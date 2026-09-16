@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from simcompare.schema import DataContractError
 
@@ -60,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
                 from simcompare.synthetic import generate_demo_data
 
                 results["demo-data"] = generate_demo_data(args.demo_out, seed=cfg.train.seed)
+                # Analyse exactly the data that was just generated.
+                cfg.data.data_dir = str(Path(args.demo_out).resolve())
             for name in COMMANDS:
                 results[name] = runners[name](cfg)
             _print(results)

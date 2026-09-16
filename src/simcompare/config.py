@@ -380,6 +380,8 @@ def _parse_model(raw: dict, path: str = "model") -> ModelSection:
         conv_channels = [8, 16, 32]
     else:
         conv_channels = _check_int_list(conv_raw, f"{path}.conv_channels")
+        if not conv_channels:
+            raise ConfigError(f"{path}.conv_channels: must not be empty")
 
     modality_dim = _opt_int(raw, "modality_dim", path)
     if modality_dim is None:
@@ -528,6 +530,8 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
             filters[k] = v
 
     size_tolerance = _opt_float(raw, "size_tolerance", path, allow_none=True)
+    if size_tolerance is not None and size_tolerance < 0:
+        raise ConfigError(f"{path}.size_tolerance: must be >= 0")
 
     loo_top_k = _opt_int(raw, "loo_top_k", path)
     if loo_top_k is None:
@@ -609,6 +613,11 @@ def config_from_dict(raw: dict) -> AppConfig:
         analysis = _parse_analysis(analysis_raw)
 
     # Cross-section rules
+    factor = 2 ** len(model.conv_channels)
+    if any(v % factor for v in data.image_size):
+        raise ConfigError(
+            f"data.image_size {data.image_size} must be divisible by 2**len(model.conv_channels) = {factor}"
+        )
     if mode == "real":
         if caa.rule is not None:
             if caa.rule.startswith("demo_"):

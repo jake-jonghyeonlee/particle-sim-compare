@@ -48,20 +48,26 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".npy":
-        arr = np.load(path, allow_pickle=False)
+        try:
+            arr = np.load(path, allow_pickle=False)
+        except (OSError, ValueError) as exc:
+            raise schema.DataContractError(f"image {path}: {exc}") from None
         if arr.ndim != 2:
             raise schema.DataContractError(
                 f"image {path} must be 2-D, got {arr.ndim}-D"
             )
         arr = np.asarray(arr, dtype=np.float32)
     elif suffix == ".png":
-        with Image.open(path) as im:
-            if kind == "hotspot" and legend is not None:
-                rgb = np.asarray(im.convert("RGB"))
-                arr = legend_to_values(rgb, legend).astype(np.float32)
-                return arr, "probability", str(legend.get("legend_id", ""))
-            gray = np.asarray(im.convert("L"), dtype=np.float32) / 255.0
-            arr = gray
+        try:
+            with Image.open(path) as im:
+                if kind == "hotspot" and legend is not None:
+                    rgb = np.asarray(im.convert("RGB"))
+                    arr = legend_to_values(rgb, legend).astype(np.float32)
+                    return arr, "probability", str(legend.get("legend_id", ""))
+                gray = np.asarray(im.convert("L"), dtype=np.float32) / 255.0
+                arr = gray
+        except (OSError, ValueError) as exc:
+            raise schema.DataContractError(f"image {path}: {exc}") from None
     else:
         raise schema.DataContractError(f"unsupported image suffix {suffix!r} for {path}")
 
@@ -454,7 +460,7 @@ def load_dataset(
     if ca_path.is_file():
         ca_rows = _read_csv(ca_path)
         _require_columns(
-            ca_rows, ["sample_id", "particle_size", "ca_unit"], "ca_records.csv"
+            ca_rows, ["sample_id", "particle_size", "ca_value", "ca_unit"], "ca_records.csv"
         )
         source_files.append("ca_records.csv")
 

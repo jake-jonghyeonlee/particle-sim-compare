@@ -29,7 +29,7 @@ uv run simcompare train    --config configs/demo.yaml
 uv run simcompare embed    --config configs/demo.yaml
 uv run simcompare analyze  --config configs/demo.yaml
 uv run simcompare evaluate --config configs/demo.yaml
-# 또는 한 번에
+# 또는 한 번에 (--demo-out에 생성한 데이터로 설정의 data_dir을 대체)
 uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 ```
 
