@@ -50,8 +50,8 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
     if suffix == ".npy":
         try:
             arr = np.load(path, allow_pickle=False)
-        except (OSError, ValueError) as exc:
-            raise schema.DataContractError(f"image {path}: {exc}") from None
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
+            raise schema.DataContractError(f"image {path}: {exc!r}") from None
         if arr.ndim != 2:
             raise schema.DataContractError(
                 f"image {path} must be 2-D, got {arr.ndim}-D"
@@ -66,8 +66,8 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
                     return arr, "probability", str(legend.get("legend_id", ""))
                 gray = np.asarray(im.convert("L"), dtype=np.float32) / 255.0
                 arr = gray
-        except (OSError, ValueError) as exc:
-            raise schema.DataContractError(f"image {path}: {exc}") from None
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
+            raise schema.DataContractError(f"image {path}: {exc!r}") from None
     else:
         raise schema.DataContractError(f"unsupported image suffix {suffix!r} for {path}")
 

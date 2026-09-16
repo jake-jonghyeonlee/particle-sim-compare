@@ -57,3 +57,30 @@ def test_all_with_demo_out_analyses_generated_data(tmp_path):
     config.write_text(yaml.safe_dump(raw))
     assert main(["all", "--config", str(config), "--demo-out", str(tmp_path / "gen")]) == 0
     assert (tmp_path / "out" / "review_cards.json").exists()
+
+
+@pytest.mark.parametrize("legend", [
+    {"legend_id": "L", "entries": [{"rgb": [255, 0, 0]}]},
+    {"legend_id": "L", "entries": [{"rgb": [255, 0], "value": 1.0}]},
+    {"legend_id": "", "entries": [{"rgb": [1, 2, 3], "value": 1.0}]},
+    {"legend_id": "L", "entries": [{"rgb": [1, 2, 3], "value": float("nan")}]},
+    {"legend_id": "L", "entries": [{"rgb": [1, 2, 3], "value": 1.0}], "tolerance": -1},
+])
+def test_malformed_legend_rejected_by_config(legend):
+    raw = copy.deepcopy(DEMO)
+    raw["data"]["hotspot_legend"] = legend
+    with pytest.raises(ConfigError):
+        config_from_dict(raw)
+
+
+def test_legend_conversion_errors_are_contract_errors(tmp_path):
+    path = tmp_path / "h.png"
+    Image.fromarray(np.full((2, 2, 3), 7, np.uint8), mode="RGB").save(path)
+    with pytest.raises(DataContractError):
+        read_image(path, kind="hotspot", legend={"legend_id": "L", "entries": [{"rgb": [7, 7, 7]}]})
+    ok = {"legend_id": "L", "entries": [{"rgb": [7, 7, 7], "value": 0.5}], "tolerance": 0}
+    raw = copy.deepcopy(DEMO)
+    raw["data"]["hotspot_legend"] = ok
+    config_from_dict(raw)
+    arr, semantics, legend_id = read_image(path, kind="hotspot", legend=ok)
+    assert semantics == "probability" and legend_id == "L" and np.allclose(arr, 0.5)

@@ -254,6 +254,31 @@ def _check_grid(values: list[float], path: str, allow_empty: bool = False) -> li
     return result
 
 
+def _check_legend(legend: dict, path: str) -> None:
+    """Legend = {legend_id: str, entries: [{rgb: [r, g, b], value: number}], tolerance: int}."""
+    unknown = set(legend) - {"legend_id", "entries", "tolerance"}
+    if unknown:
+        raise ConfigError(f"unknown key '{path}.{sorted(unknown)[0]}'")
+    if not isinstance(legend.get("legend_id"), str) or not legend["legend_id"].strip():
+        raise ConfigError(f"{path}.legend_id: required non-empty str")
+    entries = legend.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise ConfigError(f"{path}.entries: required non-empty list")
+    for i, entry in enumerate(entries):
+        where = f"{path}.entries[{i}]"
+        if not isinstance(entry, dict) or set(entry) != {"rgb", "value"}:
+            raise ConfigError(f"{where}: must have exactly keys 'rgb' and 'value'")
+        rgb = entry["rgb"]
+        if (not isinstance(rgb, list) or len(rgb) != 3
+                or not all(_is_int(c) and 0 <= c <= 255 for c in rgb)):
+            raise ConfigError(f"{where}.rgb: expected three ints in 0..255")
+        if not _is_float(entry["value"]):
+            raise ConfigError(f"{where}.value: expected finite number")
+    tolerance = legend.get("tolerance", 0)
+    if not _is_int(tolerance) or tolerance < 0:
+        raise ConfigError(f"{path}.tolerance: expected int >= 0")
+
+
 def _check_int_list(values: list[Any], path: str, positive: bool = True) -> list[int]:
     if not isinstance(values, list):
         raise ConfigError(f"{path}: expected list")
@@ -308,6 +333,8 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
         raise ConfigError(f"{path}.ca_alignment: must be one of {CA_ALIGNMENT_VALUES}")
 
     hotspot_legend = _opt_dict(raw, "hotspot_legend", path, allow_none=True)
+    if hotspot_legend is not None:
+        _check_legend(hotspot_legend, f"{path}.hotspot_legend")
 
     return DataConfig(
         data_dir=data_dir,
