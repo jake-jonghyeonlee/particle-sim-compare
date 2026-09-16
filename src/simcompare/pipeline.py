@@ -83,8 +83,8 @@ def make_split(cfg, enc):
 
 def _versions() -> dict:
     return {
-        "simcompare": __version__, "python": platform.python_version(), "numpy": np.__version__,
-        "pandas": pd.__version__, "scikit-learn": sklearn.__version__, "torch": torch.__version__,
+        "simcompare": __version__, "python": platform.python_version(), "numpy": str(np.__version__),
+        "pandas": str(pd.__version__), "scikit-learn": str(sklearn.__version__), "torch": str(torch.__version__),
     }
 
 
