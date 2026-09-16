@@ -128,18 +128,20 @@ class ImageDecoder(nn.Module):
         levels = len(conv_channels)
         self.fc = nn.Linear(modality_dim, conv_channels[-1] * (h // 2**levels) * (w // 2**levels))
         self.out_hw = (h // 2**levels, w // 2**levels)
+        self.channels = conv_channels[-1]
+        targets = list(reversed(conv_channels))[1:] + [out_ch]
         blocks: list[nn.Module] = []
         prev = conv_channels[-1]
-        for c in reversed(conv_channels):
+        for i, c in enumerate(targets):
             blocks.append(nn.ConvTranspose2d(prev, c, kernel_size=4, stride=2, padding=1))
-            blocks.append(nn.ReLU())
+            if i < len(targets) - 1:
+                blocks.append(nn.ReLU())
             prev = c
-        blocks.append(nn.ConvTranspose2d(prev, out_ch, kernel_size=4, stride=2, padding=1))
         self.net = nn.Sequential(*blocks)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         n = z.shape[0]
-        feat = self.fc(z).view(n, self.fc.out_features, *self.out_hw)
+        feat = F.relu(self.fc(z)).view(n, self.channels, *self.out_hw)
         return self.net(feat)
 
 
@@ -183,29 +185,31 @@ class MultiInputAE(nn.Module):
         h, w = cfg.image_hw
         m = cfg.modality_dim
 
-        if "layout" in cfg.enabled:
-            self.layout_encoder = ImageEncoder(cfg.layout_channels, cfg.conv_channels, m)
-            self.layout_decoder = ImageDecoder(cfg.layout_channels, cfg.conv_channels, m, (h, w))
-        if "hotspot" in cfg.enabled:
-            self.hotspot_encoder = ImageEncoder(cfg.hotspot_channels, cfg.conv_channels, m)
-            self.hotspot_decoder = ImageDecoder(cfg.hotspot_channels, cfg.conv_channels, m, (h, w))
-        if "ca" in cfg.enabled:
-            self.ca_encoder = VectorEncoder(cfg.ca_dim, m)
-            self.ca_decoder = VectorDecoder(m, cfg.ca_dim)
-        if "fab" in cfg.enabled:
-            self.fab_encoder = VectorEncoder(cfg.fab_dim + 1, m)
-            self.fab_decoder = VectorDecoder(m, cfg.fab_dim + 1)
-        if "geometry" in cfg.enabled:
-            self.geometry_encoder = VectorEncoder(cfg.geom_dim, m)
-            self.geometry_decoder = VectorDecoder(m, cfg.geom_dim)
-
         struct_enabled = [s for s in STRUCT_MODALITIES if s in cfg.enabled]
         self._struct_enabled = struct_enabled
-        if struct_enabled:
-            self.struct_head = nn.Linear(len(struct_enabled) * m, cfg.latent_dim // 2)
         self._fab_enabled = "fab" in cfg.enabled
+        half = cfg.latent_dim // 2
+        z_dim = half * (int(bool(struct_enabled)) + int(self._fab_enabled))
+        if struct_enabled:
+            self.struct_head = nn.Linear(len(struct_enabled) * m, half)
         if self._fab_enabled:
-            self.fab_head = nn.Linear(m, cfg.latent_dim // 2)
+            self.fab_head = nn.Linear(m, half)
+
+        if "layout" in cfg.enabled:
+            self.layout_encoder = ImageEncoder(cfg.layout_channels, cfg.conv_channels, m)
+            self.layout_decoder = ImageDecoder(cfg.layout_channels, cfg.conv_channels, z_dim, (h, w))
+        if "hotspot" in cfg.enabled:
+            self.hotspot_encoder = ImageEncoder(cfg.hotspot_channels, cfg.conv_channels, m)
+            self.hotspot_decoder = ImageDecoder(cfg.hotspot_channels, cfg.conv_channels, z_dim, (h, w))
+        if "ca" in cfg.enabled:
+            self.ca_encoder = VectorEncoder(cfg.ca_dim, m)
+            self.ca_decoder = VectorDecoder(z_dim, cfg.ca_dim)
+        if "fab" in cfg.enabled:
+            self.fab_encoder = VectorEncoder(cfg.fab_dim + 1, m)
+            self.fab_decoder = VectorDecoder(z_dim, cfg.fab_dim + 1)
+        if "geometry" in cfg.enabled:
+            self.geometry_encoder = VectorEncoder(cfg.geom_dim, m)
+            self.geometry_decoder = VectorDecoder(z_dim, cfg.geom_dim)
 
     def _presence(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         present: dict[str, torch.Tensor] = {}

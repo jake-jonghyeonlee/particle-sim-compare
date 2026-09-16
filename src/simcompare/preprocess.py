@@ -163,6 +163,8 @@ def align_curve(
         out = np.full(grid.shape, np.nan, dtype=np.float64)
         mask = np.zeros(grid.shape, dtype=bool)
         obs_idx = np.where(observed)[0]
+        if obs_idx.size == 0:
+            return out, mask
         obs_sizes = sizes[obs_idx]
         obs_values = values[obs_idx]
         order = np.argsort(obs_sizes)
@@ -174,6 +176,8 @@ def align_curve(
                 out[j] = obs_values[exact[0]]
                 mask[j] = True
                 continue
+            if obs_idx.size < 2:
+                continue  # need at least 2 observed points to interpolate
             if g <= obs_sizes[0] or g >= obs_sizes[-1]:
                 continue  # never extrapolate outside the observed range
             k = np.searchsorted(obs_sizes, g)
@@ -257,9 +261,8 @@ class Normalizer:
         if mask.shape != x.shape:
             raise ValueError("mask must match the shape of x")
 
-        out = np.zeros(x.shape, dtype=np.float64)
-        out[mask] = (x[mask] - self.mean) / self.std
-        return out
+        out = np.where(mask, (np.where(mask, x, 0.0) - self.mean) / self.std, 0.0)
+        return out.astype(np.float64, copy=False)
 
     def to_dict(self) -> dict:
         return {
