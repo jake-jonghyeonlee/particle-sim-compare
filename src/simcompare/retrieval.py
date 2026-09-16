@@ -136,6 +136,7 @@ def search(
     **constraints,
 ) -> pd.DataFrame:
     """Search for the *k* nearest neighbors of the query row."""
+    embeddings = np.asarray(embeddings, dtype=np.float64)
     _check_embeddings(embeddings, meta)
 
     mask = candidate_mask(meta, query_pos, **constraints)
@@ -209,6 +210,7 @@ def search_all(
     **constraints,
 ) -> pd.DataFrame:
     """Run search over *positions* (default: all rows) and concatenate."""
+    embeddings = np.asarray(embeddings, dtype=np.float64)
     _check_embeddings(embeddings, meta)
 
     if positions is None:
