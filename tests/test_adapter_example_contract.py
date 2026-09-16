@@ -65,3 +65,39 @@ def test_contract_gate():
                 load_dataset(build(Path(tmp) / name, both), mode="real"); raise AssertionError(f"accepted {name}")
             except DataContractError:
                 pass
+
+
+def test_review_findings_adapter(tmp_path):
+    """ADAPTER-001..003: header-only CSV, blank sample_id, non-numeric values."""
+    import json
+    import shutil
+
+    import pytest
+
+    from simcompare.adapters.example import load_dataset
+    from simcompare.schema import DataContractError
+    from simcompare.synthetic import generate_demo_data
+
+    base = tmp_path / "base"
+    generate_demo_data(base)
+
+    def variant(name, edit):
+        root = tmp_path / name
+        shutil.copytree(base, root)
+        edit(root)
+        return root
+
+    header_only = variant("header", lambda r: (r / "bundles.csv").write_text("sample_id,product_id\n"))
+    blank_id = variant("blank", lambda r: (r / "ca_records.csv").open("a").write(",1,2,um^2\n"))
+    bad_size = variant("bad", lambda r: (r / "hotspots.csv").write_text(
+        (r / "hotspots.csv").read_text().replace(",2.0,", ",bad,", 1)))
+
+    def bad_fab(root):
+        payload = json.loads((root / "fab.json").read_text())
+        del payload["distributions"][0]["fab_id"]
+        (root / "fab.json").write_text(json.dumps(payload))
+
+    missing_fab_id = variant("fab", bad_fab)
+    for root in (header_only, blank_id, bad_size, missing_fab_id):
+        with pytest.raises(DataContractError):
+            load_dataset(root, mode="demo")

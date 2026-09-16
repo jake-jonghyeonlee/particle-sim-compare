@@ -88,21 +88,38 @@ def _text(value: object) -> str | None:
     return str(value).strip()
 
 
-def _float(value: object) -> float | None:
+def _float(value: object, what: str = "value") -> float | None:
     if _blank(value):
         return None
-    return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise schema.DataContractError(f"{what}: not a number: {value!r}") from None
+
+
+def _req_float(value: object, what: str) -> float:
+    result = _float(value, what)
+    if result is None:
+        raise schema.DataContractError(f"{what}: required number is blank")
+    return result
+
+
+class _Rows(list):
+    """CSV rows that remember the header, so header-only files are still checked."""
+
+    fieldnames: list[str] = []
 
 
 def _read_csv(path: Path) -> list[dict]:
     with path.open(newline="") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        rows = _Rows(reader)
+        rows.fieldnames = list(reader.fieldnames or [])
+    return rows
 
 
 def _require_columns(rows: list[dict], required: list[str], what: str) -> None:
-    if not rows:
-        return
-    present = set(rows[0].keys())
+    present = set(getattr(rows, "fieldnames", None) or (rows[0].keys() if rows else []))
     missing = [name for name in required if name not in present]
     if missing:
         raise schema.DataContractError(f"{what}: missing required column(s) {missing}")
@@ -136,31 +153,48 @@ def _load_distributions(data_dir: Path) -> dict[str, schema.FabDistribution]:
 
     distributions: dict[str, schema.FabDistribution] = {}
     for entry in entries:
-        lower = np.asarray(entry.get("bin_lower"), dtype=float)
-        upper = np.asarray(entry.get("bin_upper"), dtype=float)
-        raw = entry.get("raw_values")
-        if raw is None:
-            values = np.full(len(lower), np.nan, dtype=float)
-            observed = np.zeros(len(lower), dtype=bool)
-        else:
-            observed = np.array([v is not None for v in raw], dtype=bool)
-            values = np.array([np.nan if v is None else float(v) for v in raw], dtype=float)
+        if not isinstance(entry, dict):
+            raise schema.DataContractError("fab.json: each distribution must be an object")
+        did = _text(entry.get("fab_distribution_id")) or "<missing id>"
+
+        def numbers(key: str, allow_null: bool) -> list:
+            raw = entry.get(key)
+            if not isinstance(raw, list):
+                raise schema.DataContractError(f"{did}: {key} must be a list")
+            out = []
+            for item in raw:
+                if item is None and allow_null:
+                    out.append(None)
+                elif isinstance(item, bool) or not isinstance(item, (int, float)):
+                    raise schema.DataContractError(f"{did}: {key} contains non-number {item!r}")
+                else:
+                    out.append(float(item))
+            return out
+
+        lower = np.asarray(numbers("bin_lower", False), dtype=float)
+        upper = np.asarray(numbers("bin_upper", False), dtype=float)
+        raw = numbers("raw_values", True)
+        observed = np.array([v is not None for v in raw], dtype=bool)
+        values = np.array([np.nan if v is None else v for v in raw], dtype=float)
+        is_reference = entry.get("is_reference", False)
+        if not isinstance(is_reference, bool):
+            raise schema.DataContractError(f"{did}: is_reference must be true/false")
         dist = schema.FabDistribution(
-            fab_distribution_id=str(entry.get("fab_distribution_id", "")),
-            fab_id=str(entry.get("fab_id", "")),
+            fab_distribution_id=_text(entry.get("fab_distribution_id")) or "",
+            fab_id=_text(entry.get("fab_id")) or "",
             product_family=_text(entry.get("product_family")),
-            process_layer=str(entry.get("process_layer", "")),
+            process_layer=_text(entry.get("process_layer")) or "",
             bin_lower=lower,
             bin_upper=upper,
             raw_values=values,
             observed=observed,
-            value_kind=str(entry.get("value_kind", "")),
-            value_unit=str(entry.get("value_unit", "")),
-            size_unit=str(entry.get("size_unit", "")),
-            surveyed_area=_float(entry.get("surveyed_area")),
+            value_kind=_text(entry.get("value_kind")) or "",
+            value_unit=_text(entry.get("value_unit")) or "",
+            size_unit=_text(entry.get("size_unit")) or "",
+            surveyed_area=_float(entry.get("surveyed_area"), f"{did}: surveyed_area"),
             area_unit=_text(entry.get("area_unit")),
             period=_text(entry.get("period")),
-            is_reference=bool(entry.get("is_reference", False)),
+            is_reference=is_reference,
         )
         schema.validate_fab(dist)
         if dist.fab_distribution_id in distributions:
@@ -222,7 +256,7 @@ def _build_hotspots(
     legend: dict | None,
 ) -> None:
     selected = [row for row in rows if _text(row.get("sample_id")) == sid]
-    selected.sort(key=lambda row: float(row["particle_size"]))
+    selected.sort(key=lambda row: _req_float(row["particle_size"], f"{sid}: hotspot particle_size"))
     for row in selected:
         path = _resolve(data_dir, str(row["path"]), sid)
         arr, semantics, legend_id = read_image(
@@ -239,7 +273,7 @@ def _build_hotspots(
                 origin_xy=(origin_x, origin_y)
                 if origin_x is not None and origin_y is not None
                 else None,
-                particle_size=float(row["particle_size"]),
+                particle_size=_req_float(row["particle_size"], f"{sid}: hotspot particle_size"),
                 value_semantics=semantics,
                 legend_id=legend_id,
             )
@@ -254,7 +288,7 @@ def _build_ca(
     records = [
         {
             "sample_id": sid,
-            "particle_size": float(row["particle_size"]),
+            "particle_size": _req_float(row["particle_size"], f"{sid}: CA particle_size"),
             "ca_value": row.get("ca_value"),
             "ca_unit": row.get("ca_unit"),
         }
@@ -275,8 +309,8 @@ def _build_geometry(
     entry = payload.get(sid)
     if not isinstance(entry, dict):
         return
-    thickness = {str(k): float(v) for k, v in (entry.get("thickness") or {}).items()}
-    shape = {str(k): float(v) for k, v in (entry.get("shape_metrics") or {}).items()}
+    thickness = {str(k): _req_float(v, f"{sid}: thickness {k}") for k, v in (entry.get("thickness") or {}).items()}
+    shape = {str(k): _req_float(v, f"{sid}: shape metric {k}") for k, v in (entry.get("shape_metrics") or {}).items()}
     bundle.geometry = schema.Geometry(
         thickness=thickness,
         shape_metrics=shape,
@@ -436,7 +470,9 @@ def load_dataset(
 
     for row in layout_rows + hotspot_rows + ca_rows:
         ref = _text(row.get("sample_id"))
-        if ref is not None and ref not in seen:
+        if ref is None:
+            raise schema.DataContractError("blank sample_id in layouts/hotspots/ca_records")
+        if ref not in seen:
             raise schema.DataContractError(f"unknown sample_id {ref!r} in optional records")
     for ref in geometry_payload:
         if ref not in seen:
