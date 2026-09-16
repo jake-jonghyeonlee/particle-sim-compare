@@ -5,6 +5,7 @@ Missing values are never silently filled; required fields must be present.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -109,7 +110,17 @@ def _is_int(value: Any) -> bool:
 
 
 def _is_float(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
+def _number_error(value: Any) -> str:
+    if isinstance(value, float) and not math.isfinite(value):
+        return f"must be a finite number, got {value}"
+    return f"expected number, got {type(value).__name__}"
 
 
 def _check_unknown(raw: dict, allowed: set[str], path: str) -> None:
@@ -132,60 +143,90 @@ def _require_str(raw: dict, key: str, path: str) -> str:
     return value
 
 
-def _opt_str(raw: dict, key: str, path: str) -> str | None:
-    if key not in raw or raw[key] is None:
+def _opt_str(raw: dict, key: str, path: str, *, allow_none: bool = False) -> str | None:
+    if key not in raw:
         return None
     value = raw[key]
+    if value is None:
+        if allow_none:
+            return None
+        dotted = f"{path}.{key}" if path else key
+        raise ConfigError(f"{dotted}: must not be null")
     if not isinstance(value, str):
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"{dotted}: expected str, got {type(value).__name__}")
     return value
 
 
-def _opt_float(raw: dict, key: str, path: str) -> float | None:
-    if key not in raw or raw[key] is None:
+def _opt_float(raw: dict, key: str, path: str, *, allow_none: bool = False) -> float | None:
+    if key not in raw:
         return None
     value = raw[key]
+    if value is None:
+        if allow_none:
+            return None
+        dotted = f"{path}.{key}" if path else key
+        raise ConfigError(f"{dotted}: must not be null")
     if not _is_float(value):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected number, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: {_number_error(value)}")
     return float(value)
 
 
-def _opt_int(raw: dict, key: str, path: str) -> int | None:
-    if key not in raw or raw[key] is None:
+def _opt_int(raw: dict, key: str, path: str, *, allow_none: bool = False) -> int | None:
+    if key not in raw:
         return None
     value = raw[key]
+    if value is None:
+        if allow_none:
+            return None
+        dotted = f"{path}.{key}" if path else key
+        raise ConfigError(f"{dotted}: must not be null")
     if not _is_int(value):
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"{dotted}: expected int, got {type(value).__name__}")
     return value
 
 
-def _opt_bool(raw: dict, key: str, path: str) -> bool | None:
-    if key not in raw or raw[key] is None:
+def _opt_bool(raw: dict, key: str, path: str, *, allow_none: bool = False) -> bool | None:
+    if key not in raw:
         return None
     value = raw[key]
+    if value is None:
+        if allow_none:
+            return None
+        dotted = f"{path}.{key}" if path else key
+        raise ConfigError(f"{dotted}: must not be null")
     if not isinstance(value, bool):
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"{dotted}: expected bool, got {type(value).__name__}")
     return value
 
 
-def _opt_dict(raw: dict, key: str, path: str) -> dict | None:
-    if key not in raw or raw[key] is None:
+def _opt_dict(raw: dict, key: str, path: str, *, allow_none: bool = False) -> dict | None:
+    if key not in raw:
         return None
     value = raw[key]
+    if value is None:
+        if allow_none:
+            return None
+        dotted = f"{path}.{key}" if path else key
+        raise ConfigError(f"{dotted}: must not be null")
     if not isinstance(value, dict):
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"{dotted}: expected mapping, got {type(value).__name__}")
     return value
 
 
-def _opt_list(raw: dict, key: str, path: str) -> list | None:
-    if key not in raw or raw[key] is None:
+def _opt_list(raw: dict, key: str, path: str, *, allow_none: bool = False) -> list | None:
+    if key not in raw:
         return None
     value = raw[key]
+    if value is None:
+        if allow_none:
+            return None
+        dotted = f"{path}.{key}" if path else key
+        raise ConfigError(f"{dotted}: must not be null")
     if not isinstance(value, list):
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"{dotted}: expected list, got {type(value).__name__}")
@@ -202,7 +243,7 @@ def _check_grid(values: list[float], path: str, allow_empty: bool = False) -> li
     result: list[float] = []
     for i, v in enumerate(values):
         if not _is_float(v):
-            raise ConfigError(f"{path}[{i}]: expected number, got {type(v).__name__}")
+            raise ConfigError(f"{path}[{i}]: {_number_error(v)}")
         fv = float(v)
         if fv <= 0:
             raise ConfigError(f"{path}[{i}]: must be > 0")
@@ -266,7 +307,7 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
     if ca_alignment not in CA_ALIGNMENT_VALUES:
         raise ConfigError(f"{path}.ca_alignment: must be one of {CA_ALIGNMENT_VALUES}")
 
-    hotspot_legend = _opt_dict(raw, "hotspot_legend", path)
+    hotspot_legend = _opt_dict(raw, "hotspot_legend", path, allow_none=True)
 
     return DataConfig(
         data_dir=data_dir,
@@ -285,11 +326,11 @@ def _parse_caa(raw: dict, path: str = "caa") -> CAAConfig:
         "require_full_coverage", "process_layer_overrides",
     }, path)
 
-    rule = _opt_str(raw, "rule", path)
+    rule = _opt_str(raw, "rule", path, allow_none=True)
     confirmed = _opt_bool(raw, "confirmed", path)
     if confirmed is None:
         confirmed = False
-    reference_distribution_id = _opt_str(raw, "reference_distribution_id", path)
+    reference_distribution_id = _opt_str(raw, "reference_distribution_id", path, allow_none=True)
     require_full_coverage = _opt_bool(raw, "require_full_coverage", path)
     if require_full_coverage is None:
         require_full_coverage = True
@@ -362,7 +403,7 @@ def _parse_model(raw: dict, path: str = "model") -> ModelSection:
                 raise ConfigError(f"{path}.loss_weights[{k!r}]: not an enabled input")
             if not _is_float(v):
                 raise ConfigError(
-                    f"{path}.loss_weights[{k!r}]: expected number, got {type(v).__name__}"
+                    f"{path}.loss_weights[{k!r}]: {_number_error(v)}"
                 )
             if v < 0:
                 raise ConfigError(f"{path}.loss_weights[{k!r}]: must be >= 0")
@@ -486,7 +527,7 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
                 raise ConfigError(f"{path}.filters[{k!r}]: value must be a list")
             filters[k] = v
 
-    size_tolerance = _opt_float(raw, "size_tolerance", path)
+    size_tolerance = _opt_float(raw, "size_tolerance", path, allow_none=True)
 
     loo_top_k = _opt_int(raw, "loo_top_k", path)
     if loo_top_k is None:
