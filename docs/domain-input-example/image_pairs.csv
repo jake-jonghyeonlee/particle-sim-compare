@@ -1,0 +1,4 @@
+sample_id,failure_type,layout_a_path,layout_b_path,hotspot_path,particle_size_um,width_px,height_px,unit_width_um,unit_height_um,pixel_match,transform,status,note
+EXAMPLE_PRODUCT_A_V1_OPEN,lateral_open,images/layout_a.npy,,images/hotspot_01.npy,1,512,512,80,80,true,identity,confirmed,layout과 hotspot 픽셀 1대1 대응
+EXAMPLE_PRODUCT_A_V1_SHORT,lateral_short,images/layout_a.npy,images/layout_b.npy,images/hotspot_10.npy,10,512,512,80,80,true,identity,confirmed,두 layout과 hotspot 모두 같은 영역
+EXAMPLE_PRODUCT_B_V1_VSHORT,vertical_short,images/lower.npy,images/upper.npy,images/hotspot_50.npy,50,640,480,100,75,true,identity,confirmed,제품마다 unit-pixel 크기와 이미지 모양은 다를 수 있음

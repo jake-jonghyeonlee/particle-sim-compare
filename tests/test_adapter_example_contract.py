@@ -22,9 +22,9 @@ def test_contract_gate():
                                  fab_id="FAB_A", fab_distribution_id="D1", assigned_process_layer="ITO", unit_width="", unit_height="",
                                  physical_length_unit="")],
             "layouts.csv": [dict(sample_id="S1", slot="a", path="a/l.npy", pixel_size="1.5", origin_x="0", origin_y="0")],
-            "hotspots.csv": [dict(sample_id="S1", particle_size="2", path="a/h.png", pixel_size="", origin_x="", origin_y="")],
-            "ca_records.csv": [dict(sample_id="S1", particle_size="1", ca_value="0", ca_unit="um^2"),
-                               dict(sample_id="S1", particle_size="2", ca_value="", ca_unit="um^2")],
+            "hotspots.csv": [dict(sample_id="S1", particle_size="2", particle_size_unit="um", path="a/h.png", pixel_size="1.5", origin_x="0", origin_y="0")],
+            "ca_records.csv": [dict(sample_id="S1", particle_size="1", particle_size_unit="um", ca_value="0", ca_unit="1"),
+                               dict(sample_id="S1", particle_size="2", particle_size_unit="um", ca_value="", ca_unit="1")],
         }
         fab = {"distributions": [dict(fab_distribution_id="D1", fab_id="FAB_A", product_family="F1", process_layer="ITO",
                                       bin_lower=[0.5], bin_upper=[1.5], raw_values=[None], value_kind="probability",
@@ -50,7 +50,7 @@ def test_contract_gate():
         assert np.isnan(data.distributions["D1"].raw_values[0]) and not data.distributions["D1"].observed[0]
         assert s1.provenance.adapter == "example"
         cases = {
-            "unknown": lambda f, d: f["ca_records.csv"].append(dict(sample_id="NOPE", particle_size="4", ca_value="1", ca_unit="um^2")),
+            "unknown": lambda f, d: f["ca_records.csv"].append(dict(sample_id="NOPE", particle_size="4", particle_size_unit="um", ca_value="1", ca_unit="1")),
             "dup": lambda f, d: f["bundles.csv"].append(dict(f["bundles.csv"][0])),
             "slot_b_open": lambda f, d: f["layouts.csv"].append(dict(sample_id="S1", slot="b", path="a/l.npy", pixel_size="", origin_x="", origin_y="")),
             "escape": lambda f, d: f["layouts.csv"].__setitem__(0, dict(f["layouts.csv"][0], path="../x.npy")),
@@ -88,7 +88,7 @@ def test_review_findings_adapter(tmp_path):
         return root
 
     header_only = variant("header", lambda r: (r / "bundles.csv").write_text("sample_id,product_id\n"))
-    blank_id = variant("blank", lambda r: (r / "ca_records.csv").open("a").write(",1,2,um^2\n"))
+    blank_id = variant("blank", lambda r: (r / "ca_records.csv").open("a").write(",1,um,0.2,1\n"))
     bad_size = variant("bad", lambda r: (r / "hotspots.csv").write_text(
         (r / "hotspots.csv").read_text().replace(",2.0,", ",bad,", 1)))
 

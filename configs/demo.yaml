@@ -4,6 +4,7 @@ mode: demo
 output_dir: ../outputs/demo
 data:
   data_dir: ../demo_data
+  canonical_length_unit: um
   ca_grid: [1, 2, 4, 8, 16]
   hotspot_sizes: [2, 4, 8]
   fab_grid: [1, 2, 4, 8, 16]

@@ -4,7 +4,8 @@ Imports: numpy, schema, split (group_ids, confounding_report), caa, dataset.Enco
 adapters.example.LoadedDataset.
 
 `run_checks(loaded, enc, cfg) -> dict` (JSON-serialisable; numpy -> python types):
-- "counts": n_bundles, n_products, n_lineages, n_families, n_fabs, by_failure_type.
+- "counts": n_bundles, n_products, n_lineages, n_families, n_fabs,
+  comparison_groups, by_failure_type.
 - "missing_inputs": {"layout_a": n, "layout_b_short": n (shorts lacking slot b),
   "open_b_not_applicable": n (opens; explicitly not missing), "hotspot@<size>": n,
   "ca@<g>": n, "fab": n, "geometry": n}.
@@ -20,5 +21,7 @@ adapters.example.LoadedDataset.
 - "caa_applicability": list of {"sample_id", "reason"} where select_distribution /
   interpret_fab fails (reason = error message).
 - "grid_coverage": {"ca@<g>": fraction observed}.
+- "ca_value_range": observed raw CA min/max and number above the usual 0.03 reference
+  level (descriptive warning only; 0.03 is not a hard validity limit).
 - "synthetic": True if any bundle.provenance.is_synthetic.
 - "warnings": loaded.warnings + enc.notes.

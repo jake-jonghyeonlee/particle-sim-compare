@@ -1,0 +1,8 @@
+product_id,design_version,layer_name,stack_order,fab_process_layer,status,note
+EXAMPLE_PRODUCT_A,*,M1,1,M1,confirmed,숫자가 클수록 상부
+EXAMPLE_PRODUCT_A,*,M2,2,M2,confirmed,
+EXAMPLE_PRODUCT_A,*,ITO,3,ITO,confirmed,
+EXAMPLE_PRODUCT_B,*,GATE,1,GATE,confirmed,제품마다 layer 개수가 달라도 됨
+EXAMPLE_PRODUCT_B,*,DATA,2,DATA,confirmed,
+EXAMPLE_PRODUCT_B,v2,TOP_ITO,3,ITO,confirmed,특정 버전 예외는 명시 버전으로 추가
+

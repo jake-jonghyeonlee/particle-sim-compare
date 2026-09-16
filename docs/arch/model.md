@@ -6,7 +6,7 @@ internal training objective only; this is not a CA/hotspot predictor.
 Batch dict (torch float32 tensors; N = batch size). Keys of disabled modalities may be absent.
 - layout (N, CL, H, W), layout_valid (N, CL, H, W), layout_present (N, CL)
 - hotspot (N, CH, H, W), hotspot_valid (N, CH, H, W), hotspot_present (N, CH)
-- ca (N, G), ca_mask (N, G)
+- ca (N, 2G), ca_mask (N, 2G): normalized raw CA followed by normalized CA/unit-area
 - fab (N, B), fab_mask (N, B), fab_total (N, 1), fab_total_mask (N, 1)
 - geom (N, D), geom_mask (N, D)
 

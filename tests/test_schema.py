@@ -39,33 +39,33 @@ def test_vertical_short_layer_never_inferred():
 
 
 def test_physical_scale_and_ca_per_area():
-    curve = CACurve(np.array([1.0, 2.0]), np.array([4.0, np.nan]), np.array([True, False]), "um^2")
+    curve = CACurve(np.array([1.0, 2.0]), np.array([0.02, np.nan]), np.array([True, False]), "1")
     b = make_bundle(ca=curve)
     per_area, reason = b.ca_per_area()
-    assert reason == "ok" and per_area[0] == pytest.approx(4.0 / 4000.0) and np.isnan(per_area[1])
+    assert reason == "ok" and per_area[0] == pytest.approx(0.02 / 4000.0) and np.isnan(per_area[1])
     nb = make_bundle(unit_width=None, unit_height=None, physical_length_unit=None, ca=curve)
     assert nb.ca_per_area()[0] is None
     assert any("실제 크기 없음" in w for w in validate_bundle(nb, "real"))
 
 
 def test_unobserved_must_be_nan_not_zero():
-    bad = CACurve(np.array([1.0, 2.0]), np.array([4.0, 0.0]), np.array([True, False]), "um^2")
+    bad = CACurve(np.array([1.0, 2.0]), np.array([0.02, 0.0]), np.array([True, False]), "1")
     with pytest.raises(DataContractError):
         validate_bundle(make_bundle(ca=bad), "real")
 
 
 def test_group_size_records_keeps_missing_and_detects_duplicates():
     curves = group_size_records([
-        {"sample_id": "S1", "particle_size": 2, "ca_value": "", "ca_unit": "um^2"},
-        {"sample_id": "S1", "particle_size": 1, "ca_value": "0", "ca_unit": "um^2"},
+        {"sample_id": "S1", "particle_size": 2, "particle_size_unit": "um", "ca_value": "", "ca_unit": "1"},
+        {"sample_id": "S1", "particle_size": 1, "particle_size_unit": "um", "ca_value": "0", "ca_unit": "1"},
     ])
     c = curves["S1"]
     assert list(c.particle_sizes) == [1.0, 2.0]
     assert list(c.observed) == [True, False] and c.values[0] == 0.0 and np.isnan(c.values[1])
     with pytest.raises(DataContractError):
         group_size_records([
-            {"sample_id": "S1", "particle_size": 1, "ca_value": 1, "ca_unit": "um^2"},
-            {"sample_id": "S1", "particle_size": 1, "ca_value": 2, "ca_unit": "um^2"},
+            {"sample_id": "S1", "particle_size": 1, "particle_size_unit": "um", "ca_value": 0.1, "ca_unit": "1"},
+            {"sample_id": "S1", "particle_size": 1, "particle_size_unit": "um", "ca_value": 0.2, "ca_unit": "1"},
         ])
 
 

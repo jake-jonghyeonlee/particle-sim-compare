@@ -1,6 +1,8 @@
-"""Masked multi-input reconstruction loss (torch).
+"""다중 입력 마스크 복원 손실(torch).
 
-Contract: docs/arch/losses.md
+입력별로 유효 영역·관측값만 사용해 샘플별 평균을 먼저 구하고, 그 입력이 없는 샘플은 제외한 뒤
+샘플 평균을 낸다. 이렇게 하면 픽셀 수가 많은 이미지가 수치 입력을 압도하지 않는다.
+마지막으로 입력별 손실을 가중 평균한다.
 """
 
 from __future__ import annotations
@@ -20,11 +22,10 @@ LOSS_KINDS: dict[str, str] = {
 def _masked_mse_term(
     recon: torch.Tensor, target: torch.Tensor, weight: torch.Tensor
 ) -> torch.Tensor | None:
-    """Per-term masked MSE.
+    """마스크 평균제곱오차 항.
 
-    per-sample loss = sum(elem * weight) / count(weight > 0) over that sample;
-    samples with count 0 are EXCLUDED; term loss = mean over included samples.
-    Returns None if no sample is included.
+    샘플 손실 = (원소 오차 × 가중치 합) / 유효 원소 수, 유효 원소가 없는 샘플은 제외하고
+    포함된 샘플의 평균을 반환한다. 포함된 샘플이 없으면 None.
     """
     target = torch.where(weight > 0, target, torch.zeros_like(target))
     elem = (recon - target) ** 2
@@ -40,10 +41,7 @@ def _masked_mse_term(
 def _masked_bce_term(
     recon: torch.Tensor, target: torch.Tensor, weight: torch.Tensor
 ) -> torch.Tensor | None:
-    """Per-term masked BCEWithLogits.
-
-    Same per-sample reduction as _masked_mse_term.
-    """
+    """마스크 BCEWithLogits 항. 샘플별 축약 방식은 _masked_mse_term과 같다."""
     target = torch.where(weight > 0, target, torch.zeros_like(target))
     elem = F.binary_cross_entropy_with_logits(recon, target, reduction="none")
     weighted = elem * weight
@@ -60,16 +58,14 @@ def masked_losses(
     out: dict,
     weights: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """Compute masked reconstruction losses for each modality in out["recon"].
+    """out["recon"]에 있는 입력마다 마스크 복원 손실을 계산해 (전체 손실, 기록 dict)를 반환한다.
 
-    Args:
-        batch: Batch dict with keys as in docs/arch/model.md.
-        out: MultiInputAE.forward output dict with "recon" key.
-        weights: Optional per-modality weights; missing -> 1.0.
-
-    Returns:
-        (total_loss, log_dict) where log_dict maps modality -> float loss
-        plus "total" -> float(total).
+    - layout: 이진 이미지이므로 BCEWithLogits (유효 영역 × 전극 존재)
+    - hotspot: 가공 강도이므로 sigmoid 출력과의 MSE (유효 영역 × 크기별 존재)
+    - ca, geometry: 관측 마스크 MSE
+    - fab: 분포 모양 MSE와 총량 MSE의 평균
+    weights에 없는 입력의 가중치는 1이다. 계산된 입력이 하나도 없으면 0 손실을 반환한다.
+    마스크 밖 목표값은 계산 전에 0으로 바꿔 NaN이 전파되지 않게 한다.
     """
     if weights is None:
         weights = {}

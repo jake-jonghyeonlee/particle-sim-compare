@@ -1,10 +1,6 @@
-"""Preprocessing helpers for simcompare.
+"""전처리 도구: 종횡비 보존 letterbox, 범례 기반 색상 변환, 외삽 없는 곡선 정렬, 학습 행 전용 정규화.
 
-Implements the contract in ``docs/arch/preprocess.md``: aspect-ratio preserving
-letterboxing with a valid-area mask, explicit-legend colour-to-value conversion,
-extrapolation-free CA-curve alignment and a train-rows-only ``Normalizer``.
-
-Only numpy, Pillow and the standard library are used.  No torch.
+NumPy와 Pillow만 사용한다(torch 미사용).
 """
 
 from __future__ import annotations
@@ -17,7 +13,7 @@ from PIL import Image
 
 
 # --------------------------------------------------------------------------- #
-# letterbox
+# 종횡비 보존 리사이즈
 # --------------------------------------------------------------------------- #
 def letterbox(
     image: np.ndarray,
@@ -25,11 +21,11 @@ def letterbox(
     *,
     binary: bool,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Resize *image* preserving aspect ratio and centre it in an ``out_hw`` canvas.
+    """종횡비를 유지한 채 이미지를 out_hw 캔버스에 맞추고 가운데 배치한다.
 
-    Returns ``(canvas, valid_mask, info)`` where the canvas is float32, the mask
-    is float32 (1.0 on the placed region, 0.0 on padding) and *info* records the
-    geometry.  When *binary* is true the canvas values are thresholded to {0, 1}.
+    (canvas, valid_mask, info)를 반환한다. valid_mask는 이미지가 놓인 영역이 1, 여백이 0이다.
+    binary이면 최근접 보간 후 {0, 1}로 이진화하고, 아니면 쌍선형 보간한다.
+    info에는 scale, offset_y, offset_x, 원본 크기가 들어 있다.
     """
     if not isinstance(image, np.ndarray) or image.ndim != 2 or image.size == 0:
         raise ValueError("이미지는 비어 있지 않은 2차원 배열이어야 합니다")
@@ -69,10 +65,10 @@ def letterbox(
 
 
 # --------------------------------------------------------------------------- #
-# resized_pixel_size
+# 리사이즈 후 픽셀 크기
 # --------------------------------------------------------------------------- #
 def resized_pixel_size(pixel_size: float | None, info: dict) -> float | None:
-    """Map a pixel size from the resized frame back to the source frame."""
+    """리사이즈 후 픽셀 하나의 실제 길이(원래 pixel_size / scale). pixel_size가 없으면 None."""
     if pixel_size is None:
         return None
     scale = info["scale"]
@@ -82,14 +78,14 @@ def resized_pixel_size(pixel_size: float | None, info: dict) -> float | None:
 
 
 # --------------------------------------------------------------------------- #
-# legend_to_values
+# 범례 기반 색상 변환
 # --------------------------------------------------------------------------- #
 def legend_to_values(rgb: np.ndarray, legend: dict | None) -> np.ndarray:
-    """Convert an HxWx3 RGB array to float32 values using an explicit legend.
+    """명시적 범례로 RGB 이미지를 float32 값 배열로 변환한다.
 
-    Each pixel is mapped to the legend entry with the smallest max-abs channel
-    difference, provided that difference is within ``tolerance``.  Any unmapped
-    pixel raises ``ValueError`` reporting the number of such pixels.
+    각 픽셀은 채널 최대 차이가 가장 작은 범례 색에 대응시키며, 그 차이가 tolerance를 넘으면
+    대응 실패다. 대응되지 않은 픽셀이 하나라도 있으면 ValueError를 낸다.
+    범례가 없으면 색을 확률로 바꾸지 않는다.
     """
     if not isinstance(rgb, np.ndarray) or rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ValueError("rgb는 HxWx3 배열이어야 합니다")
@@ -121,7 +117,7 @@ def legend_to_values(rgb: np.ndarray, legend: dict | None) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# align_curve
+# 크기 격자 정렬
 # --------------------------------------------------------------------------- #
 def align_curve(
     sizes,
@@ -130,10 +126,11 @@ def align_curve(
     grid,
     method: str = "exact",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Align *values* (at *sizes*) onto *grid* without extrapolation.
+    """크기별 곡선을 목표 크기 격자에 정렬한다. 관측 범위 밖으로 외삽하지 않는다.
 
-    Returns ``(out, mask)`` where *out* is float64 (NaN where unknown) and *mask*
-    is a bool array marking grid points that received a value.
+    - exact: 격자 크기와 정확히 일치(rtol=1e-6)하는 관측값만 사용
+    - loglinear_within_range: 일치값이 없으면 양쪽에 관측점이 있을 때만 log(크기) 선형 보간
+    (값 배열, 마스크)를 반환하며 채우지 못한 격자는 NaN과 False다. 0으로 채우지 않는다.
     """
     sizes = np.asarray(sizes, dtype=np.float64)
     values = np.asarray(values, dtype=np.float64)
@@ -177,9 +174,9 @@ def align_curve(
                 mask[j] = True
                 continue
             if obs_idx.size < 2:
-                continue  # need at least 2 observed points to interpolate
+                continue  # 보간하려면 관측점이 2개 이상 필요하다
             if g <= obs_sizes[0] or g >= obs_sizes[-1]:
-                continue  # never extrapolate outside the observed range
+                continue  # 관측 범위 밖으로는 절대 외삽하지 않는다
             k = np.searchsorted(obs_sizes, g)
             s0, s1 = obs_sizes[k - 1], obs_sizes[k]
             if s0 <= g <= s1:
@@ -192,10 +189,10 @@ def align_curve(
 
 
 # --------------------------------------------------------------------------- #
-# safe_log10
+# 안전한 log10
 # --------------------------------------------------------------------------- #
 def safe_log10(values: np.ndarray, mask: np.ndarray, floor: float = 1e-12) -> np.ndarray:
-    """``log10(max(v, floor))`` where *mask* is true, NaN elsewhere."""
+    """마스크가 참인 위치는 log10(max(v, floor)), 나머지는 NaN을 반환한다."""
     values = np.asarray(values, dtype=np.float64)
     mask = np.asarray(mask, dtype=bool)
     out = np.full(values.shape, np.nan, dtype=np.float64)
@@ -204,15 +201,14 @@ def safe_log10(values: np.ndarray, mask: np.ndarray, floor: float = 1e-12) -> np
 
 
 # --------------------------------------------------------------------------- #
-# Normalizer
+# 학습 행 전용 정규화
 # --------------------------------------------------------------------------- #
 @dataclasses.dataclass
 class Normalizer:
-    """Standard-scaler fit on a subset of rows only.
+    """지정한 행(학습 행)만으로 적합하는 표준화기.
 
-    ``mean`` and ``std`` have shape ``(D,)``.  Statistics are computed from the
-    entries of *rows* where *mask* is true; a column with no observed entry gets
-    mean 0 / std 1, and a std below ``1e-8`` is clamped to 1.
+    통계는 rows 행 중 mask가 참인 값으로 열마다 계산한다. 관측값이 없는 열은 평균 0·표준편차 1,
+    표준편차가 1e-8보다 작으면 1로 둔다.
     """
 
     mean: np.ndarray  # (D,)
@@ -220,6 +216,7 @@ class Normalizer:
 
     @classmethod
     def fit(cls, x, mask, rows) -> "Normalizer":
+        """rows 행에서 열마다 관측된 값만 사용해 평균과 표준편차를 계산한다."""
         x = np.asarray(x, dtype=np.float64)
         mask = np.asarray(mask, dtype=bool)
         rows = np.asarray(rows, dtype=np.intp)
@@ -254,6 +251,7 @@ class Normalizer:
         return cls(mean, std)
 
     def transform(self, x, mask) -> np.ndarray:
+        """(x - 평균) / 표준편차를 계산한다. 마스크 밖은 0 자리표시값이며 NaN을 전파하지 않는다."""
         x = np.asarray(x, dtype=np.float64)
         mask = np.asarray(mask, dtype=bool)
         if x.ndim != 2:
@@ -265,6 +263,7 @@ class Normalizer:
         return out.astype(np.float64, copy=False)
 
     def to_dict(self) -> dict:
+        """체크포인트 저장용으로 평균·표준편차를 float 리스트 dict로 만든다."""
         return {
             "mean": [float(v) for v in np.asarray(self.mean).ravel()],
             "std": [float(v) for v in np.asarray(self.std).ravel()],
@@ -272,6 +271,7 @@ class Normalizer:
 
     @classmethod
     def from_dict(cls, d) -> "Normalizer":
+        """to_dict 결과에서 Normalizer를 복원한다."""
         return cls(
             np.asarray(d["mean"], dtype=np.float64),
             np.asarray(d["std"], dtype=np.float64),

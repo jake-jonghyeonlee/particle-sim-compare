@@ -1,0 +1,3 @@
+case_id,sample_id,comparison_group_id,risk_pattern_label,is_positive_example,is_counter_example,expert_confidence,evidence,status,note
+EXAMPLE_CASE_001,EXAMPLE_PRODUCT_A_V1_SHORT,EXAMPLE_LSHORT_DATA_GATE_M1_M2,narrow_parallel_gap,true,false,high,전문가 검토와 기존 시뮬레이션,future_optional,현재 라벨 없음; 향후 실제 위험 유형 라벨이 생기면 교체
+EXAMPLE_CASE_002,EXAMPLE_PRODUCT_B_V1_SHORT,EXAMPLE_LSHORT_DATA_GATE_M1_M2,narrow_parallel_gap,false,true,medium,유사 조건 저위험 사례,future_optional,현재 첫 버전의 평가 입력으로 사용하지 않음

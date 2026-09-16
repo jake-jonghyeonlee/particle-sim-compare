@@ -11,6 +11,7 @@ DEMO_LABEL = "DEMO CAA: 예시용 가중치 계산이며 실제 불량률·수�
 class FabWeights:
     sizes: np.ndarray      # bin midpoints
     weights: np.ndarray    # NaN where the bin is unobserved
+    size_unit: str
     rule: str
     source_id: str         # fab_distribution_id
     weight_unit: str
@@ -31,7 +32,8 @@ class CAAResult:
 
 - `bin_midpoints(dist) -> np.ndarray`: (lower + upper) / 2 as float64.
 - `fab_shape_and_total(dist) -> tuple[np.ndarray, float, str]`: validate_fab first.
-  count / probability / rate_per_area: mass = raw value; density: mass = value *
+  probability / rate_per_area: mass = raw value; count and average_count_per_glass
+  are divided by inspected area; density: mass = value *
   (upper - lower) and unit f"{value_unit}*{size_unit}"; otherwise unit = value_unit.
   total = sum of observed mass; shape = mass / total (NaN where unobserved).
   total == 0 -> shape all NaN, total 0.0. No observed bin -> CAAError.
@@ -47,8 +49,8 @@ class CAAResult:
 - `select_distribution(bundle, distributions: dict[str, FabDistribution],
   overrides: dict[str, str] | None = None) -> FabDistribution`:
   layer = overrides[f"{product_id}|{failure_type}"] if present else
-  bundle.assigned_process_layer. None -> CAAError (message says the layer is never
-  inferred, e.g. from the lower layer). Reference distributions (is_reference) are
+  bundle.assigned_process_layer. For vertical_short the adapter resolves this from
+  the upper layer in layer_stack.csv. Reference distributions (is_reference) are
   never selected here. If bundle.fab_distribution_id: must exist (else CAAError) and
   its fab_id and process_layer must equal the bundle's fab_id and layer (else CAAError).
   Otherwise candidates = non-reference distributions with same fab_id and
@@ -60,5 +62,6 @@ class CAAResult:
   NO conversion between different bins. Missing sizes are listed. If any missing and
   require_full_coverage: value None, reason "missing CA at sizes [...]". Else value =
   sum(weight * ca) over matched (reason notes partial coverage if missing).
-  unit = f"{ca.unit}*{weights.weight_unit}". label = DEMO_LABEL if is_demo else
+  unit = "relative_index". Particle diameter units are explicitly converted before
+  exact-size matching. label = DEMO_LABEL if is_demo else
   "CAA (configured rule)".

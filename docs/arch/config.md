@@ -7,6 +7,7 @@ Unknown keys at ANY level raise ConfigError naming the dotted path (e.g. "model.
 @dataclass
 class DataConfig:
     data_dir: str                      # required
+    canonical_length_unit: str = "um" # "nm" | "um" | "mm"; all grids use this unit
     ca_grid: list[float]               # required, strictly increasing, > 0
     hotspot_sizes: list[float]         # required, strictly increasing, > 0 (may be empty list)
     fab_grid: list[float]              # required, strictly increasing, > 0

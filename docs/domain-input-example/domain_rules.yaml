@@ -1,0 +1,162 @@
+schema_version: 1
+purpose: "실제 데이터 연결 전에 도메인 규칙을 검토하기 위한 예시이며 현재 실행 설정이 아님"
+
+units:
+  canonical_length_unit:
+    value: um
+    status: confirmed
+  particle_size:
+    min: 1
+    max: 50
+    step: 1
+    unit: um
+    definition: circular_particle_diameter
+    simulated_shape: circle
+    non_circular_particles_in_scope: false
+    ca_has_full_grid: true
+    hotspot_has_full_grid: true
+    fab_has_full_grid: true
+    alignment_method: exact
+    interpolation_allowed: false
+    status: confirmed
+  unit_pixel_extent:
+    typical_width: [50, 100]
+    typical_height: [50, 100]
+    unit: um
+    note: "제품별 실제 width/height를 입력해야 하며 대표 범위를 고정값으로 사용하지 않음"
+    status: confirmed
+
+images:
+  layout_hotspot_same_physical_region: true
+  exact_pixel_correspondence: true
+  allowed_transform: identity
+  require_same_pixel_shape: true
+  require_same_physical_extent: true
+  status: confirmed
+
+ca:
+  value_kind: dimensionless_probability_based_aggregate
+  raw_unit: "1"
+  valid_range: [0.0, 1.0]
+  typical_observed_max: [0.02, 0.03]
+  already_area_normalized: false
+  increases_with_analysis_area: true
+  required_outputs:
+    - raw_ca
+    - ca_per_unit_area
+  normalized_output:
+    name: ca_per_unit_area
+    formula: "raw_ca / (unit_width_um * unit_height_um)"
+    display_name: "단위 면적당 위험 지표"
+    unit: "1/um^2"
+    must_not_be_called_probability: true
+  status: confirmed
+
+fab:
+  input_level: processed_summary
+  raw_value_kind: average_detected_count
+  count_definition: "지정된 측정 기간 동안 glass 1장당 평균 검출 개수"
+  particle_size_unit: um
+  varies_by:
+    - fab_id
+    - product_family
+    - process_layer
+  surveyed_area_required: true
+  surveyed_area_definition: "glass 한 장에서 실제로 검사한 물리 면적"
+  surveyed_area_unit: um^2
+  averaging_basis:
+    value: per_glass
+    description: "지정된 측정 기간 동안 glass 1장당 평균 검출 개수"
+    status: confirmed
+  measurement_period_required: true
+  unit_pixel_expected_count:
+    formula: "avg_detected_count * unit_pixel_area_um2 / surveyed_area_um2"
+    status: provisional
+
+caa:
+  formula: "sum_over_particle_size(raw_ca * unit_pixel_expected_count)"
+  interpretation: relative_risk_index_for_cross_product_comparison
+  allowed_use: product_comparison_only
+  prohibited_interpretations:
+    - defect_probability
+    - expected_defect_count
+    - yield
+    - defect_rate
+  status: provisional
+  real_mode_enabled: false
+  enable_condition: "시뮬레이션/Fab 계산 담당자가 식, 조사 면적 기준, 평균 기준과 출력 의미를 확인한 뒤"
+
+vertical_short:
+  fab_layer_policy: upper_layer
+  upper_layer_source: layer_stack.csv
+  infer_from_layer_a_or_layer_b: false
+  missing_stack_behavior: block_caa
+  status: confirmed
+
+layer_equivalence:
+  policy_until_confirmed: exact_name_only
+  mapping_file: layer_equivalence.csv
+  status: pending
+
+expert_validation:
+  labels_available_initially: false
+  supervised_metrics_enabled: false
+  allowed_initial_evidence:
+    - held_out_retrieval_consistency
+    - held_out_risk_trend_agreement
+    - cluster_assignment_stability
+    - random_seed_stability
+    - counter_example_consistency
+  prohibited_initial_claims:
+    - classification_accuracy
+    - precision
+    - recall
+    - proven_risk_factor_detection
+  optional_future_input: expert_validation.csv
+  status: confirmed
+
+thickness:
+  typical_scale_unit: um
+  preserve_as_optional_metadata: true
+  model_input_default: false
+  status: provisional
+
+improvement_candidates:
+  strategy: broad_candidate_generation_then_human_review
+  include_features:
+    - electrode_gap
+    - wiring_width
+    - parallel_run_length
+    - overlap_area
+    - detour_geometry
+  maximize_supported_candidates: true
+  auto_reject_by_electrical_constraints: false
+  human_review_each_candidate: true
+  external_review_items:
+    - resistance
+    - capacitance
+    - coupling
+    - signal_delay_or_integrity
+    - design_rule
+    - other_short_open_risk
+  calculate_external_review_items_in_this_project: false
+  missing_external_result_behavior: mark_external_review_required
+  candidate_must_include:
+    - supporting_high_risk_cases
+    - lower_risk_comparison_cases
+    - observed_geometry_delta
+    - applicable_conditions
+    - counter_examples
+    - resimulation_status
+    - electrical_review_status
+  status: confirmed
+
+interpretation_guardrails:
+  caa_is_yield_or_defect_rate: false
+  caa_is_expected_defect_count: false
+  caa_is_absolute_probability: false
+  model_may_claim_causality: false
+  model_may_auto_approve_design_change: false
+  improvement_hypothesis_requires_resimulation: true
+  electrical_review_required: true
+  electrical_quantities_predicted_by_this_project: false

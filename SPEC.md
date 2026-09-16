@@ -20,9 +20,13 @@ Hard rules for all code:
 - Keep image aspect ratio; padding is marked by a valid-area mask.
 - Normalization, PCA, autoencoder and clustering are fit on TRAIN rows only.
 - Train/test split by product AND design lineage groups (variants never cross).
-- Uncertain physical meaning (units, bins, CAA formula, vertical-short layer) ->
+- Lengths are converted to the configured canonical unit (`um`). CA is a dimensionless
+  probability-based aggregate in [0, 1], and CA/area is a separate risk index in 1/um^2.
+- Uncertain physical meaning (bins, CAA formula, cross-product layer equivalence) ->
   raise an explicit error in mode "real"; mode "demo" may run labelled demo rules.
 - Color->probability conversion only with an explicit legend.
+- In real mode, layout and hotspot arrays must have identical shape, pixel size and origin.
+- Vertical-short Fab layer is the upper layer resolved from product/version layer_stack.csv.
 - Latent/attention values are never turned into importance or causal scores.
 - Clusters ids have no physical meaning.
 - User-facing text (errors, warnings, notes, disclaimers, CLI help) is Korean. Quoted English

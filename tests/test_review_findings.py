@@ -33,8 +33,10 @@ def test_ca_records_requires_ca_value_column(tmp_path, demo_dir):
     root = tmp_path / "d"
     shutil.copytree(demo_dir, root)
     lines = (root / "ca_records.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    remove = header.index("ca_value")
     (root / "ca_records.csv").write_text("\n".join(
-        ",".join(p for i, p in enumerate(line.split(",")) if i != 2) for line in lines) + "\n")
+        ",".join(p for i, p in enumerate(line.split(",")) if i != remove) for line in lines) + "\n")
     with pytest.raises(DataContractError, match="ca_value"):
         load_dataset(root, mode="demo")
 

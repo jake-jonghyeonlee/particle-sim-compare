@@ -10,13 +10,18 @@ Directory format (paths inside CSV are relative to data_dir):
   assigned_process_layer, unit_width, unit_height, physical_length_unit,
   parent_design_id, change_description, calc_version.
 - `layouts.csv` (optional): sample_id, slot ("a"|"b"), path, pixel_size, origin_x, origin_y
-- `hotspots.csv` (optional): sample_id, particle_size, path, pixel_size, origin_x, origin_y
-- `ca_records.csv` (optional): sample_id, particle_size, ca_value, ca_unit
+- `hotspots.csv` (optional): sample_id, particle_size, particle_size_unit, path, pixel_size, origin_x, origin_y
+- `ca_records.csv` (optional): sample_id, particle_size, particle_size_unit, ca_value, ca_unit(1)
   (one row per size; blank ca_value = not observed)
-- `fab.json` (required): {"distributions": [{fab_distribution_id, fab_id,
+- `fab.json` (optional): {"distributions": [{fab_distribution_id, fab_id,
   product_family, process_layer, bin_lower, bin_upper, raw_values (null = not
   observed), value_kind, value_unit, size_unit, surveyed_area, area_unit, period,
   is_reference}]}
+- `fab_measurements.csv` (optional; one of it or fab.json is required): processed
+  1..50 um average_count_per_glass rows with inspected area and period.
+- `layer_stack.csv` (required for real vertical_short): product/version layer order
+  and Fab process-layer mapping.
+- `design_review_status.csv` (optional): external electrical/design review states.
 - `geometry.json` (optional): {sample_id: {"thickness": {}, "shape_metrics": {}, "length_unit": str}}
 - `provenance.json` (optional): {"calc_settings": {}, "calc_version": str, "is_synthetic": bool}
 
@@ -26,6 +31,7 @@ class LoadedDataset:
     bundles: list[AnalysisBundle]
     distributions: dict[str, FabDistribution]
     warnings: list[str]
+    design_reviews: list[dict]
 
 def load_dataset(data_dir, *, mode: str, hotspot_legend: dict | None = None) -> LoadedDataset
 def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarray, str, str | None]
@@ -40,7 +46,7 @@ Rules (all violations raise DataContractError with sample ids in the message):
 - blank CSV cells become None, never 0; numeric columns parsed with float().
 - lateral_open: electrode_b_role/layer_b blank or "N/A" -> NOT_APPLICABLE; other
   value -> error. Short types: blank b fields -> error.
-- missing bundles.csv/fab.json or required column; duplicate sample_id.
+- missing bundles.csv or both Fab input files, missing required column; duplicate sample_id.
 - rows in layouts/hotspots/ca_records/geometry referencing unknown sample_id.
 - layout slot "b" for an open; duplicate slot; image file missing; absolute path
   or path resolving outside data_dir.
@@ -48,6 +54,8 @@ Rules (all violations raise DataContractError with sample ids in the message):
 - fab_distribution_id in bundles.csv not present in fab.json.
 - every bundle: schema.validate_bundle(bundle, mode) (warnings collected);
   every distribution: schema.validate_fab.
+- real layout/hotspot arrays must have identical shape, pixel size, origin and physical extent.
+- vertical_short assigned_process_layer is resolved from the upper layer in layer_stack.csv.
 - layouts sorted by slot (a then b); image role = electrode role of that slot;
   hotspots sorted by particle_size with role "hotspot".
 - Provenance(adapter="example", source_files=[relative paths used], calc_settings,

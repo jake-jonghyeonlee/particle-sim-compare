@@ -7,7 +7,7 @@ import pytest
 from simcompare.analysis import (
     cluster_embeddings, jaccard, leave_one_product_out, rank_agreement, ranking_comparison, risk_table,
 )
-from simcompare.cards import build_review_cards
+from simcompare.cards import _order_value, build_review_cards
 
 
 @pytest.fixture()
@@ -54,6 +54,15 @@ def test_clusters_fit_on_train_only():
     assert jaccard(set(), set()) is None and jaccard({"a"}, {"a", "b"}) == 0.5
 
 
+def test_card_risk_order_prefers_area_normalized_ca_when_caa_is_unavailable():
+    group = pd.DataFrame({
+        "caa_actual": [np.nan, np.nan],
+        "ca_area_max": [0.002, 0.001],
+        "ca_max": [0.01, 0.02],
+    })
+    assert _order_value(group).tolist() == [0.002, 0.001]
+
+
 def test_leave_one_product_out_and_cards(demo_loaded, ranked):
     from simcompare.dataset import encode_bundles  # noqa: F401  (import check)
 
@@ -77,7 +86,13 @@ def test_leave_one_product_out_and_cards(demo_loaded, ranked):
         {"query_id": "P1-v1-OPEN", "neighbor_id": "P2-v1-OPEN", "rank": 1, "distance": 0.1,
          "space": "shape_only", "neighbor_product_id": "P2", "neighbor_fab_id": "FAB_A", "n_candidates": 3},
     ])
-    features = pd.DataFrame({"sample_id": ranked["sample_id"], "layout0_fill": np.linspace(0.1, 0.3, len(ranked))})
+    features = pd.DataFrame({
+        "sample_id": ranked["sample_id"],
+        "layout0_fill": np.linspace(0.1, 0.3, len(ranked)),
+        "geom:shape:electrode_gap_um": np.linspace(2.0, 4.0, len(ranked)),
+        "geom:thk:metal": np.linspace(0.2, 0.4, len(ranked)),
+        "geom:unit_width": np.linspace(50.0, 100.0, len(ranked)),
+    })
     clusters = {"labels": {}, "representatives": {0: "P1-v1-OPEN"}, "counter_examples": {0: None}}
     cards = build_review_cards(ranked, neighbors, clusters, features)
     assert len(cards) == 3
@@ -88,3 +103,10 @@ def test_leave_one_product_out_and_cards(demo_loaded, ranked):
     assert open_card["retrieval"]["shape_only"]["P1-v1-OPEN"] == ["P2-v1-OPEN"]
     assert any("실제 크기 없음" in s for s in open_card["unavailable_conditions"])
     assert any("DEMO" in s for s in open_card["expert_review_required"])
+    candidate_names = {item["feature"] for card in cards for item in card["improvement_candidates"]}
+    assert "geom:shape:electrode_gap_um" in candidate_names
+    assert "geom:thk:metal" not in candidate_names
+    assert "geom:unit_width" not in candidate_names
+    candidates = [item for card in cards for item in card["improvement_candidates"]]
+    assert all(item["applicable_conditions"]["comparison_group_id"] for item in candidates)
+    assert all(item["counter_examples"] for item in candidates)

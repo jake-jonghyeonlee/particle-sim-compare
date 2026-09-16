@@ -1,3 +1,3 @@
-"""Cross-product comparison of display particle-defect simulation results."""
+"""simcompare: 이미 계산된 디스플레이 이물 시뮬레이션 결과를 제품 간 비교·해석하는 패키지."""
 
 __version__ = "0.1.0"

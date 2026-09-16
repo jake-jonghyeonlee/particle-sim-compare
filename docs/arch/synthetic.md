@@ -17,7 +17,7 @@ Content:
 - per product-version three bundles:
   lateral_open: electrode a "data", layer M2, b "N/A";
   lateral_short: "data" (M2) + "pixel_electrode" (ITO), assigned_process_layer ITO;
-  vertical_short: "gate" (M1) + "data" (M2), assigned_process_layer M2 (explicit).
+  vertical_short: "gate" (M1) + "data" (M2), upper Fab layer M2 resolved from layer_stack.csv.
   lateral_open assigned_process_layer M2. sample_id "<product>-<version>-<code>" with
   code OPEN/LSHORT/VSHORT.
 - layout per electrode: 2-D binary array with image size depending on product
@@ -25,7 +25,7 @@ Content:
   parallel stripes with a product "gap" parameter; saved as NPY under arrays/.
 - hotspot PNG (grayscale) for particle sizes [2, 4, 8]: blurred band where
   electrodes are close, intensity scaled by risk; skip size 8 for P4 samples.
-- CA grid [1, 2, 4, 8, 16] um with ca_unit "um^2" and CA = risk * area_scale *
+- CA grid [1, 2, 4, 8, 16] um with ca_unit "1" and bounded dimensionless CA = risk * area_scale *
   size**1.5 (+ small noise); P3 uses grid [1, 3, 4, 8, 16]; blank ca_value for size 16
   in P2 samples. P5 and P2 share almost the same gap (similar shape) but P5 risk is 3x
   ("similar_shape_different_risk" in summary).
@@ -36,6 +36,7 @@ Content:
   Also "REF_FLAT" (is_reference true, fab_id "REFERENCE", family null, layer "ANY",
   flat 0.2) and "FAB_A-COUNT-DEMO" (value_kind "count", surveyed_area 1.0e6,
   area_unit "um^2", family F1, layer "M9") to show the demo rule rejecting counts.
+- layer_stack.csv lists M1 < M2 < ITO for each synthetic product.
 - geometry.json: thickness {"M1": .., "M2": .., "ITO": ..} and shape_metrics
   {"gap": gap, "line_width": ..} for every sample except P4 (no geometry).
 - provenance.json: {"calc_settings": {"note": "synthetic"}, "calc_version": "synthetic-0",

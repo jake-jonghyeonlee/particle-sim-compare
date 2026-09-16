@@ -1,7 +1,8 @@
-"""YAML -> nested dataclass configuration with strict validation.
+"""YAML 설정을 엄격하게 검증해 중첩 dataclass로 읽는다.
 
-Unknown keys at any level raise :class:`ConfigError` naming the dotted path.
-Missing values are never silently filled; required fields must be present.
+어느 단계에서든 알 수 없는 키는 점으로 구분한 경로와 함께 ConfigError를 낸다.
+누락값을 조용히 채우지 않으며, 기본값이 있는 항목에 null을 명시하면 오류다.
+mode가 real이면 demo 규칙을 거부하고, CAA 규칙 사용에는 confirmed: true가 필요하다.
 """
 from __future__ import annotations
 
@@ -12,23 +13,25 @@ from typing import Any
 
 import yaml
 
-from simcompare.schema import DataContractError
+from simcompare.schema import DataContractError, normalize_length_unit
 
 
 class ConfigError(DataContractError):
-    """Raised when a configuration file violates the config contract."""
+    """설정 파일이 설정 계약을 위반했을 때 발생하는 오류."""
 
 
 # ---------------------------------------------------------------------------
-# Dataclasses
+# 설정 dataclass
 # ---------------------------------------------------------------------------
 
 @dataclass
 class DataConfig:
+    """데이터 경로, CA·hotspot·Fab 크기 격자, 이미지 크기, 곡선 정렬 방식, hotspot 범례."""
     data_dir: str
     ca_grid: list[float]
     hotspot_sizes: list[float]
     fab_grid: list[float]
+    canonical_length_unit: str = "um"
     image_size: list[int] = field(default_factory=lambda: [64, 64])
     ca_alignment: str = "exact"
     hotspot_legend: dict | None = None
@@ -36,6 +39,7 @@ class DataConfig:
 
 @dataclass
 class CAAConfig:
+    """CAA 규칙과 확정 여부, 기준 분포 ID, 크기 전체 포함 요구 여부, 적용 layer 지정값."""
     rule: str | None = None
     confirmed: bool = False
     reference_distribution_id: str | None = None
@@ -45,6 +49,7 @@ class CAAConfig:
 
 @dataclass
 class ModelSection:
+    """활성 입력, 합성곱 채널, 입력별·결합 특징 크기, 입력별 손실 가중치."""
     enabled_inputs: list[str] = field(
         default_factory=lambda: ["layout", "hotspot", "ca", "fab", "geometry"]
     )
@@ -56,6 +61,7 @@ class ModelSection:
 
 @dataclass
 class TrainConfig:
+    """에폭, 배치 크기, 학습률, seed, 실행 장치, 제품 균형 샘플링 여부."""
     epochs: int = 30
     batch_size: int = 16
     lr: float = 1e-3
@@ -66,6 +72,7 @@ class TrainConfig:
 
 @dataclass
 class SplitConfig:
+    """평가 비율 또는 평가로 보낼 제품·설계 계열 ID, 분리 seed."""
     test_fraction: float = 0.25
     test_groups: list[str] = field(default_factory=list)
     seed: int = 0
@@ -73,6 +80,7 @@ class SplitConfig:
 
 @dataclass
 class AnalysisConfig:
+    """이웃 수, 군집 수, layer 조건, 다른 제품만 보기, 필터, 크기 허용 비율, 제품 제외 비교 상위 개수."""
     k_neighbors: int = 5
     n_clusters: int = 4
     layer_policy: str = "exact"
@@ -84,6 +92,7 @@ class AnalysisConfig:
 
 @dataclass
 class AppConfig:
+    """전체 설정."""
     mode: str
     output_dir: str
     data: DataConfig
@@ -95,7 +104,7 @@ class AppConfig:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 검증 도우미
 # ---------------------------------------------------------------------------
 
 KNOWN_INPUTS = ("layout", "hotspot", "ca", "fab", "geometry")
@@ -106,10 +115,12 @@ LAYER_POLICY_VALUES = ("exact", "ignore")
 
 
 def _is_int(value: Any) -> bool:
+    """bool을 제외한 정수인지 확인한다."""
     return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _is_float(value: Any) -> bool:
+    """bool을 제외한 유한한 숫자인지 확인한다(NaN/inf 거부)."""
     if isinstance(value, bool):
         return False
     if not isinstance(value, (int, float)):
@@ -118,12 +129,14 @@ def _is_float(value: Any) -> bool:
 
 
 def _number_error(value: Any) -> str:
+    """숫자 검증 실패 메시지를 만든다."""
     if isinstance(value, float) and not math.isfinite(value):
         return f"유한한 숫자여야 합니다(현재 {value})"
     return f"숫자여야 합니다(현재 {type(value).__name__})"
 
 
 def _check_unknown(raw: dict, allowed: set[str], path: str) -> None:
+    """허용되지 않은 키가 있으면 경로와 함께 ConfigError를 낸다."""
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: 매핑이어야 합니다")
     for key in raw:
@@ -133,6 +146,7 @@ def _check_unknown(raw: dict, allowed: set[str], path: str) -> None:
 
 
 def _require_str(raw: dict, key: str, path: str) -> str:
+    """필수 문자열 키를 읽는다."""
     if key not in raw:
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"필수 설정 키 누락 {dotted!r}")
@@ -144,6 +158,7 @@ def _require_str(raw: dict, key: str, path: str) -> str:
 
 
 def _opt_str(raw: dict, key: str, path: str, *, allow_none: bool = False) -> str | None:
+    """선택 문자열 키를 읽는다. 키가 없으면 None, null은 allow_none일 때만 허용."""
     if key not in raw:
         return None
     value = raw[key]
@@ -159,6 +174,7 @@ def _opt_str(raw: dict, key: str, path: str, *, allow_none: bool = False) -> str
 
 
 def _opt_float(raw: dict, key: str, path: str, *, allow_none: bool = False) -> float | None:
+    """선택 숫자 키를 읽는다. 키가 없으면 None, null은 allow_none일 때만 허용."""
     if key not in raw:
         return None
     value = raw[key]
@@ -174,6 +190,7 @@ def _opt_float(raw: dict, key: str, path: str, *, allow_none: bool = False) -> f
 
 
 def _opt_int(raw: dict, key: str, path: str, *, allow_none: bool = False) -> int | None:
+    """선택 정수 키를 읽는다. 키가 없으면 None, null은 allow_none일 때만 허용."""
     if key not in raw:
         return None
     value = raw[key]
@@ -189,6 +206,7 @@ def _opt_int(raw: dict, key: str, path: str, *, allow_none: bool = False) -> int
 
 
 def _opt_bool(raw: dict, key: str, path: str, *, allow_none: bool = False) -> bool | None:
+    """선택 bool 키를 읽는다. 키가 없으면 None, null은 allow_none일 때만 허용."""
     if key not in raw:
         return None
     value = raw[key]
@@ -204,6 +222,7 @@ def _opt_bool(raw: dict, key: str, path: str, *, allow_none: bool = False) -> bo
 
 
 def _opt_dict(raw: dict, key: str, path: str, *, allow_none: bool = False) -> dict | None:
+    """선택 매핑 키를 읽는다. 키가 없으면 None, null은 allow_none일 때만 허용."""
     if key not in raw:
         return None
     value = raw[key]
@@ -219,6 +238,7 @@ def _opt_dict(raw: dict, key: str, path: str, *, allow_none: bool = False) -> di
 
 
 def _opt_list(raw: dict, key: str, path: str, *, allow_none: bool = False) -> list | None:
+    """선택 리스트 키를 읽는다. 키가 없으면 None, null은 allow_none일 때만 허용."""
     if key not in raw:
         return None
     value = raw[key]
@@ -234,6 +254,7 @@ def _opt_list(raw: dict, key: str, path: str, *, allow_none: bool = False) -> li
 
 
 def _check_grid(values: list[float], path: str, allow_empty: bool = False) -> list[float]:
+    """크기 격자가 비어 있지 않고 유한한 양수이며 엄격히 증가하는지 확인한다."""
     if not isinstance(values, list):
         raise ConfigError(f"{path}: 리스트여야 합니다")
     if len(values) == 0:
@@ -255,7 +276,10 @@ def _check_grid(values: list[float], path: str, allow_empty: bool = False) -> li
 
 
 def _check_legend(legend: dict, path: str) -> None:
-    """Legend = {legend_id: str, entries: [{rgb: [r, g, b], value: number}], tolerance: int}."""
+    """hotspot 범례 구조를 검사한다.
+
+    형식: {legend_id: 문자열, entries: [{rgb: [r, g, b], value: 숫자}], tolerance: 0 이상 정수}
+    """
     unknown = set(legend) - {"legend_id", "entries", "tolerance"}
     if unknown:
         raise ConfigError(f"알 수 없는 설정 키 '{path}.{sorted(map(str, unknown))[0]}'")
@@ -280,6 +304,7 @@ def _check_legend(legend: dict, path: str) -> None:
 
 
 def _check_int_list(values: list[Any], path: str, positive: bool = True) -> list[int]:
+    """정수 리스트를 검사한다(positive이면 양수만 허용)."""
     if not isinstance(values, list):
         raise ConfigError(f"{path}: 리스트여야 합니다")
     result: list[int] = []
@@ -293,13 +318,14 @@ def _check_int_list(values: list[Any], path: str, positive: bool = True) -> list
 
 
 # ---------------------------------------------------------------------------
-# Section parsers
+# 절별 파서
 # ---------------------------------------------------------------------------
 
 def _parse_data(raw: dict, path: str = "data") -> DataConfig:
+    """data 절을 읽는다."""
     _check_unknown(raw, {
         "data_dir", "ca_grid", "hotspot_sizes", "fab_grid",
-        "image_size", "ca_alignment", "hotspot_legend",
+        "canonical_length_unit", "image_size", "ca_alignment", "hotspot_legend",
     }, path)
 
     data_dir = _require_str(raw, "data_dir", path)
@@ -315,6 +341,14 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
     if "fab_grid" not in raw:
         raise ConfigError(f"필수 설정 키 누락 {path}.fab_grid")
     fab_grid = _check_grid(raw["fab_grid"], f"{path}.fab_grid")
+
+    canonical_length_unit = raw.get("canonical_length_unit", "um")
+    if not isinstance(canonical_length_unit, str):
+        raise ConfigError(f"{path}.canonical_length_unit: 문자열이어야 합니다")
+    try:
+        canonical_length_unit = normalize_length_unit(canonical_length_unit)
+    except DataContractError as exc:
+        raise ConfigError(f"{path}.canonical_length_unit: {exc}") from None
 
     image_size = _opt_list(raw, "image_size", path)
     if image_size is None:
@@ -341,6 +375,7 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
         ca_grid=ca_grid,
         hotspot_sizes=hotspot_sizes,
         fab_grid=fab_grid,
+        canonical_length_unit=canonical_length_unit,
         image_size=image_size,
         ca_alignment=ca_alignment,
         hotspot_legend=hotspot_legend,
@@ -348,6 +383,7 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
 
 
 def _parse_caa(raw: dict, path: str = "caa") -> CAAConfig:
+    """caa 절을 읽는다."""
     _check_unknown(raw, {
         "rule", "confirmed", "reference_distribution_id",
         "require_full_coverage", "process_layer_overrides",
@@ -384,6 +420,7 @@ def _parse_caa(raw: dict, path: str = "caa") -> CAAConfig:
 
 
 def _parse_model(raw: dict, path: str = "model") -> ModelSection:
+    """model 절을 읽는다."""
     _check_unknown(raw, {
         "enabled_inputs", "conv_channels", "modality_dim",
         "latent_dim", "loss_weights",
@@ -448,6 +485,7 @@ def _parse_model(raw: dict, path: str = "model") -> ModelSection:
 
 
 def _parse_train(raw: dict, path: str = "train") -> TrainConfig:
+    """train 절을 읽는다."""
     _check_unknown(raw, {
         "epochs", "batch_size", "lr", "seed", "device", "balance_products",
     }, path)
@@ -493,6 +531,7 @@ def _parse_train(raw: dict, path: str = "train") -> TrainConfig:
 
 
 def _parse_split(raw: dict, path: str = "split") -> SplitConfig:
+    """split 절을 읽는다."""
     _check_unknown(raw, {"test_fraction", "test_groups", "seed"}, path)
 
     test_fraction = _opt_float(raw, "test_fraction", path)
@@ -521,6 +560,7 @@ def _parse_split(raw: dict, path: str = "split") -> SplitConfig:
 
 
 def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
+    """analysis 절을 읽는다."""
     _check_unknown(raw, {
         "k_neighbors", "n_clusters", "layer_policy",
         "other_products_only", "filters", "size_tolerance", "loo_top_k",
@@ -578,10 +618,11 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# 공개 함수
 # ---------------------------------------------------------------------------
 
 def config_from_dict(raw: dict) -> AppConfig:
+    """dict를 검증해 AppConfig로 만든다. 절 사이 규칙(이미지 크기와 합성곱 층 수, real 모드 CAA 규칙)도 검사한다."""
     if not isinstance(raw, dict):
         raise ConfigError("설정 최상위는 매핑이어야 합니다")
     _check_unknown(raw, {
@@ -639,7 +680,7 @@ def config_from_dict(raw: dict) -> AppConfig:
             raise ConfigError("analysis: 매핑이어야 합니다")
         analysis = _parse_analysis(analysis_raw)
 
-    # Cross-section rules
+    # 절 사이 규칙
     factor = 2 ** len(model.conv_channels)
     if any(v % factor for v in data.image_size):
         raise ConfigError(
@@ -669,6 +710,7 @@ def config_from_dict(raw: dict) -> AppConfig:
 
 
 def load_config(path: str | Path) -> AppConfig:
+    """YAML 파일을 읽어 AppConfig를 만든다. 상대경로 data_dir·output_dir은 YAML 파일 위치 기준으로 바꾼다."""
     p = Path(path)
     if not p.is_file():
         raise ConfigError(f"설정 파일을 찾을 수 없습니다: {p}")
@@ -680,7 +722,7 @@ def load_config(path: str | Path) -> AppConfig:
         raise ConfigError("설정 최상위는 매핑이어야 합니다")
     cfg = config_from_dict(raw)
 
-    # Resolve relative data_dir / output_dir against the YAML file's parent.
+    # 상대경로 data_dir / output_dir은 YAML 파일이 있는 디렉터리 기준으로 바꾼다.
     parent = p.resolve().parent
     if cfg.data.data_dir and not Path(cfg.data.data_dir).is_absolute():
         cfg.data.data_dir = str((parent / cfg.data.data_dir).resolve())
@@ -690,4 +732,5 @@ def load_config(path: str | Path) -> AppConfig:
 
 
 def config_to_dict(cfg: AppConfig) -> dict:
+    """실행 기록용으로 AppConfig를 JSON에 쓸 수 있는 dict로 바꾼다."""
     return asdict(cfg)

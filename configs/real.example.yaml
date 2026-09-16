@@ -1,0 +1,45 @@
+# 실제 데이터용 설정 예시. 복사해서 경로와 크기 격자를 실제 값으로 바꿔 사용한다.
+# - mode: real 에서는 demo_ 로 시작하는 CAA 규칙을 쓸 수 없다.
+# - CAA 계산식이 확정되기 전까지 caa.rule 은 null 로 두며, 이때 CAA 값은 사유와 함께 비어 있다.
+# - 상대경로는 이 YAML 파일이 있는 디렉터리를 기준으로 해석한다.
+mode: real
+output_dir: ../outputs/real
+data:
+  data_dir: ../data/real            # 어댑터 형식(docs/data_contract.md)으로 정리한 자료 위치
+  canonical_length_unit: um          # 모든 길이·이물 지름 비교의 기준 단위
+  ca_grid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+  hotspot_sizes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+  fab_grid: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
+  image_size: [64, 64]               # [H, W], 2^(합성곱 층 수)의 배수
+  ca_alignment: exact                # exact | loglinear_within_range (관측 범위 안에서만 보간)
+  hotspot_legend: null               # 색상 hotspot을 확률로 바꿀 때만 범례를 지정한다
+caa:
+  rule: null                         # 확정된 규칙을 구현한 뒤 이름을 넣고 confirmed: true 로 바꾼다
+  confirmed: false
+  reference_distribution_id: null    # 순위 비교용 기준 분포 ID(fab.json의 is_reference 분포)
+  require_full_coverage: true        # CA 크기가 하나라도 빠지면 CAA를 계산하지 않는다
+  process_layer_overrides: {}        # 예: {"P1|vertical_short": "M2"} (적용 layer를 명시할 때)
+model:
+  enabled_inputs: [layout, hotspot, ca, fab]  # 적층 두께/형상 수치는 필요할 때 geometry를 추가
+  conv_channels: [8, 16, 32]
+  modality_dim: 16
+  latent_dim: 32
+train:
+  epochs: 50
+  batch_size: 16
+  lr: 0.001
+  seed: 0
+  device: cpu                        # cpu | auto(CUDA→MPS→CPU) | cuda | mps
+  balance_products: true
+split:
+  test_fraction: 0.25
+  test_groups: []                    # 평가로 보낼 제품 ID 또는 설계 계열 ID를 직접 지정할 수 있다
+  seed: 0
+analysis:
+  k_neighbors: 5
+  n_clusters: 4
+  layer_policy: exact                # exact | ignore
+  other_products_only: true
+  filters: {}                        # 예: {fab_id: [FAB_A]}
+  size_tolerance: null               # 예: 0.2 (가로·세로 실제 크기 ±20% 안의 사례만)
+  loo_top_k: 5

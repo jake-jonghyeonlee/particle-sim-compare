@@ -11,7 +11,8 @@ Imports: numpy, sklearn.decomposition.PCA, preprocess.Normalizer, dataset.Encode
   Then geometry columns `geom:<name>` from enc.geom/geom_mask.
   Risk features (include_risk): per hotspot channel k where present: `hot{k}_mean`,
   `hot{k}_max`, `hot{k}_frac50` (fraction of valid pixels > 0.5); `ca_log:{j}` from
-  enc.ca_log/ca_mask; `fab_shape:{j}`, `fab_total_log`.
+  enc.ca_log/ca_mask; `ca_per_area_log:{j}` from enc.ca_area_log/ca_area_mask;
+  `fab_shape:{j}`, `fab_total_log`.
 - `class BaselinePCA`: `__init__(self, n_components=8)`;
   `fit(self, X, mask, train_pos) -> self`: Normalizer.fit on train rows; standardised
   matrix with masked entries = 0 (train mean); append missing-indicator columns

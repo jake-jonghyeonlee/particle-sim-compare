@@ -1,7 +1,9 @@
-"""Small multi-input autoencoder for case feature vectors (torch).
+"""사례 특징 벡터를 만드는 작은 다중 입력 오토인코더(torch).
 
-Reconstruction is an internal training objective only; this module is not a
-CA/hotspot predictor and does not claim causality.
+layout·hotspot은 각각 CNN encoder, CA·Fab·형상 수치는 각각 MLP encoder로 압축한 뒤
+구조·시뮬레이션 결과 측 특징(z_struct)과 Fab 측 특징(z_fab)을 따로 만들고 이어 붙여
+결합 특징(z)을 만든다. 복원은 특징 학습을 위한 내부 목적일 뿐 CA·hotspot 예측기가 아니며,
+z_struct와 z_fab의 분리가 인과적 분리를 뜻하지도 않는다.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ _VECTOR_MODALITIES = ("ca", "fab", "geometry")
 
 @dataclass
 class ModelConfig:
+    """모델 구조 설정. 활성 입력, 채널 수, 입력 차원, 특징 벡터 크기를 정한다."""
     image_hw: tuple[int, int] = (64, 64)
     layout_channels: int = 2
     hotspot_channels: int = 3
@@ -34,6 +37,7 @@ class ModelConfig:
     latent_dim: int = 32
 
     def to_dict(self) -> dict:
+        """체크포인트 저장용 dict(튜플은 리스트로)로 변환한다."""
         return {
             "image_hw": list(self.image_hw),
             "layout_channels": self.layout_channels,
@@ -49,6 +53,7 @@ class ModelConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelConfig":
+        """to_dict 결과에서 ModelConfig를 복원한다."""
         return cls(
             image_hw=tuple(d["image_hw"]),
             layout_channels=int(d["layout_channels"]),
@@ -64,6 +69,7 @@ class ModelConfig:
 
 
 def _validate_config(cfg: ModelConfig) -> None:
+    """활성 입력, 이미지 크기의 2^(합성곱 층 수) 배수 조건, 짝수 latent_dim, 0차원 입력 여부를 검사한다."""
     if not cfg.enabled:
         raise ValueError("enabled는 MODALITIES의 비어 있지 않은 부분집합이어야 합니다")
     unknown = [m for m in cfg.enabled if m not in MODALITIES]
@@ -90,9 +96,9 @@ def _validate_config(cfg: ModelConfig) -> None:
 
 
 class ImageEncoder(nn.Module):
-    """Encode an image modality to a fixed-size vector.
+    """이미지 입력을 고정 길이 벡터로 압축하는 CNN encoder.
 
-    Input is ``cat([x * valid, valid], dim=1)`` (2 * in_ch channels).
+    입력은 [이미지 × 유효 영역, 유효 영역]을 채널로 이어 붙인 것(2 × in_ch 채널)이다.
     """
 
     def __init__(self, in_ch: int, conv_channels: tuple[int, ...], modality_dim: int):
@@ -108,13 +114,14 @@ class ImageEncoder(nn.Module):
         self.fc = nn.Linear(prev, modality_dim)
 
     def forward(self, x: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+        """유효 영역을 곱한 이미지와 유효 영역 채널을 함께 넣어 (N, modality_dim) 벡터를 만든다."""
         inp = torch.cat([x * valid, valid], dim=1)
         feat = self.pool(self.net(inp)).flatten(1)
         return self.fc(feat)
 
 
 class ImageDecoder(nn.Module):
-    """Decode a latent vector to image logits of shape (N, out_ch, H, W)."""
+    """특징 벡터를 (N, out_ch, H, W) 이미지 logit으로 복원하는 전치 합성곱 decoder."""
 
     def __init__(
         self,
@@ -140,13 +147,14 @@ class ImageDecoder(nn.Module):
         self.net = nn.Sequential(*blocks)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """Linear로 가장 작은 특징 맵을 만든 뒤 합성곱 층 수만큼 2배 업샘플링한다."""
         n = z.shape[0]
         feat = F.relu(self.fc(z)).view(n, self.channels, *self.out_hw)
         return self.net(feat)
 
 
 class VectorEncoder(nn.Module):
-    """Encode a masked vector modality to a fixed-size vector."""
+    """[값 × 마스크, 마스크]를 입력으로 받아 수치 입력을 고정 길이 벡터로 압축하는 MLP."""
 
     def __init__(self, in_dim: int, modality_dim: int):
         super().__init__()
@@ -157,11 +165,12 @@ class VectorEncoder(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """[값 × 마스크, 마스크]를 이어 붙여 압축한다. 누락 위치는 마스크로 구분된다."""
         return self.net(torch.cat([x * mask, mask], dim=1))
 
 
 class VectorDecoder(nn.Module):
-    """Decode a latent vector to a vector of ``out_dim`` values."""
+    """특징 벡터를 out_dim 길이 수치로 복원하는 MLP."""
 
     def __init__(self, modality_dim_in: int, out_dim: int):
         super().__init__()
@@ -172,11 +181,16 @@ class VectorDecoder(nn.Module):
         )
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
+        """특징 벡터에서 수치 입력을 복원한다."""
         return self.net(z)
 
 
 class MultiInputAE(nn.Module):
-    """Small multi-input autoencoder producing case feature vectors."""
+    """다중 입력 오토인코더.
+
+    입력이 없는 샘플은 해당 입력의 embedding에 존재 여부(0/1)를 곱해 영향을 끈다.
+    decoder는 결합 특징 z에서 활성화된 모든 입력을 복원한다.
+    """
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
@@ -212,6 +226,7 @@ class MultiInputAE(nn.Module):
             self.geometry_decoder = VectorDecoder(z_dim, cfg.geom_dim)
 
     def _presence(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """샘플별로 각 입력이 하나라도 존재하는지(0/1)를 계산한다."""
         present: dict[str, torch.Tensor] = {}
         cfg = self.cfg
         if "layout" in cfg.enabled:
@@ -229,6 +244,7 @@ class MultiInputAE(nn.Module):
         return present
 
     def _embeddings(self, batch: dict[str, torch.Tensor], present: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """활성 입력별 encoder 출력에 존재 여부를 곱한 embedding을 만든다."""
         cfg = self.cfg
         emb: dict[str, torch.Tensor] = {}
         if "layout" in cfg.enabled:
@@ -246,6 +262,7 @@ class MultiInputAE(nn.Module):
         return emb
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, Any]:
+        """z, z_struct, z_fab, 입력별 복원값(recon), 입력별 존재 여부(present)를 반환한다."""
         present = self._presence(batch)
         emb = self._embeddings(batch, present)
 
@@ -289,6 +306,7 @@ class MultiInputAE(nn.Module):
         }
 
     def encode(self, batch: dict[str, torch.Tensor]) -> dict[str, Any]:
+        """forward와 같지만 복원값을 뺀 특징만 반환한다."""
         out = self.forward(batch)
         out.pop("recon", None)
         return out

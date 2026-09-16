@@ -1,14 +1,13 @@
-"""Fab raw-distribution interpretation and demo CAA computation.
+"""Fab 원자료·가공 요약자료 해석과 CAA 계산.
 
-This module is deliberately separate from the model code. It turns a raw Fab
-particle distribution into a shape/total decomposition and into CAA weights,
-and it combines those weights with an already-computed CA curve.
+CAA는 CA에 Fab 가중치를 적용한 파생 지표이며 입력이나 정답으로 쓰지 않는다.
+실제 가중식과 단위가 확정되지 않았으므로 현재는 demo 규칙 하나만 제공한다.
 
-CAA is a *derived* value (CA x Fab weights); it is never an independent input
-or a ground truth. Missing values are kept as NaN plus boolean masks and are
-never replaced by 0. Uncertain physical meaning (units, bins, CAA formula,
-vertical-short layer) raises :class:`CAAError` in real mode; only the labelled
-demo rule may run in demo mode.
+원칙
+- 원본 분포(FabDistribution)와 적용 가중치(FabWeights)를 분리해 보존한다.
+- 크기 구간 변환이나 보간 없이 같은 크기 격자에서만 곱해 합산한다.
+- 적용 공정 layer는 입력/설정으로만 정하며 하부 layer 등으로 추정하지 않는다.
+- 결과를 실제 불량률이나 수율로 표시하지 않는다.
 """
 from __future__ import annotations
 
@@ -21,6 +20,8 @@ from simcompare.schema import (
     CACurve,
     DataContractError,
     FabDistribution,
+    convert_area,
+    convert_length,
     validate_fab,
 )
 
@@ -29,21 +30,24 @@ DEMO_LABEL = "DEMO CAA: 예시용 가중치 계산이며 실제 불량률·수�
 
 
 class CAAError(DataContractError):
-    """CAA-specific contract violation."""
+    """Fab 해석 또는 CAA 계산 조건이 충족되지 않을 때 발생하는 오류."""
 
 
 @dataclass
 class FabWeights:
-    sizes: np.ndarray      # bin midpoints
-    weights: np.ndarray    # NaN where the bin is unobserved
+    """원본 분포에서 만든 크기별 적용 가중치. sizes는 구간 중앙값, 미관측 구간의 weights는 NaN이다."""
+    sizes: np.ndarray      # 구간 중앙값
+    weights: np.ndarray    # 미관측 구간은 NaN
+    size_unit: str
     rule: str
-    source_id: str         # fab_distribution_id
+    source_id: str         # 원본 fab_distribution_id
     weight_unit: str
     is_demo: bool
 
 
 @dataclass
 class CAAResult:
+    """CAA 계산 결과. 계산할 수 없으면 value는 None이고 reason에 사유가 남는다."""
     value: float | None
     unit: str | None
     used_sizes: list[float]
@@ -56,19 +60,17 @@ class CAAResult:
 
 
 def bin_midpoints(dist: FabDistribution) -> np.ndarray:
-    """Return ``(lower + upper) / 2`` as float64 for every bin."""
+    """각 크기 구간의 중앙값 (lower + upper) / 2를 반환한다."""
     lower = np.asarray(dist.bin_lower, dtype=float)
     upper = np.asarray(dist.bin_upper, dtype=float)
     return ((lower + upper) / 2.0).astype(np.float64)
 
 
 def fab_shape_and_total(dist: FabDistribution) -> tuple[np.ndarray, float, str]:
-    """Decompose a raw distribution into (shape, total, unit).
+    """분포를 모양(shape)과 총량(total)으로 분리한다.
 
-    ``shape`` is the distribution *form* (mass normalised to sum to 1 over the
-    observed bins, NaN where unobserved) and ``total`` is the *amount*. They are
-    returned separately on purpose so that form and amount never collapse into
-    one number.
+    count, probability, rate_per_area는 원본 값을, density는 값×구간 폭을 질량으로 본다.
+    shape = 질량 / 총량이며 미관측 구간은 NaN이다. 관측 구간이 없으면 CAAError.
     """
     validate_fab(dist)
     lower = np.asarray(dist.bin_lower, dtype=float)
@@ -84,6 +86,11 @@ def fab_shape_and_total(dist: FabDistribution) -> tuple[np.ndarray, float, str]:
     if dist.value_kind == "density":
         mass = values * (upper - lower)
         unit = f"{dist.value_unit}*{dist.size_unit}"
+    elif dist.value_kind in ("count", "average_count_per_glass"):
+        surveyed_area_um2 = convert_area(dist.surveyed_area, dist.area_unit, "um")
+        mass = values / surveyed_area_um2
+        suffix = "/glass" if dist.value_kind == "average_count_per_glass" else ""
+        unit = f"{dist.value_unit}{suffix}/um^2"
     else:
         mass = values.copy()
         unit = dist.value_unit
@@ -104,12 +111,10 @@ def interpret_fab(
     mode: str,
     confirmed: bool = False,
 ) -> FabWeights:
-    """Build :class:`FabWeights` for ``dist`` under the configured ``rule``.
+    """설정된 규칙으로 원본 분포를 적용 가중치로 해석한다.
 
-    Only the labelled demo rule is implemented. Real CAA formulas are
-    intentionally not implemented here; any non-demo rule is rejected even when
-    ``confirmed`` is provided (``confirmed`` is accepted as a future hook and
-    must be True for any non-demo rule).
+    지원 규칙은 demo_probability_per_bin 하나이며 mode demo와 value_kind probability에서만
+    동작한다. 규칙이 없거나 확정되지 않은 규칙이면 CAAError를 낸다.
     """
     validate_fab(dist)
     if rule is None:
@@ -130,6 +135,7 @@ def interpret_fab(
         return FabWeights(
             sizes=sizes,
             weights=weights,
+            size_unit=dist.size_unit,
             rule=rule,
             source_id=dist.fab_distribution_id,
             weight_unit="probability/bin",
@@ -144,7 +150,12 @@ def select_distribution(
     distributions: dict[str, FabDistribution],
     overrides: dict[str, str] | None = None,
 ) -> FabDistribution:
-    """Select the Fab distribution for ``bundle``; never infer the layer."""
+    """분석 묶음에 적용할 실제 Fab 분포를 고른다.
+
+    적용 layer는 process_layer_overrides["제품|불량종류"]가 있으면 그 값을, 없으면
+    assigned_process_layer를 쓴다. 둘 다 없으면 오류다. 기준 분포는 선택하지 않으며,
+    후보가 없거나 여러 개면 오류를 낸다.
+    """
     key = f"{bundle.product_id}|{bundle.failure_type}"
     layer = (
         overrides.get(key)
@@ -211,12 +222,16 @@ def compute_caa(
     *,
     require_full_coverage: bool = True,
 ) -> CAAResult:
-    """Combine a CA curve with Fab weights into a derived CAA value.
+    """CA 곡선과 Fab 가중치를 곱해 합산한 CAA를 계산한다.
 
-    No interpolation and no conversion between different bins: each weight size
-    must match an *observed* CA size exactly (within ``rtol=1e-6``).
+    가중치 크기와 관측된 CA 크기가 정확히 일치(rtol=1e-6)하는 점만 사용한다.
+    누락 크기가 있고 require_full_coverage이면 값을 만들지 않고 사유만 남긴다.
     """
-    w_sizes = np.asarray(weights.sizes, dtype=float)
+    try:
+        w_sizes = convert_length(weights.sizes, weights.size_unit, ca.particle_size_unit)
+    except DataContractError as exc:
+        raise CAAError(f"CAA 이물 지름 단위 불일치: {exc}") from None
+    w_sizes = np.asarray(w_sizes, dtype=float)
     w_values = np.asarray(weights.weights, dtype=float)
     finite = np.isfinite(w_values)
     if not np.any(finite):
@@ -243,7 +258,7 @@ def compute_caa(
         else:
             missing_sizes.append(float(size))
 
-    unit = f"{ca.unit}*{weights.weight_unit}"
+    unit = "relative_index"
     label = DEMO_LABEL if weights.is_demo else "CAA (설정된 규칙)"
 
     if missing_sizes and require_full_coverage:

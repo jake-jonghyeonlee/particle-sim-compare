@@ -1,0 +1,6 @@
+product_id,layer_name,common_layer_role,status,note
+EXAMPLE_PRODUCT_A,M1,,pending,제품 간 layer 대응은 현재 보류
+EXAMPLE_PRODUCT_A,M2,,pending,
+EXAMPLE_PRODUCT_B,GATE,,pending,
+EXAMPLE_PRODUCT_B,DATA,,pending,
+

@@ -9,7 +9,8 @@ META_COLUMNS = ["sample_id", "product_id", "product_family", "design_version",
     "design_lineage_id", "electrode_a_role", "electrode_b_role", "layer_a", "layer_b",
     "failure_type", "fab_id", "fab_distribution_id", "assigned_process_layer",
     "unit_width", "unit_height", "physical_length_unit", "has_physical_scale", "is_open",
-    "parent_design_id"]
+    "parent_design_id", "unit_width_canonical", "unit_height_canonical",
+    "canonical_length_unit"]
 
 @dataclass
 class EncodedSet:
@@ -48,11 +49,11 @@ class EncodedSet:
   midpoint isclose(rtol=1e-6) and shape finite; total_log = log10(total) if total > 0.
   Geometry: geom_names = ["unit_width", "unit_height"] + sorted "thk:<k>" + sorted
   "shape:<k>" over all bundles; missing -> mask False, value NaN.
-- `fit_normalizers(enc, train_pos) -> dict[str, Normalizer]` keys "ca", "fab_total",
+- `fit_normalizers(enc, train_pos) -> dict[str, Normalizer]` keys "ca", "ca_area", "fab_total",
   "geom", each Normalizer.fit on train rows only.
 - `to_model_arrays(enc, norms) -> dict[str, np.ndarray]` float32 arrays with keys:
   layout, layout_valid, layout_present, hotspot, hotspot_valid, hotspot_present,
-  ca (normalised ca_log), ca_mask, fab (fab_shape with NaN -> 0 where masked), fab_mask,
+  ca (normalised raw CA and CA/area concatenated), ca_mask, fab (fab_shape with NaN -> 0 where masked), fab_mask,
   fab_total (normalised), fab_total_mask, geom (normalised), geom_mask
   (masks as float32 0/1).
 - `subset_arrays(arrays, pos) -> dict` slices every array by positions.

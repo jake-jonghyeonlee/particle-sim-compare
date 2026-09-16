@@ -13,13 +13,13 @@ def test_contract_gate():
                                is_reference=ref)
     b = AnalysisBundle("S", "P1", "F1", "v1", "L1", "data", "pix", "M2", "ITO", "lateral_short", "FAB_A",
                        assigned_process_layer="ITO",
-                       ca=CACurve(np.array([1.0, 2.0]), np.array([4.0, 8.0]), np.array([True, True]), "um^2"))
+                       ca=CACurve(np.array([1.0, 2.0]), np.array([0.04, 0.08]), np.array([True, True]), "1"))
     ds = {"d1": dist("d1", "ITO"), "d2": dist("d2", "M2"), "ref": dist("ref", "ITO", family=None, ref=True)}
     assert select_distribution(b, ds, {"P9|lateral_short": "M2"}).fab_distribution_id == "d1"
     assert select_distribution(b, ds, {"P1|lateral_short": "M2"}).fab_distribution_id == "d2"
     w = interpret_fab(ds["d1"], "demo_probability_per_bin", mode="demo")
     r = compute_caa(b.ca, w)
-    assert np.isclose(r.value, 0.25 * 4 + 0.75 * 8) and r.is_demo
+    assert np.isclose(r.value, 0.25 * 0.04 + 0.75 * 0.08) and r.is_demo
     for args in ((ds["d1"], "demo_probability_per_bin", "real"), (dist("c", "ITO", "count"), "demo_probability_per_bin", "demo"),
                  (ds["d1"], None, "demo"), (ds["d1"], "made_up", "demo")):
         try:

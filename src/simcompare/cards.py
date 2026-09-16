@@ -1,4 +1,9 @@
-"""Review cards: evidence bundles for expert review (no automatic factor judgement)."""
+"""검토 카드: 전문가 검토를 위한 근거 묶음.
+
+중요 인자를 자동으로 판정하지 않고, 같은 불량 종류·전극 역할·layer 조합별로
+대표/반대 사례, 반복되는 형상 특징, 위험 수치 비교, 면적 보정 전후 순위 변화,
+적용 가능·불가 조건, 전문가 확인 항목을 모아 보여준다.
+"""
 from __future__ import annotations
 
 import math
@@ -14,6 +19,7 @@ RETRIEVAL_NOTE = "with_risk 공간의 유사 사례는 CA·hotspot 입력을 재
 
 
 def _clean(value):
+    """NumPy 타입과 NaN을 JSON에 쓸 수 있는 파이썬 값(None 포함)으로 바꾼다."""
     if isinstance(value, dict):
         return {str(k): _clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
@@ -28,10 +34,13 @@ def _clean(value):
 
 
 def _order_value(group: pd.DataFrame) -> pd.Series:
-    return group["caa_actual"].where(group["caa_actual"].notna(), group["ca_max"])
+    """정렬 기준 값: 실제 CAA, 면적 보정 CA, 원 CA 순으로 사용할 수 있는 값을 쓴다."""
+    value = group["caa_actual"].where(group["caa_actual"].notna(), group["ca_area_max"])
+    return value.where(value.notna(), group["ca_max"])
 
 
 def _cv(values: pd.Series) -> float | None:
+    """변동계수(표준편차/|평균|). 값이 2개 미만이거나 평균이 0에 가까우면 None."""
     values = pd.to_numeric(values, errors="coerce").dropna()
     if len(values) < 2 or abs(values.mean()) <= 1e-12:
         return None
@@ -39,10 +48,10 @@ def _cv(values: pd.Series) -> float | None:
 
 
 def _repeated_features(group: pd.DataFrame, features: pd.DataFrame) -> list[str]:
-    """Features that vary across the group but stay similar among higher-risk cases.
+    """그룹 전체보다 위험이 높은 사례들 사이에서 변동이 작은 형상 특징을 최대 3개 고른다.
 
-    Constant features (e.g. identical thickness everywhere) are skipped because
-    their consistency says nothing about the higher-risk cases.
+    모든 사례에서 값이 같은 특징(예: 동일한 두께)은 의미가 없으므로 제외한다.
+    기술적 요약일 뿐 인과를 뜻하지 않는다.
     """
     order = _order_value(group)
     upper = group[order >= order.median()] if order.notna().any() else group
@@ -58,14 +67,90 @@ def _repeated_features(group: pd.DataFrame, features: pd.DataFrame) -> list[str]
     return [name for name, ratio in ranked if ratio < 1.0][:3]
 
 
+def _feature_deltas(group: pd.DataFrame, features: pd.DataFrame) -> list[dict]:
+    """고위험·저위험 절반의 형상 특징 중앙값 차이를 폭넓은 사람 검토 후보로 만든다."""
+    order = _order_value(group)
+    valid = group[order.notna()].copy()
+    if len(valid) < 2:
+        return []
+    valid["_risk"] = order[order.notna()]
+    valid = valid.sort_values(["_risk", "sample_id"])
+    cut = max(1, len(valid) // 2)
+    low_ids = set(valid.head(cut)["sample_id"])
+    high_ids = set(valid.tail(cut)["sample_id"])
+    candidates = []
+    for name in features.columns.drop("sample_id"):
+        # 적층 두께는 현재 모델의 기본 관심 대상이 아니고, unit-pixel 크기는 제품 간 CA를
+        # 보정하기 위한 조건이지 변경 제안 대상이 아니다. layout 파생 특징과 명시적으로
+        # 전달된 shape_metrics만 후보로 남긴다.
+        if name.startswith(("geom:thk:", "geom:unit_width", "geom:unit_height")):
+            continue
+        low = pd.to_numeric(features.loc[features["sample_id"].isin(low_ids), name], errors="coerce").dropna()
+        high = pd.to_numeric(features.loc[features["sample_id"].isin(high_ids), name], errors="coerce").dropna()
+        if low.empty or high.empty:
+            continue
+        low_value, high_value = float(low.median()), float(high.median())
+        delta = high_value - low_value
+        if abs(delta) <= 1e-12:
+            continue
+        candidates.append({
+            "feature": name,
+            "high_risk_median": high_value,
+            "lower_risk_median": low_value,
+            "observed_delta": delta,
+            "observed_geometry_delta": delta,
+            "review_direction": "decrease" if delta > 0 else "increase",
+            "supporting_high_risk_cases": sorted(high_ids),
+            "lower_risk_comparison_cases": sorted(low_ids),
+            "counter_examples": sorted(low_ids),
+            "applicable_conditions": {
+                "comparison_group_id": str(group["comparison_group_id"].iloc[0]),
+                "products": sorted(str(value) for value in group["product_id"].unique()),
+            },
+            "statement": "관찰된 차이에 근거한 검토 후보이며 원인이나 개선 효과를 뜻하지 않습니다",
+            "resimulation_status": "pending",
+            "electrical_review_status": "external_review_required",
+        })
+    return candidates
+
+
+def _particle_size_summary(group: pd.DataFrame) -> list[dict]:
+    """샘플별 관측 CA 크기 범위와 최대 CA 크기를 요약한다."""
+    ca_columns = [c for c in group.columns if c.startswith("ca@")]
+    out = []
+    for _, row in group.iterrows():
+        observed = [(float(c.split("@", 1)[1]), row[c]) for c in ca_columns if pd.notna(row[c])]
+        if not observed:
+            out.append({"sample_id": row["sample_id"], "observed_range": None, "peak_size": None})
+            continue
+        peak = max(observed, key=lambda item: item[1])
+        out.append({
+            "sample_id": row["sample_id"],
+            "observed_range": [min(x[0] for x in observed), max(x[0] for x in observed)],
+            "peak_size": peak[0],
+        })
+    return out
+
+
 def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: dict,
-                       features: pd.DataFrame, *, min_products: int = 2) -> list[dict]:
+                       features: pd.DataFrame, *, min_products: int = 2,
+                       design_reviews: list[dict] | None = None) -> list[dict]:
+    """불량 종류·전극 역할·layer 조합별 검토 카드 목록을 만든다.
+
+    ranked는 순위 비교 표, neighbors는 공간별 검색 결과, clusters는 군집 라벨·대표·반대 사례,
+    features는 sample_id 열이 있는 형상 특징 표다. 형상 전용 검색(shape_only)과
+    위험 수치를 포함한 검색(with_risk)의 결과는 구분해 담는다.
+    """
     reps = set(clusters.get("representatives", {}).values())
+    design_reviews = list(design_reviews or [])
     counters = {v for v in clusters.get("counter_examples", {}).values() if v is not None}
     cards = []
-    keys = ["failure_type", "role_key", "layer_key"]
-    for n, (key, group) in enumerate(ranked.groupby(keys, sort=True), start=1):
-        failure_type, roles, layers = key
+    for n, (comparison_group_id, group) in enumerate(
+        ranked.groupby("comparison_group_id", sort=True), start=1
+    ):
+        failure_type = group["failure_type"].iloc[0]
+        roles = group["role_key"].iloc[0]
+        layers = group["layer_key"].iloc[0]
         ids = list(group["sample_id"])
         products = sorted(group["product_id"].unique())
         order = _order_value(group)
@@ -109,19 +194,24 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             review.append(f"누락된 이물 크기의 CA 재계산 필요: {missing_ca}")
         if group["caa_is_demo"].astype(bool).any():
             review.append("CAA 값은 DEMO 규칙으로 계산됨: 해석 전에 확정된 규칙으로 교체 필요")
+        external_reviews = [
+            item for item in design_reviews if item.get("comparison_group_id") == comparison_group_id
+        ]
 
         cards.append(_clean({
             "card_id": f"card-{n}",
+            "comparison_group_id": comparison_group_id,
             "failure_type": failure_type,
             "electrode_roles": roles,
             "layers": layers,
             "products": products,
+            "fabs": sorted(group["fab_id"].unique()),
             "n_comparable_products": len(products),
             "status": "comparable" if len(products) >= min_products else "insufficient_products",
             "representative_cases": representative,
             "counter_cases": counter,
             "repeated_shape_features": _repeated_features(group, features),
-            "repeated_shape_features_note": "그룹 전체보다 위험이 높은 사례들 사이에서 변동이 작은 특징(기술적 요약이며 인과 아님)",
+            "repeated_shape_features_note": "CAA 또는 면적 보정 CA 기준 고위험 사례들 사이에서 변동이 작은 특징(기술적 요약이며 인과 아님)",
             "risk_comparison": group[[
                 "sample_id", "product_id", "ca_max", "ca_area_max", "caa_actual", "caa_reference",
                 "rank_shift_fab",
@@ -129,10 +219,22 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             "size_correction": group.loc[
                 group["rank_shift_area"].fillna(0) != 0, ["sample_id", "rank_ca_max", "rank_ca_area_max"]
             ].to_dict(orient="records"),
+            "particle_size_summary": _particle_size_summary(group),
+            "improvement_candidates": _feature_deltas(group, features),
             "retrieval": retrieval,
             "available_conditions": available,
             "unavailable_conditions": unavailable,
             "expert_review_required": review,
+            "verification_status": {
+                "particle_resimulation": "pending",
+                "resistance": "external_review_required",
+                "capacitance": "external_review_required",
+                "coupling": "external_review_required",
+                "signal_delay_or_integrity": "external_review_required",
+                "design_rule": "external_review_required",
+                "other_short_open_risk": "external_review_required",
+            },
+            "external_design_reviews": external_reviews,
             "disclaimer": DISCLAIMER,
         }))
     return cards

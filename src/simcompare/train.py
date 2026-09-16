@@ -1,4 +1,8 @@
-"""Autoencoder training, checkpointing and embedding extraction."""
+"""다중 입력 오토인코더 학습, 체크포인트 저장·불러오기, 특징 벡터 추출.
+
+학습에는 학습 행만 사용하고, 제품별 표본 수 편중을 줄이기 위해 제품 균형 샘플링을 쓴다.
+seed와 설정은 체크포인트에 함께 저장한다.
+"""
 from __future__ import annotations
 
 import random
@@ -14,6 +18,7 @@ from simcompare.split import product_balance_weights
 
 
 def select_device(name: str) -> torch.device:
+    """cpu, auto(CUDA→MPS→CPU), cuda, mps 중 실행 장치를 고른다. 요청한 가속기가 없으면 오류."""
     if name == "cpu":
         return torch.device("cpu")
     if name == "auto":
@@ -34,6 +39,7 @@ def select_device(name: str) -> torch.device:
 
 
 def set_seed(seed: int) -> None:
+    """random, NumPy, PyTorch의 난수 seed를 고정한다."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -42,6 +48,7 @@ def set_seed(seed: int) -> None:
 def model_config_from_arrays(
     arrays: dict, *, enabled, conv_channels, modality_dim: int, latent_dim: int
 ) -> ModelConfig:
+    """모델 입력 배열의 모양에서 이미지 크기·채널 수·수치 차원을 읽어 ModelConfig를 만든다."""
     _, layout_channels, h, w = arrays["layout"].shape
     return ModelConfig(
         image_hw=(int(h), int(w)),
@@ -58,6 +65,7 @@ def model_config_from_arrays(
 
 
 def to_tensors(arrays: dict, pos, device) -> dict[str, torch.Tensor]:
+    """배열 dict에서 지정한 행을 골라 장치의 float32 텐서 dict로 만든다."""
     idx = np.asarray(pos, dtype=int)
     return {
         key: torch.as_tensor(np.ascontiguousarray(value[idx]), dtype=torch.float32, device=device)
@@ -79,6 +87,11 @@ def train_model(
     balance_products: bool = True,
     loss_weights: dict | None = None,
 ) -> tuple[MultiInputAE, list[dict]]:
+    """학습 행만으로 오토인코더를 학습하고 에폭별 손실 기록을 반환한다.
+
+    balance_products가 True이면 제품별 표본 수의 역수 가중으로 복원 추출한다.
+    기록에는 에폭별 전체 손실과 입력별 손실이 따로 남는다.
+    """
     set_seed(seed)
     train_pos = np.asarray(train_pos, dtype=int)
     if train_pos.size == 0:
@@ -117,6 +130,7 @@ def train_model(
 
 @torch.no_grad()
 def embed(model: MultiInputAE, arrays: dict, device: str = "cpu", batch_size: int = 64) -> dict:
+    """학습된 모델로 전체 행의 결합 특징(z), 구조측 특징(z_struct), Fab측 특징(z_fab)을 추출한다."""
     dev = select_device(device)
     model = model.to(dev).eval()
     n = len(next(iter(arrays.values())))
@@ -130,6 +144,7 @@ def embed(model: MultiInputAE, arrays: dict, device: str = "cpu", batch_size: in
 
 
 def save_checkpoint(path, model: MultiInputAE, model_cfg: ModelConfig, normalizers: dict, extra: dict) -> None:
+    """모델 가중치, 모델 설정, 정규화 통계, 추적 정보(extra)를 한 파일로 저장한다."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -143,6 +158,7 @@ def save_checkpoint(path, model: MultiInputAE, model_cfg: ModelConfig, normalize
 
 
 def load_checkpoint(path, device: str = "cpu"):
+    """weights_only 모드로 체크포인트를 읽어 평가 모드의 모델과 설정·정규화 통계·추적 정보를 반환한다."""
     payload = torch.load(path, map_location=select_device(device), weights_only=True)
     model_cfg = ModelConfig.from_dict(payload["model_config"])
     model = MultiInputAE(model_cfg)

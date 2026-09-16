@@ -1,0 +1,2 @@
+candidate_id,comparison_group_id,hypothesis,source_cases,resimulation_status,ca_check_status,resistance_status,capacitance_status,coupling_status,signal_status,design_rule_status,short_open_status,external_result_ref,owner,status,note
+EXAMPLE_CANDIDATE_001,lateral_short|data|gate::M1|M2,평행 구간 간격 확대 검토,EXAMPLE_CASE_001|EXAMPLE_CASE_002,pending,pending,external_review_required,external_review_required,external_review_required,external_review_required,external_review_required,external_review_required,,,pending,AI 결론이 아니라 전문가 검토 후보

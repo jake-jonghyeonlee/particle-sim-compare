@@ -1,9 +1,12 @@
 import json
 
 import numpy as np
+import yaml
 
 from conftest import write_demo_config
 from simcompare.cli import main
+from simcompare.config import load_config
+from simcompare.pipeline import _training_fingerprint
 
 
 def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
@@ -42,3 +45,36 @@ def test_cli_reports_contract_errors(tmp_path, capsys):
     assert "오류:" in capsys.readouterr().err
     config = write_demo_config(tmp_path, tmp_path / "missing")
     assert main(["embed", "--config", str(config)]) == 2
+
+
+def test_checkpoint_fingerprint_rejects_changed_input(tmp_path, capsys):
+    data = tmp_path / "data"
+    config = write_demo_config(tmp_path, data, epochs=1)
+    assert main(["demo-data", "--out", str(data)]) == 0
+    assert main(["train", "--config", str(config)]) == 0
+    provenance = data / "provenance.json"
+    provenance.write_text(provenance.read_text() + "\n")
+    assert main(["embed", "--config", str(config)]) == 2
+    assert "오래된 체크포인트" in capsys.readouterr().err
+
+
+def test_checkpoint_fingerprint_rejects_changed_training_contract(tmp_path, capsys):
+    data = tmp_path / "data"
+    config = write_demo_config(tmp_path, data, epochs=1, seed=0)
+    assert main(["demo-data", "--out", str(data)]) == 0
+    assert main(["train", "--config", str(config)]) == 0
+    payload = yaml.safe_load(config.read_text())
+    payload["train"]["seed"] = 1
+    config.write_text(yaml.safe_dump(payload))
+    assert main(["analyze", "--config", str(config)]) == 2
+    assert "오래된 체크포인트" in capsys.readouterr().err
+
+
+def test_external_review_status_is_not_a_training_fingerprint_input(tmp_path):
+    data = tmp_path / "data"
+    config = write_demo_config(tmp_path, data, epochs=1)
+    assert main(["demo-data", "--out", str(data)]) == 0
+    cfg = load_config(config)
+    before = _training_fingerprint(cfg)
+    (data / "design_review_status.csv").write_text("human review state may change\n")
+    assert _training_fingerprint(cfg) == before

@@ -1,9 +1,8 @@
-"""Train/test splitting, leakage checks, and confounding diagnostics.
+"""학습/평가 분리, 누수 검사, 교락 진단.
 
-Implements the contract in ``docs/arch/split.md``.  All functions operate on
-row *positions* (0..N-1) of a ``meta`` DataFrame that carries at least
-``sample_id``, ``product_id`` and ``design_lineage_id`` (plus ``fab_id`` and
-``product_family`` for the confounding report).
+모든 함수는 meta DataFrame의 행 위치(0..N-1)를 다룬다. product_id나 design_lineage_id를
+공유하는 행은 하나의 그룹(연결 성분)으로 묶여 항상 같은 쪽에 배정된다.
+따라서 같은 제품의 변경 설계나 크기별 기록이 학습과 평가에 섞이지 않는다.
 """
 
 from __future__ import annotations
@@ -15,13 +14,14 @@ import pandas as pd
 
 
 class LeakageError(ValueError):
-    """Raised when train/test positions or group labels leak across the split."""
+    """학습/평가 위치가 겹치거나 제품·설계 계열 ID가 양쪽에 섞였을 때 발생하는 오류."""
 
 
 # --------------------------------------------------------------------------- #
-# Union-find helpers
+# union-find 도우미
 # --------------------------------------------------------------------------- #
 def _union_find(n: int) -> tuple[list[int], list[int]]:
+    """경로 압축과 rank를 쓰는 union-find(find, union 함수 쌍)를 만든다."""
     parent = list(range(n))
     rank = [0] * n
 
@@ -47,8 +47,7 @@ def _union_find(n: int) -> tuple[list[int], list[int]]:
 
 
 def _components(meta: pd.DataFrame) -> list[list[int]]:
-    """Return the connected components of rows linked by shared product_id
-    or design_lineage_id, as lists of row positions."""
+    """product_id 또는 design_lineage_id를 공유하는 행을 연결한 그룹 목록(행 위치 리스트)을 반환한다."""
     n = len(meta)
     if n == 0:
         return []
@@ -56,6 +55,7 @@ def _components(meta: pd.DataFrame) -> list[list[int]]:
     parent, (find, union) = _union_find(n)
 
     def link_by(column: str) -> None:
+        """같은 column 값을 가진 행들을 하나의 그룹으로 연결한다(빈 값은 건너뜀)."""
         seen: dict = {}
         for pos in range(n):
             key = meta.iloc[pos][column]
@@ -79,8 +79,7 @@ def _components(meta: pd.DataFrame) -> list[list[int]]:
 
 
 def group_ids(meta: pd.DataFrame) -> np.ndarray:
-    """Component label per row: the smallest ``design_lineage_id`` string in
-    the component.  Returns an object-dtype array of length ``len(meta)``."""
+    """행마다 그룹 라벨을 반환한다. 라벨은 그룹 안에서 가장 작은 design_lineage_id 문자열이다."""
     n = len(meta)
     labels = np.empty(n, dtype=object)
     if n == 0:
@@ -95,7 +94,7 @@ def group_ids(meta: pd.DataFrame) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# Splitting
+# 학습/평가 분리
 # --------------------------------------------------------------------------- #
 def group_split(
     meta: pd.DataFrame,
@@ -104,13 +103,11 @@ def group_split(
     seed: int,
     test_groups=(),
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Split row positions into ``(train_pos, test_pos)`` at component level.
+    """그룹 단위로 행 위치를 (train_pos, test_pos)로 나눈다.
 
-    With ``test_groups`` the whole component of every row whose ``product_id``
-    or ``design_lineage_id`` is listed goes to test.  Otherwise components are
-    shuffled (sorted first) with ``np.random.default_rng(seed)`` and added to
-    test until the test rows reach ``ceil(test_fraction * N)``, always keeping
-    at least one component in train.
+    test_groups를 주면 해당 제품·설계 계열이 속한 그룹 전체를 평가로 보낸다.
+    주지 않으면 seed로 그룹 순서를 섞어 평가 행이 ceil(test_fraction × N) 이상이 될 때까지
+    그룹을 평가에 넣되, 학습에 최소 한 그룹을 남긴다. 독립 그룹이 2개 미만이면 ValueError.
     """
     n = len(meta)
     comps = _components(meta) if n else []
@@ -163,7 +160,7 @@ def group_split(
             break
         test_pos.extend(comp)
 
-    if len(test_pos) == n:  # keep at least one component in train
+    if len(test_pos) == n:  # 학습 쪽에 최소 한 그룹을 남긴다
         last = shuffled[-1]
         test_pos = [p for p in test_pos if p not in set(last)]
 
@@ -176,13 +173,12 @@ def group_split(
 
 
 # --------------------------------------------------------------------------- #
-# Leakage
+# 누수 검사
 # --------------------------------------------------------------------------- #
 def assert_no_leakage(
     meta: pd.DataFrame, train_pos: np.ndarray, test_pos: np.ndarray
 ) -> None:
-    """Raise :class:`LeakageError` if positions overlap or a ``product_id`` /
-    ``design_lineage_id`` value occurs in both train and test."""
+    """학습/평가 위치가 겹치거나 product_id·design_lineage_id가 양쪽에 있으면 LeakageError를 낸다."""
     train_set = set(int(p) for p in train_pos)
     test_set = set(int(p) for p in test_pos)
     if train_set & test_set:
@@ -200,11 +196,13 @@ def assert_no_leakage(
 
 
 # --------------------------------------------------------------------------- #
-# Leave-one-group-out
+# 그룹 제외 검증
 # --------------------------------------------------------------------------- #
 def leave_one_group_out(meta: pd.DataFrame, column: str) -> list[dict]:
-    """For each sorted unique value of ``column`` hold out the whole component
-    of every row carrying that value; return per-value split records."""
+    """column 값마다 해당 값을 가진 행의 그룹 전체를 평가로 빼는 분리 목록을 만든다.
+
+    Fab이나 제품군 단위 제외 검증에 쓴다. 학습 행이 남지 않으면 status가 no_train_rows다.
+    """
     n = len(meta)
     comps = _components(meta)
     comp_of_pos: dict[int, int] = {}
@@ -238,12 +236,18 @@ def leave_one_group_out(meta: pd.DataFrame, column: str) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
-# Confounding
+# 교락 진단
 # --------------------------------------------------------------------------- #
 def confounding_report(
     meta: pd.DataFrame, a: str = "fab_id", b: str = "product_family"
 ) -> dict:
-    """Cross-tabulate ``a`` x ``b`` and classify the confounding status."""
+    """두 요인(기본 fab_id × product_family)의 교차표와 교락 상태를 보고한다.
+
+    - insufficient_groups: 한 요인이라도 값이 2개 미만(평가 불가)
+    - fully_confounded: 두 요인이 일대일 대응(효과 분리 불가)
+    - partially_confounded: 한쪽 방향으로만 고정 대응
+    - ok: 교차 비교 가능(인과 분리를 뜻하지는 않음)
+    """
     a_vals = [str(v) for v in meta[a]]
     b_vals = [str(v) for v in meta[b]]
     n_a = len(set(a_vals))
@@ -294,11 +298,10 @@ def confounding_report(
 
 
 # --------------------------------------------------------------------------- #
-# Product balance weights
+# 제품 균형 가중치
 # --------------------------------------------------------------------------- #
 def product_balance_weights(meta: pd.DataFrame, train_pos: np.ndarray) -> np.ndarray:
-    """Per-train-position weight ``1 / (train rows sharing the product_id)``,
-    normalised to sum to 1."""
+    """학습 행마다 1 / (같은 product_id의 학습 행 수)를 주고 합이 1이 되게 정규화한다."""
     train_pos = np.asarray(train_pos, dtype=int)
     if train_pos.size == 0:
         return np.array([], dtype=float)

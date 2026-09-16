@@ -10,7 +10,7 @@
 ```text
 layout (2ch: 전극 a, b) ──CNN enc──┐
 hotspot (Kch: 이물 크기별) ─CNN enc─┤→ concat → Linear → z_struct ┐
-CA 곡선 (log, mask) ────MLP enc────┤                              ├→ z (결합) → 입력별 decoder
+원 CA + CA/면적 곡선 (log, mask) ─MLP enc─┤                         ├→ z (결합) → 입력별 decoder
 형상·두께·실제 크기 ─────MLP enc────┘                              │
 Fab 모양 + log 총량 (mask) ─MLP enc──→ Linear → z_fab ────────────┘
 ```
@@ -36,7 +36,7 @@ Fab 모양 + log 총량 (mask) ─MLP enc──→ Linear → z_fab ────
 
 - 제품별 표본 수 역수 가중 샘플링(`train.balance_products`)으로 편중을 줄인다.
 - 정규화 통계(`dataset.fit_normalizers`)는 학습 행에서만 계산한다.
-- seed, 설정 전체, 학습/평가 sample_id, 손실 종류, 라이브러리 버전은 checkpoint와 `run_record.json`에 기록한다.
+- seed, 설정 전체, 학습/평가 sample_id, 손실 종류, 라이브러리 버전은 checkpoint와 `run_record.json`에 기록한다. 학습 입력 파일 및 data/CAA/model/train/split 설정 fingerprint가 달라지면 후속 명령은 재학습을 요구한다. 모델 입력이 아닌 `design_review_status.csv` 갱신은 재학습 대상이 아니다.
 - 기본 device는 `cpu`. `auto`는 CUDA → MPS → CPU 순서로 선택한다.
 
 ## 기준 모델 (`baseline.py`)
@@ -52,10 +52,10 @@ Fab 모양 + log 총량 (mask) ─MLP enc──→ Linear → z_fab ────
 
 1. 유사 사례 검색: 같은 불량 종류·전극 역할 집합, layer 조건, 다른 제품만(`other_products_only`), 필터, 실제 크기 허용 비율.
 2. 군집화: 학습 행으로 KMeans 적합, 대표 사례(중심 최근접)와 반대 사례(다른 군집의 가장 가까운 학습 행). 군집 번호에는 의미가 없다.
-3. 제품별 비교: 원 CA, CA/면적, 크기별 곡선, demo CAA(실제 Fab 분포 / 지정 기준 분포).
+3. 비교 그룹별 비교: 원 CA, CA/면적, 크기별 곡선, demo CAA(실제 Fab 분포 / 지정 기준 분포).
 4. 순위 비교: 실제 Fab vs 기준 분포, 원 CA vs 면적 보정 CA의 순위 변화와 Spearman 상관.
-5. 제품 하나씩 제외: 상위 항목 Jaccard, 형상 기준선 이웃 집합 Jaccard.
-6. 검토 카드: 근거와 "자료 없음", "전문가 확인 필요" 목록. 중요 인자 자동 판정은 하지 않는다.
+5. 제품 하나씩 제외: 남은 제품 안정성과 별도로, 제외 제품을 query로 두고 학습 제품 이웃의 면적 정규화 CA 경향 반복성을 확인.
+6. 검토 카드: 실제 CAA가 없으면 면적 보정 CA를 우선해 고위험·저위험 형상 차이를 폭넓은 변경 검토 후보로 제시하고 외부 전기 검토 상태를 기록. 적층 두께와 unit-pixel 크기는 자동 변경 후보에서 제외하며 중요 인자 자동 판정은 하지 않는다.
 
 **해석 주의**: `with_risk_*` 공간은 CA·hotspot을 입력으로 쓰므로, 그 공간에서 위험이 비슷한 사례를 찾은 것은 독립적 발견이 아니다. `neighbors.csv`의 `reuses_risk_inputs` 열과 카드의 `retrieval.note`로 구분한다. latent·attention 값으로 중요도 점수를 만들지 않는다.
 
@@ -69,5 +69,5 @@ Fab 모양 + log 총량 (mask) ─MLP enc──→ Linear → z_fab ────
 
 - 합성 데이터 결과는 코드 동작 확인일 뿐 연구 성능 근거가 아니다. 실제 자료로 한 검증은 없다.
 - 표본이 작으면 AE가 기준선보다 나을 근거가 없다. 두 공간을 함께 보고 판단한다.
-- CAA 규칙, layer 대응, Fab 단위가 확정되지 않았다(`open_questions.md`).
+- CAA 공식과 제품 간 layer 대응은 아직 확정되지 않았다(`open_questions.md`). Fab 입력 단위·기간·조사 면적은 명시적으로 기록한다.
 - 후속 후보(미구현): MOFA+, DCCAE, GNN (`references.md`).

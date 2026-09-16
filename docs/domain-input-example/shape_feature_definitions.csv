@@ -1,0 +1,6 @@
+feature_name,unit,physical_definition,actionable,allowed_direction,min_allowed,max_allowed,required_design_checks,status,note
+electrode_gap_um,um,비교 대상 전극 사이의 실제 간격,true,increase|decrease,,,capacitance|coupling|signal|design_rule,confirmed,양방향 후보를 넓게 제시하고 사람이 검토
+wiring_width_um,um,대상 배선의 실제 폭,true,increase|decrease,,,resistance|capacitance|signal|design_rule,confirmed,
+parallel_run_length_um,um,두 전극이 평행하게 인접한 실제 길이,true,increase|decrease,,,capacitance|coupling|signal|design_rule,confirmed,
+overlap_area_um2,um^2,두 전극 투영 영역의 겹침 면적,true,increase|decrease,,,capacitance|coupling|vertical_short|design_rule,confirmed,
+detour_count,count,대상 배선 경로의 방향 전환 또는 우회 구간 개수,true,increase|decrease,,,resistance|capacitance|coupling|signal|design_rule,confirmed,현재 shape_metrics가 수치형이므로 합의한 추출 규칙으로 개수를 입력

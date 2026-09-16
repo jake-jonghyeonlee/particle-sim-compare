@@ -1,4 +1,7 @@
-"""validate-data report: coverage, scale, overlap, confounding and CAA applicability."""
+"""validate-data 보고서: 입력 누락, 실제 크기, hotspot–layout 중복, 교락, CAA 적용 가능 여부.
+
+학습 전에 데이터의 한계를 먼저 드러내기 위한 점검이며 자료를 수정하지 않는다.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -10,6 +13,10 @@ OVERLAP_THRESHOLD = 0.8
 
 
 def _overlap(enc, i: int) -> float | None:
+    """한 샘플에서 hotspot 평균 이미지와 layout 합성 이미지의 상관계수를 구한다.
+
+    가공 hotspot이 layout 형상을 그대로 담고 있는지 확인하는 용도다. 계산할 수 없으면 None.
+    """
     hot = enc.hotspot_present[i] > 0
     lay = enc.layout_present[i] > 0
     if not hot.any() or not lay.any():
@@ -24,12 +31,18 @@ def _overlap(enc, i: int) -> float | None:
 
 
 def run_checks(loaded, enc, cfg) -> dict:
+    """데이터 점검 결과를 JSON으로 저장할 수 있는 dict로 반환한다.
+
+    open 불량의 두 번째 전극은 누락이 아닌 '해당 없음' 건수로 따로 센다.
+    Fab과 제품군 교락 상태, 독립 그룹 수, 크기 격자 관측률도 함께 담는다.
+    """
     meta = enc.meta
     bundles = loaded.bundles
     shorts = ~meta["is_open"].to_numpy(bool)
     missing = {
         "layout_a": int((enc.layout_present[:, 0] == 0).sum()),
         "layout_b_short": int(((enc.layout_present[:, 1] == 0) & shorts).sum()),
+        # open의 두 번째 전극은 누락이 아니라 해당 없음으로 따로 센다.
         "open_b_not_applicable": int((~shorts).sum()),
         "fab": int((~enc.fab_mask.any(axis=1) & ~enc.fab_total_mask[:, 0]).sum()),
         "geometry": int((~enc.geom_mask.any(axis=1)).sum()),
@@ -54,6 +67,16 @@ def run_checks(loaded, enc, cfg) -> dict:
             caa_issues.append({"sample_id": bundle.sample_id, "reason": str(exc)})
 
     groups = group_ids(meta)
+    ca_values = enc.ca_log[enc.ca_mask]
+    ca_raw = np.power(10.0, ca_values) if ca_values.size else np.array([], dtype=float)
+    comparison_groups = {
+        (
+            row["failure_type"],
+            tuple(sorted(x for x in (row["electrode_a_role"], row["electrode_b_role"]) if x != "N/A")),
+            tuple(sorted(x for x in (row["layer_a"], row["layer_b"]) if x != "N/A")),
+        )
+        for _, row in meta.iterrows()
+    }
     return {
         "mode": cfg.mode,
         "synthetic": any(b.provenance.is_synthetic for b in bundles),
@@ -81,11 +104,19 @@ def run_checks(loaded, enc, cfg) -> dict:
         },
         "confounding": confounding_report(meta, "fab_id", "product_family"),
         "independent_groups": int(len(set(groups))),
+        "comparison_groups": int(len(comparison_groups)),
         "split_feasible": len(set(groups)) >= 2,
         "caa_applicability": caa_issues,
         "grid_coverage": {
             f"ca@{size:g}": round(float(enc.ca_mask[:, j].mean()), 4)
             for j, size in enumerate(cfg.data.ca_grid)
+        },
+        "ca_value_range": {
+            "valid_contract": [0.0, 1.0],
+            "observed_min": None if ca_raw.size == 0 else float(ca_raw.min()),
+            "observed_max": None if ca_raw.size == 0 else float(ca_raw.max()),
+            "n_above_typical_0_03": int((ca_raw > 0.03).sum()),
+            "message": "0.03 초과는 오류가 아니지만 현재 알려진 일반 범위보다 높아 원자료 확인이 필요합니다",
         },
         "warnings": list(loaded.warnings) + list(enc.notes),
     }

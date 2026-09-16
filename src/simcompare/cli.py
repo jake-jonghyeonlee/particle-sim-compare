@@ -1,4 +1,8 @@
-"""Command line interface."""
+"""simcompare 명령행 인터페이스.
+
+demo-data, validate-data, train, embed, analyze, evaluate, all 명령을 제공한다.
+데이터·설정 계약 오류는 트레이스백 대신 '오류:' 메시지와 종료 코드 2로 끝낸다.
+"""
 from __future__ import annotations
 
 import argparse
@@ -13,12 +17,14 @@ COMMANDS = ("validate-data", "train", "embed", "analyze", "evaluate")
 
 
 def _korean_help(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """argparse 파서에 한글 '옵션' 제목과 도움말 옵션(-h/--help)을 붙인다."""
     parser._optionals.title = "옵션"
     parser.add_argument("-h", "--help", action="help", help="도움말을 표시하고 종료")
     return parser
 
 
 def _parser() -> argparse.ArgumentParser:
+    """명령과 인자를 정의한 argparse 파서를 만든다."""
     parser = argparse.ArgumentParser(
         add_help=False,
         prog="simcompare",
@@ -47,10 +53,16 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _print(payload) -> None:
+    """결과 dict를 한글이 깨지지 않는 JSON으로 표준 출력에 쓴다."""
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
 def main(argv: list[str] | None = None) -> int:
+    """명령행 진입점. 성공하면 0, 계약 오류나 파일 누락이면 2를 반환한다.
+
+    demo 모드에서는 결과가 연구 근거가 아니라는 안내를 stderr에 출력한다.
+    all --demo-out을 쓰면 생성한 demo 데이터 경로로 data_dir을 바꿔 분석한다.
+    """
     args = _parser().parse_args(argv)
     try:
         if args.command == "demo-data":
@@ -78,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 from simcompare.synthetic import generate_demo_data
 
                 results["demo-data"] = generate_demo_data(args.demo_out, seed=cfg.train.seed)
-                # Analyse exactly the data that was just generated.
+                # 방금 생성한 데이터를 그대로 분석한다.
                 cfg.data.data_dir = str(Path(args.demo_out).resolve())
             for name in COMMANDS:
                 results[name] = runners[name](cfg)
