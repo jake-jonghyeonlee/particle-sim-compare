@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="357.023438pt" height="195.598pt" viewBox="0 0 357.023438 195.598" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-09-17T07:04:08.572969</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 195.598 
+L 357.023438 195.598 
+L 357.023438 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 40.943438 162.898 
+L 353.423437 162.898 
+L 353.423437 24.298 
+L 40.943438 24.298 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1"/>
+     <g id="text_1">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="79.310937" y="174.498" transform="rotate(-0 79.310937 174.498)">1</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2"/>
+     <g id="text_2">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="138.247187" y="174.498" transform="rotate(-0 138.247187 174.498)">2</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3"/>
+     <g id="text_3">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="197.183437" y="174.498" transform="rotate(-0 197.183437 174.498)">4</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_4"/>
+     <g id="text_4">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="256.119688" y="174.498" transform="rotate(-0 256.119688 174.498)">8</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_5"/>
+     <g id="text_5">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="315.055938" y="174.498" transform="rotate(-0 315.055938 174.498)">16</text>
+     </g>
+    </g>
+    <g id="text_6">
+     <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="197.183437" y="189.298" transform="rotate(-0 197.183437 189.298)">이물 크기 구간 중앙값 (µm)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_6">
+      <path d="M 40.943438 162.898 
+L 353.423437 162.898 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_7"/>
+     <g id="text_7">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="166.948" transform="rotate(-0 37.443438 166.948)">0.00</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_8">
+      <path d="M 40.943438 142.879862 
+L 353.423437 142.879862 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_9"/>
+     <g id="text_8">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="146.929862" transform="rotate(-0 37.443438 146.929862)">0.05</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_10">
+      <path d="M 40.943438 122.861725 
+L 353.423437 122.861725 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_11"/>
+     <g id="text_9">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="126.911725" transform="rotate(-0 37.443438 126.911725)">0.10</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_12">
+      <path d="M 40.943438 102.843587 
+L 353.423437 102.843587 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_13"/>
+     <g id="text_10">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="106.893587" transform="rotate(-0 37.443438 106.893587)">0.15</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_14">
+      <path d="M 40.943438 82.825449 
+L 353.423437 82.825449 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_15"/>
+     <g id="text_11">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="86.875449" transform="rotate(-0 37.443438 86.875449)">0.20</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_16">
+      <path d="M 40.943438 62.807312 
+L 353.423437 62.807312 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_17"/>
+     <g id="text_12">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="66.857312" transform="rotate(-0 37.443438 66.857312)">0.25</text>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_18">
+      <path d="M 40.943438 42.789174 
+L 353.423437 42.789174 
+" clip-path="url(#p9cf5f9202f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_19"/>
+     <g id="text_13">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="37.443438" y="46.839174" transform="rotate(-0 37.443438 46.839174)">0.30</text>
+     </g>
+    </g>
+    <g id="text_14">
+     <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="11.7" y="93.598" transform="rotate(-90 11.7 93.598)">비율</text>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 40.943438 162.898 
+L 40.943438 24.298 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 40.943437 162.898 
+L 353.423437 162.898 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 55.147074 162.898 
+L 70.470499 162.898 
+L 70.470499 30.898 
+L 55.147074 30.898 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 114.083324 162.898 
+L 129.406749 162.898 
+L 129.406749 42.393616 
+L 114.083324 42.393616 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 173.019575 162.898 
+L 188.343 162.898 
+L 188.343 71.021154 
+L 173.019575 71.021154 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 231.955825 162.898 
+L 247.27925 162.898 
+L 247.27925 129.378029 
+L 231.955825 129.378029 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 290.892076 162.898 
+L 306.215501 162.898 
+L 306.215501 140.436448 
+L 290.892076 140.436448 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #2a78d6"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 71.649224 162.898 
+L 86.972649 162.898 
+L 86.972649 123.664813 
+L 71.649224 123.664813 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #eb6834"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 130.585474 162.898 
+L 145.9089 162.898 
+L 145.9089 89.984663 
+L 130.585474 89.984663 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #eb6834"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 189.521725 162.898 
+L 204.84515 162.898 
+L 204.84515 32.09055 
+L 189.521725 32.09055 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #eb6834"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 248.457975 162.898 
+L 263.781401 162.898 
+L 263.781401 62.679496 
+L 248.457975 62.679496 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #eb6834"/>
+   </g>
+   <g id="patch_14">
+    <path d="M 307.394226 162.898 
+L 322.717651 162.898 
+L 322.717651 105.707725 
+L 307.394226 105.707725 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #eb6834"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 88.151374 162.898 
+L 103.474799 162.898 
+L 103.474799 82.825449 
+L 88.151374 82.825449 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #b9b7b0"/>
+   </g>
+   <g id="patch_16">
+    <path d="M 147.087625 162.898 
+L 162.41105 162.898 
+L 162.41105 82.825449 
+L 147.087625 82.825449 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #b9b7b0"/>
+   </g>
+   <g id="patch_17">
+    <path d="M 206.023875 162.898 
+L 221.3473 162.898 
+L 221.3473 82.825449 
+L 206.023875 82.825449 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #b9b7b0"/>
+   </g>
+   <g id="patch_18">
+    <path d="M 264.960126 162.898 
+L 280.283551 162.898 
+L 280.283551 82.825449 
+L 264.960126 82.825449 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #b9b7b0"/>
+   </g>
+   <g id="patch_19">
+    <path d="M 323.896376 162.898 
+L 339.219801 162.898 
+L 339.219801 82.825449 
+L 323.896376 82.825449 
+z
+" clip-path="url(#p9cf5f9202f)" style="fill: #b9b7b0"/>
+   </g>
+   <g id="legend_1">
+    <g id="patch_20">
+     <path d="M 24.165313 14.65 
+L 41.165313 14.65 
+L 41.165313 8.7 
+L 24.165313 8.7 
+z
+" style="fill: #2a78d6"/>
+    </g>
+    <g id="text_15">
+     <text style="font-size: 8.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start" x="47.965313" y="14.65" transform="rotate(-0 47.965313 14.65)">FAB_A (F1, M2 공정)</text>
+    </g>
+    <g id="patch_21">
+     <path d="M 134.339922 14.65 
+L 151.339922 14.65 
+L 151.339922 8.7 
+L 134.339922 8.7 
+z
+" style="fill: #eb6834"/>
+    </g>
+    <g id="text_16">
+     <text style="font-size: 8.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start" x="158.139922" y="14.65" transform="rotate(-0 158.139922 14.65)">FAB_B (F2, M2 공정)</text>
+    </g>
+    <g id="patch_22">
+     <path d="M 245.940938 14.65 
+L 262.940938 14.65 
+L 262.940938 8.7 
+L 245.940938 8.7 
+z
+" style="fill: #b9b7b0"/>
+    </g>
+    <g id="text_17">
+     <text style="font-size: 8.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start" x="269.740938" y="14.65" transform="rotate(-0 269.740938 14.65)">기준 분포(순위 비교용)</text>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p9cf5f9202f">
+   <rect x="40.943438" y="24.298" width="312.48" height="138.6"/>
+  </clipPath>
+ </defs>
+</svg>

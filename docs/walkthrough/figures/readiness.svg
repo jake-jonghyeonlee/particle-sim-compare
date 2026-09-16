@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="422.431719pt" height="164.444pt" viewBox="0 0 422.431719 164.444" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-09-17T07:04:08.646333</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 164.444 
+L 422.431719 164.444 
+L 422.431719 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 17.071719 160.844 
+L 418.831719 160.844 
+L 418.831719 16.7 
+L 17.071719 16.7 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g clip-path="url(#p5bacf6d184)">
+    <image xlink:href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAi4AAADICAYAAADPyGppAAAD50lEQVR4nO3YsW2EQBRFUbCohALovwknFECwbWyAY0sOnHhn7/icCp5GAl399fPxvBcA4JtjvaZ5kfPel1l8jB4AAPBbwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAIAM4QIAZAgXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIEO4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgYxs9AADe0XnvoyfwAxcXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIEO4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAIAM4QIAZAgXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIGMbPYC5Heu1zOK899ETAJb//i92cQEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAIAM4QIAZAgXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIEO4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQMb6+Xjeo0cAr3Os1zTPfd776AnAi7m4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAIAM4QIAZAgXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIEO4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgYxs9AHit8949OX/qWK8pXti38p5cXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAIAM4QIAZAgXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIEO4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAICMbfQAAOZy3vvoCUzMxQUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAABnCBQDIEC4AQIZwAQAyhAsAkCFcAIAM4QIAZAgXACBDuAAAGcIFAMgQLgBAhnABADKECwCQIVwAgAzhAgBkCBcAIEO4AAAZwgUAyBAuAECGcAEAMoQLAJAhXACADOECAGQIFwAgQ7gAAEvFF9W2G88USNaFAAAAAElFTkSuQmCC" id="image1e967197a8" transform="scale(1 -1) translate(0 -144)" x="17.28" y="-16.844" width="401.76" height="144"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1"/>
+     <g id="text_1">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="35.333537" y="10.8" transform="rotate(-0 35.333537 10.8)">전극 그림</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2"/>
+     <g id="text_2">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="71.857173" y="10.8" transform="rotate(-0 71.857173 10.8)">hotspot 2</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3"/>
+     <g id="text_3">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="108.38081" y="10.8" transform="rotate(-0 108.38081 10.8)">hotspot 4</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_4"/>
+     <g id="text_4">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="144.904446" y="10.8" transform="rotate(-0 144.904446 10.8)">hotspot 8</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_5"/>
+     <g id="text_5">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="181.428082" y="10.8" transform="rotate(-0 181.428082 10.8)">CA 1</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_6"/>
+     <g id="text_6">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="217.951719" y="10.8" transform="rotate(-0 217.951719 10.8)">CA 2</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_7"/>
+     <g id="text_7">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="254.475355" y="10.8" transform="rotate(-0 254.475355 10.8)">CA 4</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_8"/>
+     <g id="text_8">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="290.998991" y="10.8" transform="rotate(-0 290.998991 10.8)">CA 8</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_9"/>
+     <g id="text_9">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="327.522628" y="10.8" transform="rotate(-0 327.522628 10.8)">CA 16</text>
+     </g>
+    </g>
+    <g id="xtick_10">
+     <g id="line2d_10"/>
+     <g id="text_10">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="364.046264" y="10.8" transform="rotate(-0 364.046264 10.8)">실제 크기</text>
+     </g>
+    </g>
+    <g id="xtick_11">
+     <g id="line2d_11"/>
+     <g id="text_11">
+      <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="400.569901" y="10.8" transform="rotate(-0 400.569901 10.8)">형상 수치</text>
+     </g>
+    </g>
+    <g id="xtick_12">
+     <g id="line2d_12">
+      <path d="M 17.071719 160.844 
+L 17.071719 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_13"/>
+    </g>
+    <g id="xtick_13">
+     <g id="line2d_14">
+      <path d="M 53.595355 160.844 
+L 53.595355 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_15"/>
+    </g>
+    <g id="xtick_14">
+     <g id="line2d_16">
+      <path d="M 90.118991 160.844 
+L 90.118991 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_17"/>
+    </g>
+    <g id="xtick_15">
+     <g id="line2d_18">
+      <path d="M 126.642628 160.844 
+L 126.642628 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_19"/>
+    </g>
+    <g id="xtick_16">
+     <g id="line2d_20">
+      <path d="M 163.166264 160.844 
+L 163.166264 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_21"/>
+    </g>
+    <g id="xtick_17">
+     <g id="line2d_22">
+      <path d="M 199.689901 160.844 
+L 199.689901 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_23"/>
+    </g>
+    <g id="xtick_18">
+     <g id="line2d_24">
+      <path d="M 236.213537 160.844 
+L 236.213537 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_25"/>
+    </g>
+    <g id="xtick_19">
+     <g id="line2d_26">
+      <path d="M 272.737173 160.844 
+L 272.737173 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_27"/>
+    </g>
+    <g id="xtick_20">
+     <g id="line2d_28">
+      <path d="M 309.26081 160.844 
+L 309.26081 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_29"/>
+    </g>
+    <g id="xtick_21">
+     <g id="line2d_30">
+      <path d="M 345.784446 160.844 
+L 345.784446 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_31"/>
+    </g>
+    <g id="xtick_22">
+     <g id="line2d_32">
+      <path d="M 382.308082 160.844 
+L 382.308082 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_33"/>
+    </g>
+    <g id="xtick_23">
+     <g id="line2d_34">
+      <path d="M 418.831719 160.844 
+L 418.831719 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_35"/>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_36"/>
+     <g id="text_12">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="13.571719" y="32.762" transform="rotate(-0 13.571719 32.762)">P1</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_37"/>
+     <g id="text_13">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="13.571719" y="56.786" transform="rotate(-0 13.571719 56.786)">P2</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_38"/>
+     <g id="text_14">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="13.571719" y="80.81" transform="rotate(-0 13.571719 80.81)">P3</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_39"/>
+     <g id="text_15">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="13.571719" y="104.834" transform="rotate(-0 13.571719 104.834)">P4</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_40"/>
+     <g id="text_16">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="13.571719" y="128.858" transform="rotate(-0 13.571719 128.858)">P5</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_41"/>
+     <g id="text_17">
+      <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="13.571719" y="152.882" transform="rotate(-0 13.571719 152.882)">P6</text>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_42">
+      <path d="M 17.071719 16.7 
+L 418.831719 16.7 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_43"/>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_44">
+      <path d="M 17.071719 40.724 
+L 418.831719 40.724 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_45"/>
+    </g>
+    <g id="ytick_9">
+     <g id="line2d_46">
+      <path d="M 17.071719 64.748 
+L 418.831719 64.748 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_47"/>
+    </g>
+    <g id="ytick_10">
+     <g id="line2d_48">
+      <path d="M 17.071719 88.772 
+L 418.831719 88.772 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_49"/>
+    </g>
+    <g id="ytick_11">
+     <g id="line2d_50">
+      <path d="M 17.071719 112.796 
+L 418.831719 112.796 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_51"/>
+    </g>
+    <g id="ytick_12">
+     <g id="line2d_52">
+      <path d="M 17.071719 136.82 
+L 418.831719 136.82 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_53"/>
+    </g>
+    <g id="ytick_13">
+     <g id="line2d_54">
+      <path d="M 17.071719 160.844 
+L 418.831719 160.844 
+" clip-path="url(#p5bacf6d184)" style="fill: none; stroke: #ffffff; stroke-width: 2; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_55"/>
+    </g>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="35.333537" y="31.112" transform="rotate(-0 35.333537 31.112)">있음</text>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="71.857173" y="31.112" transform="rotate(-0 71.857173 31.112)">있음</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="108.38081" y="31.112" transform="rotate(-0 108.38081 31.112)">있음</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="144.904446" y="31.112" transform="rotate(-0 144.904446 31.112)">있음</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="181.428082" y="31.112" transform="rotate(-0 181.428082 31.112)">있음</text>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="217.951719" y="31.112" transform="rotate(-0 217.951719 31.112)">있음</text>
+   </g>
+   <g id="text_24">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="254.475355" y="31.112" transform="rotate(-0 254.475355 31.112)">있음</text>
+   </g>
+   <g id="text_25">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="290.998991" y="31.112" transform="rotate(-0 290.998991 31.112)">있음</text>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="327.522628" y="31.112" transform="rotate(-0 327.522628 31.112)">있음</text>
+   </g>
+   <g id="text_27">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="364.046264" y="31.112" transform="rotate(-0 364.046264 31.112)">있음</text>
+   </g>
+   <g id="text_28">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="400.569901" y="31.112" transform="rotate(-0 400.569901 31.112)">있음</text>
+   </g>
+   <g id="text_29">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="35.333537" y="55.136" transform="rotate(-0 35.333537 55.136)">있음</text>
+   </g>
+   <g id="text_30">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="71.857173" y="55.136" transform="rotate(-0 71.857173 55.136)">있음</text>
+   </g>
+   <g id="text_31">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="108.38081" y="55.136" transform="rotate(-0 108.38081 55.136)">있음</text>
+   </g>
+   <g id="text_32">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="144.904446" y="55.136" transform="rotate(-0 144.904446 55.136)">있음</text>
+   </g>
+   <g id="text_33">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="181.428082" y="55.136" transform="rotate(-0 181.428082 55.136)">있음</text>
+   </g>
+   <g id="text_34">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="217.951719" y="55.136" transform="rotate(-0 217.951719 55.136)">있음</text>
+   </g>
+   <g id="text_35">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="254.475355" y="55.136" transform="rotate(-0 254.475355 55.136)">있음</text>
+   </g>
+   <g id="text_36">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="290.998991" y="55.136" transform="rotate(-0 290.998991 55.136)">있음</text>
+   </g>
+   <g id="text_37">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #8f2f0c" x="327.522628" y="55.136" transform="rotate(-0 327.522628 55.136)">없음</text>
+   </g>
+   <g id="text_38">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="364.046264" y="55.136" transform="rotate(-0 364.046264 55.136)">있음</text>
+   </g>
+   <g id="text_39">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="400.569901" y="55.136" transform="rotate(-0 400.569901 55.136)">있음</text>
+   </g>
+   <g id="text_40">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="35.333537" y="79.16" transform="rotate(-0 35.333537 79.16)">있음</text>
+   </g>
+   <g id="text_41">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="71.857173" y="79.16" transform="rotate(-0 71.857173 79.16)">있음</text>
+   </g>
+   <g id="text_42">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="108.38081" y="79.16" transform="rotate(-0 108.38081 79.16)">있음</text>
+   </g>
+   <g id="text_43">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="144.904446" y="79.16" transform="rotate(-0 144.904446 79.16)">있음</text>
+   </g>
+   <g id="text_44">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="181.428082" y="79.16" transform="rotate(-0 181.428082 79.16)">있음</text>
+   </g>
+   <g id="text_45">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #8f2f0c" x="217.951719" y="79.16" transform="rotate(-0 217.951719 79.16)">없음</text>
+   </g>
+   <g id="text_46">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="254.475355" y="79.16" transform="rotate(-0 254.475355 79.16)">있음</text>
+   </g>
+   <g id="text_47">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="290.998991" y="79.16" transform="rotate(-0 290.998991 79.16)">있음</text>
+   </g>
+   <g id="text_48">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="327.522628" y="79.16" transform="rotate(-0 327.522628 79.16)">있음</text>
+   </g>
+   <g id="text_49">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="364.046264" y="79.16" transform="rotate(-0 364.046264 79.16)">있음</text>
+   </g>
+   <g id="text_50">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="400.569901" y="79.16" transform="rotate(-0 400.569901 79.16)">있음</text>
+   </g>
+   <g id="text_51">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="35.333537" y="103.184" transform="rotate(-0 35.333537 103.184)">있음</text>
+   </g>
+   <g id="text_52">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="71.857173" y="103.184" transform="rotate(-0 71.857173 103.184)">있음</text>
+   </g>
+   <g id="text_53">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="108.38081" y="103.184" transform="rotate(-0 108.38081 103.184)">있음</text>
+   </g>
+   <g id="text_54">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #8f2f0c" x="144.904446" y="103.184" transform="rotate(-0 144.904446 103.184)">없음</text>
+   </g>
+   <g id="text_55">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="181.428082" y="103.184" transform="rotate(-0 181.428082 103.184)">있음</text>
+   </g>
+   <g id="text_56">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="217.951719" y="103.184" transform="rotate(-0 217.951719 103.184)">있음</text>
+   </g>
+   <g id="text_57">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="254.475355" y="103.184" transform="rotate(-0 254.475355 103.184)">있음</text>
+   </g>
+   <g id="text_58">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="290.998991" y="103.184" transform="rotate(-0 290.998991 103.184)">있음</text>
+   </g>
+   <g id="text_59">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="327.522628" y="103.184" transform="rotate(-0 327.522628 103.184)">있음</text>
+   </g>
+   <g id="text_60">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="364.046264" y="103.184" transform="rotate(-0 364.046264 103.184)">있음</text>
+   </g>
+   <g id="text_61">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #8f2f0c" x="400.569901" y="103.184" transform="rotate(-0 400.569901 103.184)">없음</text>
+   </g>
+   <g id="text_62">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="35.333537" y="127.208" transform="rotate(-0 35.333537 127.208)">있음</text>
+   </g>
+   <g id="text_63">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="71.857173" y="127.208" transform="rotate(-0 71.857173 127.208)">있음</text>
+   </g>
+   <g id="text_64">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="108.38081" y="127.208" transform="rotate(-0 108.38081 127.208)">있음</text>
+   </g>
+   <g id="text_65">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="144.904446" y="127.208" transform="rotate(-0 144.904446 127.208)">있음</text>
+   </g>
+   <g id="text_66">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="181.428082" y="127.208" transform="rotate(-0 181.428082 127.208)">있음</text>
+   </g>
+   <g id="text_67">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="217.951719" y="127.208" transform="rotate(-0 217.951719 127.208)">있음</text>
+   </g>
+   <g id="text_68">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="254.475355" y="127.208" transform="rotate(-0 254.475355 127.208)">있음</text>
+   </g>
+   <g id="text_69">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="290.998991" y="127.208" transform="rotate(-0 290.998991 127.208)">있음</text>
+   </g>
+   <g id="text_70">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="327.522628" y="127.208" transform="rotate(-0 327.522628 127.208)">있음</text>
+   </g>
+   <g id="text_71">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="364.046264" y="127.208" transform="rotate(-0 364.046264 127.208)">있음</text>
+   </g>
+   <g id="text_72">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="400.569901" y="127.208" transform="rotate(-0 400.569901 127.208)">있음</text>
+   </g>
+   <g id="text_73">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="35.333537" y="151.232" transform="rotate(-0 35.333537 151.232)">있음</text>
+   </g>
+   <g id="text_74">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="71.857173" y="151.232" transform="rotate(-0 71.857173 151.232)">있음</text>
+   </g>
+   <g id="text_75">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="108.38081" y="151.232" transform="rotate(-0 108.38081 151.232)">있음</text>
+   </g>
+   <g id="text_76">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="144.904446" y="151.232" transform="rotate(-0 144.904446 151.232)">있음</text>
+   </g>
+   <g id="text_77">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="181.428082" y="151.232" transform="rotate(-0 181.428082 151.232)">있음</text>
+   </g>
+   <g id="text_78">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="217.951719" y="151.232" transform="rotate(-0 217.951719 151.232)">있음</text>
+   </g>
+   <g id="text_79">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="254.475355" y="151.232" transform="rotate(-0 254.475355 151.232)">있음</text>
+   </g>
+   <g id="text_80">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="290.998991" y="151.232" transform="rotate(-0 290.998991 151.232)">있음</text>
+   </g>
+   <g id="text_81">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="327.522628" y="151.232" transform="rotate(-0 327.522628 151.232)">있음</text>
+   </g>
+   <g id="text_82">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #8f2f0c" x="364.046264" y="151.232" transform="rotate(-0 364.046264 151.232)">없음</text>
+   </g>
+   <g id="text_83">
+    <text style="font-size: 8px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="400.569901" y="151.232" transform="rotate(-0 400.569901 151.232)">있음</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p5bacf6d184">
+   <rect x="17.071719" y="16.7" width="401.76" height="144.144"/>
+  </clipPath>
+ </defs>
+</svg>

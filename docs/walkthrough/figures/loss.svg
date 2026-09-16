@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="520.828791pt" height="124.56pt" viewBox="0 0 520.828791 124.56" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-09-17T07:04:08.754644</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 124.56 
+L 520.828791 124.56 
+L 520.828791 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 32.301563 94.26 
+L 107.070488 94.26 
+L 107.070488 19.7 
+L 32.301563 19.7 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1"/>
+     <g id="text_1">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="35.70015" y="104.06" transform="rotate(-0 35.70015 104.06)">1</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2"/>
+     <g id="text_2">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="67.897295" y="104.06" transform="rotate(-0 67.897295 104.06)">10</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3"/>
+     <g id="text_3">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="103.6719" y="104.06" transform="rotate(-0 103.6719 104.06)">20</text>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_4">
+      <path d="M 32.301563 94.26 
+L 107.070488 94.26 
+" clip-path="url(#pbbd52c247f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_5"/>
+     <g id="text_4">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="28.801563" y="97.41" transform="rotate(-0 28.801563 97.41)">0.0</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_6">
+      <path d="M 32.301563 77.784653 
+L 107.070488 77.784653 
+" clip-path="url(#pbbd52c247f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_7"/>
+     <g id="text_5">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="28.801563" y="80.934653" transform="rotate(-0 28.801563 80.934653)">0.2</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_8">
+      <path d="M 32.301563 61.309307 
+L 107.070488 61.309307 
+" clip-path="url(#pbbd52c247f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_9"/>
+     <g id="text_6">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="28.801563" y="64.459307" transform="rotate(-0 28.801563 64.459307)">0.4</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_10">
+      <path d="M 32.301563 44.83396 
+L 107.070488 44.83396 
+" clip-path="url(#pbbd52c247f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_11"/>
+     <g id="text_7">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="28.801563" y="47.98396" transform="rotate(-0 28.801563 47.98396)">0.6</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_12">
+      <path d="M 32.301563 28.358614 
+L 107.070488 28.358614 
+" clip-path="url(#pbbd52c247f)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_13"/>
+     <g id="text_8">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="28.801563" y="31.508614" transform="rotate(-0 28.801563 31.508614)">0.8</text>
+     </g>
+    </g>
+    <g id="text_9">
+     <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="11.7" y="56.98" transform="rotate(-90 11.7 56.98)">오차</text>
+    </g>
+   </g>
+   <g id="line2d_14">
+    <path d="M 35.70015 34.612 
+L 39.277611 34.683964 
+L 42.855071 34.763364 
+L 46.432532 35.048119 
+L 50.009992 35.197365 
+L 53.587453 35.586576 
+L 57.164913 35.74325 
+L 60.742374 35.819417 
+L 64.319834 36.196108 
+L 67.897295 36.440618 
+L 71.474755 36.969662 
+L 75.052216 37.437267 
+L 78.629676 38.615724 
+L 82.207137 39.518817 
+L 85.784597 40.662026 
+L 89.362058 43.778644 
+L 92.939519 47.772981 
+L 96.516979 50.120606 
+L 100.09444 56.471215 
+L 103.6719 57.67867 
+" clip-path="url(#pbbd52c247f)" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_15">
+    <defs>
+     <path id="m6d73b845cb" d="M 0 2 
+C 0.530406 2 1.03916 1.789267 1.414214 1.414214 
+C 1.789267 1.03916 2 0.530406 2 0 
+C 2 -0.530406 1.789267 -1.03916 1.414214 -1.414214 
+C 1.03916 -1.789267 0.530406 -2 0 -2 
+C -0.530406 -2 -1.03916 -1.789267 -1.414214 -1.414214 
+C -1.789267 -1.03916 -2 -0.530406 -2 0 
+C -2 0.530406 -1.789267 1.03916 -1.414214 1.414214 
+C -1.03916 1.789267 -0.530406 2 0 2 
+z
+" style="stroke: #2a78d6"/>
+    </defs>
+    <g clip-path="url(#pbbd52c247f)">
+     <use xlink:href="#m6d73b845cb" x="103.6719" y="57.67867" style="fill: #2a78d6; stroke: #2a78d6"/>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 32.301563 94.26 
+L 32.301563 19.7 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 32.301563 94.26 
+L 107.070488 94.26 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 7.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="105.575109" y="30.178" transform="rotate(-0 105.575109 30.178)">0.72 → 0.44</text>
+   </g>
+   <g id="text_11">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="32.301563" y="11.7" transform="rotate(-0 32.301563 11.7)">전극 그림</text>
+   </g>
+  </g>
+  <g id="axes_2">
+   <g id="patch_5">
+    <path d="M 134.677562 94.26 
+L 209.446488 94.26 
+L 209.446488 19.7 
+L 134.677562 19.7 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_3">
+    <g id="xtick_4">
+     <g id="line2d_16"/>
+     <g id="text_12">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="138.07615" y="104.06" transform="rotate(-0 138.07615 104.06)">1</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_17"/>
+     <g id="text_13">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="170.273295" y="104.06" transform="rotate(-0 170.273295 104.06)">10</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_18"/>
+     <g id="text_14">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="206.0479" y="104.06" transform="rotate(-0 206.0479 104.06)">20</text>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_4">
+    <g id="ytick_6">
+     <g id="line2d_19">
+      <path d="M 134.677562 94.26 
+L 209.446488 94.26 
+" clip-path="url(#pff3fa663da)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_20"/>
+     <g id="text_15">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="131.177562" y="97.41" transform="rotate(-0 131.177562 97.41)">0.0</text>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_21">
+      <path d="M 134.677562 68.417703 
+L 209.446488 68.417703 
+" clip-path="url(#pff3fa663da)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_22"/>
+     <g id="text_16">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="131.177562" y="71.567703" transform="rotate(-0 131.177562 71.567703)">0.1</text>
+     </g>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_23">
+      <path d="M 134.677562 42.575406 
+L 209.446488 42.575406 
+" clip-path="url(#pff3fa663da)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_24"/>
+     <g id="text_17">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="131.177562" y="45.725406" transform="rotate(-0 131.177562 45.725406)">0.2</text>
+     </g>
+    </g>
+   </g>
+   <g id="line2d_25">
+    <path d="M 138.07615 35.283532 
+L 141.653611 34.612 
+L 145.231071 36.814986 
+L 148.808532 36.790718 
+L 152.385992 37.7633 
+L 155.963453 39.541666 
+L 159.540913 38.279098 
+L 163.118374 40.147419 
+L 166.695834 42.98715 
+L 170.273295 45.701234 
+L 173.850755 49.503782 
+L 177.428216 54.08925 
+L 181.005676 60.393071 
+L 184.583137 67.197274 
+L 188.160597 73.545314 
+L 191.738058 79.243083 
+L 195.315519 83.385432 
+L 198.892979 87.099258 
+L 202.47044 86.95086 
+L 206.0479 87.573885 
+" clip-path="url(#pff3fa663da)" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_26">
+    <g clip-path="url(#pff3fa663da)">
+     <use xlink:href="#m6d73b845cb" x="206.0479" y="87.573885" style="fill: #2a78d6; stroke: #2a78d6"/>
+    </g>
+   </g>
+   <g id="patch_6">
+    <path d="M 134.677562 94.26 
+L 134.677562 19.7 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 134.677562 94.26 
+L 209.446488 94.26 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 7.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="207.951109" y="30.178" transform="rotate(-0 207.951109 30.178)">0.23 → 0.03</text>
+   </g>
+   <g id="text_19">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="134.677562" y="11.7" transform="rotate(-0 134.677562 11.7)">hotspot</text>
+   </g>
+  </g>
+  <g id="axes_3">
+   <g id="patch_8">
+    <path d="M 237.053563 94.26 
+L 311.822488 94.26 
+L 311.822488 19.7 
+L 237.053563 19.7 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_5">
+    <g id="xtick_7">
+     <g id="line2d_27"/>
+     <g id="text_20">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="240.45215" y="104.06" transform="rotate(-0 240.45215 104.06)">1</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_28"/>
+     <g id="text_21">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="272.649295" y="104.06" transform="rotate(-0 272.649295 104.06)">10</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_29"/>
+     <g id="text_22">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="308.4239" y="104.06" transform="rotate(-0 308.4239 104.06)">20</text>
+     </g>
+    </g>
+    <g id="text_23">
+     <text style="font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="274.438025" y="118.26" transform="rotate(-0 274.438025 118.26)">학습 반복 횟수(epoch)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_6">
+    <g id="ytick_9">
+     <g id="line2d_30">
+      <path d="M 237.053563 94.26 
+L 311.822488 94.26 
+" clip-path="url(#p50be2ae774)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_31"/>
+     <g id="text_24">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="233.553563" y="97.41" transform="rotate(-0 233.553563 97.41)">0.0</text>
+     </g>
+    </g>
+    <g id="ytick_10">
+     <g id="line2d_32">
+      <path d="M 237.053563 76.047778 
+L 311.822488 76.047778 
+" clip-path="url(#p50be2ae774)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_33"/>
+     <g id="text_25">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="233.553563" y="79.197778" transform="rotate(-0 233.553563 79.197778)">0.5</text>
+     </g>
+    </g>
+    <g id="ytick_11">
+     <g id="line2d_34">
+      <path d="M 237.053563 57.835557 
+L 311.822488 57.835557 
+" clip-path="url(#p50be2ae774)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_35"/>
+     <g id="text_26">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="233.553563" y="60.985557" transform="rotate(-0 233.553563 60.985557)">1.0</text>
+     </g>
+    </g>
+    <g id="ytick_12">
+     <g id="line2d_36">
+      <path d="M 237.053563 39.623335 
+L 311.822488 39.623335 
+" clip-path="url(#p50be2ae774)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_37"/>
+     <g id="text_27">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="233.553563" y="42.773335" transform="rotate(-0 233.553563 42.773335)">1.5</text>
+     </g>
+    </g>
+    <g id="ytick_13">
+     <g id="line2d_38">
+      <path d="M 237.053563 21.411113 
+L 311.822488 21.411113 
+" clip-path="url(#p50be2ae774)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_39"/>
+     <g id="text_28">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="233.553563" y="24.561113" transform="rotate(-0 233.553563 24.561113)">2.0</text>
+     </g>
+    </g>
+   </g>
+   <g id="line2d_40">
+    <path d="M 240.45215 57.104097 
+L 244.029611 34.612 
+L 247.607071 54.661695 
+L 251.184532 57.011054 
+L 254.761992 56.805503 
+L 258.339453 60.201651 
+L 261.916913 42.053466 
+L 265.494374 58.61398 
+L 269.071834 59.040986 
+L 272.649295 52.623389 
+L 276.226755 51.026689 
+L 279.804216 54.491302 
+L 283.381676 65.090252 
+L 286.959137 45.085427 
+L 290.536597 73.365558 
+L 294.114058 62.211348 
+L 297.691519 61.701122 
+L 301.268979 68.089409 
+L 304.84644 66.469779 
+L 308.4239 59.108517 
+" clip-path="url(#p50be2ae774)" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_41">
+    <g clip-path="url(#p50be2ae774)">
+     <use xlink:href="#m6d73b845cb" x="308.4239" y="59.108517" style="fill: #2a78d6; stroke: #2a78d6"/>
+    </g>
+   </g>
+   <g id="patch_9">
+    <path d="M 237.053563 94.26 
+L 237.053563 19.7 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 237.053563 94.26 
+L 311.822488 94.26 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_29">
+    <text style="font-size: 7.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="310.327109" y="30.178" transform="rotate(-0 310.327109 30.178)">1.02 → 0.97</text>
+   </g>
+   <g id="text_30">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="237.053563" y="11.7" transform="rotate(-0 237.053563 11.7)">CA 곡선</text>
+   </g>
+  </g>
+  <g id="axes_4">
+   <g id="patch_11">
+    <path d="M 339.429563 94.26 
+L 414.198488 94.26 
+L 414.198488 19.7 
+L 339.429563 19.7 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_7">
+    <g id="xtick_10">
+     <g id="line2d_42"/>
+     <g id="text_31">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="342.82815" y="104.06" transform="rotate(-0 342.82815 104.06)">1</text>
+     </g>
+    </g>
+    <g id="xtick_11">
+     <g id="line2d_43"/>
+     <g id="text_32">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="375.025295" y="104.06" transform="rotate(-0 375.025295 104.06)">10</text>
+     </g>
+    </g>
+    <g id="xtick_12">
+     <g id="line2d_44"/>
+     <g id="text_33">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="410.7999" y="104.06" transform="rotate(-0 410.7999 104.06)">20</text>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_8">
+    <g id="ytick_14">
+     <g id="line2d_45">
+      <path d="M 339.429563 94.26 
+L 414.198488 94.26 
+" clip-path="url(#p7e1a39f04e)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_46"/>
+     <g id="text_34">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="335.929563" y="97.41" transform="rotate(-0 335.929563 97.41)">0.0</text>
+     </g>
+    </g>
+    <g id="ytick_15">
+     <g id="line2d_47">
+      <path d="M 339.429563 78.438175 
+L 414.198488 78.438175 
+" clip-path="url(#p7e1a39f04e)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_48"/>
+     <g id="text_35">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="335.929563" y="81.588175" transform="rotate(-0 335.929563 81.588175)">0.2</text>
+     </g>
+    </g>
+    <g id="ytick_16">
+     <g id="line2d_49">
+      <path d="M 339.429563 62.616351 
+L 414.198488 62.616351 
+" clip-path="url(#p7e1a39f04e)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_50"/>
+     <g id="text_36">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="335.929563" y="65.766351" transform="rotate(-0 335.929563 65.766351)">0.4</text>
+     </g>
+    </g>
+    <g id="ytick_17">
+     <g id="line2d_51">
+      <path d="M 339.429563 46.794526 
+L 414.198488 46.794526 
+" clip-path="url(#p7e1a39f04e)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_52"/>
+     <g id="text_37">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="335.929563" y="49.944526" transform="rotate(-0 335.929563 49.944526)">0.6</text>
+     </g>
+    </g>
+    <g id="ytick_18">
+     <g id="line2d_53">
+      <path d="M 339.429563 30.972702 
+L 414.198488 30.972702 
+" clip-path="url(#p7e1a39f04e)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_54"/>
+     <g id="text_38">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="335.929563" y="34.122702" transform="rotate(-0 335.929563 34.122702)">0.8</text>
+     </g>
+    </g>
+   </g>
+   <g id="line2d_55">
+    <path d="M 342.82815 59.528689 
+L 346.405611 34.612 
+L 349.983071 52.782836 
+L 353.560532 45.401678 
+L 357.137992 54.945311 
+L 360.715453 62.305174 
+L 364.292913 39.401142 
+L 367.870374 50.529873 
+L 371.447834 41.316883 
+L 375.025295 59.034741 
+L 378.602755 35.375965 
+L 382.180216 67.706652 
+L 385.757676 67.144566 
+L 389.335137 36.138089 
+L 392.912597 76.534493 
+L 396.490058 57.330021 
+L 400.067519 75.495798 
+L 403.644979 62.071298 
+L 407.22244 67.440488 
+L 410.7999 70.463664 
+" clip-path="url(#p7e1a39f04e)" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_56">
+    <g clip-path="url(#p7e1a39f04e)">
+     <use xlink:href="#m6d73b845cb" x="410.7999" y="70.463664" style="fill: #2a78d6; stroke: #2a78d6"/>
+    </g>
+   </g>
+   <g id="patch_12">
+    <path d="M 339.429563 94.26 
+L 339.429563 19.7 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_13">
+    <path d="M 339.429563 94.26 
+L 414.198488 94.26 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_39">
+    <text style="font-size: 7.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="412.703109" y="30.178" transform="rotate(-0 412.703109 30.178)">0.44 → 0.30</text>
+   </g>
+   <g id="text_40">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="339.429563" y="11.7" transform="rotate(-0 339.429563 11.7)">Fab 분포</text>
+   </g>
+  </g>
+  <g id="axes_5">
+   <g id="patch_14">
+    <path d="M 441.805563 94.26 
+L 516.574488 94.26 
+L 516.574488 19.7 
+L 441.805563 19.7 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_9">
+    <g id="xtick_13">
+     <g id="line2d_57"/>
+     <g id="text_41">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="445.20415" y="104.06" transform="rotate(-0 445.20415 104.06)">1</text>
+     </g>
+    </g>
+    <g id="xtick_14">
+     <g id="line2d_58"/>
+     <g id="text_42">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="477.401295" y="104.06" transform="rotate(-0 477.401295 104.06)">10</text>
+     </g>
+    </g>
+    <g id="xtick_15">
+     <g id="line2d_59"/>
+     <g id="text_43">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: middle; fill: #52514e" x="513.1759" y="104.06" transform="rotate(-0 513.1759 104.06)">20</text>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_10">
+    <g id="ytick_19">
+     <g id="line2d_60">
+      <path d="M 441.805563 94.26 
+L 516.574488 94.26 
+" clip-path="url(#pc21fa3ab13)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_61"/>
+     <g id="text_44">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="438.305563" y="97.41" transform="rotate(-0 438.305563 97.41)">0.00</text>
+     </g>
+    </g>
+    <g id="ytick_20">
+     <g id="line2d_62">
+      <path d="M 441.805563 77.854681 
+L 516.574488 77.854681 
+" clip-path="url(#pc21fa3ab13)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_63"/>
+     <g id="text_45">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="438.305563" y="81.004681" transform="rotate(-0 438.305563 81.004681)">0.25</text>
+     </g>
+    </g>
+    <g id="ytick_21">
+     <g id="line2d_64">
+      <path d="M 441.805563 61.449362 
+L 516.574488 61.449362 
+" clip-path="url(#pc21fa3ab13)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_65"/>
+     <g id="text_46">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="438.305563" y="64.599362" transform="rotate(-0 438.305563 64.599362)">0.50</text>
+     </g>
+    </g>
+    <g id="ytick_22">
+     <g id="line2d_66">
+      <path d="M 441.805563 45.044043 
+L 516.574488 45.044043 
+" clip-path="url(#pc21fa3ab13)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_67"/>
+     <g id="text_47">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="438.305563" y="48.194043" transform="rotate(-0 438.305563 48.194043)">0.75</text>
+     </g>
+    </g>
+    <g id="ytick_23">
+     <g id="line2d_68">
+      <path d="M 441.805563 28.638724 
+L 516.574488 28.638724 
+" clip-path="url(#pc21fa3ab13)" style="fill: none; stroke: #e8e7e2; stroke-width: 0.6; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_69"/>
+     <g id="text_48">
+      <text style="font-size: 7px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="438.305563" y="31.788724" transform="rotate(-0 438.305563 31.788724)">1.00</text>
+     </g>
+    </g>
+   </g>
+   <g id="line2d_70">
+    <path d="M 445.20415 34.612 
+L 448.781611 45.844986 
+L 452.359071 38.972587 
+L 455.936532 41.573554 
+L 459.513992 46.9883 
+L 463.091453 44.6485 
+L 466.668913 47.220764 
+L 470.246374 41.627212 
+L 473.823834 47.269382 
+L 477.401295 50.298232 
+L 480.978755 40.010936 
+L 484.556216 46.255809 
+L 488.133676 43.694393 
+L 491.711137 46.243262 
+L 495.288597 48.413114 
+L 498.866058 42.99946 
+L 502.443519 48.633191 
+L 506.020979 48.792776 
+L 509.59844 58.925994 
+L 513.1759 50.112418 
+" clip-path="url(#pc21fa3ab13)" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_71">
+    <g clip-path="url(#pc21fa3ab13)">
+     <use xlink:href="#m6d73b845cb" x="513.1759" y="50.112418" style="fill: #2a78d6; stroke: #2a78d6"/>
+    </g>
+   </g>
+   <g id="patch_15">
+    <path d="M 441.805563 94.26 
+L 441.805563 19.7 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_16">
+    <path d="M 441.805563 94.26 
+L 516.574488 94.26 
+" style="fill: none; stroke: #e8e7e2; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_49">
+    <text style="font-size: 7.5px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: end; fill: #52514e" x="515.079109" y="30.178" transform="rotate(-0 515.079109 30.178)">0.91 → 0.67</text>
+   </g>
+   <g id="text_50">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Apple SD Gothic Neo', 'AppleGothic', 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="441.805563" y="11.7" transform="rotate(-0 441.805563 11.7)">형상 수치</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pbbd52c247f">
+   <rect x="32.301563" y="19.7" width="74.768925" height="74.56"/>
+  </clipPath>
+  <clipPath id="pff3fa663da">
+   <rect x="134.677562" y="19.7" width="74.768925" height="74.56"/>
+  </clipPath>
+  <clipPath id="p50be2ae774">
+   <rect x="237.053563" y="19.7" width="74.768925" height="74.56"/>
+  </clipPath>
+  <clipPath id="p7e1a39f04e">
+   <rect x="339.429563" y="19.7" width="74.768925" height="74.56"/>
+  </clipPath>
+  <clipPath id="pc21fa3ab13">
+   <rect x="441.805563" y="19.7" width="74.768925" height="74.56"/>
+  </clipPath>
+ </defs>
+</svg>
