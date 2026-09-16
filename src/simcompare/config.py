@@ -258,7 +258,7 @@ def _check_legend(legend: dict, path: str) -> None:
     """Legend = {legend_id: str, entries: [{rgb: [r, g, b], value: number}], tolerance: int}."""
     unknown = set(legend) - {"legend_id", "entries", "tolerance"}
     if unknown:
-        raise ConfigError(f"unknown key '{path}.{sorted(unknown)[0]}'")
+        raise ConfigError(f"unknown key '{path}.{sorted(map(str, unknown))[0]}'")
     if not isinstance(legend.get("legend_id"), str) or not legend["legend_id"].strip():
         raise ConfigError(f"{path}.legend_id: required non-empty str")
     entries = legend.get("entries")

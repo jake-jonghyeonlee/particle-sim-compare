@@ -84,3 +84,12 @@ def test_legend_conversion_errors_are_contract_errors(tmp_path):
     config_from_dict(raw)
     arr, semantics, legend_id = read_image(path, kind="hotspot", legend=ok)
     assert semantics == "probability" and legend_id == "L" and np.allclose(arr, 0.5)
+
+
+def test_legend_mixed_type_unknown_keys_are_config_errors():
+    raw = copy.deepcopy(DEMO)
+    raw["data"]["hotspot_legend"] = {
+        "legend_id": "L", "entries": [{"rgb": [255, 0, 0], "value": 1.0}], "x": 1, 7: 2,
+    }
+    with pytest.raises(ConfigError):
+        config_from_dict(raw)
