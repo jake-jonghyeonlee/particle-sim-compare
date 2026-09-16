@@ -1,0 +1,37 @@
+# DEMO configuration for synthetic data only. Synthetic CA/hotspot values are not
+# physical simulation results and the CAA rule below is an illustrative demo rule.
+mode: demo
+output_dir: ../outputs/demo
+data:
+  data_dir: ../demo_data
+  ca_grid: [1, 2, 4, 8, 16]
+  hotspot_sizes: [2, 4, 8]
+  fab_grid: [1, 2, 4, 8, 16]
+  image_size: [64, 64]
+  ca_alignment: exact
+caa:
+  rule: demo_probability_per_bin
+  confirmed: false
+  reference_distribution_id: REF_FLAT
+  require_full_coverage: false
+model:
+  enabled_inputs: [layout, hotspot, ca, fab, geometry]
+  conv_channels: [8, 16, 32]
+  modality_dim: 16
+  latent_dim: 32
+train:
+  epochs: 20
+  batch_size: 8
+  lr: 0.001
+  seed: 0
+  device: cpu
+  balance_products: true
+split:
+  test_fraction: 0.25
+  seed: 0
+analysis:
+  k_neighbors: 3
+  n_clusters: 4
+  layer_policy: exact
+  other_products_only: true
+  loo_top_k: 3
