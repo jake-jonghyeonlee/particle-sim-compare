@@ -58,7 +58,7 @@ def _components(meta: pd.DataFrame) -> list[list[int]]:
     def link_by(column: str) -> None:
         seen: dict = {}
         for pos in range(n):
-            key = meta.at[pos, column]
+            key = meta.iloc[pos][column]
             if isinstance(key, pd.Series):  # pragma: no cover - defensive
                 key = key.iloc[0]
             if key is None or (isinstance(key, float) and math.isnan(key)):
@@ -86,8 +86,9 @@ def group_ids(meta: pd.DataFrame) -> np.ndarray:
     if n == 0:
         return labels
 
+    lineage = meta["design_lineage_id"].to_numpy()
     for comp in _components(meta):
-        label = min(str(meta.at[pos, "design_lineage_id"]) for pos in comp)
+        label = min(str(lineage[pos]) for pos in comp)
         for pos in comp:
             labels[pos] = label
     return labels
@@ -112,9 +113,9 @@ def group_split(
     at least one component in train.
     """
     n = len(meta)
-    comps = _components(meta)
     if n == 0:
-        return np.array([], dtype=int), np.array([], dtype=int)
+        raise ValueError("cannot split: fewer than 2 independent groups")
+    comps = _components(meta)
 
     if test_groups:
         wanted = set(str(g) for g in test_groups)
@@ -124,11 +125,13 @@ def group_split(
         if unknown:
             raise ValueError(f"unknown test_groups: {sorted(unknown)}")
 
+        product_arr = meta["product_id"].to_numpy()
+        lineage_arr = meta["design_lineage_id"].to_numpy()
         test_comp = set()
         for comp in comps:
             for pos in comp:
-                if str(meta.at[pos, "product_id"]) in wanted or str(
-                    meta.at[pos, "design_lineage_id"]
+                if str(product_arr[pos]) in wanted or str(
+                    lineage_arr[pos]
                 ) in wanted:
                     test_comp.add(id(comp))
                     break
@@ -148,7 +151,10 @@ def group_split(
     if len(comps) < 2:
         raise ValueError("cannot split: fewer than 2 independent groups")
 
-    order = sorted(comps, key=lambda c: min(str(meta.at[p, "design_lineage_id"]) for p in c))
+    lineage_arr = meta["design_lineage_id"].to_numpy()
+    order = sorted(
+        comps, key=lambda c: min(str(lineage_arr[p]) for p in c)
+    )
     rng = np.random.default_rng(seed)
     perm = rng.permutation(len(order))
     shuffled = [order[i] for i in perm]
@@ -186,10 +192,9 @@ def assert_no_leakage(
         raise LeakageError("train and test positions overlap")
 
     for column in ("product_id", "design_lineage_id"):
-        train_vals = {
-            str(meta.at[p, column]) for p in train_set
-        }
-        test_vals = {str(meta.at[p, column]) for p in test_set}
+        col = meta[column].to_numpy()
+        train_vals = {str(col[p]) for p in train_set}
+        test_vals = {str(col[p]) for p in test_set}
         overlap = train_vals & test_vals
         if overlap:
             raise LeakageError(
@@ -210,12 +215,13 @@ def leave_one_group_out(meta: pd.DataFrame, column: str) -> list[dict]:
         for pos in comp:
             comp_of_pos[pos] = idx
 
+    col = meta[column].to_numpy()
     results: list[dict] = []
-    for v in sorted(set(str(x) for x in meta[column])):
+    for v in sorted(set(str(x) for x in col)):
         target_comps = {
             comp_of_pos[pos]
             for pos in range(n)
-            if str(meta.at[pos, column]) == v
+            if str(col[pos]) == v
         }
         test_pos = sorted(
             pos for idx, comp in enumerate(comps) if idx in target_comps for pos in comp
@@ -300,13 +306,14 @@ def product_balance_weights(meta: pd.DataFrame, train_pos: np.ndarray) -> np.nda
     if train_pos.size == 0:
         return np.array([], dtype=float)
 
+    product_arr = meta["product_id"].to_numpy()
     counts: dict = {}
     for pos in train_pos:
-        key = str(meta.at[pos, "product_id"])
+        key = str(product_arr[pos])
         counts[key] = counts.get(key, 0) + 1
 
     weights = np.array(
-        [1.0 / counts[str(meta.at[pos, "product_id"])] for pos in train_pos],
+        [1.0 / counts[str(product_arr[pos])] for pos in train_pos],
         dtype=float,
     )
     total = weights.sum()
