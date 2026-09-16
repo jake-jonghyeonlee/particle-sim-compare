@@ -159,10 +159,13 @@ def save_checkpoint(path, model: MultiInputAE, model_cfg: ModelConfig, normalize
 
 def load_checkpoint(path, device: str = "cpu"):
     """weights_only 모드로 체크포인트를 읽어 평가 모드의 모델과 설정·정규화 통계·추적 정보를 반환한다."""
-    payload = torch.load(path, map_location=select_device(device), weights_only=True)
+    dev = select_device(device)
+    # 체크포인트는 CPU 텐서로 저장한다. 먼저 CPU에서 복원한 뒤 모델 전체를 요청 장치로
+    # 옮겨야 evaluate처럼 곧바로 모델을 호출하는 경로에서도 입력과 가중치 장치가 일치한다.
+    payload = torch.load(path, map_location="cpu", weights_only=True)
     model_cfg = ModelConfig.from_dict(payload["model_config"])
     model = MultiInputAE(model_cfg)
     model.load_state_dict(payload["state_dict"])
-    model.eval()
+    model.to(dev).eval()
     normalizers = {k: Normalizer.from_dict(v) for k, v in payload["normalizers"].items()}
     return model, model_cfg, normalizers, payload["extra"]

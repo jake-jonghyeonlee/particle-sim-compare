@@ -69,3 +69,25 @@ def test_modality_ablation_configs_train(arrays_meta):
         z = embed(model, arrays)
         assert z["z"].shape[0] == len(meta)
         assert (z["z_fab"] is None) == ("fab" not in enabled)
+
+
+def test_checkpoint_model_is_loaded_on_requested_accelerator(arrays_meta, tmp_path):
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        pytest.skip("사용 가능한 CUDA/MPS 가속기가 없습니다")
+
+    arrays, meta, train = arrays_meta
+    cfg = cfg_for(arrays)
+    model, _ = train_model(
+        arrays, meta, train, cfg, epochs=1, batch_size=8, lr=1e-3, seed=0, device=device
+    )
+    from simcompare.preprocess import Normalizer
+
+    norms = {"ca": Normalizer(np.zeros(5), np.ones(5))}
+    path = tmp_path / "accelerator.pt"
+    save_checkpoint(path, model, cfg, norms, {"device": device})
+    loaded, _, _, _ = load_checkpoint(path, device)
+    assert next(loaded.parameters()).device.type == device
