@@ -13,7 +13,7 @@ from simcompare.caa import CAAError, compute_caa, interpret_fab, select_distribu
 from simcompare.preprocess import align_curve
 from simcompare.retrieval import layer_key, role_key, search_all
 
-CLUSTER_NOTE = "cluster ids are arbitrary labels without physical meaning"
+CLUSTER_NOTE = "군집 번호는 임의의 라벨이며 물리적 의미가 없습니다"
 
 
 def cluster_embeddings(emb: np.ndarray, train_pos, n_clusters: int, seed: int) -> dict:
@@ -40,7 +40,7 @@ def _caa(bundle, dist_or_error, cfg) -> tuple[float, str, bool | None]:
     if isinstance(dist_or_error, str):
         return np.nan, dist_or_error, None
     if bundle.ca is None:
-        return np.nan, "no CA curve", None
+        return np.nan, "CA 곡선 없음", None
     try:
         weights = interpret_fab(dist_or_error, cfg.caa.rule, mode=cfg.mode, confirmed=cfg.caa.confirmed)
         result = compute_caa(bundle.ca, weights, require_full_coverage=cfg.caa.require_full_coverage)
@@ -88,9 +88,9 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             actual = str(exc)
         row["caa_actual"], row["caa_actual_reason"], demo_a = _caa(bundle, actual, cfg)
         if ref_id is None:
-            reference = "no reference distribution configured"
+            reference = "기준 분포가 설정되지 않았습니다"
         elif ref_id not in distributions:
-            reference = f"reference distribution {ref_id!r} not found"
+            reference = f"기준 분포 {ref_id!r}을(를) 찾을 수 없습니다"
         else:
             reference = distributions[ref_id]
         row["caa_reference"], row["caa_reference_reason"], demo_r = _caa(bundle, reference, cfg)

@@ -12,6 +12,6 @@ argparse program "simcompare" with subcommands; `main(argv: list[str] | None = N
 - `all --config PATH [--demo-out DIR]` runs validate-data, train, embed, analyze,
   evaluate in order (demo-data first when --demo-out given and mode is demo).
 Config commands print the returned dict as JSON to stdout. DataContractError /
-ConfigError / FileNotFoundError -> message to stderr prefixed "error: ", exit 2.
+ConfigError / FileNotFoundError -> message to stderr prefixed "오류: ", exit 2.
 In mode "demo" every command prints a one-line stderr notice:
-"DEMO mode: synthetic/illustrative settings; results are not research evidence".
+"DEMO 모드: 합성/예시 설정이며 결과는 연구 근거가 아닙니다".

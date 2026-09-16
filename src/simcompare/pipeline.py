@@ -26,6 +26,7 @@ from simcompare.config import config_to_dict
 from simcompare.dataset import encode_bundles, fit_normalizers, to_model_arrays
 from simcompare.losses import LOSS_KINDS, masked_losses
 from simcompare.retrieval import search_all
+from simcompare.schema import DataContractError
 from simcompare.split import (
     assert_no_leakage, confounding_report, group_ids, group_split, leave_one_group_out,
 )
@@ -34,8 +35,8 @@ from simcompare.train import (
     train_model,
 )
 
-SYNTHETIC_NOTE = "Synthetic/demo results only verify that the code runs; they are not research evidence."
-RECON_NOTE = "Reconstruction error does not guarantee interpretation or retrieval quality."
+SYNTHETIC_NOTE = "합성/demo 결과는 코드 동작 확인용이며 연구 근거가 아닙니다."
+RECON_NOTE = "복원 오차는 해석이나 검색 품질을 보장하지 않습니다."
 RISK_SPACES = ("with_risk_baseline", "with_risk_ae")
 
 
@@ -73,10 +74,14 @@ def prepare(cfg):
 
 
 def make_split(cfg, enc):
-    train_pos, test_pos = group_split(
-        enc.meta, test_fraction=cfg.split.test_fraction, seed=cfg.split.seed,
-        test_groups=tuple(cfg.split.test_groups),
-    )
+    try:
+        train_pos, test_pos = group_split(
+            enc.meta, test_fraction=cfg.split.test_fraction, seed=cfg.split.seed,
+            test_groups=tuple(cfg.split.test_groups),
+        )
+    except ValueError as exc:
+        # Too few independent groups or bad test_groups is a data/config problem.
+        raise DataContractError(f"학습/평가 분리 실패: {exc}") from None
     assert_no_leakage(enc.meta, train_pos, test_pos)
     return train_pos, test_pos
 
@@ -133,7 +138,7 @@ def run_train(cfg) -> dict:
     pd.DataFrame(history).to_csv(out / "train_history.csv", index=False)
     groups = group_ids(enc.meta)
     _write_json(out / "split.json", {
-        "group_by": "connected components of product_id and design_lineage_id",
+        "group_by": "product_id와 design_lineage_id로 연결된 그룹 단위 분리",
         "train": [{"sample_id": ids.iloc[i], "group": groups[i]} for i in train_pos],
         "test": [{"sample_id": ids.iloc[i], "group": groups[i]} for i in test_pos],
     })
@@ -151,7 +156,7 @@ def run_train(cfg) -> dict:
 def _load_trained(cfg):
     path = Path(cfg.output_dir) / "model.pt"
     if not path.exists():
-        raise FileNotFoundError(f"{path} not found; run 'simcompare train' first")
+        raise FileNotFoundError(f"{path}이(가) 없습니다. 먼저 'simcompare train'을 실행하세요")
     return load_checkpoint(path, cfg.train.device)
 
 
@@ -159,7 +164,7 @@ def _positions(enc, sample_ids) -> np.ndarray:
     lookup = {sid: i for i, sid in enumerate(enc.meta["sample_id"])}
     missing = [s for s in sample_ids if s not in lookup]
     if missing:
-        raise FileNotFoundError(f"checkpoint samples not in current data (retrain needed): {missing[:5]}")
+        raise FileNotFoundError(f"체크포인트의 샘플이 현재 데이터에 없습니다(재학습 필요): {missing[:5]}")
     return np.array(sorted(lookup[s] for s in sample_ids), dtype=int)
 
 
@@ -225,7 +230,7 @@ def _scatter_png(path: Path, emb: np.ndarray, labels: np.ndarray, train_mask: np
         color = palette[int(label) % len(palette)]
         box = [x - 5, size - y - 5, x + 5, size - y + 5]
         draw.ellipse(box, fill=color if is_train else None, outline=color, width=2)
-    draw.text((8, 8), "with_risk_ae PC1/PC2; filled=train, ring=test; cluster ids arbitrary", fill="black")
+    draw.text((8, 8), "with_risk_ae PC1/PC2", fill="black")  # Pillow default font has no Hangul glyphs
     img.save(path)
 
 
@@ -281,7 +286,7 @@ def run_analyze(cfg) -> dict:
     features.to_csv(out / "shape_features.csv", index=False)
     cards = build_review_cards(ranked, neighbors, cluster_json, features)
     _write_json(out / "review_cards.json", {
-        "note": "Evidence summaries for expert review; not automatic factor judgements.",
+        "note": "전문가 검토용 근거 요약이며 중요 인자 자동 판정이 아닙니다.",
         "synthetic": any(b.provenance.is_synthetic for b in loaded.bundles),
         "cards": cards,
     })
@@ -341,7 +346,7 @@ def run_evaluate(cfg) -> dict:
     }
     for name, modalities in variants.items():
         if not modalities:
-            ablations[name] = {"status": "skipped: no enabled modality in this group"}
+            ablations[name] = {"status": "건너뜀: 이 구성에 활성화된 입력이 없습니다"}
             continue
         variant_norms = fit_normalizers(enc, train_pos)
         variant_arrays = to_model_arrays(enc, variant_norms)
@@ -359,11 +364,11 @@ def run_evaluate(cfg) -> dict:
     for column, other in (("fab_id", "product_family"), ("product_family", "fab_id")):
         report = confounding_report(enc.meta, column, other)
         if report["status"] == "insufficient_groups":
-            verdict = "not evaluable: fewer than 2 groups"
+            verdict = "평가 불가: 그룹이 2개 미만입니다"
         elif report["status"] == "fully_confounded":
-            verdict = f"effects not separable: {column} and {other} fully confounded"
+            verdict = f"효과 분리 불가: {column}와 {other}가 완전히 겹칩니다"
         else:
-            verdict = f"evaluable with caution ({report['status']})"
+            verdict = f"주의해서 평가 가능 ({report['status']})"
         folds = []
         for fold in leave_one_group_out(enc.meta, column):
             if fold["status"] != "ok" or len(fold["train_pos"]) < 2:
@@ -380,7 +385,7 @@ def run_evaluate(cfg) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "synthetic": any(b.provenance.is_synthetic for b in loaded.bundles),
         "notes": [SYNTHETIC_NOTE, RECON_NOTE,
-                  "with_risk spaces reuse CA/hotspot inputs; similarity there is not an independent finding"],
+                  "with_risk 공간은 CA·hotspot 입력을 재사용하므로 그 유사성은 독립적인 발견이 아닙니다"],
         "split": {"n_train": len(train_pos), "n_test": len(test_pos), "leakage_check": "passed",
                   "n_groups": int(len(set(group_ids(enc.meta))))},
         "trained_model_test_losses": _test_losses(model, arrays, test_pos, cfg.train.device),

@@ -68,15 +68,15 @@ def run_checks(loaded, enc, cfg) -> dict:
         "missing_inputs": missing,
         "physical_scale": {
             "missing_sample_ids": sorted(meta.loc[~meta["has_physical_scale"].astype(bool), "sample_id"]),
-            "message": "physical length comparison impossible for these samples; only pixel-relative comparison",
+            "message": "이 샘플들은 실제 크기 정보가 없어 물리 길이 비교가 불가능하며 픽셀 상대 비교만 가능합니다",
         },
         "hotspot_layout_overlap": {
             "items": overlap,
             "n_flagged": sum(item["flagged"] for item in overlap),
             "threshold": OVERLAP_THRESHOLD,
             "message": (
-                "processed hotspot images can duplicate layout content; image features may double "
-                "count geometry"
+                "가공 hotspot 이미지는 layout 내용과 겹칠 수 있어 이미지 특징이 "
+                "형상을 이중으로 반영할 수 있습니다"
             ),
         },
         "confounding": confounding_report(meta, "fab_id", "product_family"),

@@ -25,6 +25,9 @@ Hard rules for all code:
 - Color->probability conversion only with an explicit legend.
 - Latent/attention values are never turned into importance or causal scores.
 - Clusters ids have no physical meaning.
+- User-facing text (errors, warnings, notes, disclaimers, CLI help) is Korean. Quoted English
+  message texts in docs/arch describe the meaning; the implemented wording is Korean.
+  JSON keys, CSV columns, enum values and identifiers stay English.
 - Errors: raise schema.DataContractError (or a documented subclass) with a clear message.
 - Tests use pytest, small synthetic arrays, run in seconds on CPU, no network.
 

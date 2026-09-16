@@ -46,7 +46,7 @@ def candidate_mask(
     """Boolean mask of candidate rows for the query at *query_pos* (iloc)."""
     if layer_policy not in ("exact", "ignore"):
         raise ValueError(
-            f"layer_policy must be 'exact' or 'ignore', got {layer_policy!r}"
+            f"layer_policy는 'exact' 또는 'ignore'여야 합니다(현재 {layer_policy!r})"
         )
 
     n = len(meta)
@@ -81,7 +81,7 @@ def candidate_mask(
     if filters:
         for col, allowed in filters.items():
             if col not in meta.columns:
-                raise ValueError(f"Unknown filter column: {col!r}")
+                raise ValueError(f"알 수 없는 필터 열: {col!r}")
             allowed_set = set(allowed)
             for i in range(n):
                 if mask[i] and meta.iloc[i][col] not in allowed_set:
@@ -90,7 +90,7 @@ def candidate_mask(
     # Size tolerance.
     if size_tolerance is not None:
         if size_tolerance < 0:
-            raise ValueError(f"size_tolerance must be >= 0, got {size_tolerance}")
+            raise ValueError(f"size_tolerance는 0 이상이어야 합니다(현재 {size_tolerance})")
         log_tol = np.log(1.0 + size_tolerance)
         q_w = query_row["unit_width"]
         q_h = query_row["unit_height"]
@@ -115,14 +115,14 @@ def candidate_mask(
 def _check_embeddings(embeddings: np.ndarray, meta: pd.DataFrame) -> None:
     if len(embeddings) != len(meta):
         raise ValueError(
-            f"len(embeddings)={len(embeddings)} != len(meta)={len(meta)}"
+            f"특징 벡터 수({len(embeddings)})와 메타데이터 행 수({len(meta)})가 다릅니다"
         )
 
 
 def _validate_finite(embeddings: np.ndarray, positions: np.ndarray) -> None:
     for p in positions:
         if not np.all(np.isfinite(embeddings[p])):
-            raise ValueError(f"Non-finite embedding at position {p}")
+            raise ValueError(f"위치 {p}의 특징 벡터에 유한하지 않은 값이 있습니다")
 
 
 def search(
@@ -163,7 +163,7 @@ def search(
             cos_sim = np.where(denom > 0, np.dot(c_vecs, q_vec) / safe_denom, 0.0)
         dists = 1.0 - cos_sim
     else:
-        raise ValueError(f"Unknown metric: {metric!r}")
+        raise ValueError(f"알 수 없는 거리 척도: {metric!r}")
 
     # Sort by distance ascending; ties broken by sample_id.
     sample_ids = meta.iloc[cand_idx]["sample_id"].values

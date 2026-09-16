@@ -33,7 +33,11 @@ uv run simcompare evaluate --config configs/demo.yaml
 uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 ```
 
-`configs/demo.yaml`은 `mode: demo`와 demo CAA 규칙을 사용한다. 경로는 YAML 파일 위치 기준 상대경로다(`../demo_data`, `../outputs/demo`). demo 모드의 모든 명령은 결과가 연구 근거가 아니라는 안내를 stderr에 출력한다.
+`configs/demo.yaml`은 `mode: demo`와 demo CAA 규칙을 사용한다. 경로는 YAML 파일 위치 기준 상대경로다(`../demo_data`, `../outputs/demo`). demo 모드의 모든 명령은 `DEMO 모드: 합성/예시 설정이며 결과는 연구 근거가 아닙니다` 안내를 stderr에 출력한다.
+
+## 출력 언어
+
+오류·경고·안내 문구, 검토 카드와 평가 결과의 설명, CLI 도움말은 한국어로 출력한다. 다른 프로그램이 읽을 수 있도록 JSON 키, CSV 열 이름, `lateral_open` 같은 열거값과 ID는 영문을 유지한다. `cluster_map.png`의 그림 안 글자는 Pillow 기본 글꼴이 한글을 지원하지 않아 `PC1/PC2`만 표시하고, 설명은 `clusters.json`에 있다. argparse가 자체 생성하는 `usage:` 줄과 인자 누락 문구(`the following arguments are required`)는 영문으로 남는다.
 
 ## 산출물 (`output_dir`)
 

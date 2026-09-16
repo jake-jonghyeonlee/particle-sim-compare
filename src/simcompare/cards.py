@@ -7,10 +7,10 @@ import numpy as np
 import pandas as pd
 
 DISCLAIMER = (
-    "Evidence for expert review only. No causal importance, automatic factor ranking, "
-    "or yield/defect-rate claim."
+    "전문가 검토용 근거 요약입니다. 인과적 중요도, 자동 인자 순위, "
+    "수율·불량률을 주장하지 않습니다."
 )
-RETRIEVAL_NOTE = "with_risk neighbors reuse CA/hotspot inputs; not independent findings"
+RETRIEVAL_NOTE = "with_risk 공간의 유사 사례는 CA·hotspot 입력을 재사용하므로 독립적인 발견이 아닙니다"
 
 
 def _clean(value):
@@ -85,30 +85,30 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
         unavailable = []
         no_scale = sorted(group.loc[~group["has_physical_scale"].astype(bool), "sample_id"])
         if no_scale:
-            unavailable.append(f"no physical unit-pixel size (size-corrected comparison impossible): {no_scale}")
+            unavailable.append(f"unit-pixel 실제 크기 없음(면적 보정 비교 불가): {no_scale}")
         for _, row in group[group["caa_actual"].isna()].iterrows():
-            unavailable.append(f"CAA unavailable for {row['sample_id']}: {row['caa_actual_reason']}")
+            unavailable.append(f"{row['sample_id']} CAA 계산 불가: {row['caa_actual_reason']}")
         if len(products) < min_products:
-            unavailable.append("fewer comparable products than required")
+            unavailable.append("비교 가능한 제품 수가 부족합니다")
         if group["fab_id"].nunique() < 2:
-            unavailable.append("single Fab in this group; Fab effect cannot be compared")
-        available = [f"{len(products)} product(s) share roles {roles} and layers {layers}"]
+            unavailable.append("이 그룹에는 Fab이 하나뿐이라 Fab 영향을 비교할 수 없습니다")
+        available = [f"제품 {len(products)}개가 전극 역할 {roles}, layer {layers}를 공유합니다"]
         if group["caa_reference"].notna().any():
-            available.append("reference-distribution ranking available")
+            available.append("기준 분포 적용 순위 비교 가능")
         if group["has_physical_scale"].astype(bool).sum() >= 2:
-            available.append("CA per unit area comparable for products with physical size")
+            available.append("실제 크기가 있는 제품끼리 면적 대비 CA 비교 가능")
 
         missing_ca = sorted(
             group.loc[group.filter(like="ca@").isna().any(axis=1), "sample_id"]
         )
         review = [
-            "confirm electrode role / layer correspondence across products",
-            "confirm CAA weighting rule and Fab units",
+            "제품 간 전극 역할·layer 대응 확인",
+            "CAA 가중 규칙과 Fab 자료 단위 확인",
         ]
         if missing_ca:
-            review.append(f"recompute CA at missing sizes: {missing_ca}")
+            review.append(f"누락된 이물 크기의 CA 재계산 필요: {missing_ca}")
         if group["caa_is_demo"].astype(bool).any():
-            review.append("CAA values use a DEMO rule; replace with a confirmed rule before interpretation")
+            review.append("CAA 값은 DEMO 규칙으로 계산됨: 해석 전에 확정된 규칙으로 교체 필요")
 
         cards.append(_clean({
             "card_id": f"card-{n}",
@@ -121,7 +121,7 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             "representative_cases": representative,
             "counter_cases": counter,
             "repeated_shape_features": _repeated_features(group, features),
-            "repeated_shape_features_note": "less variation among higher-risk cases than across the group; descriptive, not causal",
+            "repeated_shape_features_note": "그룹 전체보다 위험이 높은 사례들 사이에서 변동이 작은 특징(기술적 요약이며 인과 아님)",
             "risk_comparison": group[[
                 "sample_id", "product_id", "ca_max", "ca_area_max", "caa_actual", "caa_reference",
                 "rank_shift_fab",

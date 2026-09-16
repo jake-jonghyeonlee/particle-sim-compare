@@ -8,24 +8,41 @@ from pathlib import Path
 
 from simcompare.schema import DataContractError
 
-DEMO_NOTICE = "DEMO mode: synthetic/illustrative settings; results are not research evidence"
+DEMO_NOTICE = "DEMO 모드: 합성/예시 설정이며 결과는 연구 근거가 아닙니다"
 COMMANDS = ("validate-data", "train", "embed", "analyze", "evaluate")
+
+
+def _korean_help(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser._optionals.title = "옵션"
+    parser.add_argument("-h", "--help", action="help", help="도움말을 표시하고 종료")
+    return parser
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        add_help=False,
         prog="simcompare",
-        description="Compare already computed particle-defect simulation results across products.",
+        description="이미 계산된 디스플레이 이물 시뮬레이션 결과를 제품 간 비교·해석합니다(CA·hotspot 예측 아님).",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
-    demo = sub.add_parser("demo-data", help="write synthetic demo data (not physical results)")
-    demo.add_argument("--out", required=True)
-    demo.add_argument("--seed", type=int, default=0)
+    _korean_help(parser)
+    sub = parser.add_subparsers(dest="command", required=True, title="명령")
+    demo = sub.add_parser("demo-data", add_help=False, help="합성 demo 데이터 생성(물리 시뮬레이션 결과 아님)")
+    _korean_help(demo)
+    demo.add_argument("--out", required=True, help="출력 디렉터리")
+    demo.add_argument("--seed", type=int, default=0, help="난수 seed")
+    helps = {
+        "validate-data": "입력 데이터 점검(누락·실제 크기·중복 의심·교락·CAA 적용 가능 여부)",
+        "train": "제품·설계 계열 단위로 분리해 다중 입력 오토인코더 학습",
+        "embed": "AE와 기준 PCA 특징 벡터 저장",
+        "analyze": "유사 사례 검색·군집·위험 순위 비교·제품 제외 안정성·검토 카드 생성",
+        "evaluate": "평가 분리 복원 손실·입력 구성 비교·Fab/제품군 제외 검증",
+    }
     for name in COMMANDS:
-        sub.add_parser(name).add_argument("--config", required=True)
-    run_all = sub.add_parser("all", help="validate-data, train, embed, analyze, evaluate")
-    run_all.add_argument("--config", required=True)
-    run_all.add_argument("--demo-out", help="generate demo data here first (mode demo only)")
+        command = _korean_help(sub.add_parser(name, add_help=False, help=helps[name]))
+        command.add_argument("--config", required=True, help="YAML 설정 파일 경로")
+    run_all = _korean_help(sub.add_parser("all", add_help=False, help="validate-data부터 evaluate까지 순서대로 실행"))
+    run_all.add_argument("--config", required=True, help="YAML 설정 파일 경로")
+    run_all.add_argument("--demo-out", help="이 경로에 demo 데이터를 먼저 생성하고 그 데이터로 분석(mode demo 전용)")
     return parser
 
 
@@ -57,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             results = {}
             if args.demo_out:
                 if cfg.mode != "demo":
-                    raise DataContractError("--demo-out is only allowed with mode: demo")
+                    raise DataContractError("--demo-out은 mode: demo에서만 사용할 수 있습니다")
                 from simcompare.synthetic import generate_demo_data
 
                 results["demo-data"] = generate_demo_data(args.demo_out, seed=cfg.train.seed)
@@ -70,5 +87,5 @@ def main(argv: list[str] | None = None) -> int:
             _print(runners[args.command](cfg))
         return 0
     except (DataContractError, FileNotFoundError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"오류: {exc}", file=sys.stderr)
         return 2

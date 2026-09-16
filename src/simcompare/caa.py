@@ -25,7 +25,7 @@ from simcompare.schema import (
 )
 
 DEMO_RULE = "demo_probability_per_bin"
-DEMO_LABEL = "DEMO CAA: illustrative weighting only; not a defect rate or yield"
+DEMO_LABEL = "DEMO CAA: 예시용 가중치 계산이며 실제 불량률·수율이 아님"
 
 
 class CAAError(DataContractError):
@@ -78,7 +78,7 @@ def fab_shape_and_total(dist: FabDistribution) -> tuple[np.ndarray, float, str]:
 
     if not np.any(observed):
         raise CAAError(
-            f"{dist.fab_distribution_id}: no observed bins; shape and total are undefined"
+            f"{dist.fab_distribution_id}: 관측된 구간이 없어 분포 모양과 총량을 정의할 수 없습니다"
         )
 
     if dist.value_kind == "density":
@@ -113,17 +113,17 @@ def interpret_fab(
     """
     validate_fab(dist)
     if rule is None:
-        raise CAAError("CAA rule not configured")
+        raise CAAError("CAA 계산 규칙이 설정되지 않았습니다")
 
     if rule == DEMO_RULE:
         if mode != "demo":
             raise CAAError(
-                f"demo rule {DEMO_RULE!r} may only run in mode 'demo', got {mode!r}"
+                f"demo 규칙 {DEMO_RULE!r}은(는) mode 'demo'에서만 사용할 수 있습니다(현재 {mode!r})"
             )
         if dist.value_kind != "probability":
             raise CAAError(
-                f"demo rule {DEMO_RULE!r} requires value_kind 'probability'; "
-                f"conversion for {dist.value_kind!r} is not confirmed"
+                f"demo 규칙 {DEMO_RULE!r}은(는) value_kind 'probability'만 허용합니다. "
+                f"{dist.value_kind!r} 값의 변환 방식은 확정되지 않았습니다"
             )
         weights = np.asarray(dist.raw_values, dtype=float).copy()
         sizes = bin_midpoints(dist)
@@ -136,7 +136,7 @@ def interpret_fab(
             is_demo=True,
         )
 
-    raise CAAError(f"unknown or unconfirmed CAA rule {rule!r}")
+    raise CAAError(f"알 수 없거나 확정되지 않은 CAA 규칙 {rule!r}")
 
 
 def select_distribution(
@@ -154,8 +154,8 @@ def select_distribution(
 
     if layer is None:
         raise CAAError(
-            f"{bundle.sample_id}: process layer is not set and is never inferred "
-            "(e.g. from the lower layer)"
+            f"{bundle.sample_id}: 적용 공정 layer가 지정되지 않았습니다. "
+            "하부 layer 등으로 추정하지 않습니다"
         )
 
     if bundle.fab_distribution_id is not None:
@@ -163,22 +163,22 @@ def select_distribution(
         if dist is None:
             raise CAAError(
                 f"{bundle.sample_id}: fab_distribution_id "
-                f"{bundle.fab_distribution_id!r} not found"
+                f"{bundle.fab_distribution_id!r}을(를) 찾을 수 없습니다"
             )
         if dist.is_reference:
             raise CAAError(
-                f"{bundle.sample_id}: reference distribution "
-                f"{bundle.fab_distribution_id!r} cannot be selected"
+                f"{bundle.sample_id}: 기준 분포 "
+                f"{bundle.fab_distribution_id!r}은(는) 실제 Fab 분포로 선택할 수 없습니다"
             )
         if dist.fab_id != bundle.fab_id:
             raise CAAError(
-                f"{bundle.sample_id}: fab_distribution_id {bundle.fab_distribution_id!r} "
-                f"fab_id {dist.fab_id!r} does not match bundle fab_id {bundle.fab_id!r}"
+                f"{bundle.sample_id}: fab_distribution_id {bundle.fab_distribution_id!r}"
+                f"의 fab_id {dist.fab_id!r}가 묶음 fab_id {bundle.fab_id!r}와 일치하지 않습니다"
             )
         if dist.process_layer != layer:
             raise CAAError(
-                f"{bundle.sample_id}: fab_distribution_id {bundle.fab_distribution_id!r} "
-                f"process_layer {dist.process_layer!r} does not match {layer!r}"
+                f"{bundle.sample_id}: fab_distribution_id {bundle.fab_distribution_id!r}"
+                f"의 process_layer {dist.process_layer!r}가 {layer!r}와 일치하지 않습니다"
             )
         return dist
 
@@ -194,13 +194,13 @@ def select_distribution(
     final = exact if exact else candidates
     if len(final) == 0:
         raise CAAError(
-            f"{bundle.sample_id}: no candidate Fab distribution for "
-            f"fab_id={bundle.fab_id!r} layer={layer!r} family={bundle.product_family!r}"
+            f"{bundle.sample_id}: 해당하는 Fab 분포가 없습니다 "
+            f"(fab_id={bundle.fab_id!r}, layer={layer!r}, family={bundle.product_family!r})"
         )
     if len(final) > 1:
         ids = sorted(d.fab_distribution_id for d in final)
         raise CAAError(
-            f"{bundle.sample_id}: ambiguous Fab distribution candidates {ids}"
+            f"{bundle.sample_id}: Fab 분포 후보가 여러 개라 선택할 수 없습니다 {ids}"
         )
     return final[0]
 
@@ -221,7 +221,7 @@ def compute_caa(
     finite = np.isfinite(w_values)
     if not np.any(finite):
         raise CAAError(
-            f"{weights.source_id}: no finite weight sizes; CAA cannot be computed"
+            f"{weights.source_id}: 유효한 가중치가 없어 CAA를 계산할 수 없습니다"
         )
 
     ca_sizes = np.asarray(ca.particle_sizes, dtype=float)
@@ -244,7 +244,7 @@ def compute_caa(
             missing_sizes.append(float(size))
 
     unit = f"{ca.unit}*{weights.weight_unit}"
-    label = DEMO_LABEL if weights.is_demo else "CAA (configured rule)"
+    label = DEMO_LABEL if weights.is_demo else "CAA (설정된 규칙)"
 
     if missing_sizes and require_full_coverage:
         return CAAResult(
@@ -256,12 +256,12 @@ def compute_caa(
             source_id=weights.source_id,
             is_demo=weights.is_demo,
             label=label,
-            reason=f"missing CA at sizes {missing_sizes}",
+            reason=f"이물 크기 {missing_sizes}의 CA 누락",
         )
 
     value = float(sum(w * c for w, c in zip(matched_weight, matched_ca)))
     if missing_sizes:
-        reason = f"partial coverage; missing CA at sizes {missing_sizes}"
+        reason = f"일부 크기만 반영; 이물 크기 {missing_sizes}의 CA 누락"
     else:
         reason = None
     return CAAResult(

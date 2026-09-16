@@ -95,13 +95,13 @@ class BaselinePCA:
         matrix = self._matrix(x, mask)
         n_comp = min(self.n_components, len(rows) - 1, matrix.shape[1])
         if n_comp < 1:
-            raise ValueError("baseline PCA needs at least 2 training rows and 1 observed feature")
+            raise ValueError("기준 PCA에는 학습 행 2개 이상과 관측된 특징 1개 이상이 필요합니다")
         self.pca = PCA(n_components=n_comp, random_state=0).fit(matrix[rows])
         return self
 
     def transform(self, x: np.ndarray, mask: np.ndarray) -> np.ndarray:
         if self.pca is None:
-            raise RuntimeError("BaselinePCA is not fitted")
+            raise RuntimeError("BaselinePCA가 아직 학습되지 않았습니다")
         return self.pca.transform(self._matrix(x, mask))
 
     @property

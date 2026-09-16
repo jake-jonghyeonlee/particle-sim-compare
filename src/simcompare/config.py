@@ -119,27 +119,27 @@ def _is_float(value: Any) -> bool:
 
 def _number_error(value: Any) -> str:
     if isinstance(value, float) and not math.isfinite(value):
-        return f"must be a finite number, got {value}"
-    return f"expected number, got {type(value).__name__}"
+        return f"유한한 숫자여야 합니다(현재 {value})"
+    return f"숫자여야 합니다(현재 {type(value).__name__})"
 
 
 def _check_unknown(raw: dict, allowed: set[str], path: str) -> None:
     if not isinstance(raw, dict):
-        raise ConfigError(f"{path}: expected a mapping")
+        raise ConfigError(f"{path}: 매핑이어야 합니다")
     for key in raw:
         if key not in allowed:
             dotted = f"{path}.{key}" if path else str(key)
-            raise ConfigError(f"unknown key {dotted!r}")
+            raise ConfigError(f"알 수 없는 설정 키 {dotted!r}")
 
 
 def _require_str(raw: dict, key: str, path: str) -> str:
     if key not in raw:
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"missing required key {dotted!r}")
+        raise ConfigError(f"필수 설정 키 누락 {dotted!r}")
     value = raw[key]
     if not isinstance(value, str):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected str, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: 문자열이어야 합니다(현재 {type(value).__name__})")
     return value
 
 
@@ -151,10 +151,10 @@ def _opt_str(raw: dict, key: str, path: str, *, allow_none: bool = False) -> str
         if allow_none:
             return None
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: must not be null")
+        raise ConfigError(f"{dotted}: null일 수 없습니다")
     if not isinstance(value, str):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected str, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: 문자열이어야 합니다(현재 {type(value).__name__})")
     return value
 
 
@@ -166,7 +166,7 @@ def _opt_float(raw: dict, key: str, path: str, *, allow_none: bool = False) -> f
         if allow_none:
             return None
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: must not be null")
+        raise ConfigError(f"{dotted}: null일 수 없습니다")
     if not _is_float(value):
         dotted = f"{path}.{key}" if path else key
         raise ConfigError(f"{dotted}: {_number_error(value)}")
@@ -181,10 +181,10 @@ def _opt_int(raw: dict, key: str, path: str, *, allow_none: bool = False) -> int
         if allow_none:
             return None
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: must not be null")
+        raise ConfigError(f"{dotted}: null일 수 없습니다")
     if not _is_int(value):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected int, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: 정수여야 합니다(현재 {type(value).__name__})")
     return value
 
 
@@ -196,10 +196,10 @@ def _opt_bool(raw: dict, key: str, path: str, *, allow_none: bool = False) -> bo
         if allow_none:
             return None
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: must not be null")
+        raise ConfigError(f"{dotted}: null일 수 없습니다")
     if not isinstance(value, bool):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected bool, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: true/false여야 합니다(현재 {type(value).__name__})")
     return value
 
 
@@ -211,10 +211,10 @@ def _opt_dict(raw: dict, key: str, path: str, *, allow_none: bool = False) -> di
         if allow_none:
             return None
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: must not be null")
+        raise ConfigError(f"{dotted}: null일 수 없습니다")
     if not isinstance(value, dict):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected mapping, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: 매핑이어야 합니다(현재 {type(value).__name__})")
     return value
 
 
@@ -226,31 +226,31 @@ def _opt_list(raw: dict, key: str, path: str, *, allow_none: bool = False) -> li
         if allow_none:
             return None
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: must not be null")
+        raise ConfigError(f"{dotted}: null일 수 없습니다")
     if not isinstance(value, list):
         dotted = f"{path}.{key}" if path else key
-        raise ConfigError(f"{dotted}: expected list, got {type(value).__name__}")
+        raise ConfigError(f"{dotted}: 리스트여야 합니다(현재 {type(value).__name__})")
     return value
 
 
 def _check_grid(values: list[float], path: str, allow_empty: bool = False) -> list[float]:
     if not isinstance(values, list):
-        raise ConfigError(f"{path}: expected list")
+        raise ConfigError(f"{path}: 리스트여야 합니다")
     if len(values) == 0:
         if allow_empty:
             return []
-        raise ConfigError(f"{path}: must be non-empty")
+        raise ConfigError(f"{path}: 비어 있을 수 없습니다")
     result: list[float] = []
     for i, v in enumerate(values):
         if not _is_float(v):
             raise ConfigError(f"{path}[{i}]: {_number_error(v)}")
         fv = float(v)
         if fv <= 0:
-            raise ConfigError(f"{path}[{i}]: must be > 0")
+            raise ConfigError(f"{path}[{i}]: 0보다 커야 합니다")
         result.append(fv)
     for i in range(1, len(result)):
         if result[i] <= result[i - 1]:
-            raise ConfigError(f"{path}: must be strictly increasing")
+            raise ConfigError(f"{path}: 엄격히 증가해야 합니다")
     return result
 
 
@@ -258,36 +258,36 @@ def _check_legend(legend: dict, path: str) -> None:
     """Legend = {legend_id: str, entries: [{rgb: [r, g, b], value: number}], tolerance: int}."""
     unknown = set(legend) - {"legend_id", "entries", "tolerance"}
     if unknown:
-        raise ConfigError(f"unknown key '{path}.{sorted(map(str, unknown))[0]}'")
+        raise ConfigError(f"알 수 없는 설정 키 '{path}.{sorted(map(str, unknown))[0]}'")
     if not isinstance(legend.get("legend_id"), str) or not legend["legend_id"].strip():
-        raise ConfigError(f"{path}.legend_id: required non-empty str")
+        raise ConfigError(f"{path}.legend_id: 비어 있지 않은 문자열이 필요합니다")
     entries = legend.get("entries")
     if not isinstance(entries, list) or not entries:
-        raise ConfigError(f"{path}.entries: required non-empty list")
+        raise ConfigError(f"{path}.entries: 비어 있지 않은 리스트가 필요합니다")
     for i, entry in enumerate(entries):
         where = f"{path}.entries[{i}]"
         if not isinstance(entry, dict) or set(entry) != {"rgb", "value"}:
-            raise ConfigError(f"{where}: must have exactly keys 'rgb' and 'value'")
+            raise ConfigError(f"{where}: 키는 정확히 'rgb'와 'value'여야 합니다")
         rgb = entry["rgb"]
         if (not isinstance(rgb, list) or len(rgb) != 3
                 or not all(_is_int(c) and 0 <= c <= 255 for c in rgb)):
-            raise ConfigError(f"{where}.rgb: expected three ints in 0..255")
+            raise ConfigError(f"{where}.rgb: 0..255 범위 정수 3개여야 합니다")
         if not _is_float(entry["value"]):
-            raise ConfigError(f"{where}.value: expected finite number")
+            raise ConfigError(f"{where}.value: 유한한 숫자여야 합니다")
     tolerance = legend.get("tolerance", 0)
     if not _is_int(tolerance) or tolerance < 0:
-        raise ConfigError(f"{path}.tolerance: expected int >= 0")
+        raise ConfigError(f"{path}.tolerance: 0 이상의 정수여야 합니다")
 
 
 def _check_int_list(values: list[Any], path: str, positive: bool = True) -> list[int]:
     if not isinstance(values, list):
-        raise ConfigError(f"{path}: expected list")
+        raise ConfigError(f"{path}: 리스트여야 합니다")
     result: list[int] = []
     for i, v in enumerate(values):
         if not _is_int(v):
-            raise ConfigError(f"{path}[{i}]: expected int, got {type(v).__name__}")
+            raise ConfigError(f"{path}[{i}]: 정수여야 합니다(현재 {type(v).__name__})")
         if positive and v <= 0:
-            raise ConfigError(f"{path}[{i}]: must be positive")
+            raise ConfigError(f"{path}[{i}]: 양수여야 합니다")
         result.append(v)
     return result
 
@@ -305,15 +305,15 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
     data_dir = _require_str(raw, "data_dir", path)
 
     if "ca_grid" not in raw:
-        raise ConfigError(f"missing required key {path}.ca_grid")
+        raise ConfigError(f"필수 설정 키 누락 {path}.ca_grid")
     ca_grid = _check_grid(raw["ca_grid"], f"{path}.ca_grid")
 
     if "hotspot_sizes" not in raw:
-        raise ConfigError(f"missing required key {path}.hotspot_sizes")
+        raise ConfigError(f"필수 설정 키 누락 {path}.hotspot_sizes")
     hotspot_sizes = _check_grid(raw["hotspot_sizes"], f"{path}.hotspot_sizes", allow_empty=True)
 
     if "fab_grid" not in raw:
-        raise ConfigError(f"missing required key {path}.fab_grid")
+        raise ConfigError(f"필수 설정 키 누락 {path}.fab_grid")
     fab_grid = _check_grid(raw["fab_grid"], f"{path}.fab_grid")
 
     image_size = _opt_list(raw, "image_size", path)
@@ -321,16 +321,16 @@ def _parse_data(raw: dict, path: str = "data") -> DataConfig:
         image_size = [64, 64]
     else:
         if len(image_size) != 2:
-            raise ConfigError(f"{path}.image_size: must be [H, W]")
+            raise ConfigError(f"{path}.image_size: [H, W] 형식이어야 합니다")
         for i, v in enumerate(image_size):
             if not _is_int(v):
-                raise ConfigError(f"{path}.image_size[{i}]: expected int")
+                raise ConfigError(f"{path}.image_size[{i}]: 정수여야 합니다")
             if v <= 0 or v % 8 != 0:
-                raise ConfigError(f"{path}.image_size[{i}]: must be positive and divisible by 8")
+                raise ConfigError(f"{path}.image_size[{i}]: 8로 나누어떨어지는 양수여야 합니다")
 
     ca_alignment = raw.get("ca_alignment", "exact")
     if ca_alignment not in CA_ALIGNMENT_VALUES:
-        raise ConfigError(f"{path}.ca_alignment: must be one of {CA_ALIGNMENT_VALUES}")
+        raise ConfigError(f"{path}.ca_alignment: {CA_ALIGNMENT_VALUES} 중 하나여야 합니다")
 
     hotspot_legend = _opt_dict(raw, "hotspot_legend", path, allow_none=True)
     if hotspot_legend is not None:
@@ -367,7 +367,7 @@ def _parse_caa(raw: dict, path: str = "caa") -> CAAConfig:
     if overrides_raw is not None:
         for k, v in overrides_raw.items():
             if not isinstance(k, str):
-                raise ConfigError(f"{path}.process_layer_overrides: keys must be str")
+                raise ConfigError(f"{path}.process_layer_overrides: 키는 문자열이어야 합니다")
             if not isinstance(v, str):
                 raise ConfigError(
                     f"{path}.process_layer_overrides[{k!r}]: value must be str"
@@ -394,12 +394,12 @@ def _parse_model(raw: dict, path: str = "model") -> ModelSection:
         enabled_inputs = list(KNOWN_INPUTS)
     else:
         if len(enabled_raw) == 0:
-            raise ConfigError(f"{path}.enabled_inputs: must be non-empty")
+            raise ConfigError(f"{path}.enabled_inputs: 비어 있을 수 없습니다")
         for i, v in enumerate(enabled_raw):
             if not isinstance(v, str):
-                raise ConfigError(f"{path}.enabled_inputs[{i}]: expected str")
+                raise ConfigError(f"{path}.enabled_inputs[{i}]: 문자열이어야 합니다")
             if v not in KNOWN_INPUTS:
-                raise ConfigError(f"{path}.enabled_inputs[{i}]: unknown input {v!r}")
+                raise ConfigError(f"{path}.enabled_inputs[{i}]: 알 수 없는 입력 {v!r}")
         enabled_inputs = list(enabled_raw)
 
     conv_raw = _opt_list(raw, "conv_channels", path)
@@ -408,34 +408,34 @@ def _parse_model(raw: dict, path: str = "model") -> ModelSection:
     else:
         conv_channels = _check_int_list(conv_raw, f"{path}.conv_channels")
         if not conv_channels:
-            raise ConfigError(f"{path}.conv_channels: must not be empty")
+            raise ConfigError(f"{path}.conv_channels: 비어 있을 수 없습니다")
 
     modality_dim = _opt_int(raw, "modality_dim", path)
     if modality_dim is None:
         modality_dim = 16
     elif modality_dim <= 0:
-        raise ConfigError(f"{path}.modality_dim: must be positive")
+        raise ConfigError(f"{path}.modality_dim: 양수여야 합니다")
 
     latent_dim = _opt_int(raw, "latent_dim", path)
     if latent_dim is None:
         latent_dim = 32
     elif latent_dim < 2 or latent_dim % 2 != 0:
-        raise ConfigError(f"{path}.latent_dim: must be even and >= 2")
+        raise ConfigError(f"{path}.latent_dim: 2 이상의 짝수여야 합니다")
 
     loss_raw = _opt_dict(raw, "loss_weights", path)
     loss_weights: dict[str, float] = {}
     if loss_raw is not None:
         for k, v in loss_raw.items():
             if not isinstance(k, str):
-                raise ConfigError(f"{path}.loss_weights: keys must be str")
+                raise ConfigError(f"{path}.loss_weights: 키는 문자열이어야 합니다")
             if k not in enabled_inputs:
-                raise ConfigError(f"{path}.loss_weights[{k!r}]: not an enabled input")
+                raise ConfigError(f"{path}.loss_weights[{k!r}]: 활성화된 입력이 아닙니다")
             if not _is_float(v):
                 raise ConfigError(
                     f"{path}.loss_weights[{k!r}]: {_number_error(v)}"
                 )
             if v < 0:
-                raise ConfigError(f"{path}.loss_weights[{k!r}]: must be >= 0")
+                raise ConfigError(f"{path}.loss_weights[{k!r}]: 0 이상이어야 합니다")
             loss_weights[k] = float(v)
 
     return ModelSection(
@@ -456,19 +456,19 @@ def _parse_train(raw: dict, path: str = "train") -> TrainConfig:
     if epochs is None:
         epochs = 30
     elif epochs <= 0:
-        raise ConfigError(f"{path}.epochs: must be positive")
+        raise ConfigError(f"{path}.epochs: 양수여야 합니다")
 
     batch_size = _opt_int(raw, "batch_size", path)
     if batch_size is None:
         batch_size = 16
     elif batch_size <= 0:
-        raise ConfigError(f"{path}.batch_size: must be positive")
+        raise ConfigError(f"{path}.batch_size: 양수여야 합니다")
 
     lr = _opt_float(raw, "lr", path)
     if lr is None:
         lr = 1e-3
     elif lr <= 0:
-        raise ConfigError(f"{path}.lr: must be positive")
+        raise ConfigError(f"{path}.lr: 양수여야 합니다")
 
     seed = _opt_int(raw, "seed", path)
     if seed is None:
@@ -476,7 +476,7 @@ def _parse_train(raw: dict, path: str = "train") -> TrainConfig:
 
     device = raw.get("device", "cpu")
     if device not in DEVICE_VALUES:
-        raise ConfigError(f"{path}.device: must be one of {DEVICE_VALUES}")
+        raise ConfigError(f"{path}.device: {DEVICE_VALUES} 중 하나여야 합니다")
 
     balance_products = _opt_bool(raw, "balance_products", path)
     if balance_products is None:
@@ -499,7 +499,7 @@ def _parse_split(raw: dict, path: str = "split") -> SplitConfig:
     if test_fraction is None:
         test_fraction = 0.25
     elif not (0 < test_fraction < 1):
-        raise ConfigError(f"{path}.test_fraction: must be in (0, 1)")
+        raise ConfigError(f"{path}.test_fraction: 0과 1 사이여야 합니다")
 
     test_groups = _opt_list(raw, "test_groups", path)
     if test_groups is None:
@@ -507,7 +507,7 @@ def _parse_split(raw: dict, path: str = "split") -> SplitConfig:
     else:
         for i, v in enumerate(test_groups):
             if not isinstance(v, str):
-                raise ConfigError(f"{path}.test_groups[{i}]: expected str")
+                raise ConfigError(f"{path}.test_groups[{i}]: 문자열이어야 합니다")
 
     seed = _opt_int(raw, "seed", path)
     if seed is None:
@@ -530,17 +530,17 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
     if k_neighbors is None:
         k_neighbors = 5
     elif k_neighbors <= 0:
-        raise ConfigError(f"{path}.k_neighbors: must be positive")
+        raise ConfigError(f"{path}.k_neighbors: 양수여야 합니다")
 
     n_clusters = _opt_int(raw, "n_clusters", path)
     if n_clusters is None:
         n_clusters = 4
     elif n_clusters <= 0:
-        raise ConfigError(f"{path}.n_clusters: must be positive")
+        raise ConfigError(f"{path}.n_clusters: 양수여야 합니다")
 
     layer_policy = raw.get("layer_policy", "exact")
     if layer_policy not in LAYER_POLICY_VALUES:
-        raise ConfigError(f"{path}.layer_policy: must be one of {LAYER_POLICY_VALUES}")
+        raise ConfigError(f"{path}.layer_policy: {LAYER_POLICY_VALUES} 중 하나여야 합니다")
 
     other_products_only = _opt_bool(raw, "other_products_only", path)
     if other_products_only is None:
@@ -551,20 +551,20 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
     if filters_raw is not None:
         for k, v in filters_raw.items():
             if not isinstance(k, str):
-                raise ConfigError(f"{path}.filters: keys must be str")
+                raise ConfigError(f"{path}.filters: 키는 문자열이어야 합니다")
             if not isinstance(v, list):
-                raise ConfigError(f"{path}.filters[{k!r}]: value must be a list")
+                raise ConfigError(f"{path}.filters[{k!r}]: 값은 리스트여야 합니다")
             filters[k] = v
 
     size_tolerance = _opt_float(raw, "size_tolerance", path, allow_none=True)
     if size_tolerance is not None and size_tolerance < 0:
-        raise ConfigError(f"{path}.size_tolerance: must be >= 0")
+        raise ConfigError(f"{path}.size_tolerance: 0 이상이어야 합니다")
 
     loo_top_k = _opt_int(raw, "loo_top_k", path)
     if loo_top_k is None:
         loo_top_k = 5
     elif loo_top_k <= 0:
-        raise ConfigError(f"{path}.loo_top_k: must be positive")
+        raise ConfigError(f"{path}.loo_top_k: 양수여야 합니다")
 
     return AnalysisConfig(
         k_neighbors=k_neighbors,
@@ -583,7 +583,7 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
 
 def config_from_dict(raw: dict) -> AppConfig:
     if not isinstance(raw, dict):
-        raise ConfigError("top-level config must be a mapping")
+        raise ConfigError("설정 최상위는 매핑이어야 합니다")
     _check_unknown(raw, {
         "mode", "output_dir", "data", "caa", "model",
         "train", "split", "analysis",
@@ -591,12 +591,12 @@ def config_from_dict(raw: dict) -> AppConfig:
 
     mode = _require_str(raw, "mode", "")
     if mode not in MODE_VALUES:
-        raise ConfigError(f"mode: must be one of {MODE_VALUES}")
+        raise ConfigError(f"mode: {MODE_VALUES} 중 하나여야 합니다")
 
     output_dir = _require_str(raw, "output_dir", "")
 
     if "data" not in raw:
-        raise ConfigError("missing required key 'data'")
+        raise ConfigError("필수 설정 키 누락 'data'")
     data = _parse_data(raw["data"])
 
     caa_raw = raw.get("caa")
@@ -604,7 +604,7 @@ def config_from_dict(raw: dict) -> AppConfig:
         caa = CAAConfig()
     else:
         if not isinstance(caa_raw, dict):
-            raise ConfigError("caa: expected a mapping")
+            raise ConfigError("caa: 매핑이어야 합니다")
         caa = _parse_caa(caa_raw)
 
     model_raw = raw.get("model")
@@ -612,7 +612,7 @@ def config_from_dict(raw: dict) -> AppConfig:
         model = ModelSection()
     else:
         if not isinstance(model_raw, dict):
-            raise ConfigError("model: expected a mapping")
+            raise ConfigError("model: 매핑이어야 합니다")
         model = _parse_model(model_raw)
 
     train_raw = raw.get("train")
@@ -620,7 +620,7 @@ def config_from_dict(raw: dict) -> AppConfig:
         train = TrainConfig()
     else:
         if not isinstance(train_raw, dict):
-            raise ConfigError("train: expected a mapping")
+            raise ConfigError("train: 매핑이어야 합니다")
         train = _parse_train(train_raw)
 
     split_raw = raw.get("split")
@@ -628,7 +628,7 @@ def config_from_dict(raw: dict) -> AppConfig:
         split = SplitConfig()
     else:
         if not isinstance(split_raw, dict):
-            raise ConfigError("split: expected a mapping")
+            raise ConfigError("split: 매핑이어야 합니다")
         split = _parse_split(split_raw)
 
     analysis_raw = raw.get("analysis")
@@ -636,24 +636,24 @@ def config_from_dict(raw: dict) -> AppConfig:
         analysis = AnalysisConfig()
     else:
         if not isinstance(analysis_raw, dict):
-            raise ConfigError("analysis: expected a mapping")
+            raise ConfigError("analysis: 매핑이어야 합니다")
         analysis = _parse_analysis(analysis_raw)
 
     # Cross-section rules
     factor = 2 ** len(model.conv_channels)
     if any(v % factor for v in data.image_size):
         raise ConfigError(
-            f"data.image_size {data.image_size} must be divisible by 2**len(model.conv_channels) = {factor}"
+            f"data.image_size {data.image_size}는 2**len(model.conv_channels) = {factor}로 나누어떨어져야 합니다"
         )
     if mode == "real":
         if caa.rule is not None:
             if caa.rule.startswith("demo_"):
                 raise ConfigError(
-                    "mode 'real' rejects caa.rule starting with 'demo_'"
+                    "mode 'real'에서는 'demo_'로 시작하는 caa.rule을 사용할 수 없습니다"
                 )
             if not caa.confirmed:
                 raise ConfigError(
-                    "mode 'real' with caa.rule set requires caa.confirmed true"
+                    "mode 'real'에서 caa.rule을 쓰려면 caa.confirmed: true가 필요합니다"
                 )
 
     return AppConfig(
@@ -671,13 +671,13 @@ def config_from_dict(raw: dict) -> AppConfig:
 def load_config(path: str | Path) -> AppConfig:
     p = Path(path)
     if not p.is_file():
-        raise ConfigError(f"config file not found: {p}")
+        raise ConfigError(f"설정 파일을 찾을 수 없습니다: {p}")
     with open(p, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
-        raise ConfigError("top-level config must be a mapping")
+        raise ConfigError("설정 최상위는 매핑이어야 합니다")
     cfg = config_from_dict(raw)
 
     # Resolve relative data_dir / output_dir against the YAML file's parent.

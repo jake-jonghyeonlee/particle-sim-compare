@@ -122,7 +122,7 @@ def test_legend_to_values_rejects_unmapped():
     rgb[0, 0] = [255, 0, 0]
     rgb[0, 1] = [128, 128, 128]  # far from red
     legend = _legend([{"rgb": [255, 0, 0], "value": 1.0}], tolerance=0)
-    with pytest.raises(ValueError, match="1 pixels"):
+    with pytest.raises(ValueError, match="1개 픽셀"):
         legend_to_values(rgb, legend)
 
 

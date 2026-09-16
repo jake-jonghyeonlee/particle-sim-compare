@@ -24,13 +24,13 @@ def select_device(name: str) -> torch.device:
         return torch.device("cpu")
     if name == "cuda":
         if not torch.cuda.is_available():
-            raise RuntimeError("device 'cuda' requested but CUDA is not available")
+            raise RuntimeError("device 'cuda'를 요청했지만 CUDA를 사용할 수 없습니다")
         return torch.device("cuda")
     if name == "mps":
         if not torch.backends.mps.is_available():
-            raise RuntimeError("device 'mps' requested but MPS is not available")
+            raise RuntimeError("device 'mps'를 요청했지만 MPS를 사용할 수 없습니다")
         return torch.device("mps")
-    raise ValueError(f"unknown device {name!r}")
+    raise ValueError(f"알 수 없는 device {name!r}")
 
 
 def set_seed(seed: int) -> None:
@@ -82,7 +82,7 @@ def train_model(
     set_seed(seed)
     train_pos = np.asarray(train_pos, dtype=int)
     if train_pos.size == 0:
-        raise ValueError("no training rows")
+        raise ValueError("학습 행이 없습니다")
     dev = select_device(device)
     model = MultiInputAE(model_cfg).to(dev)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

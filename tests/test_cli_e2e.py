@@ -29,16 +29,16 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
     assert {"shape_only", "with_risk_baseline", "with_risk_ae"} <= set(spaces.files)
     evaluation = json.loads((out / "evaluation.json").read_text())
     assert set(evaluation["ablation"]) == {"image_only", "numeric_only", "full"}
-    assert "not research evidence" in evaluation["notes"][0]
+    assert "연구 근거가 아닙니다" in evaluation["notes"][0]
     cards = json.loads((out / "review_cards.json").read_text())["cards"]
     assert cards and all("disclaimer" in card for card in cards)
-    assert "DEMO mode" in capsys.readouterr().err
+    assert "DEMO 모드" in capsys.readouterr().err
 
 
 def test_cli_reports_contract_errors(tmp_path, capsys):
     bad = tmp_path / "bad.yaml"
     bad.write_text("mode: real\noutput_dir: x\n")
     assert main(["train", "--config", str(bad)]) == 2
-    assert "error:" in capsys.readouterr().err
+    assert "오류:" in capsys.readouterr().err
     config = write_demo_config(tmp_path, tmp_path / "missing")
     assert main(["embed", "--config", str(config)]) == 2

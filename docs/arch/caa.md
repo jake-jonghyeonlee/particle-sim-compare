@@ -5,7 +5,7 @@ validate_fab). `class CAAError(DataContractError)`.
 
 ```python
 DEMO_RULE = "demo_probability_per_bin"
-DEMO_LABEL = "DEMO CAA: illustrative weighting only; not a defect rate or yield"
+DEMO_LABEL = "DEMO CAA: 예시용 가중치 계산이며 실제 불량률·수율이 아님"
 
 @dataclass
 class FabWeights:

@@ -115,7 +115,7 @@ def group_split(
     n = len(meta)
     comps = _components(meta) if n else []
     if len(comps) < 2:
-        raise ValueError("cannot split: fewer than 2 independent groups")
+        raise ValueError("분리 불가: 독립 그룹(제품·설계 계열)이 2개 미만입니다")
 
     if test_groups:
         wanted = set(str(g) for g in test_groups)
@@ -123,7 +123,7 @@ def group_split(
         lineage_ids = set(str(v) for v in meta["design_lineage_id"])
         unknown = wanted - product_ids - lineage_ids
         if unknown:
-            raise ValueError(f"unknown test_groups: {sorted(unknown)}")
+            raise ValueError(f"알 수 없는 test_groups: {sorted(unknown)}")
 
         product_arr = meta["product_id"].to_numpy()
         lineage_arr = meta["design_lineage_id"].to_numpy()
@@ -140,7 +140,7 @@ def group_split(
             pos for comp in comps if id(comp) in test_comp for pos in comp
         )
         if len(test_pos) == n:
-            raise ValueError("all rows assigned to test")
+            raise ValueError("모든 행이 평가 쪽에 배정되어 학습 자료가 없습니다")
         test_set = set(test_pos)
         train_pos = [pos for pos in range(n) if pos not in test_set]
         return (
@@ -186,7 +186,7 @@ def assert_no_leakage(
     train_set = set(int(p) for p in train_pos)
     test_set = set(int(p) for p in test_pos)
     if train_set & test_set:
-        raise LeakageError("train and test positions overlap")
+        raise LeakageError("학습과 평가 위치가 겹칩니다")
 
     for column in ("product_id", "design_lineage_id"):
         col = meta[column].to_numpy()
@@ -195,7 +195,7 @@ def assert_no_leakage(
         overlap = train_vals & test_vals
         if overlap:
             raise LeakageError(
-                f"{column} value(s) leak across split: {sorted(overlap)}"
+                f"{column} 값이 학습·평가 양쪽에 섞였습니다: {sorted(overlap)}"
             )
 
 
@@ -257,8 +257,8 @@ def confounding_report(
     if n_a < 2 or n_b < 2:
         status = "insufficient_groups"
         detail = (
-            "fewer than two levels in at least one factor; "
-            "effects cannot be separated"
+            "적어도 한 요인의 그룹이 2개 미만이라 "
+            "평가 불가: 효과를 분리할 수 없습니다"
         )
     else:
         a_to_b = {av: set(bs) for av, bs in crosstab.items()}
@@ -270,17 +270,17 @@ def confounding_report(
         if a_single and b_single:
             status = "fully_confounded"
             detail = (
-                "a and b map one-to-one; their effects cannot be separated"
+                "두 요인이 일대일로 대응해 효과를 분리할 수 없습니다"
             )
         elif a_single or b_single:
             status = "partially_confounded"
             detail = (
-                "one factor maps to a single level of the other; "
-                "effects cannot be fully separated"
+                "한 요인의 각 값이 다른 요인의 한 값에만 대응해 "
+                "효과를 완전히 분리할 수 없습니다"
             )
         else:
             status = "ok"
-            detail = "a and b are not confounded"
+            detail = "두 요인이 서로 한쪽에 고정되지 않아 교차 비교가 가능합니다(인과 분리를 뜻하지는 않음)"
 
     return {
         "a": a,

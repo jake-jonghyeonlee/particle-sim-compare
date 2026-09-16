@@ -45,7 +45,7 @@ def test_physical_scale_and_ca_per_area():
     assert reason == "ok" and per_area[0] == pytest.approx(4.0 / 4000.0) and np.isnan(per_area[1])
     nb = make_bundle(unit_width=None, unit_height=None, physical_length_unit=None, ca=curve)
     assert nb.ca_per_area()[0] is None
-    assert any("physical" in w for w in validate_bundle(nb, "real"))
+    assert any("실제 크기 없음" in w for w in validate_bundle(nb, "real"))
 
 
 def test_unobserved_must_be_nan_not_zero():

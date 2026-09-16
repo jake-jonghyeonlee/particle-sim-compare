@@ -25,7 +25,7 @@ def test_masks_distinguish_missing_from_zero(enc):
     assert not enc.geom_mask[p6, :2].any()
     p3 = pos(enc, "P3-v1-OPEN")  # grid [1,3,4,8,16] vs configured [1,2,4,8,16]
     assert enc.ca_mask[p3].tolist() == [True, False, True, True, True]
-    assert any("per unit area unavailable" in note for note in enc.notes)
+    assert any("면적 대비 CA 계산 불가" in note for note in enc.notes)
 
 
 def test_letterbox_keeps_aspect_with_valid_mask(enc):
@@ -55,7 +55,7 @@ def test_fab_unavailable_is_masked_not_zero(demo_loaded, demo_cfg):
     finally:
         bundle.assigned_process_layer = original
     assert not enc.fab_mask.any() and not enc.fab_total_mask.any()
-    assert any("fab unavailable" in note for note in enc.notes)
+    assert any("Fab 분포 사용 불가" in note for note in enc.notes)
 
 
 def test_baseline_pca_fits_on_train_rows_only(enc):

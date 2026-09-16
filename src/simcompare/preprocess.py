@@ -32,11 +32,11 @@ def letterbox(
     geometry.  When *binary* is true the canvas values are thresholded to {0, 1}.
     """
     if not isinstance(image, np.ndarray) or image.ndim != 2 or image.size == 0:
-        raise ValueError("image must be a 2-D non-empty ndarray")
+        raise ValueError("이미지는 비어 있지 않은 2차원 배열이어야 합니다")
 
     out_h, out_w = out_hw
     if out_h <= 0 or out_w <= 0:
-        raise ValueError("out_hw must contain positive dimensions")
+        raise ValueError("out_hw는 양수 크기여야 합니다")
 
     h, w = image.shape
     scale = min(out_h / h, out_w / w)
@@ -77,7 +77,7 @@ def resized_pixel_size(pixel_size: float | None, info: dict) -> float | None:
         return None
     scale = info["scale"]
     if scale == 0:
-        raise ValueError("scale must be non-zero")
+        raise ValueError("scale은 0이 아니어야 합니다")
     return float(pixel_size) / float(scale)
 
 
@@ -92,12 +92,12 @@ def legend_to_values(rgb: np.ndarray, legend: dict | None) -> np.ndarray:
     pixel raises ``ValueError`` reporting the number of such pixels.
     """
     if not isinstance(rgb, np.ndarray) or rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("rgb must be an HxWx3 ndarray")
+        raise ValueError("rgb는 HxWx3 배열이어야 합니다")
     if legend is None or not isinstance(legend, dict):
-        raise ValueError("legend must be a dict")
+        raise ValueError("범례(legend)가 필요합니다: 범례 없이 색상을 확률로 바꾸지 않습니다")
     entries = legend.get("entries")
     if not entries:
-        raise ValueError("legend entries must not be empty")
+        raise ValueError("범례 항목이 비어 있습니다")
 
     tolerance = float(legend.get("tolerance", 0))
     table = np.array([e["rgb"] for e in entries], dtype=np.float64)
@@ -115,7 +115,7 @@ def legend_to_values(rgb: np.ndarray, legend: dict | None) -> np.ndarray:
 
     if not np.all(valid):
         count = int((~valid).sum())
-        raise ValueError(f"{count} pixels could not be mapped to the legend")
+        raise ValueError(f"{count}개 픽셀을 범례에 대응시킬 수 없습니다")
 
     return out
 
@@ -141,11 +141,11 @@ def align_curve(
     grid = np.asarray(grid, dtype=np.float64)
 
     if sizes.shape != values.shape or sizes.ndim != 1:
-        raise ValueError("sizes and values must be 1-D and the same length")
+        raise ValueError("크기와 값 배열은 길이가 같은 1차원이어야 합니다")
     if observed.shape != sizes.shape:
-        raise ValueError("observed must match the length of sizes")
+        raise ValueError("관측 여부 배열의 길이는 크기 배열과 같아야 합니다")
     if grid.ndim != 1:
-        raise ValueError("grid must be 1-D")
+        raise ValueError("격자는 1차원이어야 합니다")
 
     if method == "exact":
         out = np.full(grid.shape, np.nan, dtype=np.float64)
@@ -188,7 +188,7 @@ def align_curve(
                 mask[j] = True
         return out, mask
 
-    raise ValueError(f"unknown method: {method!r}")
+    raise ValueError(f"알 수 없는 정렬 방식: {method!r}")
 
 
 # --------------------------------------------------------------------------- #
@@ -225,11 +225,11 @@ class Normalizer:
         rows = np.asarray(rows, dtype=np.intp)
 
         if x.ndim != 2:
-            raise ValueError("x must be 2-D")
+            raise ValueError("x는 2차원이어야 합니다")
         if mask.shape != x.shape:
-            raise ValueError("mask must match the shape of x")
+            raise ValueError("mask의 모양이 x와 같아야 합니다")
         if rows.ndim != 1:
-            raise ValueError("rows must be 1-D")
+            raise ValueError("rows는 1차원이어야 합니다")
 
         n, d = x.shape
         if rows.size == 0:
@@ -257,9 +257,9 @@ class Normalizer:
         x = np.asarray(x, dtype=np.float64)
         mask = np.asarray(mask, dtype=bool)
         if x.ndim != 2:
-            raise ValueError("x must be 2-D")
+            raise ValueError("x는 2차원이어야 합니다")
         if mask.shape != x.shape:
-            raise ValueError("mask must match the shape of x")
+            raise ValueError("mask의 모양이 x와 같아야 합니다")
 
         out = np.where(mask, (np.where(mask, x, 0.0) - self.mean) / self.std, 0.0)
         return out.astype(np.float64, copy=False)

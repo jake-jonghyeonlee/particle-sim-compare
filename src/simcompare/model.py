@@ -65,18 +65,18 @@ class ModelConfig:
 
 def _validate_config(cfg: ModelConfig) -> None:
     if not cfg.enabled:
-        raise ValueError("enabled must be a non-empty subset of MODALITIES")
+        raise ValueError("enabled는 MODALITIES의 비어 있지 않은 부분집합이어야 합니다")
     unknown = [m for m in cfg.enabled if m not in MODALITIES]
     if unknown:
-        raise ValueError(f"enabled contains unknown modalities: {unknown}")
+        raise ValueError(f"enabled에 알 수 없는 입력이 있습니다: {unknown}")
     h, w = cfg.image_hw
     factor = 2 ** len(cfg.conv_channels)
     if h % factor != 0 or w % factor != 0:
         raise ValueError(
-            f"image_hw {cfg.image_hw} must be divisible by {factor}"
+            f"image_hw {cfg.image_hw}는 {factor}로 나누어떨어져야 합니다"
         )
     if cfg.latent_dim % 2 != 0:
-        raise ValueError("latent_dim must be even")
+        raise ValueError("latent_dim은 짝수여야 합니다")
     dims = {
         "layout": cfg.layout_channels,
         "hotspot": cfg.hotspot_channels,
@@ -86,7 +86,7 @@ def _validate_config(cfg: ModelConfig) -> None:
     }
     for m in cfg.enabled:
         if dims[m] <= 0:
-            raise ValueError(f"modality {m!r} cannot be enabled with dim 0")
+            raise ValueError(f"차원이 0인 입력 {m!r}은(는) 활성화할 수 없습니다")
 
 
 class ImageEncoder(nn.Module):

@@ -7,7 +7,7 @@ from simcompare.schema import NOT_APPLICABLE
 
 def test_demo_data_covers_required_conditions(demo_dir, demo_loaded):
     summary = json.loads((demo_dir / "summary.json").read_text())
-    assert "not physical" in summary["notes"][0]
+    assert "물리 시뮬레이션 결과가 아니며" in summary["notes"][0]
     bundles = {b.sample_id: b for b in demo_loaded.bundles}
     assert len(bundles) == summary["n_bundles"] == 21
     assert {(b.unit_width, b.unit_height) for b in bundles.values()} >= {(60.0, 90.0), (45.0, 70.0), (None, None)}
@@ -23,7 +23,7 @@ def test_demo_data_covers_required_conditions(demo_dir, demo_loaded):
     assert not bundles["P6-v1-VSHORT"].has_physical_scale()
     assert all(b.provenance.is_synthetic for b in bundles.values())
     assert bundles["P5-v1-VSHORT"].fab_id != bundles["P6-v1-VSHORT"].fab_id
-    assert any("physical" in w for w in demo_loaded.warnings)
+    assert any("실제 크기 없음" in w for w in demo_loaded.warnings)
 
 
 def test_generation_is_deterministic(tmp_path):

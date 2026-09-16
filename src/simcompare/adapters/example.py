@@ -51,10 +51,10 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
         try:
             arr = np.load(path, allow_pickle=False)
         except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
-            raise schema.DataContractError(f"image {path}: {exc!r}") from None
+            raise schema.DataContractError(f"이미지 {path}를 읽을 수 없습니다: {exc!r}") from None
         if arr.ndim != 2:
             raise schema.DataContractError(
-                f"image {path} must be 2-D, got {arr.ndim}-D"
+                f"이미지 {path}는 2차원이어야 합니다(현재 {arr.ndim}차원)"
             )
         arr = np.asarray(arr, dtype=np.float32)
     elif suffix == ".png":
@@ -67,9 +67,9 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
                 gray = np.asarray(im.convert("L"), dtype=np.float32) / 255.0
                 arr = gray
         except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
-            raise schema.DataContractError(f"image {path}: {exc!r}") from None
+            raise schema.DataContractError(f"이미지 {path}를 읽을 수 없습니다: {exc!r}") from None
     else:
-        raise schema.DataContractError(f"unsupported image suffix {suffix!r} for {path}")
+        raise schema.DataContractError(f"지원하지 않는 이미지 확장자 {suffix!r}: {path}")
 
     if kind == "layout":
         arr = (arr > 0.5).astype(np.float32)
@@ -100,13 +100,13 @@ def _float(value: object, what: str = "value") -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
-        raise schema.DataContractError(f"{what}: not a number: {value!r}") from None
+        raise schema.DataContractError(f"{what}: 숫자가 아닙니다: {value!r}") from None
 
 
 def _req_float(value: object, what: str) -> float:
     result = _float(value, what)
     if result is None:
-        raise schema.DataContractError(f"{what}: required number is blank")
+        raise schema.DataContractError(f"{what}: 필수 숫자 값이 비어 있습니다")
     return result
 
 
@@ -117,7 +117,7 @@ class _Rows(list):
 
 
 def _read_csv(path: Path) -> list[dict]:
-    with path.open(newline="") as handle:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         rows = _Rows(reader)
         rows.fieldnames = list(reader.fieldnames or [])
@@ -128,20 +128,20 @@ def _require_columns(rows: list[dict], required: list[str], what: str) -> None:
     present = set(getattr(rows, "fieldnames", None) or (rows[0].keys() if rows else []))
     missing = [name for name in required if name not in present]
     if missing:
-        raise schema.DataContractError(f"{what}: missing required column(s) {missing}")
+        raise schema.DataContractError(f"{what}: 필수 열 누락 {missing}")
 
 
 def _resolve(data_dir: Path, raw: str, sid: str) -> Path:
     """Resolve a CSV path relative to ``data_dir`` and keep it inside the tree."""
     path = Path(raw)
     if path.is_absolute():
-        raise schema.DataContractError(f"{sid}: image path must be relative, got {raw!r}")
+        raise schema.DataContractError(f"{sid}: 이미지 경로는 상대경로여야 합니다(현재 {raw!r})")
     resolved = (data_dir / path).resolve()
     root = data_dir.resolve()
     if resolved != root and root not in resolved.parents:
-        raise schema.DataContractError(f"{sid}: image path escapes data_dir: {raw!r}")
+        raise schema.DataContractError(f"{sid}: 이미지 경로가 data_dir 밖을 가리킵니다: {raw!r}")
     if not resolved.is_file():
-        raise schema.DataContractError(f"{sid}: image file missing: {raw!r}")
+        raise schema.DataContractError(f"{sid}: 이미지 파일이 없습니다: {raw!r}")
     return resolved
 
 
@@ -151,28 +151,28 @@ def _resolve(data_dir: Path, raw: str, sid: str) -> Path:
 def _load_distributions(data_dir: Path) -> dict[str, schema.FabDistribution]:
     fab_path = data_dir / "fab.json"
     if not fab_path.is_file():
-        raise schema.DataContractError("fab.json is missing")
-    payload = json.loads(fab_path.read_text())
+        raise schema.DataContractError("fab.json 파일이 없습니다")
+    payload = json.loads(fab_path.read_text(encoding="utf-8"))
     entries = payload.get("distributions")
     if not isinstance(entries, list):
-        raise schema.DataContractError("fab.json: 'distributions' must be a list")
+        raise schema.DataContractError("fab.json: 'distributions'는 리스트여야 합니다")
 
     distributions: dict[str, schema.FabDistribution] = {}
     for entry in entries:
         if not isinstance(entry, dict):
-            raise schema.DataContractError("fab.json: each distribution must be an object")
+            raise schema.DataContractError("fab.json: 각 분포는 객체여야 합니다")
         did = _text(entry.get("fab_distribution_id")) or "<missing id>"
 
         def numbers(key: str, allow_null: bool) -> list:
             raw = entry.get(key)
             if not isinstance(raw, list):
-                raise schema.DataContractError(f"{did}: {key} must be a list")
+                raise schema.DataContractError(f"{did}: {key}는 리스트여야 합니다")
             out = []
             for item in raw:
                 if item is None and allow_null:
                     out.append(None)
                 elif isinstance(item, bool) or not isinstance(item, (int, float)):
-                    raise schema.DataContractError(f"{did}: {key} contains non-number {item!r}")
+                    raise schema.DataContractError(f"{did}: {key}에 숫자가 아닌 값이 있습니다 {item!r}")
                 else:
                     out.append(float(item))
             return out
@@ -184,7 +184,7 @@ def _load_distributions(data_dir: Path) -> dict[str, schema.FabDistribution]:
         values = np.array([np.nan if v is None else v for v in raw], dtype=float)
         is_reference = entry.get("is_reference", False)
         if not isinstance(is_reference, bool):
-            raise schema.DataContractError(f"{did}: is_reference must be true/false")
+            raise schema.DataContractError(f"{did}: is_reference는 true/false여야 합니다")
         dist = schema.FabDistribution(
             fab_distribution_id=_text(entry.get("fab_distribution_id")) or "",
             fab_id=_text(entry.get("fab_id")) or "",
@@ -205,7 +205,7 @@ def _load_distributions(data_dir: Path) -> dict[str, schema.FabDistribution]:
         schema.validate_fab(dist)
         if dist.fab_distribution_id in distributions:
             raise schema.DataContractError(
-                f"duplicate fab_distribution_id {dist.fab_distribution_id!r}"
+                f"fab_distribution_id가 중복되었습니다 {dist.fab_distribution_id!r}"
             )
         distributions[dist.fab_distribution_id] = dist
     return distributions
@@ -226,11 +226,11 @@ def _build_layouts(
             continue
         slot = _text(row.get("slot"))
         if slot not in ("a", "b"):
-            raise schema.DataContractError(f"{sid}: invalid layout slot {slot!r}")
+            raise schema.DataContractError(f"{sid}: 잘못된 layout slot {slot!r}")
         if slot in by_slot:
-            raise schema.DataContractError(f"{sid}: duplicate layout slot {slot!r}")
+            raise schema.DataContractError(f"{sid}: layout slot이 중복되었습니다 {slot!r}")
         if bundle.is_open and slot == "b":
-            raise schema.DataContractError(f"{sid}: open failure cannot have layout slot 'b'")
+            raise schema.DataContractError(f"{sid}: open 불량에는 layout slot 'b'가 있을 수 없습니다")
         by_slot[slot] = row
 
     for slot in sorted(by_slot):
@@ -262,7 +262,7 @@ def _build_hotspots(
     legend: dict | None,
 ) -> None:
     selected = [row for row in rows if _text(row.get("sample_id")) == sid]
-    selected.sort(key=lambda row: _req_float(row["particle_size"], f"{sid}: hotspot particle_size"))
+    selected.sort(key=lambda row: _req_float(row["particle_size"], f"{sid}: hotspot 이물 크기"))
     for row in selected:
         path = _resolve(data_dir, str(row["path"]), sid)
         arr, semantics, legend_id = read_image(
@@ -279,7 +279,7 @@ def _build_hotspots(
                 origin_xy=(origin_x, origin_y)
                 if origin_x is not None and origin_y is not None
                 else None,
-                particle_size=_req_float(row["particle_size"], f"{sid}: hotspot particle_size"),
+                particle_size=_req_float(row["particle_size"], f"{sid}: hotspot 이물 크기"),
                 value_semantics=semantics,
                 legend_id=legend_id,
             )
@@ -294,7 +294,7 @@ def _build_ca(
     records = [
         {
             "sample_id": sid,
-            "particle_size": _req_float(row["particle_size"], f"{sid}: CA particle_size"),
+            "particle_size": _req_float(row["particle_size"], f"{sid}: CA 이물 크기"),
             "ca_value": row.get("ca_value"),
             "ca_unit": row.get("ca_unit"),
         }
@@ -315,8 +315,8 @@ def _build_geometry(
     entry = payload.get(sid)
     if not isinstance(entry, dict):
         return
-    thickness = {str(k): _req_float(v, f"{sid}: thickness {k}") for k, v in (entry.get("thickness") or {}).items()}
-    shape = {str(k): _req_float(v, f"{sid}: shape metric {k}") for k, v in (entry.get("shape_metrics") or {}).items()}
+    thickness = {str(k): _req_float(v, f"{sid}: 두께 {k}") for k, v in (entry.get("thickness") or {}).items()}
+    shape = {str(k): _req_float(v, f"{sid}: 형상 수치 {k}") for k, v in (entry.get("shape_metrics") or {}).items()}
     bundle.geometry = schema.Geometry(
         thickness=thickness,
         shape_metrics=shape,
@@ -332,26 +332,26 @@ def _parse_bundle_row(row: dict, sid: str) -> schema.AnalysisBundle:
     b_layer = _text(row.get("layer_b"))
     failure_type = _text(row.get("failure_type"))
     if failure_type is None:
-        raise schema.DataContractError(f"{sid}: failure_type is missing")
+        raise schema.DataContractError(f"{sid}: failure_type이 없습니다")
 
     if failure_type in schema.OPEN_TYPES:
         if b_role is not None and b_role != schema.NOT_APPLICABLE:
             raise schema.DataContractError(
-                f"{sid}: open failure requires electrode_b_role blank or N/A"
+                f"{sid}: open 불량의 electrode_b_role은 비우거나 N/A여야 합니다"
             )
         if b_layer is not None and b_layer != schema.NOT_APPLICABLE:
             raise schema.DataContractError(
-                f"{sid}: open failure requires layer_b blank or N/A"
+                f"{sid}: open 불량의 layer_b는 비우거나 N/A여야 합니다"
             )
         b_role = schema.NOT_APPLICABLE
         b_layer = schema.NOT_APPLICABLE
     else:
         if failure_type not in schema.FAILURE_TYPES:
-            raise schema.DataContractError(f"{sid}: unknown failure_type {failure_type!r}")
+            raise schema.DataContractError(f"{sid}: 알 수 없는 failure_type {failure_type!r}")
         if b_role is None:
-            raise schema.DataContractError(f"{sid}: short failure requires electrode_b_role")
+            raise schema.DataContractError(f"{sid}: short 불량에는 electrode_b_role이 필요합니다")
         if b_layer is None:
-            raise schema.DataContractError(f"{sid}: short failure requires layer_b")
+            raise schema.DataContractError(f"{sid}: short 불량에는 layer_b가 필요합니다")
 
     return schema.AnalysisBundle(
         sample_id=sid,
@@ -401,11 +401,11 @@ def load_dataset(
     """Load one analysis directory into a :class:`LoadedDataset`."""
     data_dir = Path(data_dir)
     if mode not in schema.MODES:
-        raise schema.DataContractError(f"unknown mode {mode!r}")
+        raise schema.DataContractError(f"알 수 없는 mode {mode!r}")
 
     bundles_path = data_dir / "bundles.csv"
     if not bundles_path.is_file():
-        raise schema.DataContractError("bundles.csv is missing")
+        raise schema.DataContractError("bundles.csv 파일이 없습니다")
 
     source_files = ["bundles.csv"]
     warnings: list[str] = []
@@ -429,9 +429,9 @@ def load_dataset(
     for row in bundle_rows:
         sid = _text(row.get("sample_id"))
         if sid is None:
-            raise schema.DataContractError("bundles.csv: sample_id is missing")
+            raise schema.DataContractError("bundles.csv: sample_id가 비어 있습니다")
         if sid in seen:
-            raise schema.DataContractError(f"duplicate sample_id {sid!r}")
+            raise schema.DataContractError(f"sample_id가 중복되었습니다 {sid!r}")
         seen.add(sid)
         bundles.append(_parse_bundle_row(row, sid))
 
@@ -466,29 +466,29 @@ def load_dataset(
 
     geometry_path = data_dir / "geometry.json"
     if geometry_path.is_file():
-        geometry_payload = json.loads(geometry_path.read_text())
+        geometry_payload = json.loads(geometry_path.read_text(encoding="utf-8"))
         source_files.append("geometry.json")
 
     provenance_path = data_dir / "provenance.json"
     if provenance_path.is_file():
-        provenance_payload = json.loads(provenance_path.read_text())
+        provenance_payload = json.loads(provenance_path.read_text(encoding="utf-8"))
         source_files.append("provenance.json")
 
     for row in layout_rows + hotspot_rows + ca_rows:
         ref = _text(row.get("sample_id"))
         if ref is None:
-            raise schema.DataContractError("blank sample_id in layouts/hotspots/ca_records")
+            raise schema.DataContractError("layouts/hotspots/ca_records에 빈 sample_id가 있습니다")
         if ref not in seen:
-            raise schema.DataContractError(f"unknown sample_id {ref!r} in optional records")
+            raise schema.DataContractError(f"부속 기록에 알 수 없는 sample_id {ref!r}가 있습니다")
     for ref in geometry_payload:
         if ref not in seen:
-            raise schema.DataContractError(f"unknown sample_id {ref!r} in geometry.json")
+            raise schema.DataContractError(f"geometry.json에 알 수 없는 sample_id {ref!r}가 있습니다")
 
     for bundle in bundles:
         sid = bundle.sample_id
         if bundle.fab_distribution_id is not None and bundle.fab_distribution_id not in distributions:
             raise schema.DataContractError(
-                f"{sid}: fab_distribution_id {bundle.fab_distribution_id!r} not present in fab.json"
+                f"{sid}: fab_distribution_id {bundle.fab_distribution_id!r}가 fab.json에 없습니다"
             )
         _build_layouts(layout_rows, sid, bundle, data_dir)
         _build_hotspots(hotspot_rows, sid, bundle, data_dir, hotspot_legend)

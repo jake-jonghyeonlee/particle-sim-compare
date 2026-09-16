@@ -66,7 +66,7 @@ def encode_bundles(
     bundles: list[AnalysisBundle], distributions: dict[str, FabDistribution], cfg
 ) -> EncodedSet:
     if not bundles:
-        raise ValueError("no bundles to encode")
+        raise ValueError("변환할 분석 묶음이 없습니다")
     h, w = (int(v) for v in cfg.data.image_size)
     n = len(bundles)
     hot_sizes = [float(s) for s in cfg.data.hotspot_sizes]
@@ -132,7 +132,7 @@ def encode_bundles(
             dist = select_distribution(bundle, distributions, overrides)
             shape, total, _unit = fab_shape_and_total(dist)
         except CAAError as exc:
-            enc.notes.append(f"{bundle.sample_id}: fab unavailable: {exc}")
+            enc.notes.append(f"{bundle.sample_id}: Fab 분포 사용 불가: {exc}")
         else:
             mids = bin_midpoints(dist)
             for j, size in enumerate(fab_grid):
@@ -152,7 +152,7 @@ def encode_bundles(
             if value is not None and np.isfinite(value):
                 enc.geom[i, j], enc.geom_mask[i, j] = float(value), True
     for reason, count in sorted(area_reasons.items()):
-        enc.notes.append(f"CA per unit area unavailable for {count} bundle(s): {reason}")
+        enc.notes.append(f"면적 대비 CA 계산 불가 {count}건: {reason}")
     return enc
 
 

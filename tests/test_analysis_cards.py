@@ -49,7 +49,7 @@ def test_clusters_fit_on_train_only():
     train = np.arange(12)
     info = cluster_embeddings(emb, train, 2, seed=0)
     assert len(set(info["labels"][:12])) == 2
-    assert "without physical meaning" in info["note"]
+    assert "물리적 의미가 없습니다" in info["note"]
     assert all(v is not None for v in info["counter_examples"].values())
     assert jaccard(set(), set()) is None and jaccard({"a"}, {"a", "b"}) == 0.5
 
@@ -81,10 +81,10 @@ def test_leave_one_product_out_and_cards(demo_loaded, ranked):
     clusters = {"labels": {}, "representatives": {0: "P1-v1-OPEN"}, "counter_examples": {0: None}}
     cards = build_review_cards(ranked, neighbors, clusters, features)
     assert len(cards) == 3
-    text = json.dumps(cards, allow_nan=False)
-    assert "No causal importance" in text
+    text = json.dumps(cards, allow_nan=False, ensure_ascii=False)
+    assert "인과적 중요도" in text
     open_card = next(c for c in cards if c["failure_type"] == "lateral_open")
     assert open_card["representative_cases"] == ["P1-v1-OPEN"]
     assert open_card["retrieval"]["shape_only"]["P1-v1-OPEN"] == ["P2-v1-OPEN"]
-    assert any("physical" in s for s in open_card["unavailable_conditions"])
+    assert any("실제 크기 없음" in s for s in open_card["unavailable_conditions"])
     assert any("DEMO" in s for s in open_card["expert_review_required"])

@@ -155,7 +155,7 @@ def test_group_split_single_component_raises():
             {"sample_id": "s1", "product_id": "A", "design_lineage_id": "L1"},
         ]
     )
-    with pytest.raises(ValueError, match="fewer than 2 independent groups"):
+    with pytest.raises(ValueError, match="독립 그룹"):
         group_split(meta, test_fraction=0.5, seed=0)
 
 
@@ -165,7 +165,7 @@ def test_group_split_empty_meta_raises():
             {"sample_id": "s0", "product_id": "A", "design_lineage_id": "L1"},
         ]
     ).iloc[0:0]
-    with pytest.raises(ValueError, match="fewer than 2 independent groups"):
+    with pytest.raises(ValueError, match="독립 그룹"):
         group_split(meta, test_fraction=0.5, seed=0)
 
 
