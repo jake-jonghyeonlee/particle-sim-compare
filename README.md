@@ -12,6 +12,8 @@
 > 현재 저장소에서 확인한 것은 **합성 데이터 기반 코드 동작**뿐이다. 실제 데이터 분석이나 연구 성능 검증은 수행하지 않았다.
 
 > 설치부터 결과 해석, 실제 자료 연결, 오류 해결까지의 자세한 절차는 [docs/usage.md](docs/usage.md)(실행 가이드)에 있다.
+>
+> 처음이라면 [docs/walkthrough.pdf](docs/walkthrough.pdf)(따라하기)부터 보면 된다. 더미 데이터 생성부터 평가까지 실제로 실행한 결과를 그림과 쉬운 설명으로 정리했다.
 
 ## 설치
 
@@ -76,6 +78,7 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 
 ## 문서
 
+- [docs/walkthrough.pdf](docs/walkthrough.pdf): 따라하기(더미 데이터로 전체 흐름 실행, 결과 그림과 읽는 법). `uv run --with matplotlib python docs/walkthrough/build.py`로 다시 생성
 - [docs/usage.md](docs/usage.md): 실행 가이드(단계별 실행, 결과 읽는 법, 설정 변경, 실제 자료 실행, 오류 해결)
 - [docs/data_contract.md](docs/data_contract.md): 공통 형식, 예시, 단위·매칭 규칙
 - [docs/model_design.md](docs/model_design.md): 모델 구조, 분석 목적, 한계
