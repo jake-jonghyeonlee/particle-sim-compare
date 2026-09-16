@@ -115,7 +115,9 @@ def build_html(work: Path, run: dict) -> str:
     cards = json.loads((out / "review_cards.json").read_text())
     ev = json.loads((out / "evaluation.json").read_text())
     total_sec = sum(secs.values())
-    n_files = sum(1 for f in out.iterdir() if f.is_file())
+    n_files = sum(1 for f in out.rglob("*") if f.is_file())
+    auto_figs = sorted(f.name for f in (out / "figures").glob("*.svg"))
+    crop_svg(out / "figures" / "rank_shift.svg", HERE / "figures" / "auto_rank_shift.svg", 350)
 
     train_products = sorted({s["sample_id"].split("-")[0] for s in split["train"]})
     test_products = sorted({s["sample_id"].split("-")[0] for s in split["test"]})
@@ -373,6 +375,7 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
     ["이 사례와 비슷한 다른 제품 사례는?", "<code>neighbors.csv</code>, <code>clusters.json</code>"],
     ["결과가 제품 하나에 좌우되지 않나?", "<code>loo_stability.csv</code>"],
     ["한 장으로 정리하면?", "<code>review_cards.json</code>"],
+    ["그림으로 한눈에 보려면?", ", ".join(f"<code>figures/{esc(n)}</code>" for n in auto_figs)],
 ])}
 
 <h3>7-1. 제품별 위험 비교</h3>
@@ -413,6 +416,22 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
   <li>값이 낮은 제품이 있으면 “그 제품 하나 때문에 나온 결론인지” 확인해 보세요.</li>
 </ul>
 {card_html(cards["cards"][0], opens)}
+</section>
+
+<section class="pagebreak">
+<h3>7-6. 자동으로 저장되는 그림 (figures/)</h3>
+<p><code>analyze</code>를 실행하면 위에서 본 표 가운데 세 가지가 그림으로도 저장됩니다. 파일은
+<code>outputs/demo/figures/</code>에 있고, <b>브라우저로 열면</b> 한글 설명까지 그대로 보입니다.
+추가 설치는 필요 없습니다.</p>
+{table(["파일", "보여 주는 것", "이 문서의 비슷한 그림"], [
+    ["<code>rank_shift.svg</code>", "크기 보정·Fab 반영 전후 순위 변화. 가장 크게 바뀐 두 사례만 색으로 표시", "그림 7"],
+    ["<code>ca_curves.svg</code>", "이물 크기별 CA 곡선. CA가 가장 큰 사례를 주황으로 표시하고 빠진 값은 선을 끊음", "그림 6 ①"],
+    ["<code>loo_stability.svg</code>", "제품을 하나씩 뺐을 때 두 목록의 유지율 막대", "그림 8"],
+])}
+<p>이 문서의 그림은 설명을 위해 일부 사례만 골라 그렸지만, 자동 그림은 <b>모든 비교 그룹</b>(불량 종류·전극 역할·layer 조합)을
+한 줄씩 세로로 쌓아 보여 줍니다. 아래는 이번 실행에서 실제로 저장된 <code>rank_shift.svg</code>의 첫 번째 그룹입니다.</p>
+{figure("auto_rank_shift.svg", "그림 10. analyze가 자동으로 저장한 figures/rank_shift.svg의 윗부분 (끊김 불량 그룹). 이름 뒤 *는 한쪽 값이 없어 순위를 비교하지 못한 사례입니다.")}
+{note("그림은 결과 표를 옮긴 것일 뿐 새로운 판단을 더하지 않습니다. 사례 ID가 길면 그림에서는 줄여 표시하고, 전체 ID는 CSV 파일에 있습니다.")}
 </section>""")
 
     # ---------------- 8. 평가
@@ -473,7 +492,7 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
   <li><b><code>validation.json</code>의 경고</b> — 빠진 자료, 실제 크기 없는 제품, 공장·제품군 겹침부터 확인합니다. (그림 3)</li>
   <li><b><code>split.json</code></b> — 어떤 제품이 평가용으로 갔는지 확인합니다. (5장)</li>
   <li><b><code>review_cards.json</code></b> — 불량 종류별 카드에서 대표·반대 사례, 검토 후보, ‘자료 없음’, ‘전문가 확인 필요’를 읽습니다. (7-4)</li>
-  <li><b><code>ranking.csv</code></b> — 크기·공장 반영 전후로 순위가 크게 바뀐 제품을 찾습니다. (그림 7)</li>
+  <li><b><code>ranking.csv</code></b> — 크기·공장 반영 전후로 순위가 크게 바뀐 제품을 찾습니다. <code>figures/rank_shift.svg</code>로 먼저 훑어보면 빠릅니다. (그림 7·10)</li>
   <li><b><code>neighbors.csv</code></b> — 모양만 쓴 공간(<code>reuses_risk_inputs=False</code>)의 이웃을 우선 봅니다. (7-3)</li>
   <li><b><code>loo_stability.csv</code>, <code>evaluation.json</code></b> — 결론이 제품 하나에 좌우되지 않는지 확인합니다. (그림 8·9)</li>
 </ol>
@@ -508,6 +527,16 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 </section>""")
 
     return HTML_HEAD + "\n".join(p) + "</body></html>"
+
+
+def crop_svg(src: Path, dst: Path, height: int) -> None:
+    """자동 생성 SVG의 윗부분(height px)만 보이도록 크기와 viewBox를 바꿔 복사한다."""
+    import re
+
+    text = src.read_text(encoding="utf-8")
+    text = re.sub(r'height="[0-9.]+" viewBox="0 0 ([0-9.]+) [0-9.]+"',
+                  lambda m: f'height="{height}" viewBox="0 0 {m.group(1)} {height}"', text, count=1)
+    dst.write_text(text, encoding="utf-8")
 
 
 def card_html(card: dict, opens: pd.DataFrame) -> str:
