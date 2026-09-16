@@ -204,7 +204,7 @@ def generate_demo_data(out_dir: str | Path, *, seed: int = 0) -> dict:
             "P3 uses a different CA particle-size grid; P2 misses CA at 16 um",
             "P1 v2 is a design variant of P1 v1 in lineage L1",
             "FAB_A-COUNT-DEMO is a count distribution that the demo CAA rule must reject",
-            "Fab and product family are partially confounded (F1->FAB_A, F2->FAB_B, F3->both)",
+            "Fab and product family overlap: F1 only in FAB_A, F2 only in FAB_B, F3 in both",
         ],
         "similar_shape_different_risk": ["P2", "P5"],
         "seed": seed,

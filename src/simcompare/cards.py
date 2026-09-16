@@ -31,16 +31,31 @@ def _order_value(group: pd.DataFrame) -> pd.Series:
     return group["caa_actual"].where(group["caa_actual"].notna(), group["ca_max"])
 
 
+def _cv(values: pd.Series) -> float | None:
+    values = pd.to_numeric(values, errors="coerce").dropna()
+    if len(values) < 2 or abs(values.mean()) <= 1e-12:
+        return None
+    return float(values.std(ddof=0) / abs(values.mean()))
+
+
 def _repeated_features(group: pd.DataFrame, features: pd.DataFrame) -> list[str]:
+    """Features that vary across the group but stay similar among higher-risk cases.
+
+    Constant features (e.g. identical thickness everywhere) are skipped because
+    their consistency says nothing about the higher-risk cases.
+    """
     order = _order_value(group)
     upper = group[order >= order.median()] if order.notna().any() else group
-    rows = features[features["sample_id"].isin(upper["sample_id"])].drop(columns=["sample_id"])
+    rows_all = features[features["sample_id"].isin(group["sample_id"])]
+    rows_upper = features[features["sample_id"].isin(upper["sample_id"])]
     scores = {}
-    for name in rows.columns:
-        values = pd.to_numeric(rows[name], errors="coerce").dropna()
-        if len(values) >= 2 and abs(values.mean()) > 1e-12:
-            scores[name] = float(values.std(ddof=0) / abs(values.mean()))
-    return [name for name, _ in sorted(scores.items(), key=lambda kv: (kv[1], kv[0]))[:3]]
+    for name in features.columns.drop("sample_id"):
+        cv_all, cv_upper = _cv(rows_all[name]), _cv(rows_upper[name])
+        if cv_all is None or cv_upper is None or cv_all < 1e-6:
+            continue
+        scores[name] = cv_upper / cv_all
+    ranked = sorted(scores.items(), key=lambda kv: (kv[1], kv[0]))
+    return [name for name, ratio in ranked if ratio < 1.0][:3]
 
 
 def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: dict,
@@ -106,7 +121,7 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             "representative_cases": representative,
             "counter_cases": counter,
             "repeated_shape_features": _repeated_features(group, features),
-            "repeated_shape_features_note": "lowest variation among higher-risk cases; descriptive, not causal",
+            "repeated_shape_features_note": "less variation among higher-risk cases than across the group; descriptive, not causal",
             "risk_comparison": group[[
                 "sample_id", "product_id", "ca_max", "ca_area_max", "caa_actual", "caa_reference",
                 "rank_shift_fab",
