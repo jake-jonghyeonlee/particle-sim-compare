@@ -113,9 +113,9 @@ def group_split(
     at least one component in train.
     """
     n = len(meta)
-    if n == 0:
+    comps = _components(meta) if n else []
+    if len(comps) < 2:
         raise ValueError("cannot split: fewer than 2 independent groups")
-    comps = _components(meta)
 
     if test_groups:
         wanted = set(str(g) for g in test_groups)
@@ -147,9 +147,6 @@ def group_split(
             np.array(sorted(train_pos), dtype=int),
             np.array(sorted(test_pos), dtype=int),
         )
-
-    if len(comps) < 2:
-        raise ValueError("cannot split: fewer than 2 independent groups")
 
     lineage_arr = meta["design_lineage_id"].to_numpy()
     order = sorted(
