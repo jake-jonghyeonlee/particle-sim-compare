@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from simcompare.schema import (
+    AnalysisBundle,
     CACurve,
     DataContractError,
     FabDistribution,
@@ -135,22 +136,21 @@ def interpret_fab(
             is_demo=True,
         )
 
-    if not confirmed:
-        raise CAAError(f"unknown or unconfirmed CAA rule {rule!r}")
     raise CAAError(f"unknown or unconfirmed CAA rule {rule!r}")
 
 
 def select_distribution(
-    bundle,
+    bundle: AnalysisBundle,
     distributions: dict[str, FabDistribution],
     overrides: dict[str, str] | None = None,
 ) -> FabDistribution:
     """Select the Fab distribution for ``bundle``; never infer the layer."""
-    if overrides:
-        key = f"{bundle.product_id}|{bundle.failure_type}"
-        layer = overrides.get(key)
-    else:
-        layer = bundle.assigned_process_layer
+    key = f"{bundle.product_id}|{bundle.failure_type}"
+    layer = (
+        overrides.get(key)
+        if overrides and key in overrides
+        else bundle.assigned_process_layer
+    )
 
     if layer is None:
         raise CAAError(
