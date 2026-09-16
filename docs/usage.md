@@ -4,6 +4,8 @@
 
 > simcompare는 **이미 계산된** 시뮬레이션 결과를 제품 간에 비교·해석하는 도구다. CA나 hotspot을 예측하지 않고, 인과관계나 수율을 판정하지 않는다. 합성 데이터 결과는 코드 동작 확인용이며 연구 근거가 아니다.
 
+> 명령을 하나씩 입력하지 않고 파일만 실행하려면 [README의 시작하기 표](../README.md#시작하기-이-순서대로-따라-하기)를 따른다: `scripts/1_install.sh` → `scripts/2_demo.sh` → `scripts/3_check_my_data.sh` → `scripts/4_analyze_my_data.sh`. 이 문서는 그 파일들이 내부에서 실행하는 명령과 결과 파일을 자세히 설명한다.
+
 ## 1. 준비
 
 | 항목 | 요구 사항 |

@@ -15,6 +15,35 @@
 >
 > 처음이라면 [docs/walkthrough.pdf](docs/walkthrough.pdf)(따라하기)부터 보면 된다. 더미 데이터 생성부터 평가까지 실제로 실행한 결과를 그림과 쉬운 설명으로 정리했다.
 
+## 시작하기: 이 순서대로 따라 하기
+
+새 PC에서 처음 쓰는 경우의 전체 흐름이다. 단계마다 **읽을 문서 → 실행할 파일 → 열어 볼 결과 파일** 순서로 진행한다.
+실행 파일은 저장소 루트에서 `bash scripts/<파일>`로 실행하며 macOS·Linux 기준이다.
+
+**준비물**: Python 3.11+, [uv](https://docs.astral.sh/uv/), 저장소 접근 권한(비공개 저장소라 `gh auth login` 등으로 GitHub 로그인 필요). 설치할 때만 인터넷이 필요하고 이후에는 CPU만으로 동작한다.
+
+```bash
+git clone https://github.com/jake-jonghyeonlee/particle-sim-compare.git
+cd particle-sim-compare
+```
+
+| 단계 | 먼저 읽을 문서 | 실행할 파일 | 열어 볼 결과 파일 |
+|---|---|---|---|
+| 0. 이해하기 (10분) | [docs/walkthrough.pdf](docs/walkthrough.pdf) 1~2장: 도구가 하는 일·안 하는 일, 용어, 전체 흐름 | 없음 | 없음 |
+| 1. 설치 (처음 한 번) | 이 표 | [`scripts/1_install.sh`](scripts/1_install.sh) | 없음 (`설치 완료` 문구 확인) |
+| 2. 더미 데이터로 전체 실행 (약 10초) | [docs/walkthrough.pdf](docs/walkthrough.pdf) 3~8장 | [`scripts/2_demo.sh`](scripts/2_demo.sh) | ① `outputs/demo/figures/rank_shift.svg` ② `outputs/demo/figures/ca_curves.svg` ③ `outputs/demo/figures/loo_stability.svg` (브라우저로 열기) ④ `outputs/demo/review_cards.json` ⑤ `outputs/demo/validation.json` |
+| 3. 결과 파일 자세히 읽기 | [docs/usage.md](docs/usage.md) 4장(파일별 의미), [docs/walkthrough.pdf](docs/walkthrough.pdf) 9장(읽는 순서) | 없음 | 2단계 결과 전체 |
+| 4. 내 자료 준비 | [docs/domain-input-example/README.md](docs/domain-input-example/README.md)(Fab 측정값·적층 순서 양식), [docs/data_contract.md](docs/data_contract.md)(파일·열·단위 규칙), [docs/open_questions.md](docs/open_questions.md)(미확정 항목) | 없음. [`configs/real.example.yaml`](configs/real.example.yaml)을 `configs/real.yaml`로 복사해 `data_dir` 등을 수정 | 없음 |
+| 5. 내 자료 점검 | [docs/usage.md](docs/usage.md) 4.1절 | [`scripts/3_check_my_data.sh`](scripts/3_check_my_data.sh) | `outputs/real/validation.json`의 `warnings`, `confounding`, `caa_applicability` → 문제가 있으면 자료를 보완하고 5단계 반복 |
+| 6. 내 자료 분석 | [docs/usage.md](docs/usage.md) 4.4~4.5절 | [`scripts/4_analyze_my_data.sh`](scripts/4_analyze_my_data.sh) | ① `outputs/real/figures/rank_shift.svg` ② `outputs/real/figures/ca_curves.svg` ③ `outputs/real/review_cards.json` ④ `outputs/real/neighbors.csv` ⑤ `outputs/real/figures/loo_stability.svg` ⑥ `outputs/real/evaluation.json` |
+| 오류가 날 때 | [docs/usage.md](docs/usage.md) 7장(메시지별 해결) | 해결 후 해당 단계 파일 다시 실행 | 없음 |
+
+- 3·4번 실행 파일은 기본으로 `configs/real.yaml`을 읽는다. 다른 설정 파일은 `bash scripts/3_check_my_data.sh configs/다른설정.yaml`처럼 넘긴다. 결과 폴더는 설정의 `output_dir`(예시 설정은 `outputs/real`)이며, 실행이 끝나면 열어 볼 파일 경로를 화면에 출력한다.
+- 자료나 설정을 바꾸면 `scripts/4_analyze_my_data.sh`를 다시 실행한다(학습부터 다시 한다).
+- 실제 모드에서는 CAA 계산 규칙이 확정되기 전까지 CAA 값이 이유와 함께 비어 있는 것이 정상이다.
+
+아래 절은 명령을 직접 실행하거나 설정을 바꾸려는 사람을 위한 상세 설명이다.
+
 ## 설치
 
 Python 3.11+와 [uv](https://docs.astral.sh/uv/)가 필요하다. 외부 API·모델 다운로드·웹 서비스 없이 CPU에서 동작한다.
