@@ -53,7 +53,7 @@ uv run simcompare evaluate      --config configs/demo.yaml
 | `validate-data` | 입력 점검(자료를 수정하지 않음) | `validation.json` | 누락 수, 실제 크기 없는 샘플, 교락 상태, CAA 적용 불가 사유 |
 | `train` | 제품·설계 계열 단위 분리 후 오토인코더 학습 | `model.pt`, `train_history.csv`, `split.json`, `run_record.json` | 평가로 간 제품, 입력별 손실 추이 |
 | `embed` | 특징 공간 계산 | `embeddings.npz`, `embedding_meta.csv` | 공간 이름과 차원 |
-| `analyze` | 검색·순위·군집·안정성·검토 카드 | `ranking.csv`, `neighbors.csv`, `clusters.json`, `cluster_map.png`, `loo_stability.csv`, `review_cards.json` 등 | `review_cards.json` |
+| `analyze` | 검색·순위·군집·안정성·검토 카드 | `ranking.csv`, `neighbors.csv`, `clusters.json`, `cluster_map.png`, `loo_stability.csv`, `review_cards.json`, `figures/*.svg` 등 | `review_cards.json`, `figures/rank_shift.svg` |
 | `evaluate` | 평가 행 복원 손실, 보지 않은 제품의 반복성, 입력 구성 비교, 그룹 제외 검증 | `evaluation.json` | `held_out_product_evidence`, `ablation`, `leave_one_group_out.*.verdict` |
 
 모든 명령은 끝나면 생성한 파일 경로와 요약을 JSON으로 표준 출력에 쓴다.
@@ -102,6 +102,10 @@ print(z.files, z["shape_only"].shape)
 - `rank_agreement.json`: 비교 그룹별 순위 상관(실제 Fab 대 기준 분포, 원 CA 대 면적 대비 CA).
 - `neighbors.csv`: 공간(`space`)별 유사 사례. `reuses_risk_inputs=True`인 행은 위험 수치를 입력으로 쓴 공간의 결과이므로 독립적인 발견으로 보지 않는다.
 - `clusters.json`, `cluster_map.png`: 학습 행으로 적합한 군집과 대표·반대 사례. 군집 번호에는 의미가 없다. PNG는 PC1/PC2 산점도(채운 점=학습, 테두리=평가)다.
+- `figures/` (SVG, 브라우저로 열기): 표를 그림으로 옮긴 것이며 새 판단을 더하지 않는다. 비교 그룹마다 한 줄씩 쌓인다.
+  - `rank_shift.svg`: ① 원 CA → 면적당 CA, ② 기준 분포 CAA → 실제 Fab CAA 순위 변화. 가장 크게 바뀐 두 사례만 색으로 표시하고, 한쪽 값이 없는 사례는 `*`로 표시한다.
+  - `ca_curves.svg`: 이물 크기별 원 CA 곡선(양쪽 로그 눈금). 원 CA 최댓값이 가장 큰 사례를 강조하고, 빠진 값이나 0 이하 값은 채우지 않고 선을 끊는다.
+  - `loo_stability.svg`: `loo_stability.csv`의 두 유지율을 제품별 막대로 표시한다.
 - `loo_stability.csv`: 제품을 하나씩 뺐을 때 상위 항목(`top_items_jaccard`)과 형상 공간 이웃(`neighbor_jaccard`)이 얼마나 유지되는지(1에 가까울수록 안정).
 - `shape_features.csv`: 형상 특징 원표(누락은 빈 값).
 - `review_cards.json`: 검토 카드. 불량 종류·전극 역할·layer 조합마다 한 장이다.

@@ -22,7 +22,8 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
         assert main([command, "--config", str(config)]) == 0, command
     for name in ("model.pt", "train_history.csv", "split.json", "run_record.json", "embeddings.npz",
                  "neighbors.csv", "clusters.json", "cluster_map.png", "ranking.csv",
-                 "loo_stability.csv", "review_cards.json", "evaluation.json"):
+                 "loo_stability.csv", "review_cards.json", "evaluation.json",
+                 "figures/rank_shift.svg", "figures/ca_curves.svg", "figures/loo_stability.svg"):
         assert (out / name).exists(), name
     split = json.loads((out / "split.json").read_text())
     train_products = {s["sample_id"].split("-")[0] for s in split["train"]}

@@ -41,7 +41,7 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 
 ## 출력 언어
 
-오류·경고·안내 문구, 검토 카드와 평가 결과의 설명, CLI 도움말은 한국어로 출력한다. 다른 프로그램이 읽을 수 있도록 JSON 키, CSV 열 이름, `lateral_open` 같은 열거값과 ID는 영문을 유지한다. `cluster_map.png`의 그림 안 글자는 Pillow 기본 글꼴이 한글을 지원하지 않아 `PC1/PC2`만 표시하고, 설명은 `clusters.json`에 있다. argparse가 자체 생성하는 `usage:` 줄과 인자 누락 문구(`the following arguments are required`)는 영문으로 남는다.
+오류·경고·안내 문구, 검토 카드와 평가 결과의 설명, CLI 도움말은 한국어로 출력한다. 다른 프로그램이 읽을 수 있도록 JSON 키, CSV 열 이름, `lateral_open` 같은 열거값과 ID는 영문을 유지한다. `cluster_map.png`의 그림 안 글자는 Pillow 기본 글꼴이 한글을 지원하지 않아 `PC1/PC2`만 표시하고, 설명은 `clusters.json`에 있다. `figures/*.svg`는 여는 쪽 글꼴로 그려져 한글이 표시된다. argparse가 자체 생성하는 `usage:` 줄과 인자 누락 문구(`the following arguments are required`)는 영문으로 남는다.
 
 ## 산출물 (`output_dir`)
 
@@ -53,6 +53,7 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 | analyze | `neighbors.csv` | 공간별 유사 사례. `reuses_risk_inputs=True`인 공간은 독립 발견이 아님 |
 | | `risk_table.csv`, `ranking.csv`, `rank_agreement.json` | 원 CA, CA/면적, demo CAA(실제 Fab / 기준 분포), 순위 변화 |
 | | `clusters.json`, `cluster_map.png` | 학습 행으로 적합한 군집, 대표·반대 사례(군집 번호는 의미 없음) |
+| | `figures/rank_shift.svg`, `figures/ca_curves.svg`, `figures/loo_stability.svg` | 비교 그룹별 순위 변화(원 CA→면적당 CA, 기준 분포→실제 Fab), 이물 크기별 CA 곡선, 제품 제외 유지율 그림. 브라우저로 열며 한글 설명 포함 |
 | | `loo_stability.csv` | 제품 하나씩 제외 시 상위 항목·이웃 유지율 |
 | | `shape_features.csv`, `review_cards.json` | 명시적 형상 특징, 검토 카드 |
 | evaluate | `evaluation.json` | held-out 제품→학습 제품 형상 검색·면적 보정 CA 경향, 입력별 복원 손실, 입력 구성 비교, Fab·제품군 그룹 제외 검증과 교락 판정 |

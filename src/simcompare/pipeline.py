@@ -33,6 +33,7 @@ from simcompare.checks import run_checks
 from simcompare.config import config_to_dict
 from simcompare.dataset import encode_bundles, fit_normalizers, to_model_arrays
 from simcompare.losses import LOSS_KINDS, masked_losses
+from simcompare.plots import write_analysis_figures
 from simcompare.retrieval import search_all
 from simcompare.schema import DataContractError
 from simcompare.split import (
@@ -315,7 +316,8 @@ def run_analyze(cfg) -> dict:
     """분석을 실행하고 결과 파일을 저장한다.
 
     ranking.csv, risk_table.csv, rank_agreement.json, neighbors.csv, clusters.json,
-    cluster_map.png, loo_stability.csv, shape_features.csv, review_cards.json을 만든다.
+    cluster_map.png, loo_stability.csv, shape_features.csv, review_cards.json과
+    figures/ 아래 SVG 그림(rank_shift.svg, ca_curves.svg, loo_stability.svg)을 만든다.
     neighbors.csv의 reuses_risk_inputs가 True인 공간은 위험 입력을 재사용한 결과다.
     """
     out = _out(cfg)
@@ -365,6 +367,7 @@ def run_analyze(cfg) -> dict:
         search_kwargs={**kwargs, "other_products_only": False}, train_pos=train_pos,
     )
     loo.to_csv(out / "loo_stability.csv", index=False)
+    figures = write_analysis_figures(out, ranked, loo)
 
     x, mask, names = explicit_features(enc, include_risk=False)
     features = pd.DataFrame(np.where(mask, x, np.nan), columns=names)
@@ -381,7 +384,7 @@ def run_analyze(cfg) -> dict:
     names_out = ["ranking.csv", "risk_table.csv", "rank_agreement.json", "neighbors.csv",
                  "clusters.json", "cluster_map.png", "loo_stability.csv", "shape_features.csv",
                  "review_cards.json"]
-    return {"outputs": [str(out / n) for n in names_out], "n_cards": len(cards),
+    return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures], "n_cards": len(cards),
             "n_neighbor_rows": len(neighbors)}
 
 

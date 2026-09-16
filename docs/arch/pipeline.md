@@ -29,7 +29,9 @@ ensure_ascii=False, NaN -> null. Every function returns dict {"outputs": [paths]
   the shape_only baseline refit per held-out product -> `loo_stability.csv`;
   review cards including broad geometry candidates and external design-review status
   -> `review_cards.json`; `risk_table.csv`, `ranking.csv`,
-  `rank_agreement.json`; `cluster_map.png` (Pillow scatter of the first two PCA
+  `rank_agreement.json`; `figures/rank_shift.svg`, `figures/ca_curves.svg`,
+  `figures/loo_stability.svg` via `plots.write_analysis_figures(out, ranked, loo)` (dependency-free
+  SVG, Korean text, per comparison group); `cluster_map.png` (Pillow scatter of the first two PCA
   components of with_risk_ae, colour by cluster, train filled / test outlined).
 - `run_evaluate(cfg)`: checks the fingerprint; `evaluation.json` with: split summary
   + leakage check; held-out test products used only as shape-space queries against
