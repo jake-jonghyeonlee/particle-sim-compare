@@ -619,16 +619,16 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
         for row, na in zip(rows.itertuples(index=False), not_applicable):
             value = None
             if not na:
-                raw = row.ca_mean_um2 / run.roi_area_um2 if use_mean else row.ca_nominal_normalized
+                raw = row.ca_mean_um2 if use_mean else row.ca_nominal_um2
                 value = None if raw is None or not np.isfinite(raw) else float(raw)
             records.append({"sample_id": sid, "particle_size": float(row.particle_size_um),
-                            "particle_size_unit": "um", "ca_value": value, "ca_unit": "1"})
+                            "particle_size_unit": "um", "ca_value": value, "ca_unit": "um^2"})
         try:
             curve = schema.group_size_records(records)[sid]
         except schema.DataContractError as exc:
             report.add("error", "contract", "ca_curve", str(exc), unit)
             continue
-        curve.calc_settings = {"ca_source": "ca_mean_um2 / roi_area" if use_mean else "ca_nominal_normalized",
+        curve.calc_settings = {"ca_source": "ca_mean_um2" if use_mean else "ca_nominal_um2",
                                "run_type": run.run_type}
 
         hotspots = []
@@ -749,7 +749,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--mapping-contract-version", choices=("1.1", "1.2"), default="1.2",
                         help="G4 interpretation (default 1.2 source-step Fab assignment; 1.1 legacy upper layer)")
     parser.add_argument("--ca", choices=("nominal", "mean"), default="nominal",
-                        help="CA 곡선 값: nominal=ca_nominal_normalized, mean=ca_mean_um2/ROI 면적(확률 run)")
+                        help="CA 곡선 값: nominal=ca_nominal_um2, mean=ca_mean_um2(확률 run)")
     parser.add_argument("--mapping", type=Path, help="unit 대응표 YAML(기본 대응표에 덮어씀)")
     parser.add_argument("--output", type=Path, help="JSON 보고서 경로")
     parser.add_argument("--strict", action="store_true", help="미지원 unit이 있으면 실패로 본다")

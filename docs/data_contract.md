@@ -34,7 +34,7 @@
 
 `ImageInput`: `array`(2-D float32), `path`, `pixel_size`(픽셀당 실제 길이), `origin_xy`, `particle_size`와 `particle_size_unit`(hotspot의 원형 이물 지름), `value_semantics`(`binary` \| `processed_intensity` \| `probability`), `legend_id`. `probability`는 명시 범례가 있을 때만 허용된다. real 모드에서는 같은 묶음의 layout·hotspot 배열 크기, pixel size, 원점과 실제 영역이 일치해야 한다.
 
-`CACurve`: `particle_sizes`(원형 이물의 지름, 엄격 증가), `particle_size_unit`, `values`(0~1 무차원 누적 위험값, 미관측은 NaN), `observed`(bool), `unit="1"`, `calc_settings`. CA는 면적 정규화된 확률이 아니므로 원 CA와 `CA / unit-pixel 면적`을 함께 보존한다. 후자는 확률이 아니라 `1/um^2` 단위의 위험 지표다.
+`CACurve`: `particle_sizes`(원형 이물의 지름, 엄격 증가), `particle_size_unit`, `values`(비음수 유한값, 미관측은 NaN), `observed`(bool), `unit="1"` 또는 면적 단위 `nm^2`, `um^2`, `mm^2`, `calc_settings`. legacy 무차원 CA는 0~1 범위이며 `CA / unit-pixel 면적`은 `1/um^2` 위험 지표다. 면적 단위 원 CA는 canonical 길이 제곱으로 환산해 ROI 면적으로 한 번만 나누며 결과 단위는 `1`이다.
 
 ## 2. Fab 자료 `FabDistribution`
 
@@ -67,7 +67,7 @@ data_dir/
   bundles.csv       # 묶음 메타데이터 (필수)
   layouts.csv       # sample_id, slot(a|b), path, pixel_size, origin_x, origin_y
   hotspots.csv      # sample_id, particle_size, particle_size_unit, path, pixel_size, origin_x, origin_y
-  ca_records.csv    # sample_id, particle_size, particle_size_unit, ca_value, ca_unit(1)
+  ca_records.csv    # sample_id, particle_size, particle_size_unit, ca_value, ca_unit(1 또는 nm^2/um^2/mm^2)
   fab.json          # 기존 공통 분포 형식(선택)
   fab_measurements.csv # glass당 평균 검출 개수 가공자료(선택, 둘 중 하나 필수)
   layer_stack.csv   # 제품별 하부→상부 적층 순서(vertical short에 필요)
@@ -95,7 +95,7 @@ P1-v2-VSHORT,P1,F1,v2,L1,gate,data,M1,M2,vertical_short,FAB_A,,M2,60,90,um,P1-v1
 - open에 slot b layout이 있으면 오류.
 - 유사 사례 비교는 같은 `failure_type`과 같은 전극 역할 집합(순서 무관)에서만. layer는 `analysis.layer_policy: exact`(이름 일치) 또는 `ignore`.
 - 지원 길이 단위는 `nm`, `um`, `mm`이며 `data.canonical_length_unit`(현재 `um`)으로 명시 변환한다.
-- CA는 무차원 `1`이고 면적 보정은 canonical unit으로 환산한 unit-pixel 면적으로 나눈다.
+- CA는 legacy 무차원 `1` 또는 원 면적 단위다. 면적 보정은 분자와 unit-pixel 면적을 canonical 단위로 환산해 한 번만 나눈다.
 - 이미지 `pixel_size`와 `origin_x/y`는 해당 묶음의 `physical_length_unit`을 사용한다. 현재 실제 자료의 기준 단위는 `um`이다.
 - 순위는 `failure_type + 전극 역할 집합 + layer 집합`이 같은 비교 그룹 안에서만 계산한다.
 - 서로 다른 CA 크기 격자는 `data.ca_grid`에 정렬한다. 기본 `exact`는 일치하는 크기만, `loglinear_within_range`는 관측 범위 **안**에서만 log-size 선형 보간한다. 범위 밖 외삽 금지.
@@ -136,3 +136,22 @@ Legacy 자동 선택은 layer-wide만 고려하며 pair-specific explicit ID도 
 
 Pair ID는 product-local이다. Pair-specific 측정은 항상 검증된 explicit distribution ID로 선택한다.
 같은 key가 여러 step에서 반복되어도 sample 행은 별도이며 retrieval/grouping은 기존 geometry를 유지한다.
+
+CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은 `ca_mean_um2`)를 `um^2`로 전달합니다. ROI 크기는 유지하고 simcompare에서 한 번만 면적으로 나눠 `ca_area_unit="1"`로 기록합니다. legacy 무차원 입력은 기존 `1/um^2` 경로를 유지합니다. 도메인 해석은 담당자 확인 필요입니다.
+
+
+### CA unit-family comparison (CA-2)
+
+Area CA is converted before comparison to `canonical_length_unit^2` (default `um^2`),
+including raw model/PCA channels, CA maxima and CAA. Per-area CA divides by ROI area
+once and has unit `1`; legacy dimensionless CA retains `1/um^2` in the default configuration.
+CAA uses `relative_index` for legacy CA and `relative_index*um^2` for area CA
+(or the configured canonical area unit). This is an area-weighted relative index, not a probability.
+Real datasets mixing dimensionless and area families are rejected with counts and sample IDs;
+demo mode records a warning. Different area units belong to the same family after conversion.
+Legacy CA's original confirmed rule is preserved; the particle-sim sub-rule is provisional.
+Cross-family comparisons remain prohibited until a conversion basis is confirmed.
+Pre-fix `particle-sim-*` exports with dimensionless CA must be re-exported with the fixed exporter
+(real: error; demo: warning). Cards use the first metric complete for every group row in priority
+`caa_actual`, `ca_area_max`, `ca_max`; otherwise they use the most observed metric,
+with ties resolved in that priority order and missing values preserved.

@@ -162,3 +162,16 @@ def test_leave_one_product_out_and_cards(demo_loaded, ranked):
     candidates = [item for card in cards for item in card["improvement_candidates"]]
     assert all(item["applicable_conditions"]["comparison_group_id"] for item in candidates)
     assert all(item["counter_examples"] for item in candidates)
+
+
+def test_risk_table_area_units(demo_loaded, demo_cfg):
+    from copy import deepcopy
+    item = deepcopy(demo_loaded.bundles[0])
+    legacy = risk_table([item], demo_loaded.distributions, demo_cfg)
+    assert legacy.iloc[0].ca_area_unit == "1/um^2"
+    item.ca.unit = "um^2"
+    item.ca.values = item.ca.values * item.unit_area()
+    table = ranking_comparison(risk_table([item], demo_loaded.distributions, demo_cfg))
+    assert table.iloc[0].ca_area_unit == "1"
+    assert table.iloc[0].ca_unit == "um^2"
+    assert table.iloc[0].ca_area_max == pytest.approx(legacy.iloc[0].ca_max, rel=1e-12)

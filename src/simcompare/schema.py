@@ -96,7 +96,7 @@ class CACurve:
     """이물 크기별 CA(접촉 확률이 반영된 critical area) 곡선.
 
     particle_sizes는 엄격히 증가해야 하고, 관측되지 않은 크기의 values는 NaN,
-    observed는 False다. CA는 0~1 무차원 누적 위험값이므로 unit은 "1"이며,
+    observed는 False다. unit은 legacy 무차원 "1" 또는 원 CA 면적(nm^2, um^2, mm^2)이며,
     particle_size_unit은 원형 이물 지름의 단위다. calc_settings에 계산 설정을 보존한다.
     """
     particle_sizes: np.ndarray
@@ -215,18 +215,29 @@ class AnalysisBundle:
         height = convert_length(self.unit_height, self.physical_length_unit, target_length_unit)
         return float(width) * float(height)
 
+    def ca_area_unit(self, target_length_unit: str = "um") -> str:
+        """면적 정규화 결과의 단위를 반환한다."""
+        target = normalize_length_unit(target_length_unit)
+        if self.ca is None or is_dimensionless_unit(self.ca.unit):
+            return f"1/{target}^2"
+        convert_area(1.0, self.ca.unit, target)
+        return "1"
+
     def ca_per_area(self, target_length_unit: str = "um") -> tuple[np.ndarray | None, str]:
         """CA를 unit-pixel 면적으로 나눈 값과 사유를 반환한다.
 
-        CA는 무차원 확률 기반 누적 위험값이며 면적으로 정규화되어 있지 않다.
-        반환값은 확률이 아니라 target_length_unit 제곱당 위험 지표다.
+        legacy 무차원 CA는 길이 제곱당 위험 지표가 된다.
+        원 CA 면적은 목표 길이 제곱으로 환산한 뒤 나누어 무차원 비가 된다.
         """
         if self.ca is None:
             return None, "CA 곡선 없음"
         area = self.unit_area(target_length_unit)
         if area is None:
             return None, "unit-pixel 실제 크기 없음: 물리 길이·면적 비교 불가"
-        return self.ca.values / area, "ok"
+        values = self.ca.values if is_dimensionless_unit(self.ca.unit) else convert_area(
+            self.ca.values, self.ca.unit, target_length_unit
+        )
+        return values / area, "ok"
 
 
 def _require_text(value: object, name: str) -> None:
@@ -248,14 +259,54 @@ def validate_curve(curve: CACurve, where: str = "ca") -> None:
         raise DataContractError(f"{where}: 이물 크기는 유한한 양수여야 합니다")
     if np.any(np.diff(sizes) <= 0):
         raise DataContractError(f"{where}: 이물 크기는 엄격히 증가해야 합니다")
-    if np.any(~np.isfinite(values[observed])) or np.any(values[observed] < 0) or np.any(values[observed] > 1):
+    _require_text(curve.unit, f"{where}.unit")
+    dimensionless = is_dimensionless_unit(curve.unit)
+    if not dimensionless:
+        convert_area(1.0, curve.unit)
+    if np.any(~np.isfinite(values[observed])) or np.any(values[observed] < 0):
+        raise DataContractError(f"{where}: 관측된 CA 값은 0 이상의 유한한 값이어야 합니다")
+    if dimensionless and np.any(values[observed] > 1):
         raise DataContractError(f"{where}: 관측된 CA 값은 0 이상 1 이하의 유한한 무차원 값이어야 합니다")
     if np.any(~np.isnan(values[~observed])):
         raise DataContractError(f"{where}: 미관측 CA 값은 채우지 말고 NaN이어야 합니다")
-    _require_text(curve.unit, f"{where}.unit")
-    if not is_dimensionless_unit(curve.unit):
-        raise DataContractError(f"{where}: CA 단위는 무차원 '1'이어야 합니다(현재 {curve.unit!r})")
     normalize_length_unit(curve.particle_size_unit)
+
+
+def canonicalize_ca(curve: CACurve, length_unit: str = "um") -> CACurve:
+    """Validate and convert area CA in place; repeated conversion is idempotent."""
+    validate_curve(curve)
+    if not is_dimensionless_unit(curve.unit):
+        target = normalize_length_unit(length_unit)
+        curve.values = convert_area(curve.values, curve.unit, target)
+        curve.unit = f"{target}^2"
+    return curve
+
+
+def prepare_ca_bundles(bundles: list[AnalysisBundle], mode: str,
+                       length_unit: str = "um") -> list[str]:
+    """Enforce CA families before comparison and canonicalize every area curve."""
+    families = {"dimensionless": [], "area": []}
+    warnings = []
+    for bundle in bundles:
+        if bundle.ca is None:
+            continue
+        canonicalize_ca(bundle.ca, length_unit)
+        family = "dimensionless" if is_dimensionless_unit(bundle.ca.unit) else "area"
+        families[family].append(bundle.sample_id)
+        version = bundle.provenance.calc_version if bundle.provenance else None
+        if family == "dimensionless" and version and version.startswith("particle-sim-"):
+            message = (f"{bundle.sample_id}: pre-fix particle-sim export has dimensionless CA "
+                       "already normalized by ROI; re-export with the fixed particle-sim exporter")
+            if mode == "real":
+                raise DataContractError(message)
+            warnings.append(message)
+    if all(families.values()):
+        message = "Mixed CA unit families cannot be compared until a conversion basis is confirmed: " + "; ".join(
+            f"{name} count={len(ids)}, samples={ids[:3]}" for name, ids in families.items())
+        if mode == "real":
+            raise DataContractError(message)
+        warnings.append(message)
+    return warnings
 
 
 def validate_bundle(bundle: AnalysisBundle, mode: str = "real") -> list[str]:

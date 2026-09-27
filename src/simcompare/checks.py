@@ -7,6 +7,7 @@ from __future__ import annotations
 import numpy as np
 
 from simcompare.caa import CAAError, interpret_fab, select_distribution
+from simcompare.schema import is_dimensionless_unit
 from simcompare.split import confounding_report, group_ids
 
 OVERLAP_THRESHOLD = 0.8
@@ -67,7 +68,8 @@ def run_checks(loaded, enc, cfg) -> dict:
             caa_issues.append({"sample_id": bundle.sample_id, "reason": str(exc)})
 
     groups = group_ids(meta)
-    ca_values = enc.ca_log[enc.ca_mask]
+    dimensionless_rows = np.array([b.ca is not None and is_dimensionless_unit(b.ca.unit) for b in bundles])
+    ca_values = enc.ca_log[enc.ca_mask & dimensionless_rows[:, None]]
     ca_raw = np.power(10.0, ca_values) if ca_values.size else np.array([], dtype=float)
     comparison_groups = {
         (
@@ -112,7 +114,10 @@ def run_checks(loaded, enc, cfg) -> dict:
             for j, size in enumerate(cfg.data.ca_grid)
         },
         "ca_value_range": {
-            "valid_contract": [0.0, 1.0],
+            "valid_contract": [0.0, 1.0] if any(b.ca is not None and is_dimensionless_unit(b.ca.unit) for b in bundles) else None,
+            "applies_to_unit": "1",
+            "area_unit_sample_ids": [b.sample_id for b in bundles if b.ca is not None and not is_dimensionless_unit(b.ca.unit)],
+            "area_unit_message": "면적 단위 원 CA에는 0~1 범위 검사를 적용하지 않습니다; ROI 면적으로 나눈 무차원 비를 별도로 확인하세요",
             "observed_min": None if ca_raw.size == 0 else float(ca_raw.min()),
             "observed_max": None if ca_raw.size == 0 else float(ca_raw.max()),
             "n_above_typical_0_03": int((ca_raw > 0.03).sum()),

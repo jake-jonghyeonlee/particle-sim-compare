@@ -20,6 +20,8 @@ from simcompare.schema import (
     CACurve,
     DataContractError,
     FabDistribution,
+    canonicalize_ca,
+    is_dimensionless_unit,
     convert_area,
     convert_length,
     validate_fab,
@@ -238,12 +240,14 @@ def compute_caa(
     weights: FabWeights,
     *,
     require_full_coverage: bool = True,
+    canonical_length_unit: str = "um",
 ) -> CAAResult:
     """CA 곡선과 Fab 가중치를 곱해 합산한 CAA를 계산한다.
 
     가중치 크기와 관측된 CA 크기가 정확히 일치(rtol=1e-6)하는 점만 사용한다.
     누락 크기가 있고 require_full_coverage이면 값을 만들지 않고 사유만 남긴다.
     """
+    canonicalize_ca(ca, canonical_length_unit)
     try:
         w_sizes = convert_length(weights.sizes, weights.size_unit, ca.particle_size_unit)
     except DataContractError as exc:
@@ -275,7 +279,7 @@ def compute_caa(
         else:
             missing_sizes.append(float(size))
 
-    unit = "relative_index"
+    unit = "relative_index" if is_dimensionless_unit(ca.unit) else f"relative_index*{ca.unit}"
     label = DEMO_LABEL if weights.is_demo else "CAA (설정된 규칙)"
 
     if missing_sizes and require_full_coverage:

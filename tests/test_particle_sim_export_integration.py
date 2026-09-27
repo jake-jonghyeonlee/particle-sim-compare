@@ -106,7 +106,7 @@ def test_export_load_contract(tmp_path):
             assert bundle.sample_id == ''.join(c if c.isascii() and (c.isalnum() or c in '_.-') else '_'
                                                for c in '-'.join((p, v, step, unit)))
             rows = raw[(raw.source_step == step) & (raw[id_col] == unit)].sort_values('particle_size_um')
-            np.testing.assert_allclose(bundle.ca.values, rows.ca_nominal_normalized)
+            np.testing.assert_allclose(bundle.ca.values, rows.ca_nominal_um2)
             np.testing.assert_allclose(bundle.ca.particle_sizes, rows.particle_size_um)
             assert len(bundle.layouts) == (1 if bundle.is_open else 2)
             if bundle.is_open:
@@ -127,3 +127,56 @@ def test_export_load_contract(tmp_path):
                 auto = [t for t in trace if t['raw_tuple'][3].startswith('auto_open:')]
                 assert len(auto) == 1 and auto[0]['raw_tuple'][2] == 'S_M2'
     assert {'lateral_short', 'vertical_short', 'lateral_open'} <= {b.failure_type for b in observed}
+
+
+ROI_GENERATE = r'''
+import sys
+from pathlib import Path
+import pandas as pd
+from particle_sim.validation.synthetic_cases import build_case, write_case
+from particle_sim.pipeline import run_nominal
+from particle_sim.export.simcompare import export_simcompare
+base = Path(sys.argv[1])
+for name, extent in [('large', 100.0), ('small', 50.0)]:
+    case = build_case('pilot')
+    case.manifest['particle_sizes_um'] = [2.0, 4.0]
+    coord = case.manifest['coordinate_system']
+    shape = next(iter(case.electrode_masks.values())).shape
+    coord['pixel_size_x_um'] = extent / shape[1]
+    coord['pixel_size_y_um'] = extent / shape[0]
+    coord['roi_width_um'] = coord['roi_height_um'] = extent
+    manifest = write_case(case, base / name / 'case')
+    run_dir = base / name / 'run'
+    run_nominal(manifest, run_dir)
+    # A controlled raw CA pattern on real generated runs isolates ROI normalization.
+    # Keep the old normalized column consistent so switching the exporter back to it
+    # produces the original 16x regression, rather than a malformed input failure.
+    ca = pd.read_parquet(run_dir / 'ca.parquet')
+    ca['ca_nominal_um2'] = ca['particle_size_um'] * 10.0
+    ca['ca_nominal_normalized'] = ca['ca_nominal_um2'] / extent**2
+    ca.to_parquet(run_dir / 'ca.parquet', index=False)
+    export_simcompare(run_dir, manifest, base / name / 'export')
+'''
+
+
+def test_export_roi_area_ratio_is_four_not_sixteen(tmp_path):
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=str(Path(ROOT) / 'src'))
+    result = subprocess.run([PYTHON, '-B', '-c', ROI_GENERATE, str(tmp_path)], cwd=ROOT,
+                            env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    datasets = []
+    for name in ('large', 'small'):
+        out = tmp_path / name / 'export'
+        layers = pd.read_csv(out / 'bundles.csv').assigned_process_layer.unique()
+        (out / 'fab.json').write_text(json.dumps({'distributions': [dict(
+            fab_distribution_id='SYNTHETIC_ONLY_' + layer, fab_id='FAB_SYN', process_layer=layer,
+            bin_lower=[1.0], bin_upper=[5.0], raw_values=[1.0], value_kind='density',
+            value_unit='1/cm2', size_unit='um') for layer in layers]}))
+        datasets.append(load_dataset(out, mode='real'))
+    large = {b.sample_id: b for b in datasets[0].bundles}
+    small = {b.sample_id: b for b in datasets[1].bundles}
+    assert large and large.keys() == small.keys()
+    for sid in large:
+        np.testing.assert_array_equal(large[sid].ca.values, small[sid].ca.values)
+        ratio = small[sid].ca_per_area()[0] / large[sid].ca_per_area()[0]
+        np.testing.assert_array_equal(ratio, np.full_like(ratio, 4.0))

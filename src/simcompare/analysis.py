@@ -11,7 +11,7 @@ from sklearn.cluster import KMeans
 from simcompare.caa import CAAError, compute_caa, interpret_fab, select_distribution
 from simcompare.preprocess import align_curve
 from simcompare.retrieval import candidate_mask, layer_key, role_key, search_all
-from simcompare.schema import convert_length
+from simcompare.schema import prepare_ca_bundles, convert_length
 
 CLUSTER_NOTE = "군집 번호는 임의의 라벨이며 물리적 의미가 없습니다"
 
@@ -50,7 +50,7 @@ def _caa(bundle, dist_or_error, cfg) -> tuple[float, str, bool | None]:
         return np.nan, "CA 곡선 없음", None
     try:
         weights = interpret_fab(dist_or_error, cfg.caa.rule, mode=cfg.mode, confirmed=cfg.caa.confirmed)
-        result = compute_caa(bundle.ca, weights, require_full_coverage=cfg.caa.require_full_coverage)
+        result = compute_caa(bundle.ca, weights, canonical_length_unit=cfg.data.canonical_length_unit, require_full_coverage=cfg.caa.require_full_coverage)
     except CAAError as exc:
         return np.nan, str(exc), None
     value = np.nan if result.value is None else float(result.value)
@@ -68,6 +68,7 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
     """
     grid = np.asarray(cfg.data.ca_grid, dtype=float)
     canonical_unit = cfg.data.canonical_length_unit
+    prepare_ca_bundles(bundles, cfg.mode, canonical_unit)
     ref_id = cfg.caa.reference_distribution_id
     rows = []
     for bundle in bundles:
@@ -84,8 +85,8 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             "layer_key": layers,
             "comparison_group_id": f"{roles}::{layers}",
             "has_physical_scale": bundle.has_physical_scale(),
-            "ca_unit": "1",
-            "ca_area_unit": f"1/{canonical_unit}^2",
+            "ca_unit": bundle.ca.unit if bundle.ca is not None else "1",
+            "ca_area_unit": bundle.ca_area_unit(canonical_unit),
         }
         raw = np.full(len(grid), np.nan)
         area = np.full(len(grid), np.nan)

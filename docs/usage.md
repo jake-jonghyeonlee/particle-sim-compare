@@ -100,7 +100,7 @@ print(z.files, z["shape_only"].shape)
 
 ### 4.4 `analyze` 결과
 
-- `ranking.csv` / `risk_table.csv`: 비교 그룹별 크기별 무차원 원 CA(`ca@크기`), 단위 면적당 위험 지표(`ca_area@크기`, `1/um^2`), `ca_max`, CAA와 각 사유 열. 순위는 불량 종류뿐 아니라 전극 역할과 layer가 같은 `comparison_group_id` 안에서만 계산한다.
+- `ranking.csv` / `risk_table.csv`: 비교 그룹별 크기별 원 CA(`ca@크기`, `ca_unit`), 면적 대비 CA(`ca_area@크기`, `ca_area_unit`: legacy `1/um^2`, 면적 CA `1`), `ca_max`, CAA와 각 사유 열. 순위는 불량 종류뿐 아니라 전극 역할과 layer가 같은 `comparison_group_id` 안에서만 계산한다.
 - `rank_agreement.json`: 비교 그룹별 순위 상관(실제 Fab 대 기준 분포, 원 CA 대 면적 대비 CA).
 - `neighbors.csv`: 공간(`space`)별 유사 사례. `reuses_risk_inputs=True`인 행은 위험 수치를 입력으로 쓴 공간의 결과이므로 독립적인 발견으로 보지 않는다.
 - `clusters.json`, `cluster_map.png`: 학습 행으로 적합한 군집과 대표·반대 사례. 군집 번호에는 의미가 없다. PNG는 PC1/PC2 산점도(채운 점=학습, 테두리=평가)다.
@@ -228,7 +228,7 @@ simcompare 묶음 계약을 검사한다. 모든 크기가 `not_applicable_sourc
 
 | 옵션 | 의미 |
 |---|---|
-| `--ca nominal\|mean` | 기본은 정규화 nominal CA; mean은 확률 run의 `ca_mean_um2 / ROI 면적` |
+| `--ca nominal\|mean` | 기본은 원 `ca_nominal_um2`; mean은 확률 run의 원 `ca_mean_um2` |
 | `--mode real\|demo` | 계약 검사 모드, 기본 real |
 | `--product-config manifest.yaml` | 제품/버전 대조, 전극 역할, 제품군, 설계 계열, Fab ID 및 vertical short 상부 layer 검증 |
 | `--product-family`, `--design-lineage-id`, `--fab-id` | 메타데이터 직접 지정 |
@@ -315,3 +315,22 @@ Pair ID는 product-local이다. Pair-specific 측정은 항상 검증된 explici
 같은 key가 여러 step에서 반복되어도 sample 행은 별도이며 retrieval/grouping은 기존 geometry를 유지한다.
 
 CA에 source Fab label이 없는 legacy run은 checker에 `--mapping-contract-version 1.1`을 지정한다.
+
+CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은 `ca_mean_um2`)를 `um^2`로 전달합니다. ROI 크기는 유지하고 simcompare에서 한 번만 면적으로 나눠 `ca_area_unit="1"`로 기록합니다. legacy 무차원 입력은 기존 `1/um^2` 경로를 유지합니다. 도메인 해석은 담당자 확인 필요입니다.
+
+
+### CA unit-family comparison (CA-2)
+
+Area CA is converted before comparison to `canonical_length_unit^2` (default `um^2`),
+including raw model/PCA channels, CA maxima and CAA. Per-area CA divides by ROI area
+once and has unit `1`; legacy dimensionless CA retains `1/um^2` in the default configuration.
+CAA uses `relative_index` for legacy CA and `relative_index*um^2` for area CA
+(or the configured canonical area unit). This is an area-weighted relative index, not a probability.
+Real datasets mixing dimensionless and area families are rejected with counts and sample IDs;
+demo mode records a warning. Different area units belong to the same family after conversion.
+Legacy CA's original confirmed rule is preserved; the particle-sim sub-rule is provisional.
+Cross-family comparisons remain prohibited until a conversion basis is confirmed.
+Pre-fix `particle-sim-*` exports with dimensionless CA must be re-exported with the fixed exporter
+(real: error; demo: warning). Cards use the first metric complete for every group row in priority
+`caa_actual`, `ca_area_max`, `ca_max`; otherwise they use the most observed metric,
+with ties resolved in that priority order and missing values preserved.

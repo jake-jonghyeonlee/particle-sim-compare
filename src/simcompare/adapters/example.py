@@ -638,6 +638,7 @@ def load_dataset(
     *,
     mode: str,
     hotspot_legend: dict | None = None,
+    canonical_length_unit: str = "um",
 ) -> LoadedDataset:
     """분석 디렉터리 하나를 읽어 LoadedDataset으로 반환한다.
 
@@ -814,6 +815,8 @@ def load_dataset(
         warnings.extend(_apply_vertical_layer(bundle, layer_stack, mode))
         warnings.extend(schema.validate_bundle(bundle, mode))
         warnings.extend(_validate_image_registration(bundle, mode))
+
+    warnings.extend(schema.prepare_ca_bundles(bundles, mode, canonical_length_unit))
 
     return LoadedDataset(
         bundles=bundles,

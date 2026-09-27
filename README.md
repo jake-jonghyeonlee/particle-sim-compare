@@ -119,3 +119,5 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 ## 구현 방식 기록
 
 이 저장소는 로컬 Mac mini 오케스트레이터(mmo)로 구현했다. 계약 문서와 공통 schema는 계획 단계에서 작성했고, 기본 모듈은 로컬 Qwen(OpenCode) 작업으로 생성한 뒤 Codex/Claude 독립 검토의 blocking finding을 반영했다. 통합 계층(dataset/train/baseline/synthetic/analysis/checks/cards/pipeline/cli)과 테스트 일부는 직접 작성했다. 자세한 작업 기록은 오케스트레이터 상태 DB에 보존되어 있다.
+
+CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은 `ca_mean_um2`)를 `um^2`로 전달합니다. ROI 크기는 유지하고 simcompare에서 한 번만 면적으로 나눠 `ca_area_unit="1"`로 기록합니다. legacy 무차원 입력은 기존 `1/um^2` 경로를 유지합니다. 도메인 해석은 담당자 확인 필요입니다. 면적 CA는 적재/분석 전에 canonical 길이 제곱으로 통일하며 CAA 단위는 `relative_index*um^2`(legacy: `relative_index`)다. 두 단위 계열 혼합은 real 오류/demo 경고이며, 수정 전 particle-sim 무차원 export는 재-export해야 한다.

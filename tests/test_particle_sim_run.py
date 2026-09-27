@@ -150,7 +150,7 @@ def test_nominal_and_mean(make_run, version, probability):
         {},
     )
     np.testing.assert_allclose(
-        bundles[0].ca.values, np.array([1, 2]) * (0.5 if probability else 1) / 12
+        bundles[0].ca.values, np.array([1, 2]) * (0.5 if probability else 1)
     )
     assert bundles[0].hotspots[0].legend_id == (
         checker.PROBABILITY_LEGEND_ID if probability else None
@@ -394,7 +394,7 @@ def test_each_bundle_uses_original_step_and_unit_plane(make_run, probability):
             np.testing.assert_array_equal(hotspot.array, array[si, di, ui])
             assert hotspot.particle_size == di + 1
         rows = run.ca[(run.ca.source_step == step) & (run.ca.unit_id == unit)]
-        np.testing.assert_allclose(bundle.ca.values, rows.ca_nominal_normalized)
+        np.testing.assert_allclose(bundle.ca.values, rows.ca_nominal_um2)
 
 
 @pytest.mark.parametrize("kind", ["open_path", "open_electrode"])

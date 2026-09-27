@@ -51,6 +51,18 @@ ca:
     unit: "1/um^2"
     must_not_be_called_probability: true
   status: confirmed
+  particle_sim:
+    status: provisional
+    raw_unit: "um^2"
+    allowed_area_units: ["nm^2", "um^2", "mm^2"]
+    already_area_normalized: false
+    increases_with_analysis_area: true
+    source: "ca_nominal_um2 또는 ca_mean_um2"
+    normalized_unit: "1"
+    formula: "raw_ca_um2 / roi_area_um2"
+  cross_family_comparison:
+    allowed: false
+    enable_condition: "두 CA 단위 계열의 환산 근거가 확정된 뒤"
 
 fab:
   input_level: processed_summary

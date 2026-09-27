@@ -103,3 +103,30 @@ def test_f4_fixture_key_and_marker_conformance():
                 validate_mapping_contract(bundle)
         else:
             validate_mapping_contract(bundle)
+
+
+@pytest.mark.parametrize("unit,value", [("um^2", 2.0), ("nm^2", 2e6), ("mm^2", 2e-6)])
+def test_area_ca_normalizes_once(unit, value):
+    curve = CACurve(np.array([1.0, 2.0]), np.array([value, np.nan]), np.array([True, False]), unit)
+    large = make_bundle(ca=curve, unit_width=100.0, unit_height=100.0)
+    small = make_bundle(ca=curve, unit_width=50.0, unit_height=50.0)
+    validate_bundle(large)
+    a = large.ca_per_area()[0]
+    b = small.ca_per_area()[0]
+    assert a[0] == pytest.approx(2.0 / 10000, rel=1e-12)
+    assert b[0] / a[0] == pytest.approx(4.0, rel=1e-12)
+    assert np.isnan(a[1])
+    assert large.ca_area_unit() == "1"
+    assert large.ca_per_area("nm")[0][0] == pytest.approx(a[0], rel=1e-12)
+
+
+@pytest.mark.parametrize("unit", ["bad", "um", "1/um^2"])
+def test_invalid_ca_unit(unit):
+    curve = CACurve(np.array([1.0]), np.array([0.1]), np.array([True]), unit)
+    with pytest.raises(DataContractError):
+        validate_bundle(make_bundle(ca=curve))
+
+
+def test_legacy_ca_area_unit():
+    curve = CACurve(np.array([1.0]), np.array([0.1]), np.array([True]), "1")
+    assert make_bundle(ca=curve).ca_area_unit() == "1/um^2"

@@ -34,9 +34,12 @@ def _clean(value):
 
 
 def _order_value(group: pd.DataFrame) -> pd.Series:
-    """정렬 기준 값: 실제 CAA, 면적 보정 CA, 원 CA 순으로 사용할 수 있는 값을 쓴다."""
-    value = group["caa_actual"].where(group["caa_actual"].notna(), group["ca_area_max"])
-    return value.where(value.notna(), group["ca_max"])
+    """Use one metric: first complete, else most observed (ties keep priority)."""
+    metrics = ["caa_actual", "ca_area_max", "ca_max"]
+    counts = {name: group[name].notna().sum() for name in metrics}
+    metric = next((name for name in metrics if counts[name] == len(group)),
+                  max(metrics, key=lambda name: counts[name]))
+    return group[metric]
 
 
 def _cv(values: pd.Series) -> float | None:
