@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 from simcompare import __version__
 from simcompare.adapters.example import load_dataset
 from simcompare.analysis import (
-    CLUSTER_NOTE, cluster_embeddings, jaccard, leave_one_product_out, neighbor_sets,
+    CLUSTER_NOTE, InsufficientEmbeddingData, cluster_embeddings, jaccard, leave_one_product_out, neighbor_sets,
     held_out_product_evidence, rank_agreement, ranking_comparison, risk_table,
 )
 from simcompare.baseline import BaselinePCA, explicit_features
@@ -360,6 +360,10 @@ def run_analyze(cfg) -> dict:
 
     def shape_embed(fit_pos):
         """제품 제외 안정성 비교용: fit_pos로 형상 PCA를 다시 적합해 전체 행을 변환한다."""
+        if len(fit_pos) < 2:
+            raise InsufficientEmbeddingData("insufficient_training_rows")
+        if not mask_shape[fit_pos].any():
+            raise InsufficientEmbeddingData("no_observed_features")
         return BaselinePCA(8).fit(x_shape, mask_shape, fit_pos).transform(x_shape, mask_shape)
 
     loo = leave_one_product_out(
@@ -367,6 +371,18 @@ def run_analyze(cfg) -> dict:
         search_kwargs={**kwargs, "other_products_only": False}, train_pos=train_pos,
     )
     loo.to_csv(out / "loo_stability.csv", index=False)
+    n_computed = int((loo["status"] == "computed").sum())
+    record_path = out / "run_record.json"
+    record = json.loads(record_path.read_text()) if record_path.exists() else {}
+    record["loo_stability"] = {
+        "status": "available" if n_computed == len(loo) and n_computed else (
+            "partial" if n_computed else "not_available"),
+        "n_computed": n_computed, "n_skipped": len(loo) - n_computed,
+        "skipped_folds": loo.loc[loo["status"] == "skipped", [
+            "held_out_product", "reason", "n_training_rows",
+        ]].to_dict(orient="records"),
+    }
+    _write_json(record_path, record)
     figures = write_analysis_figures(out, ranked, loo)
 
     x, mask, names = explicit_features(enc, include_risk=False)

@@ -207,6 +207,10 @@ def _top_items(frame: pd.DataFrame, top_k: int) -> dict[str, set[str]]:
     return out
 
 
+class InsufficientEmbeddingData(ValueError):
+    """임베딩 재적합에 필요한 관측 자료가 부족함 (메시지는 기록할 reason 코드)."""
+
+
 def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=None,
                           train_pos=None) -> pd.DataFrame:
     """제품을 하나씩 제외했을 때 상위 항목과 유사 사례가 유지되는지 비교한다.
@@ -220,10 +224,30 @@ def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=Non
     positions = np.arange(len(meta))
     train_pos = positions if train_pos is None else np.asarray(train_pos, dtype=int)
     full_top = _top_items(ranked, top_k)
-    emb_full = embed_fn(train_pos)
+    full_reason = None
+    try:
+        if len(train_pos) < 2:
+            raise InsufficientEmbeddingData("insufficient_training_rows")
+        emb_full = embed_fn(train_pos)
+    except InsufficientEmbeddingData as exc:
+        full_reason = str(exc)
     rows = []
     for product in sorted(meta["product_id"].unique()):
         keep = positions[(meta["product_id"] != product).to_numpy()]
+        fit_pos = np.intersect1d(train_pos, keep)
+        try:
+            if full_reason:
+                raise InsufficientEmbeddingData(full_reason)
+            if len(fit_pos) < 2:
+                raise InsufficientEmbeddingData("insufficient_training_rows")
+            emb_loo = embed_fn(fit_pos)
+        except InsufficientEmbeddingData as exc:
+            rows.append({
+                "held_out_product": product, "status": "skipped", "reason": str(exc),
+                "n_training_rows": len(fit_pos), "top_items_jaccard": None,
+                "neighbor_jaccard": None, "n_queries": 0,
+            })
+            continue
         keep_ids = set(meta.loc[keep, "sample_id"])
         loo_ranked = ranked[ranked["sample_id"].isin(keep_ids)]
         loo_top = _top_items(loo_ranked, top_k)
@@ -234,7 +258,6 @@ def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=Non
             for ft in sorted(set(full_top) | set(loo_top))
         ]
         scores = [s for s in scores if s is not None]
-        emb_loo = embed_fn(np.intersect1d(train_pos, keep))
         sub_meta = meta.iloc[keep].reset_index(drop=True)
         full_nb = search_all(emb_full[keep], sub_meta, k=k, space="full", **search_kwargs)
         loo_nb = search_all(emb_loo[keep], sub_meta, k=k, space="loo", **search_kwargs)
@@ -244,6 +267,7 @@ def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=Non
         nb_scores = [s for s in nb_scores if s is not None]
         rows.append({
             "held_out_product": product,
+            "status": "computed", "reason": None, "n_training_rows": len(fit_pos),
             "top_items_jaccard": float(np.mean(scores)) if scores else None,
             "neighbor_jaccard": float(np.mean(nb_scores)) if nb_scores else None,
             "n_queries": len(nb_scores),

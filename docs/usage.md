@@ -109,6 +109,7 @@ print(z.files, z["shape_only"].shape)
   - `ca_curves.svg`: 이물 크기별 원 CA 곡선(양쪽 로그 눈금). 원 CA 최댓값이 가장 큰 사례를 강조하고, 빠진 값이나 0 이하 값은 채우지 않고 선을 끊는다.
   - `loo_stability.svg`: `loo_stability.csv`의 두 유지율을 제품별 막대로 표시한다.
 - `loo_stability.csv`: 제품을 하나씩 뺐을 때 상위 항목(`top_items_jaccard`)과 형상 공간 이웃(`neighbor_jaccard`)이 얼마나 유지되는지(1에 가까울수록 안정).
+  - 재적합 학습 행이 2개 미만이거나 관측 특징이 없으면 해당 제품은 `status=skipped`와 `reason`으로 기록하고 유지율은 비워 둔다. `run_record.json`의 `loo_stability`는 계산 가능한 제품이 없으면 `not_available`, 일부만 가능하면 `partial`로 기록한다.
 - `shape_features.csv`: 형상 특징 원표(누락은 빈 값).
 - `review_cards.json`: 검토 카드. 불량 종류·전극 역할·layer 조합마다 한 장이다.
 
