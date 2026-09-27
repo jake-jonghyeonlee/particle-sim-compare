@@ -1,0 +1,193 @@
+{
+  "applicability": {
+    "rule": "Classification must be uniform across sizes for each (source_step, unit); skip all not_applicable_source_step, reject mixed classifications; exported CA must be finite.",
+    "vectors": [
+      {
+        "classifications": [
+          "not_applicable_source_step",
+          "not_applicable_source_step"
+        ],
+        "result": "skip"
+      },
+      {
+        "classifications": [
+          "confirmed",
+          "confirmed"
+        ],
+        "result": "export"
+      },
+      {
+        "classifications": [
+          "confirmed",
+          "not_applicable_source_step"
+        ],
+        "result": "error"
+      }
+    ]
+  },
+  "contract_version": "1.1",
+  "excluded_open_warnings": {
+    "classifications": [
+      "baseline_open",
+      "insufficient_terminals",
+      "terminal_lost"
+    ],
+    "rule": "Keep exporting open units; emit one warning per (source_step, unit) with raw unit ID, step and classification: CA 0 reflects an excluded baseline condition, not low risk."
+  },
+  "mapping_rows": [
+    {
+      "electrode_b_role": null,
+      "layer_b": null,
+      "layout_slots": [
+        "a",
+        "b"
+      ],
+      "mode": "lateral_short",
+      "target": "lateral_short",
+      "unit_kind": "electrode_pair"
+    },
+    {
+      "electrode_b_role": null,
+      "layer_b": null,
+      "layout_slots": [
+        "a",
+        "b"
+      ],
+      "mode": "vertical_short",
+      "target": "vertical_short",
+      "unit_kind": "electrode_pair"
+    },
+    {
+      "electrode_b_role": "N/A",
+      "layer_b": "N/A",
+      "layout_slots": [
+        "a"
+      ],
+      "mode": "lateral_open",
+      "target": "lateral_open",
+      "unit_kind": "open_path"
+    },
+    {
+      "electrode_b_role": "N/A",
+      "layer_b": "N/A",
+      "layout_slots": [
+        "a"
+      ],
+      "mode": "lateral_open",
+      "target": "lateral_open",
+      "unit_kind": "open_electrode"
+    },
+    {
+      "electrode_b_role": null,
+      "layer_b": null,
+      "layout_slots": [],
+      "mode": "contact_not_open",
+      "target": null,
+      "unit_kind": "contact"
+    }
+  ],
+  "sample_id": {
+    "collision_vectors": [
+      {
+        "raw_tuples": [
+          [
+            "P",
+            "V",
+            "S",
+            "a:b"
+          ],
+          [
+            "P",
+            "V",
+            "S",
+            "a_b"
+          ]
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuples": [
+          [
+            "P",
+            "V",
+            "a:b",
+            "U"
+          ],
+          [
+            "P",
+            "V",
+            "a_b",
+            "U"
+          ]
+        ],
+        "sample_id": "P-V-a_b-U"
+      },
+      {
+        "raw_tuples": [
+          [
+            "P",
+            "V",
+            "S-X",
+            "U"
+          ],
+          [
+            "P",
+            "V",
+            "S",
+            "X-U"
+          ]
+        ],
+        "sample_id": "P-V-S-X-U"
+      }
+    ],
+    "raw_rule": "product_id-design_version-source_step-unit_id",
+    "sanitization_rule": "Replace each character outside [A-Za-z0-9_.-] with _, without collapsing underscores or adding suffixes.",
+    "vectors": [
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "safe_1.-"
+        ],
+        "sample_id": "P-V-S-safe_1.-"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "a:b"
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "a/b"
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "a b"
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "\ud55c\uae00"
+        ],
+        "sample_id": "P-V-S-__"
+      }
+    ]
+  }
+}

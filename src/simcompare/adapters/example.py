@@ -21,6 +21,8 @@ from PIL import Image
 from simcompare import schema
 from simcompare.preprocess import legend_to_values
 
+REAL_PARTICLE_SIZE_GRID_UM = (*range(1, 31), 40, 50)
+
 __all__ = ["LoadedDataset", "load_dataset", "read_image"]
 
 
@@ -304,7 +306,6 @@ def _load_processed_fab_measurements(
             raise schema.DataContractError("fab_measurements.csv: source_id가 비어 있습니다")
         grouped.setdefault(source_id, []).append(row)
     distributions: dict[str, schema.FabDistribution] = {}
-    expected_sizes = list(range(1, 51))
     for source_id, group in grouped.items():
         def one_text(key: str, *, required_value: bool = True) -> str | None:
             values = {_text(row.get(key)) for row in group}
@@ -333,10 +334,12 @@ def _load_processed_fab_measurements(
             if size_int in by_size:
                 raise schema.DataContractError(f"{source_id}: 이물 지름 {size_int} um가 중복되었습니다")
             by_size[size_int] = _float(row.get("avg_detected_count"), f"{source_id}: avg_detected_count")
-        if mode == "real" and sorted(by_size) != expected_sizes:
-            missing = sorted(set(expected_sizes) - set(by_size))
+        if mode == "real" and tuple(sorted(by_size)) != REAL_PARTICLE_SIZE_GRID_UM:
+            missing = sorted(set(REAL_PARTICLE_SIZE_GRID_UM) - set(by_size))
+            extra = sorted(set(by_size) - set(REAL_PARTICLE_SIZE_GRID_UM))
             raise schema.DataContractError(
-                f"{source_id}: real 모드 Fab 가공자료는 1..50 um 전체가 필요합니다(누락 {missing})"
+                f"{source_id}: real 모드 Fab 가공자료는 1–30 um 1 um 간격 + 40, 50 um "
+                f"(32개) 전체가 필요합니다(누락 {missing}, 격자 밖 {extra})"
             )
         sizes = sorted(by_size)
         observed = np.array([by_size[size] is not None for size in sizes], dtype=bool)

@@ -102,7 +102,7 @@ P1-v2-VSHORT,P1,F1,v2,L1,gate,data,M1,M2,vertical_short,FAB_A,,M2,60,90,um,P1-v1
 
 ## 6. Fab 가공자료와 적층표
 
-실제 입력 예시와 작성 규칙은 [`domain-input-example/`](domain-input-example/README.md)에 있다. `fab_measurements.csv`는 Fab·제품군·공정 layer·1~50 um 이물 지름별 `glass 1장당 평균 검출 개수`, glass 한 장의 실제 조사 면적과 측정 기간을 제공한다. real 모드에서는 각 분포에 1~50 um 전체 행이 필요하다.
+실제 입력 예시와 작성 규칙은 [`domain-input-example/`](domain-input-example/README.md)에 있다. `fab_measurements.csv`는 Fab·제품군·공정 layer·확정 크기 격자의 이물 지름별 `glass 1장당 평균 검출 개수`, glass 한 장의 실제 조사 면적과 측정 기간을 제공한다. 확정: 1–30 um 1 um 간격 + 40, 50 um (32개). real 모드에서는 각 분포에 이 32개 전체 행이 필요하며 격자 밖 크기는 허용하지 않는다.
 
 `layer_stack.csv`는 `product_id, design_version(* 허용), layer_name, stack_order, fab_process_layer`를 가진다. 숫자가 큰 layer를 상부로 보고 vertical short에 적용한다. 제품 간 이름이 다른 layer의 대응은 아직 보류되어 있어 같은 이름끼리만 비교한다.
 

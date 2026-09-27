@@ -161,7 +161,7 @@ train:
 ## 6. 실제 자료로 실행하기
 
 1. **자료 정리**: [`docs/domain-input-example`](domain-input-example/README.md)과 [`docs/data_contract.md`](data_contract.md)를 참고한다. 실제 Fab 자료는 `fab_measurements.csv`, vertical short 적층은 `layer_stack.csv`로 제공할 수 있다.
-2. **설정 작성**: `configs/real.example.yaml`을 복사해 `data_dir`, `output_dir`, 크기 격자를 실제 값으로 바꾼다.
+2. **설정 작성**: `configs/real.example.yaml`을 복사해 `data_dir`, `output_dir`를 실제 값으로 바꾼다. 크기 격자는 확정: 1–30 um 1 um 간격 + 40, 50 um (32개).
 3. **점검 먼저**:
    ```bash
    uv run simcompare validate-data --config configs/real.yaml
@@ -210,3 +210,84 @@ uv run pytest                                  # 전체(단위·계약·CPU 소�
 uv run pytest tests/test_cli_e2e.py            # CLI 전체 흐름만
 uv run pytest tests/test_caa_contract.py -q    # 특정 모듈 계약
 ```
+
+## 9. particle-sim 원 실행 결과 점검
+
+```bash
+bash scripts/5_check_particle_sim_run.sh "../particle-sim/run" --output /tmp/run-report.json
+bash scripts/5_check_particle_sim_run.sh RUN_A RUN_B --ca mean --strict
+```
+
+여러 run 경로와 공백이 있는 경로를 받으며 상대 경로는 호출한 디렉터리를 기준으로 해석한다.
+Python 진입점은 `simcompare.adapters.particle_sim_run.main(argv)`이다.
+이 점검기는 `run_manifest.json`, `ca.parquet`, `hotspots.zarr` 또는 `probability.zarr`를 읽고
+입력 파일을 수정하지 않는다. schema 1.0/2.0, CA 정규화, 중복 키, unit 정체성, zarr 면적과
+simcompare 묶음 계약을 검사한다. 모든 크기가 `not_applicable_source_step`인 (공정, unit)은
+건너뛰고, 같은 (공정, unit)의 크기별 classification이 다르면 오류다.
+
+| 옵션 | 의미 |
+|---|---|
+| `--ca nominal\|mean` | 기본은 정규화 nominal CA; mean은 확률 run의 `ca_mean_um2 / ROI 면적` |
+| `--mode real\|demo` | 계약 검사 모드, 기본 real |
+| `--product-config manifest.yaml` | 제품/버전 대조, 전극 역할, 제품군, 설계 계열, Fab ID 및 vertical short 상부 layer 검증 |
+| `--product-family`, `--design-lineage-id`, `--fab-id` | 메타데이터 직접 지정 |
+| `--mapping mapping.yaml` | 기본 unit 대응표를 진단 목적으로 덮어쓰기 |
+| `--output report.json` | verdict, mapping, run별 findings/units/bundles를 JSON으로 저장 |
+| `--strict` | 미지원 unit이 하나라도 있으면 실패 |
+
+종료 코드는 0(통과), 1(무결성/계약 오류 또는 strict 미지원), 2(사용법/읽을 수 없는 입력)다.
+전극쌍 lateral/vertical short와 명시/자동 open은 대응한다. Open의 b 역할/layer는 `N/A`다.
+무결성 오류가 있으면 대응 단계 전에 보고를 중단하므로 JSON의 `units`와 `bundles`는 비어 있고,
+`--strict`의 미지원 unit 집계도 제공되지 않는다(종료 코드 1은 유지).
+알 수 없는 `(unit_kind, failure_mode)`는 이 점검기에서 경고로 보고하지만 exporter는 거부한다.
+Open의 `baseline_open`, `terminal_lost`, `insufficient_terminals` classification은 (공정, unit)마다
+경고를 내고 묶음은 유지한다. 이때 CA 0은 제외된 baseline 조건을 뜻하며 낮은 위험을 뜻하지 않는다.
+CNO(`contact_not_open`)는 지원하지 않으며 기본 실행에서는 경고, `--strict`에서는 실패한다.
+`--mapping` YAML은 다음처럼 항목 목록 또는 `mappings` 목록을 받는다.
+
+```yaml
+- unit_kind: electrode_pair
+  failure_mode: lateral_short
+  failure_type: lateral_short
+  note: diagnostic override
+```
+
+대상은 현재 `schema.FAILURE_TYPES`에 포함되어야 한다(`null`은 미지원). 이 옵션은 exporter를
+확장하거나 CNO 지원을 추가하지 않는다. 기본 대응표도 바꾸지 않는다. 샘플 ID는
+`product-version-step-unit`의 허용 문자 `[A-Za-z0-9_.-]` 밖 문자 각각을 `_`로 바꾼다.
+서로 다른 전체 raw tuple이 같은 ID로 변환되면 오류이며, 다른 run에서 동일한 raw tuple의
+ID를 다시 사용하면 경고다. 이 경고가 있는 자료를 중복 ID를 가진 하나의 데이터셋으로 합치면 안 된다.
+
+점검 통과가 분석용 `data_dir` 준비 완료를 뜻하지 않는다. 원 run에는 layout 연결과 실제 Fab
+입력이 없으며, `adapters.example.load_dataset`은 exporter의 CSV/NPY 데이터 디렉터리를 받는다.
+particle-sim export는 nominal run만 지원하고 CNO를 경고와 함께 제외한다. 실제 Fab 데이터가
+없으면 export를 그대로 load할 수 없다(`fab.json` 또는 `fab_measurements.csv` 필요).
+테스트의 synthetic Fab은 임시 디렉터리에서 adapter 연결만 확인하며 실제 분석 근거가 아니다.
+
+Vertical short는 `--product-config manifest.yaml`의 `stack`과 `electrodes`로 상부 layer를
+검증한다. 제품/버전이 일치해야 하며 layer 이름과 정수 `process_order`는 각각 고유해야 한다.
+두 전극의 선언 layer를 v2 CA layer와 대조하고 높은 `process_order`의 layer 이름을
+`assigned_process_layer`로 지정하여 real 모드에서 검증한다. 전극 순서를 뒤집어도 결과는 같다.
+누락된 전극/layer, 동일 순서, CA 불일치, 제품/버전 불일치는 오류다. Source-step의 Fab
+분포 layer와 상부 전극 layer는 의미가 달라 차이는 경고로만 알린다.
+이는 exporter의 `stack_order=process_order`, `fab_process_layer=layer_name` 규칙과 같다.
+실제 Fab 공정 별칭이나 분포를 입증하지 않으며 실제 Fab 자료는 별도로 제공해야 한다.
+설정 없이 실행하면 `vertical-layer-unverified` 경고를 내고 vertical bundle은 demo 검증으로
+넘긴다. 이 경우 상부 layer에 대한 real 검증은 보류된다.
+
+Parquet/zarr reader는 선택 의존성이다. wrapper는 `uv --with pyarrow --with zarr`로 실행에만
+추가하고 프로젝트 의존성 파일을 바꾸지 않는다. Reader 없이 parquet은 입력 오류이며,
+zarr reader/저장소 부재는 면적 및 hotspot 검사를 생략했다는 경고를 낸다.
+
+```bash
+# 기본 환경: reader 테스트는 skip, CLI/wrapper 테스트는 실행
+UV_NO_SYNC=1 uv run --project . pytest -q -rs
+# 임시 reader 환경: 생성한 작은 parquet/zarr fixture 검사
+UV_NO_SYNC=1 uv run --project . --with pyarrow --with zarr pytest -q -rs tests/test_particle_sim_run.py tests/test_particle_sim_run_cli.py
+# 두 저장소 연결 검사: 환경변수가 없으면 skip
+PARTICLE_SIM_ROOT=/path/to/particle-sim PARTICLE_SIM_PYTHON=/path/to/particle-sim/.venv/bin/python \
+  UV_NO_SYNC=1 uv run --project . --with pyarrow --with zarr pytest -q -rs tests/test_particle_sim_export_integration.py
+```
+
+두 저장소의 `tests/fixtures/particle_sim_mapping_v1.json`은 동일한 버전 계약이다. Mapping 변경은
+양쪽 구현/fixture 및 exporter→adapter 연결 검사를 함께 갱신해야 한다.
