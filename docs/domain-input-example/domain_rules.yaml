@@ -87,8 +87,10 @@ caa:
   enable_condition: "시뮬레이션/Fab 계산 담당자가 식, 조사 면적 기준, 평균 기준과 출력 의미를 확인한 뒤"
 
 vertical_short:
-  fab_layer_policy: upper_layer
-  upper_layer_source: layer_stack.csv
+  # 2026-09-27 contract 1.2; existing unversioned example tables remain legacy.
+  fab_layer_policy: source_step_fab_distribution_layer
+  legacy_1_1_fab_layer_policy: upper_layer
+  upper_layer_source: layer_stack.csv  # geometry validation; legacy assignment only
   infer_from_layer_a_or_layer_b: false
   missing_stack_behavior: block_caa
   status: confirmed

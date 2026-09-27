@@ -180,7 +180,7 @@ train:
 | 항목 | real 모드 동작 |
 |---|---|
 | CAA 계산식 | `caa.rule: null`이면 CAA 열이 `CAA 계산 규칙이 설정되지 않았습니다` 사유와 함께 비어 있다. 확정 규칙을 `caa.interpret_fab`에 추가하고 `confirmed: true`로 설정해야 계산된다 |
-| vertical short 적용 layer | 제품·버전별 `layer_stack.csv`에서 두 대상 중 상부 layer를 선택. 찾지 못하면 오류 |
+| vertical short 적용 layer | 1.2는 source-step Fab layer 유지, 적층표는 geometry 검증. Legacy(미표시/1.1)는 상부 Fab layer 선택 |
 | 색상 hotspot | `hotspot_legend`가 없으면 흑백 강도로만 사용 |
 | 서로 다른 크기 구간 | 구간 중앙값과 CA 크기가 정확히 같은 점만 사용 |
 | 제품 간 layer 대응 | 현재 보류. 이름이 같은 layer끼리만 비교 |
@@ -264,16 +264,14 @@ particle-sim export는 nominal run만 지원하고 CNO를 경고와 함께 제�
 없으면 export를 그대로 load할 수 없다(`fab.json` 또는 `fab_measurements.csv` 필요).
 테스트의 synthetic Fab은 임시 디렉터리에서 adapter 연결만 확인하며 실제 분석 근거가 아니다.
 
-Vertical short는 `--product-config manifest.yaml`의 `stack`과 `electrodes`로 상부 layer를
-검증한다. 제품/버전이 일치해야 하며 layer 이름과 정수 `process_order`는 각각 고유해야 한다.
-두 전극의 선언 layer를 v2 CA layer와 대조하고 높은 `process_order`의 layer 이름을
-`assigned_process_layer`로 지정하여 real 모드에서 검증한다. 전극 순서를 뒤집어도 결과는 같다.
-누락된 전극/layer, 동일 순서, CA 불일치, 제품/버전 불일치는 오류다. Source-step의 Fab
-분포 layer와 상부 전극 layer는 의미가 달라 차이는 경고로만 알린다.
-이는 exporter의 `stack_order=process_order`, `fab_process_layer=layer_name` 규칙과 같다.
-실제 Fab 공정 별칭이나 분포를 입증하지 않으며 실제 Fab 자료는 별도로 제공해야 한다.
-설정 없이 실행하면 `vertical-layer-unverified` 경고를 내고 vertical bundle은 demo 검증으로
-넘긴다. 이 경우 상부 layer에 대한 real 검증은 보류된다.
+2026-09-27 계약 1.2: checker의 `--mapping-contract-version {1.1,1.2}` 기본값은 1.2다.
+이는 오래된 run도 source-step Fab assignment로 해석하는 선택이며 생성 당시 계약을 주장하지 않는다.
+CA의 source Fab label은 step 내 모든 행에서 nonblank·uniform이어야 하고 설정의 source step과 일치해야 한다.
+Vertical geometry는 `stack`과 `electrodes`로 검증하고 물리적 upper layer를 별도 보고한다.
+`assigned_process_layer`는 source-step label을 유지하며 upper와 달라도 정상이다.
+설정이 없으면 geometry/config-unverified 경고로 제한된 검증을 알리고 assignment/key는 real 검증한다.
+**Legacy 1.1**: upper physical layer를 assignment로 사용하고 source와 차이는 경고한다.
+오래된 CSV export는 미표시/1.1 marker라면 기존 상부 Fab layer 규칙으로 계속 읽는다.
 
 Parquet/zarr reader는 선택 의존성이다. wrapper는 `uv --with pyarrow --with zarr`로 실행에만
 추가하고 프로젝트 의존성 파일을 바꾸지 않는다. Reader 없이 parquet은 입력 오류이며,
@@ -291,3 +289,28 @@ PARTICLE_SIM_ROOT=/path/to/particle-sim PARTICLE_SIM_PYTHON=/path/to/particle-si
 
 두 저장소의 `tests/fixtures/particle_sim_mapping_v1.json`은 동일한 버전 계약이다. Mapping 변경은
 양쪽 구현/fixture 및 exporter→adapter 연결 검사를 함께 갱신해야 한다.
+
+## Fab 매칭 계약 1.2 (2026-09-27)
+
+`provenance.json.mapping_contract_version: "1.2"`를 선언하고 모든 bundle에 nonblank
+`assigned_process_layer`(source-step Fab label)와 `fab_pair_key`를 제공한다.
+키는 raw ordered `<unit>:<layer_a>-<layer_b>`이며 open은 `<unit>:<layer_a>-N/A`다.
+문장 부호/대소문자/Unicode를 보존하고 endpoint를 정렬하거나 delimiter로 분해하지 않는다.
+Particle-sim identity map이 있으면 raw tuple/key/assignment를 모두 대조한다.
+미표시/1.1은 populated pair key 없이 legacy 규칙을 유지한다. Unknown marker 및 부분 migration은 오류다.
+전환할 때 새 export 디렉터리를 만들고 derived cache/model을 다시 생성한다.
+
+Fab JSON/measurement CSV의 `fab_pair_key`는 선택 필드다. null/blank는 layer-wide,
+nonblank는 pair refinement이며 `*` wildcard는 없다. CSV source_id 안에서는 blank와 nonblank도 섞을 수 없다.
+모든 mode에서 자동 선택은 family+layer-wide → null-family+layer-wide 순서다.
+Pair-specific 분포는 자동 선택에 참여하지 않으며 명시적인 fab_distribution_id로만 선택한다.
+첫 nonempty tier의 하나만 선택하며 중복/무매칭은 오류다. 절대로 sum/merge하지 않는다.
+명시 distribution ID는 자동 선택보다 우선하며 1.2에서 Fab/layer/family/pair/reference를 검증한다.
+Legacy 자동 선택은 layer-wide만 고려하며 pair-specific explicit ID도 거부한다.
+1.2 reference distribution에는 pair key가 없어야 하며 source assignment와 다른 override는 오류다.
+선택된 분포의 누락 bin은 layer-wide fallback을 유발하지 않는다.
+
+Pair ID는 product-local이다. Pair-specific 측정은 항상 검증된 explicit distribution ID로 선택한다.
+같은 key가 여러 step에서 반복되어도 sample 행은 별도이며 retrieval/grouping은 기존 geometry를 유지한다.
+
+CA에 source Fab label이 없는 legacy run은 checker에 `--mapping-contract-version 1.1`을 지정한다.

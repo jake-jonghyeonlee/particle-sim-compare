@@ -55,6 +55,8 @@ for name in ('pilot', 'open_straight', 'auto_open'):
         case.manifest['contacts'] = [dict(contact_id='CNT', path='masks/contact.png', hole_layer='GI',
                                          applicable_particle_source_steps=['S_M1'])]
         case.manifest['open_applicable_steps_by_layer'] = {'M1': [], 'M2': ['S_M2']}
+    for step in case.manifest['particle_source_steps']:
+        step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
     manifest = write_case(case, base / name / 'case')
     if name != 'pilot':
         Image.fromarray(holes.astype(np.uint8)*255).save(manifest.parent / 'masks/contact.png')
@@ -79,7 +81,7 @@ def test_export_load_contract(tmp_path):
         (out / 'fab.json').write_text(json.dumps({'distributions': [dict(
             fab_distribution_id='SYNTHETIC_ONLY_' + layer, fab_id='FAB_SYN', process_layer=layer,
             bin_lower=[1.0], bin_upper=[5.0], raw_values=[1.0], value_kind='density',
-            value_unit='1/cm2', size_unit='um') for layer in ('M1', 'M2', 'M3')]}))
+            value_unit='1/cm2', size_unit='um') for layer in pd.read_csv(out / 'bundles.csv').assigned_process_layer.unique()]}))
         loaded = load_dataset(out, mode='real')
         observed.extend(loaded.bundles)
         run_path = tmp_path / name / 'run'
@@ -91,8 +93,9 @@ def test_export_load_contract(tmp_path):
             checker.open_store(run.store_path),
             checker.load_product_config(tmp_path / name / 'case/manifest.yaml'), args, {})
         assert report.count('error') == 0
-        assert {b.sample_id: b.assigned_process_layer for b in checked if b.failure_type == 'vertical_short'} == {
-            b.sample_id: b.assigned_process_layer for b in loaded.bundles if b.failure_type == 'vertical_short'}
+        assert {(b.sample_id, b.assigned_process_layer, b.fab_pair_key) for b in checked} == {
+            (b.sample_id, b.assigned_process_layer, b.fab_pair_key) for b in loaded.bundles}
+        assert all(b.mapping_contract_version == '1.2' for b in checked + loaded.bundles)
         raw = pd.read_parquet(tmp_path / name / 'run/ca.parquet')
         id_col = 'failure_unit_id' if 'failure_unit_id' in raw else 'pair_id'
         trace = json.loads((out / 'provenance.json').read_text())['sample_id_mapping']
@@ -109,8 +112,9 @@ def test_export_load_contract(tmp_path):
             if bundle.is_open:
                 assert bundle.electrode_b_role == bundle.layer_b == 'N/A'
             if bundle.failure_type == 'vertical_short':
-                assert bundle.assigned_process_layer == max((bundle.layer_a, bundle.layer_b),
-                                                            key={'M1': 0, 'M2': 2, 'M3': 4}.get)
+                assert bundle.assigned_process_layer == 'SOURCE_' + step
+                assert bundle.assigned_process_layer not in (bundle.layer_a, bundle.layer_b)
+            assert bundle.fab_pair_key == f'{unit}:{bundle.layer_a}-{bundle.layer_b}'
         if name != 'pilot':
             warnings = json.loads((out / 'export_warnings.json').read_text())
             cno = raw[raw.failure_mode == 'contact_not_open'][id_col].unique()

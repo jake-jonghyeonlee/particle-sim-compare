@@ -76,3 +76,30 @@ def test_validate_fab_rules():
     d.bin_upper = np.array([2.0, 2.5])
     with pytest.raises(DataContractError):
         validate_fab(d)
+
+
+def test_f4_fixture_key_and_marker_conformance():
+    import json
+    from pathlib import Path
+    import pytest
+    from simcompare.schema import AnalysisBundle, DataContractError, make_fab_pair_key, validate_mapping_contract
+    contract = json.loads((Path(__file__).parent / 'fixtures/particle_sim_mapping_v1.json').read_text())
+    for vector in contract['fab_pair_key']['vectors']:
+        assert make_fab_pair_key(*vector['raw_tuple'], {}) == vector['key']
+    for tuples in contract['fab_pair_key']['collision_vectors']:
+        registry = {}
+        make_fab_pair_key(*tuples[0], registry)
+        with pytest.raises(DataContractError, match='collision'):
+            make_fab_pair_key(*tuples[1], registry)
+    for value in contract['fab_pair_key']['invalid_components']:
+        with pytest.raises(DataContractError):
+            make_fab_pair_key(value, 'A', 'B', {})
+    for vector in contract['version_marker']['vectors']:
+        bundle = AnalysisBundle('S', 'P', 'F', 'V', 'L', 'a', 'b', 'A', 'B', 'lateral_short', 'FAB',
+                                assigned_process_layer=vector.get('assigned_process_layer'),
+                                mapping_contract_version=vector['marker'], fab_pair_key=vector.get('pair_key'))
+        if vector['result'] == 'error':
+            with pytest.raises(DataContractError):
+                validate_mapping_contract(bundle)
+        else:
+            validate_mapping_contract(bundle)

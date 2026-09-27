@@ -35,7 +35,8 @@
 - 대체로 모든 설계 버전이 같은 순서를 쓰면 `design_version`에 `*`를 쓴다.
 - 특정 설계 버전만 순서가 다르면 그 버전의 행을 별도로 추가하며, 명시 버전이 `*`보다 우선한다.
 - 제품마다 layer 개수가 달라도 된다.
-- Vertical short에는 두 대상 layer 중 `stack_order`가 큰 layer의 `fab_process_layer`를 적용한다.
+- 2026-09-27 계약 1.2: Vertical short도 source-step Fab layer를 유지하고 적층표는 geometry만 검증한다.
+- Legacy(미표시/1.1): 두 대상 layer 중 `stack_order`가 큰 layer의 `fab_process_layer`를 적용한다. 이 예시의 기존 측정/적층표는 legacy 의미를 유지한다.
 - 대상 layer가 표에 없거나 순서를 판정할 수 없으면 CAA를 계산하지 않는다.
 
 ## Fab 자료 작성 규칙
@@ -83,3 +84,6 @@
 2. 제품 간 layer·전극 역할 대응표
 
 전문가 라벨은 현재 필수 질문이 아니라 향후 선택 입력이다.
+
+Fab 자동 선택은 모든 mode에서 family+layer-wide, null-family+layer-wide 순서다.
+Pair-specific 분포는 bundle의 명시적인 `fab_distribution_id`로만 선택한다.

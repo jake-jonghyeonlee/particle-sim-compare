@@ -77,6 +77,9 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             "sample_id": bundle.sample_id, "product_id": bundle.product_id,
             "product_family": bundle.product_family, "fab_id": bundle.fab_id,
             "failure_type": bundle.failure_type,
+            "assigned_process_layer": bundle.assigned_process_layer,
+            "fab_pair_key": bundle.fab_pair_key,
+            "mapping_contract_version": bundle.mapping_contract_version,
             "role_key": roles,
             "layer_key": layers,
             "comparison_group_id": f"{roles}::{layers}",
@@ -107,6 +110,7 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             actual = select_distribution(bundle, distributions, cfg.caa.process_layer_overrides)
         except CAAError as exc:
             actual = str(exc)
+        row["selected_fab_distribution_id"] = None if isinstance(actual, str) else actual.fab_distribution_id
         row["caa_actual"], row["caa_actual_reason"], demo_a = _caa(bundle, actual, cfg)
         if ref_id is None:
             reference = "기준 분포가 설정되지 않았습니다"
@@ -114,6 +118,8 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             reference = f"기준 분포 {ref_id!r}을(를) 찾을 수 없습니다"
         elif not distributions[ref_id].is_reference:
             reference = f"분포 {ref_id!r}은(는) is_reference=true가 아닙니다"
+        elif bundle.mapping_contract_version == "1.2" and distributions[ref_id].fab_pair_key is not None:
+            reference = "1.2 reference distributions cannot carry fab_pair_key"
         else:
             reference = distributions[ref_id]
         row["caa_reference"], row["caa_reference_reason"], demo_r = _caa(bundle, reference, cfg)

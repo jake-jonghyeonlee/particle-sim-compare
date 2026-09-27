@@ -478,7 +478,28 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
     meta = _product_meta(run, config, args, report)
     if not mapped or report.count("error"):
         return []
+    version = getattr(args, "mapping_contract_version", "1.2")
+    modern = version == "1.2"
     ca = run.ca
+    pair_registry = {}
+    if modern:
+        steps = (config or {}).get("particle_source_steps", [])
+        step_map = {}
+        for source in steps:
+            if not isinstance(source, dict) or source.get("step_id") in step_map:
+                report.add("error", "contract", "source_steps", "duplicate or invalid configured source step")
+                return []
+            step_map[source.get("step_id")] = source.get("fab_distribution_layer")
+        for step, rows in ca.groupby("source_step", sort=False):
+            labels = rows.get("fab_distribution_layer")
+            if labels is None or not labels.map(lambda x: isinstance(x, str) and bool(x.strip()) and x == x.strip()).all() or labels.nunique() != 1:
+                report.add("error", "contract", "source_fab_layer", f"{step!r}: nonblank uniform source Fab label required; for legacy runs whose CA lacks source Fab labels, use --mapping-contract-version 1.1")
+            elif config is not None and (step not in step_map or step_map[step] != labels.iloc[0]):
+                report.add("error", "contract", "source_fab_layer", f"{step!r}: CA source Fab label disagrees with configured source step")
+        if report.count("error"):
+            return []
+        if config is None:
+            report.add("warning", "contract", "geometry-config-unverified", "No product config: geometry/config conformance is unverified")
     use_mean = args.ca == "mean"
     if use_mean and ("ca_mean_um2" not in ca.columns or ca["ca_mean_um2"].isna().all()):
         report.add("error", "contract", "ca_mean_missing", "--ca mean이지만 ca_mean_um2 값이 없습니다(nominal run?)")
@@ -546,7 +567,7 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
             role_b, layer_b = role_layer(str(first["electrode_b"]), "electrode_b_layer")
         # Match exported layer_stack.csv: stack_order=process_order, fab_process_layer=layer_name.
         vertical = rule.failure_type == "vertical_short"
-        assigned = None if vertical else (str(first.get("fab_distribution_layer") or "") or None)
+        assigned = None if vertical and not modern else (str(first.get("fab_distribution_layer") or "") or None)
         if vertical and config is not None:
             declared = []
             valid = True
@@ -572,11 +593,13 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
                 report.add("error", "contract", "config_layer_tie",
                            f"layers {layer_a!r}, {layer_b!r} have equal process_order", unit)
                 continue
-            assigned = max(declared, key=meta["stack"].get)
+            upper = max(declared, key=meta["stack"].get)
+            if not modern:
+                assigned = upper
             report.add("info", "contract", "vertical_layer_verified",
-                       f"{sid}: ({layer_a}, {layer_b})->{assigned}; validation mode={args.mode}", unit)
+                       f"{sid}: ({layer_a}, {layer_b})->upper physical layer {upper}; assigned Fab layer={assigned}; validation mode={args.mode}", unit)
             source_layer = first.get("fab_distribution_layer")
-            if source_layer and source_layer != assigned:
+            if not modern and source_layer and source_layer != assigned:
                 report.add("warning", "contract", "vertical_source_layer",
                            f"source step {step!r} (fab layer {source_layer!r}) differs from "
                            f"upper electrode layer {assigned!r}; "
@@ -585,6 +608,13 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
             report.add("warning", "contract", "vertical-layer-unverified",
                        f"{sid}: no --product-config; vertical_short layer_stack.csv upper layer is unverified", unit)
 
+        pair_key = None
+        if modern:
+            try:
+                pair_key = schema.make_fab_pair_key(str(unit), layer_a, layer_b, pair_registry)
+            except schema.DataContractError as exc:
+                report.add("error", "contract", "fab_pair_key", str(exc), unit)
+                continue
         records = []
         for row, na in zip(rows.itertuples(index=False), not_applicable):
             value = None
@@ -617,6 +647,7 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
             design_version=meta["design_version"], design_lineage_id=meta["design_lineage_id"],
             electrode_a_role=role_a, electrode_b_role=role_b, layer_a=layer_a, layer_b=layer_b,
             failure_type=rule.failure_type, fab_id=meta["fab_id"], assigned_process_layer=assigned,
+            fab_pair_key=pair_key, mapping_contract_version=version,
             unit_width=run.roi_width_um, unit_height=run.roi_height_um,
             physical_length_unit="um" if run.roi_width_um else None,
             hotspots=hotspots, ca=curve,
@@ -631,7 +662,7 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
             ),
         )
         mode = args.mode
-        if vertical and config is None and mode == "real":
+        if vertical and config is None and mode == "real" and not modern:
             # real 모드의 assigned_process_layer 필수 검사만 simcompare 적층표 단계로 넘긴다.
             mode = "demo"
         try:
@@ -715,6 +746,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--design-lineage-id")
     parser.add_argument("--fab-id")
     parser.add_argument("--mode", choices=schema.MODES, default="real", help="simcompare 검사 모드(기본 real)")
+    parser.add_argument("--mapping-contract-version", choices=("1.1", "1.2"), default="1.2",
+                        help="G4 interpretation (default 1.2 source-step Fab assignment; 1.1 legacy upper layer)")
     parser.add_argument("--ca", choices=("nominal", "mean"), default="nominal",
                         help="CA 곡선 값: nominal=ca_nominal_normalized, mean=ca_mean_um2/ROI 면적(확률 run)")
     parser.add_argument("--mapping", type=Path, help="unit 대응표 YAML(기본 대응표에 덮어씀)")
@@ -748,6 +781,7 @@ def main(argv: list[str] | None = None) -> int:
             "strict": args.strict,
             "mode": args.mode,
             "ca": args.ca,
+            "mapping_contract_version": args.mapping_contract_version,
             "simcompare_failure_types": list(schema.FAILURE_TYPES),
             "mapping": [{"unit_kind": k[0], "failure_mode": k[1], **asdict(v)} for k, v in mapping.items()],
             "runs": [asdict(r) for r in reports],

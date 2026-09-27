@@ -21,8 +21,9 @@
 | `electrode_b_role`, `layer_b` | ✔ | short는 필수. `lateral_open`은 반드시 `NOT_APPLICABLE`(`"N/A"`) — 누락이 아니라 "해당 없음" |
 | `failure_type` | ✔ | `lateral_open` \| `lateral_short` \| `vertical_short`. 세 전극 이상은 다루지 않음 |
 | `fab_id` | ✔ | Fab ID |
-| `fab_distribution_id` | 선택 | 명시하면 해당 분포를 사용하고 fab_id·layer 일치를 검사 |
-| `assigned_process_layer` | 조건부 | Fab 분포 매칭용 공정 layer. `vertical_short`는 `layer_stack.csv`에서 상부 layer를 결정하며 입력값과 다르면 오류 |
+| `fab_distribution_id` | 선택 | 명시하면 해당 분포를 사용; 1.2는 Fab/layer, family exact 또는 null, pair exact 또는 null, non-reference를 검증. Pair-specific 분포는 명시 ID로만 선택 |
+| `fab_pair_key` | 1.2 필수 | raw unit ID와 순서 있는 layer 쌍; 자동 선택은 null key의 layer-wide 분포만 고려 |
+| `assigned_process_layer` | 조건부 | Fab 분포 매칭용 공정 layer. 1.2는 source-step Fab layer를 유지. legacy(미표시/1.1) vertical은 적층표 상부 Fab layer |
 | `unit_width`, `unit_height`, `physical_length_unit` | 선택 | unit-pixel 실제 크기. 없으면 물리 길이·면적 보정 비교 불가로 기록 |
 | `layouts` | 선택 | 전극별 `ImageInput` (open 1개, short 2개; slot a, b 순) |
 | `hotspots` | 선택 | 이물 크기별 가공 hotspot `ImageInput` |
@@ -104,7 +105,7 @@ P1-v2-VSHORT,P1,F1,v2,L1,gate,data,M1,M2,vertical_short,FAB_A,,M2,60,90,um,P1-v1
 
 실제 입력 예시와 작성 규칙은 [`domain-input-example/`](domain-input-example/README.md)에 있다. `fab_measurements.csv`는 Fab·제품군·공정 layer·확정 크기 격자의 이물 지름별 `glass 1장당 평균 검출 개수`, glass 한 장의 실제 조사 면적과 측정 기간을 제공한다. 확정: 1–30 um 1 um 간격 + 40, 50 um (32개). real 모드에서는 각 분포에 이 32개 전체 행이 필요하며 격자 밖 크기는 허용하지 않는다.
 
-`layer_stack.csv`는 `product_id, design_version(* 허용), layer_name, stack_order, fab_process_layer`를 가진다. 숫자가 큰 layer를 상부로 보고 vertical short에 적용한다. 제품 간 이름이 다른 layer의 대응은 아직 보류되어 있어 같은 이름끼리만 비교한다.
+`layer_stack.csv`는 `product_id, design_version(* 허용), layer_name, stack_order, fab_process_layer`를 가진다. 숫자가 큰 layer를 물리적 상부로 보고 vertical geometry를 검증한다. Legacy(미표시/1.1)에서는 상부 `fab_process_layer`를 assignment로 쓰며, 1.2에서는 source-step assignment를 바꾸지 않는다. 제품 간 이름이 다른 layer의 대응은 아직 보류되어 있어 같은 이름끼리만 비교한다.
 
 `design_review_status.csv`의 `comparison_group_id`는 `ranking.csv` 또는 `review_cards.json`의 값을 그대로 사용한다. 외부 저항·capacitance·coupling·신호·설계 규칙·다른 short/open 검토 상태와 결과 참조만 보존하며 이 프로젝트가 해당 전기량을 계산하지 않는다.
 
@@ -112,3 +113,26 @@ P1-v2-VSHORT,P1,F1,v2,L1,gate,data,M1,M2,vertical_short,FAB_A,,M2,60,90,um,P1-v1
 
 - 국부 이미지: 같은 `sample_id` 아래 고정 실제 길이 조각 목록을 추가하는 방식으로 확장한다. 조각을 별도 제품/묶음으로 만들지 않는다(분리 검증 누수 방지). 첫 버전은 전체 이미지만 사용한다.
 - 색상 hotspot: `data.hotspot_legend`(`legend_id`, `entries[{rgb, value}]`, `tolerance`)가 있을 때만 확률로 변환한다.
+
+## Fab 매칭 계약 1.2 (2026-09-27)
+
+`provenance.json.mapping_contract_version: "1.2"`를 선언하고 모든 bundle에 nonblank
+`assigned_process_layer`(source-step Fab label)와 `fab_pair_key`를 제공한다.
+키는 raw ordered `<unit>:<layer_a>-<layer_b>`이며 open은 `<unit>:<layer_a>-N/A`다.
+문장 부호/대소문자/Unicode를 보존하고 endpoint를 정렬하거나 delimiter로 분해하지 않는다.
+Particle-sim identity map이 있으면 raw tuple/key/assignment를 모두 대조한다.
+미표시/1.1은 populated pair key 없이 legacy 규칙을 유지한다. Unknown marker 및 부분 migration은 오류다.
+전환할 때 새 export 디렉터리를 만들고 derived cache/model을 다시 생성한다.
+
+Fab JSON/measurement CSV의 `fab_pair_key`는 선택 필드다. null/blank는 layer-wide,
+nonblank는 pair refinement이며 `*` wildcard는 없다. CSV source_id 안에서는 blank와 nonblank도 섞을 수 없다.
+모든 mode에서 자동 선택은 family+layer-wide → null-family+layer-wide 순서다.
+Pair-specific 분포는 자동 선택에 참여하지 않으며 명시적인 fab_distribution_id로만 선택한다.
+첫 nonempty tier의 하나만 선택하며 중복/무매칭은 오류다. 절대로 sum/merge하지 않는다.
+명시 distribution ID는 자동 선택보다 우선하며 1.2에서 Fab/layer/family/pair/reference를 검증한다.
+Legacy 자동 선택은 layer-wide만 고려하며 pair-specific explicit ID도 거부한다.
+1.2 reference distribution에는 pair key가 없어야 하며 source assignment와 다른 override는 오류다.
+선택된 분포의 누락 bin은 layer-wide fallback을 유발하지 않는다.
+
+Pair ID는 product-local이다. Pair-specific 측정은 항상 검증된 explicit distribution ID로 선택한다.
+같은 key가 여러 step에서 반복되어도 sample 행은 별도이며 retrieval/grouping은 기존 geometry를 유지한다.

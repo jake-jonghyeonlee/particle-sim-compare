@@ -18,7 +18,7 @@ from simcompare.schema import AnalysisBundle, DataContractError, FabDistribution
 META_COLUMNS = [
     "sample_id", "product_id", "product_family", "design_version", "design_lineage_id",
     "electrode_a_role", "electrode_b_role", "layer_a", "layer_b", "failure_type", "fab_id",
-    "fab_distribution_id", "assigned_process_layer", "unit_width", "unit_height",
+    "fab_distribution_id", "assigned_process_layer", "fab_pair_key", "mapping_contract_version", "unit_width", "unit_height",
     "physical_length_unit", "has_physical_scale", "is_open", "parent_design_id",
     "unit_width_canonical", "unit_height_canonical", "canonical_length_unit",
 ]

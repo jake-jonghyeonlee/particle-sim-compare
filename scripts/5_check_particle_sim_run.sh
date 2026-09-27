@@ -6,6 +6,7 @@
 #   --ca nominal|mean                   CA 곡선 값 (mean은 확률 run의 ca_mean_um2 / ROI 면적)
 #   --mapping 대응표.yaml               unit 대응 규칙 추가·덮어쓰기
 #   --output 보고서.json                JSON 보고서
+#   --mapping-contract-version 1.1|1.2  G4 해석 (기본 1.2 source-step; 1.1 legacy upper)
 #   --strict                            미지원 unit(예: CNO)이 있으면 실패
 # parquet·zarr 읽기용 pyarrow·zarr는 이 실행에만 임시로 추가한다(프로젝트 의존성은 바꾸지 않음).
 set -euo pipefail

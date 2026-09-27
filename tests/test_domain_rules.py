@@ -191,3 +191,20 @@ def test_processed_fab_size_grid(tmp_path, sizes, mode, valid):
     else:
         with pytest.raises(DataContractError, match="32개.*누락"):
             _load_processed_fab_measurements(tmp_path, mode)
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_f4_vertical_preserves_source_and_reports_geometry(reverse):
+    item = bundle(assigned_process_layer='SOURCE', mapping_contract_version='1.2',
+                  fab_pair_key='U:M2-M1' if reverse else 'U:M1-M2',
+                  layer_a='M2' if reverse else 'M1', layer_b='M1' if reverse else 'M2')
+    stack = {('P', '*', 'M1'): (1, 'FAB_LOW'), ('P', '*', 'M2'): (2, 'FAB_HIGH')}
+    assert _apply_vertical_layer(item, stack, 'real') == []
+    assert item.assigned_process_layer == 'SOURCE'
+    assert item.provenance.calc_settings['upper_physical_layer'] == 'M2'
+    with pytest.raises(DataContractError):
+        _apply_vertical_layer(item, {}, 'real')
+    assert _apply_vertical_layer(item, {}, 'demo')
+    stack[('P', 'v1', 'M2')] = (1, 'OTHER')
+    with pytest.raises(DataContractError):
+        _apply_vertical_layer(item, stack, 'real')

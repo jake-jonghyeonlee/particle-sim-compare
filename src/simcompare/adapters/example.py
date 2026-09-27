@@ -88,6 +88,9 @@ def _apply_vertical_layer(
             f"{bundle.sample_id}: vertical short 대상 layer의 stack_order가 같습니다"
         )
     upper = max(entries, key=lambda item: item[0])
+    if bundle.mapping_contract_version == "1.2":
+        bundle.provenance.calc_settings["upper_physical_layer"] = upper[2]
+        return []
     if bundle.assigned_process_layer and bundle.assigned_process_layer != upper[1]:
         message = (
             f"{bundle.sample_id}: assigned_process_layer {bundle.assigned_process_layer!r}가 "
@@ -276,6 +279,7 @@ def _load_distributions(data_dir: Path) -> dict[str, schema.FabDistribution]:
             period=_text(entry.get("period")),
             averaging_basis=_text(entry.get("averaging_basis")),
             is_reference=is_reference,
+            fab_pair_key=entry.get("fab_pair_key") or None,
         )
         schema.validate_fab(dist)
         if dist.fab_distribution_id in distributions:
@@ -308,7 +312,8 @@ def _load_processed_fab_measurements(
     distributions: dict[str, schema.FabDistribution] = {}
     for source_id, group in grouped.items():
         def one_text(key: str, *, required_value: bool = True) -> str | None:
-            values = {_text(row.get(key)) for row in group}
+            values = {(row.get(key) if row.get(key) and row.get(key).strip() else None)
+                      if key == "fab_pair_key" else _text(row.get(key)) for row in group}
             if len(values) != 1:
                 raise schema.DataContractError(f"{source_id}: {key} 값이 한 분포 안에서 섞여 있습니다")
             value = values.pop()
@@ -350,6 +355,7 @@ def _load_processed_fab_measurements(
             fab_distribution_id=source_id,
             fab_id=fab_id,
             product_family=family,
+            fab_pair_key=one_text("fab_pair_key", required_value=False),
             process_layer=layer,
             bin_lower=np.asarray(sizes, dtype=float) - 0.5,
             bin_upper=np.asarray(sizes, dtype=float) + 0.5,
@@ -559,7 +565,8 @@ def _parse_bundle_row(row: dict, sid: str) -> schema.AnalysisBundle:
         failure_type=failure_type,
         fab_id=_text(row.get("fab_id")) or "",
         fab_distribution_id=_text(row.get("fab_distribution_id")),
-        assigned_process_layer=_text(row.get("assigned_process_layer")),
+        assigned_process_layer=row.get("assigned_process_layer") or None,
+        fab_pair_key=row.get("fab_pair_key") or None,
         unit_width=_float(row.get("unit_width")),
         unit_height=_float(row.get("unit_height")),
         physical_length_unit=_text(row.get("physical_length_unit")),
@@ -648,6 +655,16 @@ def load_dataset(
     source_files = ["bundles.csv"]
     warnings: list[str] = []
 
+    provenance_payload: dict = {}
+    provenance_path = data_dir / "provenance.json"
+    if provenance_path.is_file():
+        provenance_payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+        source_files.append("provenance.json")
+    if not isinstance(provenance_payload, dict):
+        raise schema.DataContractError("provenance.json must be an object")
+    if provenance_payload.get("mapping_contract_version") not in (None, "1.1", "1.2"):
+        raise schema.DataContractError(f"unknown mapping_contract_version {provenance_payload.get('mapping_contract_version')!r}")
+
     distributions = _load_distributions(data_dir)
     if distributions:
         source_files.append("fab.json")
@@ -694,7 +711,6 @@ def load_dataset(
     hotspot_rows: list[dict] = []
     ca_rows: list[dict] = []
     geometry_payload: dict = {}
-    provenance_payload: dict = {}
 
     layouts_path = data_dir / "layouts.csv"
     if layouts_path.is_file():
@@ -723,10 +739,44 @@ def load_dataset(
         geometry_payload = json.loads(geometry_path.read_text(encoding="utf-8"))
         source_files.append("geometry.json")
 
-    provenance_path = data_dir / "provenance.json"
-    if provenance_path.is_file():
-        provenance_payload = json.loads(provenance_path.read_text(encoding="utf-8"))
-        source_files.append("provenance.json")
+
+    version = provenance_payload.get("mapping_contract_version")
+    if version not in (None, "1.1", "1.2"):
+        raise schema.DataContractError(f"unknown mapping_contract_version {version!r}")
+    identities = provenance_payload.get("sample_id_mapping")
+    identity_map = {}
+    if version == "1.2" and identities is not None:
+        if not isinstance(identities, list):
+            raise schema.DataContractError("sample_id_mapping must be a list")
+        for entry in identities:
+            if not isinstance(entry, dict) or entry.get("sample_id") in identity_map:
+                raise schema.DataContractError("invalid or duplicate sample_id_mapping entry")
+            identity_map[entry.get("sample_id")] = entry
+        if set(identity_map) != seen:
+            raise schema.DataContractError("sample_id_mapping must cover every bundle exactly")
+    pair_registry = {}
+    for bundle in bundles:
+        bundle.mapping_contract_version = version
+        if version != "1.2":
+            bundle.assigned_process_layer = _text(bundle.assigned_process_layer)
+            bundle.fab_pair_key = _text(bundle.fab_pair_key)
+        schema.validate_mapping_contract(bundle)
+        if identity_map:
+            entry = identity_map[bundle.sample_id]
+            raw = entry.get("raw_tuple")
+            if not isinstance(raw, list) or len(raw) != 4 or raw[:2] != [bundle.product_id, bundle.design_version]:
+                raise schema.DataContractError(f"{bundle.sample_id}: invalid raw identity mapping")
+            if any(not isinstance(x, str) or not x.strip() or x != x.strip() for x in raw):
+                raise schema.DataContractError(f"{bundle.sample_id}: invalid raw identity components")
+            expected_id = "".join(c if c.isascii() and (c.isalnum() or c in "_.-") else "_"
+                                  for c in "-".join(raw))
+            if expected_id != bundle.sample_id:
+                raise schema.DataContractError(f"{bundle.sample_id}: raw identity sample ID mismatch")
+            key = schema.make_fab_pair_key(raw[3], bundle.layer_a, bundle.layer_b, pair_registry)
+            if key != bundle.fab_pair_key or entry.get("fab_pair_key") != key or entry.get("assigned_process_layer") != bundle.assigned_process_layer:
+                raise schema.DataContractError(f"{bundle.sample_id}: identity mapping disagrees with bundle")
+    if version == "1.2" and any(d.is_reference and d.fab_pair_key is not None for d in distributions.values()):
+        raise schema.DataContractError("1.2 reference distributions cannot carry fab_pair_key")
 
     for row in layout_rows + hotspot_rows + ca_rows:
         ref = _text(row.get("sample_id"))
@@ -748,7 +798,6 @@ def load_dataset(
         _build_hotspots(hotspot_rows, sid, bundle, data_dir, hotspot_legend)
         _build_ca(ca_rows, sid, bundle)
         _build_geometry(geometry_payload, sid, bundle)
-        warnings.extend(_apply_vertical_layer(bundle, layer_stack, mode))
 
         # 계산 버전은 bundles.csv 행 값을 우선하고 없으면 provenance.json 값을 쓴다
         calc_version = _calc_version_for(bundle, sid, bundle_rows, provenance_payload)
@@ -762,6 +811,7 @@ def load_dataset(
             is_synthetic=is_synthetic,
         )
 
+        warnings.extend(_apply_vertical_layer(bundle, layer_stack, mode))
         warnings.extend(schema.validate_bundle(bundle, mode))
         warnings.extend(_validate_image_registration(bundle, mode))
 

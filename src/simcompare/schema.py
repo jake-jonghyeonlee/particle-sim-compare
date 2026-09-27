@@ -130,6 +130,7 @@ class FabDistribution:
     period: str | None = None
     averaging_basis: str | None = None
     is_reference: bool = False
+    fab_pair_key: str | None = None
 
 
 @dataclass
@@ -180,6 +181,8 @@ class AnalysisBundle:
     parent_design_id: str | None = None
     change_description: str | None = None
     provenance: Provenance = field(default_factory=lambda: Provenance(adapter="unknown"))
+    fab_pair_key: str | None = None
+    mapping_contract_version: str | None = None
 
     @property
     def is_open(self) -> bool:
@@ -280,6 +283,7 @@ def validate_bundle(bundle: AnalysisBundle, mode: str = "real") -> list[str]:
             _require_text(value, name)
             if value == NOT_APPLICABLE:
                 raise DataContractError(f"{sid}: short 불량에는 {name}이(가) 필요합니다")
+    validate_mapping_contract(bundle)
     warnings: list[str] = []
     if bundle.failure_type == "vertical_short" and not bundle.assigned_process_layer:
         message = f"{sid}: vertical_short는 assigned_process_layer를 명시해야 합니다(추정하지 않음)"
@@ -325,6 +329,13 @@ def validate_fab(dist: FabDistribution) -> None:
     """Fab 분포의 필수 단위, 값 종류, 구간 정렬·비중첩, 관측값, 조사 면적 조건을 검사한다."""
     did = dist.fab_distribution_id
     _require_text(did, "fab_distribution_id")
+    if dist.fab_pair_key is not None:
+        if not isinstance(dist.fab_pair_key, str):
+            raise DataContractError(f"{did}: fab_pair_key must be text")
+        if not dist.fab_pair_key.strip():
+            dist.fab_pair_key = None
+        elif dist.fab_pair_key != dist.fab_pair_key.strip():
+            raise DataContractError(f"{did}: fab_pair_key has edged whitespace")
     for name in ("fab_id", "process_layer", "value_unit", "size_unit"):
         _require_text(getattr(dist, name), f"{did}.{name}")
     if dist.value_kind not in VALUE_KINDS:
@@ -406,3 +417,33 @@ def group_size_records(records: list[dict]) -> dict[str, CACurve]:
         validate_curve(curve, f"{sid}.ca")
         curves[sid] = curve
     return curves
+
+
+def validate_mapping_contract(bundle: AnalysisBundle) -> None:
+    """Validate the explicit transition before applying either assignment policy."""
+    version = bundle.mapping_contract_version
+    if version not in (None, "1.1", "1.2"):
+        raise DataContractError(f"{bundle.sample_id}: unknown mapping_contract_version {version!r}")
+    if version != "1.2":
+        if bundle.fab_pair_key is not None:
+            raise DataContractError(f"{bundle.sample_id}: fab_pair_key requires mapping_contract_version 1.2")
+        return
+    for name in ("assigned_process_layer", "fab_pair_key"):
+        value = getattr(bundle, name)
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise DataContractError(f"{bundle.sample_id}: 1.2 requires nonblank {name} without edged whitespace")
+    suffix = f":{bundle.layer_a}-{bundle.layer_b}"
+    if not bundle.fab_pair_key.endswith(suffix) or not bundle.fab_pair_key[:-len(suffix)]:
+        raise DataContractError(f"{bundle.sample_id}: fab_pair_key must retain endpoint suffix {suffix!r}")
+
+
+def make_fab_pair_key(unit: str, layer_a: str, layer_b: str, registry: dict) -> str:
+    """Build an ordered raw key, rejecting ambiguous concatenations."""
+    raw = (unit, layer_a, layer_b)
+    if any(not isinstance(x, str) or not x.strip() or x != x.strip() for x in raw):
+        raise DataContractError("fab_pair_key components must be nonblank without edged whitespace")
+    key = f"{unit}:{layer_a}-{layer_b}"
+    if key in registry and registry[key] != raw:
+        raise DataContractError(f"fab_pair_key collision {key!r}: {registry[key]!r} and {raw!r}")
+    registry[key] = raw
+    return key
