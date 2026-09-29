@@ -84,7 +84,10 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 | | `clusters.json`, `cluster_map.png` | 학습 행으로 적합한 군집, 대표·반대 사례(군집 번호는 의미 없음) |
 | | `figures/rank_shift.svg`, `figures/ca_curves.svg`, `figures/loo_stability.svg` | 비교 그룹별 순위 변화(원 CA→면적당 CA, 기준 분포→실제 Fab), 이물 크기별 CA 곡선, 제품 제외 유지율 그림. 브라우저로 열며 한글 설명 포함 |
 | | `loo_stability.csv` | 제품 하나씩 제외 시 상위 항목·이웃 유지율 |
-| | `shape_features.csv`, `review_cards.json` | 명시적 형상 특징, 검토 카드 |
+| | `shape_features.csv`, `review_cards.json` | 명시적 형상 특징과 전극 쌍 치수(`pair:*`: 최소 간격, 좁은 간격 길이, 겹침 면적, 최소 선폭), 검토 카드 |
+| | `edit_candidates.json`, `edit_candidates.csv` | 회피안 국소 편집 후보(particle-sim `make-variant` 편집 지정서 형식)와 후보·건너뜀 요약 |
+| | `variant_comparison.csv` | `parent_design_id`가 있는 변경본(재시뮬 결과)을 원안의 같은 불량·전극·layer 사례와 비교한 면적 보정 CA 변화 |
+| | `neighborhood_comparison.csv`, `neighborhood_geometry.csv` | 유사 제품 비교군 안의 면적 보정 CA 순위와 저위험 참고 사례, 참고 사례와의 전극 쌍 치수 차이(회피안 검토 후보, 판정은 설계자) |
 | evaluate | `evaluation.json` | held-out 제품→학습 제품 형상 검색·면적 보정 CA 경향, 입력별 복원 손실, 입력 구성 비교, Fab·제품군 그룹 제외 검증과 교락 판정 |
 
 ## 실제 데이터 연결
@@ -102,6 +105,7 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 - `train.device`: `cpu`(기본) \| `auto`(CUDA→MPS→CPU) \| `cuda` \| `mps`; `train.seed`; `train.balance_products`
 - `split.test_fraction` 또는 `split.test_groups`(제품/설계 계열 ID)
 - `analysis.layer_policy`(`exact`\|`ignore`), `other_products_only`, `filters`(예: `{fab_id: [FAB_A]}`), `size_tolerance`(실제 크기 허용 비율), `k_neighbors`, `n_clusters`, `loo_top_k`
+- `analysis.neighborhood_space`(유사 제품 비교군을 만들 공간, 기본 `with_risk_ae`), `pair_near_margin`(좁은 간격 구간을 셀 여유 폭, canonical 길이 단위, 기본 1.0)
 - `data.canonical_length_unit`: `um` 권장. 입력 `nm`/`um`/`mm`는 명시적으로 환산된다.
 
 알 수 없는 설정 키, NaN, 잘못된 타입은 오류다.
@@ -119,3 +123,5 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 ## 구현 방식 기록
 
 이 저장소는 로컬 Mac mini 오케스트레이터(mmo)로 구현했다. 계약 문서와 공통 schema는 계획 단계에서 작성했고, 기본 모듈은 로컬 Qwen(OpenCode) 작업으로 생성한 뒤 Codex/Claude 독립 검토의 blocking finding을 반영했다. 통합 계층(dataset/train/baseline/synthetic/analysis/checks/cards/pipeline/cli)과 테스트 일부는 직접 작성했다. 자세한 작업 기록은 오케스트레이터 상태 DB에 보존되어 있다.
+
+CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은 `ca_mean_um2`)를 `um^2`로 전달합니다. ROI 크기는 유지하고 simcompare에서 한 번만 면적으로 나눠 `ca_area_unit="1"`로 기록합니다. legacy 무차원 입력은 기존 `1/um^2` 경로를 유지합니다. 도메인 해석은 담당자 확인 필요입니다. 면적 CA는 적재/분석 전에 canonical 길이 제곱으로 통일하며 CAA 단위는 `relative_index*um^2`(legacy: `relative_index`)다. 두 단위 계열 혼합은 real 오류/demo 경고이며, 수정 전 particle-sim 무차원 export는 재-export해야 한다.

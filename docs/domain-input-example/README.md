@@ -12,7 +12,7 @@
 |---|---|
 | `domain_rules.yaml` | 지금까지 확정된 단위·CA·Fab·이미지·vertical short 규칙과 미확정 항목 |
 | `layer_stack.csv` | 제품별 하부→상부 적층 순서와 Fab 공정 layer 대응 |
-| `fab_measurements.csv` | Fab·제품군·공정 layer별 1–50 um 평균 검출 개수와 조사 조건 |
+| `fab_measurements.csv` | Fab·제품군·공정 layer별 확정 32개 크기의 평균 검출 개수와 조사 조건 |
 | `image_pairs.csv` | Layout·hotspot의 픽셀 1:1 대응 및 실제 영역 확인 |
 | `layer_equivalence.csv` | 제품 간 이름이 다른 layer의 공통 역할 대응표(현재 보류) |
 | `shape_feature_definitions.csv` | 개선 가설에 사용할 형상 지표의 정의와 변경 가능 조건 |
@@ -35,16 +35,17 @@
 - 대체로 모든 설계 버전이 같은 순서를 쓰면 `design_version`에 `*`를 쓴다.
 - 특정 설계 버전만 순서가 다르면 그 버전의 행을 별도로 추가하며, 명시 버전이 `*`보다 우선한다.
 - 제품마다 layer 개수가 달라도 된다.
-- Vertical short에는 두 대상 layer 중 `stack_order`가 큰 layer의 `fab_process_layer`를 적용한다.
+- 2026-09-27 계약 1.2: Vertical short도 source-step Fab layer를 유지하고 적층표는 geometry만 검증한다.
+- Legacy(미표시/1.1): 두 대상 layer 중 `stack_order`가 큰 layer의 `fab_process_layer`를 적용한다. 이 예시의 기존 측정/적층표는 legacy 의미를 유지한다.
 - 대상 layer가 표에 없거나 순서를 판정할 수 없으면 CAA를 계산하지 않는다.
 
 ## Fab 자료 작성 규칙
 
 - 한 행은 `Fab × 제품군 × 공정 layer × 이물 크기` 한 점이다.
 - 원시 검출 로그가 아니라 위 조건별로 집계한 가공 요약자료를 입력한다.
-- 이물 크기는 `1–50 um`, `1 um` 간격을 기본으로 한다.
+- 크기 격자는 확정: 1–30 um 1 um 간격 + 40, 50 um (32개).
 - 이물 크기는 원형으로 시뮬레이션한 이물의 지름이다. 비원형 이물은 현재 범위 밖이다.
-- CA·hotspot·Fab은 모두 `1–50 um` 전체 격자를 제공하므로 기본 연결에서는 보간하지 않는다.
+- CA·hotspot·Fab은 모두 확정 32개 전체 격자를 제공하므로 기본 연결에서는 보간하지 않는다.
 - 같은 정수 크기의 값을 정확히 연결하고 누락된 크기는 0으로 채우지 않는다.
 - `avg_detected_count`는 지정된 기간의 glass 1장당 평균 검출 개수다. 0과 미관측 빈 값은 구분한다.
 - `surveyed_area_um2`는 glass 한 장에서 실제로 검사한 물리 면적이다.
@@ -83,3 +84,6 @@
 2. 제품 간 layer·전극 역할 대응표
 
 전문가 라벨은 현재 필수 질문이 아니라 향후 선택 입력이다.
+
+Fab 자동 선택은 모든 mode에서 family+layer-wide, null-family+layer-wide 순서다.
+Pair-specific 분포는 bundle의 명시적인 `fab_distribution_id`로만 선택한다.

@@ -11,7 +11,7 @@ from sklearn.cluster import KMeans
 from simcompare.caa import CAAError, compute_caa, interpret_fab, select_distribution
 from simcompare.preprocess import align_curve
 from simcompare.retrieval import candidate_mask, layer_key, role_key, search_all
-from simcompare.schema import convert_length
+from simcompare.schema import prepare_ca_bundles, convert_length
 
 CLUSTER_NOTE = "군집 번호는 임의의 라벨이며 물리적 의미가 없습니다"
 
@@ -50,7 +50,7 @@ def _caa(bundle, dist_or_error, cfg) -> tuple[float, str, bool | None]:
         return np.nan, "CA 곡선 없음", None
     try:
         weights = interpret_fab(dist_or_error, cfg.caa.rule, mode=cfg.mode, confirmed=cfg.caa.confirmed)
-        result = compute_caa(bundle.ca, weights, require_full_coverage=cfg.caa.require_full_coverage)
+        result = compute_caa(bundle.ca, weights, canonical_length_unit=cfg.data.canonical_length_unit, require_full_coverage=cfg.caa.require_full_coverage)
     except CAAError as exc:
         return np.nan, str(exc), None
     value = np.nan if result.value is None else float(result.value)
@@ -68,6 +68,7 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
     """
     grid = np.asarray(cfg.data.ca_grid, dtype=float)
     canonical_unit = cfg.data.canonical_length_unit
+    prepare_ca_bundles(bundles, cfg.mode, canonical_unit)
     ref_id = cfg.caa.reference_distribution_id
     rows = []
     for bundle in bundles:
@@ -77,12 +78,15 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             "sample_id": bundle.sample_id, "product_id": bundle.product_id,
             "product_family": bundle.product_family, "fab_id": bundle.fab_id,
             "failure_type": bundle.failure_type,
+            "assigned_process_layer": bundle.assigned_process_layer,
+            "fab_pair_key": bundle.fab_pair_key,
+            "mapping_contract_version": bundle.mapping_contract_version,
             "role_key": roles,
             "layer_key": layers,
             "comparison_group_id": f"{roles}::{layers}",
             "has_physical_scale": bundle.has_physical_scale(),
-            "ca_unit": "1",
-            "ca_area_unit": f"1/{canonical_unit}^2",
+            "ca_unit": bundle.ca.unit if bundle.ca is not None else "1",
+            "ca_area_unit": bundle.ca_area_unit(canonical_unit),
         }
         raw = np.full(len(grid), np.nan)
         area = np.full(len(grid), np.nan)
@@ -107,6 +111,7 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             actual = select_distribution(bundle, distributions, cfg.caa.process_layer_overrides)
         except CAAError as exc:
             actual = str(exc)
+        row["selected_fab_distribution_id"] = None if isinstance(actual, str) else actual.fab_distribution_id
         row["caa_actual"], row["caa_actual_reason"], demo_a = _caa(bundle, actual, cfg)
         if ref_id is None:
             reference = "기준 분포가 설정되지 않았습니다"
@@ -114,6 +119,8 @@ def risk_table(bundles, distributions, cfg) -> pd.DataFrame:
             reference = f"기준 분포 {ref_id!r}을(를) 찾을 수 없습니다"
         elif not distributions[ref_id].is_reference:
             reference = f"분포 {ref_id!r}은(는) is_reference=true가 아닙니다"
+        elif bundle.mapping_contract_version == "1.2" and distributions[ref_id].fab_pair_key is not None:
+            reference = "1.2 reference distributions cannot carry fab_pair_key"
         else:
             reference = distributions[ref_id]
         row["caa_reference"], row["caa_reference_reason"], demo_r = _caa(bundle, reference, cfg)
@@ -201,6 +208,10 @@ def _top_items(frame: pd.DataFrame, top_k: int) -> dict[str, set[str]]:
     return out
 
 
+class InsufficientEmbeddingData(ValueError):
+    """임베딩 재적합에 필요한 관측 자료가 부족함 (메시지는 기록할 reason 코드)."""
+
+
 def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=None,
                           train_pos=None) -> pd.DataFrame:
     """제품을 하나씩 제외했을 때 상위 항목과 유사 사례가 유지되는지 비교한다.
@@ -214,10 +225,30 @@ def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=Non
     positions = np.arange(len(meta))
     train_pos = positions if train_pos is None else np.asarray(train_pos, dtype=int)
     full_top = _top_items(ranked, top_k)
-    emb_full = embed_fn(train_pos)
+    full_reason = None
+    try:
+        if len(train_pos) < 2:
+            raise InsufficientEmbeddingData("insufficient_training_rows")
+        emb_full = embed_fn(train_pos)
+    except InsufficientEmbeddingData as exc:
+        full_reason = str(exc)
     rows = []
     for product in sorted(meta["product_id"].unique()):
         keep = positions[(meta["product_id"] != product).to_numpy()]
+        fit_pos = np.intersect1d(train_pos, keep)
+        try:
+            if full_reason:
+                raise InsufficientEmbeddingData(full_reason)
+            if len(fit_pos) < 2:
+                raise InsufficientEmbeddingData("insufficient_training_rows")
+            emb_loo = embed_fn(fit_pos)
+        except InsufficientEmbeddingData as exc:
+            rows.append({
+                "held_out_product": product, "status": "skipped", "reason": str(exc),
+                "n_training_rows": len(fit_pos), "top_items_jaccard": None,
+                "neighbor_jaccard": None, "n_queries": 0,
+            })
+            continue
         keep_ids = set(meta.loc[keep, "sample_id"])
         loo_ranked = ranked[ranked["sample_id"].isin(keep_ids)]
         loo_top = _top_items(loo_ranked, top_k)
@@ -228,7 +259,6 @@ def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=Non
             for ft in sorted(set(full_top) | set(loo_top))
         ]
         scores = [s for s in scores if s is not None]
-        emb_loo = embed_fn(np.intersect1d(train_pos, keep))
         sub_meta = meta.iloc[keep].reset_index(drop=True)
         full_nb = search_all(emb_full[keep], sub_meta, k=k, space="full", **search_kwargs)
         loo_nb = search_all(emb_loo[keep], sub_meta, k=k, space="loo", **search_kwargs)
@@ -238,6 +268,7 @@ def leave_one_product_out(ranked, meta, embed_fn, *, k, top_k, search_kwargs=Non
         nb_scores = [s for s in nb_scores if s is not None]
         rows.append({
             "held_out_product": product,
+            "status": "computed", "reason": None, "n_training_rows": len(fit_pos),
             "top_items_jaccard": float(np.mean(scores)) if scores else None,
             "neighbor_jaccard": float(np.mean(nb_scores)) if nb_scores else None,
             "n_queries": len(nb_scores),

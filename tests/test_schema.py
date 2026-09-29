@@ -76,3 +76,57 @@ def test_validate_fab_rules():
     d.bin_upper = np.array([2.0, 2.5])
     with pytest.raises(DataContractError):
         validate_fab(d)
+
+
+def test_f4_fixture_key_and_marker_conformance():
+    import json
+    from pathlib import Path
+    import pytest
+    from simcompare.schema import AnalysisBundle, DataContractError, make_fab_pair_key, validate_mapping_contract
+    contract = json.loads((Path(__file__).parent / 'fixtures/particle_sim_mapping_v1.json').read_text())
+    for vector in contract['fab_pair_key']['vectors']:
+        assert make_fab_pair_key(*vector['raw_tuple'], {}) == vector['key']
+    for tuples in contract['fab_pair_key']['collision_vectors']:
+        registry = {}
+        make_fab_pair_key(*tuples[0], registry)
+        with pytest.raises(DataContractError, match='collision'):
+            make_fab_pair_key(*tuples[1], registry)
+    for value in contract['fab_pair_key']['invalid_components']:
+        with pytest.raises(DataContractError):
+            make_fab_pair_key(value, 'A', 'B', {})
+    for vector in contract['version_marker']['vectors']:
+        bundle = AnalysisBundle('S', 'P', 'F', 'V', 'L', 'a', 'b', 'A', 'B', 'lateral_short', 'FAB',
+                                assigned_process_layer=vector.get('assigned_process_layer'),
+                                mapping_contract_version=vector['marker'], fab_pair_key=vector.get('pair_key'))
+        if vector['result'] == 'error':
+            with pytest.raises(DataContractError):
+                validate_mapping_contract(bundle)
+        else:
+            validate_mapping_contract(bundle)
+
+
+@pytest.mark.parametrize("unit,value", [("um^2", 2.0), ("nm^2", 2e6), ("mm^2", 2e-6)])
+def test_area_ca_normalizes_once(unit, value):
+    curve = CACurve(np.array([1.0, 2.0]), np.array([value, np.nan]), np.array([True, False]), unit)
+    large = make_bundle(ca=curve, unit_width=100.0, unit_height=100.0)
+    small = make_bundle(ca=curve, unit_width=50.0, unit_height=50.0)
+    validate_bundle(large)
+    a = large.ca_per_area()[0]
+    b = small.ca_per_area()[0]
+    assert a[0] == pytest.approx(2.0 / 10000, rel=1e-12)
+    assert b[0] / a[0] == pytest.approx(4.0, rel=1e-12)
+    assert np.isnan(a[1])
+    assert large.ca_area_unit() == "1"
+    assert large.ca_per_area("nm")[0][0] == pytest.approx(a[0], rel=1e-12)
+
+
+@pytest.mark.parametrize("unit", ["bad", "um", "1/um^2"])
+def test_invalid_ca_unit(unit):
+    curve = CACurve(np.array([1.0]), np.array([0.1]), np.array([True]), unit)
+    with pytest.raises(DataContractError):
+        validate_bundle(make_bundle(ca=curve))
+
+
+def test_legacy_ca_area_unit():
+    curve = CACurve(np.array([1.0]), np.array([0.1]), np.array([True]), "1")
+    assert make_bundle(ca=curve).ca_area_unit() == "1/um^2"

@@ -72,3 +72,25 @@ def test_baseline_pca_fits_on_train_rows_only(enc):
     assert not any(n.startswith(("ca_log", "hot", "fab")) for n in shape_names)
     with pytest.raises(ValueError):
         BaselinePCA(4).fit(x, mask, np.array([0]))
+
+
+def test_f4_metadata_and_grouping_survive(demo_loaded, demo_cfg):
+    from dataclasses import replace
+    from simcompare.analysis import risk_table
+    from simcompare.retrieval import layer_key, role_key
+    original = demo_loaded.bundles[0]
+    b = replace(original, mapping_contract_version='1.2',
+                fab_pair_key=f'raw:unit:{original.layer_a}-{original.layer_b}')
+    repeated = replace(b, sample_id='second-step', fab_pair_key=f'other:{b.layer_a}-{b.layer_b}')
+    encoded = encode_bundles([b, repeated], demo_loaded.distributions, demo_cfg)
+    assert len(encoded.meta) == 2
+    assert encoded.meta.fab_pair_key.tolist() == [b.fab_pair_key, repeated.fab_pair_key]
+    assert encoded.meta.mapping_contract_version.tolist() == ['1.2', '1.2']
+    assert layer_key(encoded.meta.iloc[0]) == layer_key(encoded.meta.iloc[1])
+    assert role_key(encoded.meta.iloc[0]) == role_key(encoded.meta.iloc[1])
+    table = risk_table([b, repeated], demo_loaded.distributions, demo_cfg)
+    assert table.assigned_process_layer.tolist() == [b.assigned_process_layer] * 2
+    assert table.fab_pair_key.tolist() == [b.fab_pair_key, repeated.fab_pair_key]
+    assert table.mapping_contract_version.tolist() == ['1.2', '1.2']
+    assert table.selected_fab_distribution_id.notna().all()
+    assert table.comparison_group_id.nunique() == 1

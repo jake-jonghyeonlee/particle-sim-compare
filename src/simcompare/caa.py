@@ -20,9 +20,12 @@ from simcompare.schema import (
     CACurve,
     DataContractError,
     FabDistribution,
+    canonicalize_ca,
+    is_dimensionless_unit,
     convert_area,
     convert_length,
     validate_fab,
+    validate_mapping_contract,
 )
 
 DEMO_RULE = "demo_probability_per_bin"
@@ -156,7 +159,14 @@ def select_distribution(
     assigned_process_layer를 쓴다. 둘 다 없으면 오류다. 기준 분포는 선택하지 않으며,
     후보가 없거나 여러 개면 오류를 낸다.
     """
+    try:
+        validate_mapping_contract(bundle)
+    except DataContractError as exc:
+        raise CAAError(str(exc)) from exc
+    modern = bundle.mapping_contract_version == "1.2"
     key = f"{bundle.product_id}|{bundle.failure_type}"
+    if modern and overrides and key in overrides and overrides[key] != bundle.assigned_process_layer:
+        raise CAAError(f"{bundle.sample_id}: override {overrides[key]!r} conflicts with source assignment {bundle.assigned_process_layer!r}")
     layer = (
         overrides.get(key)
         if overrides and key in overrides
@@ -191,6 +201,10 @@ def select_distribution(
                 f"{bundle.sample_id}: fab_distribution_id {bundle.fab_distribution_id!r}"
                 f"의 process_layer {dist.process_layer!r}가 {layer!r}와 일치하지 않습니다"
             )
+        if dist.fab_pair_key is not None and (not modern or dist.fab_pair_key != bundle.fab_pair_key):
+            raise CAAError(f"{bundle.sample_id}: explicit distribution pair mismatch")
+        if modern and dist.product_family not in (None, bundle.product_family):
+            raise CAAError(f"{bundle.sample_id}: explicit distribution family mismatch")
         return dist
 
     candidates = [
@@ -200,18 +214,23 @@ def select_distribution(
         and d.fab_id == bundle.fab_id
         and d.process_layer == layer
         and (d.product_family == bundle.product_family or d.product_family is None)
+        and d.fab_pair_key is None
     ]
-    exact = [d for d in candidates if d.product_family == bundle.product_family]
-    final = exact if exact else candidates
+    final = []
+    for family in (bundle.product_family, None):
+        final = [d for d in candidates if d.product_family == family]
+        if final:
+            break
     if len(final) == 0:
         raise CAAError(
-            f"{bundle.sample_id}: 해당하는 Fab 분포가 없습니다 "
-            f"(fab_id={bundle.fab_id!r}, layer={layer!r}, family={bundle.product_family!r})"
+            f"{bundle.sample_id}: 해당하는 Fab 분포가 없습니다; pair-specific distributions require explicit fab_distribution_id. "
+            f"(fab_id={bundle.fab_id!r}, layer={layer!r}, family={bundle.product_family!r}, pair={bundle.fab_pair_key!r})"
         )
     if len(final) > 1:
         ids = sorted(d.fab_distribution_id for d in final)
         raise CAAError(
-            f"{bundle.sample_id}: Fab 분포 후보가 여러 개라 선택할 수 없습니다 {ids}"
+            f"{bundle.sample_id}: Fab 분포 후보가 여러 개라 선택할 수 없습니다 {ids} "
+            f"(fab={bundle.fab_id!r}, layer={layer!r}, family={bundle.product_family!r}, pair={bundle.fab_pair_key!r})"
         )
     return final[0]
 
@@ -221,12 +240,14 @@ def compute_caa(
     weights: FabWeights,
     *,
     require_full_coverage: bool = True,
+    canonical_length_unit: str = "um",
 ) -> CAAResult:
     """CA 곡선과 Fab 가중치를 곱해 합산한 CAA를 계산한다.
 
     가중치 크기와 관측된 CA 크기가 정확히 일치(rtol=1e-6)하는 점만 사용한다.
     누락 크기가 있고 require_full_coverage이면 값을 만들지 않고 사유만 남긴다.
     """
+    canonicalize_ca(ca, canonical_length_unit)
     try:
         w_sizes = convert_length(weights.sizes, weights.size_unit, ca.particle_size_unit)
     except DataContractError as exc:
@@ -258,7 +279,7 @@ def compute_caa(
         else:
             missing_sizes.append(float(size))
 
-    unit = "relative_index"
+    unit = "relative_index" if is_dimensionless_unit(ca.unit) else f"relative_index*{ca.unit}"
     label = DEMO_LABEL if weights.is_demo else "CAA (설정된 규칙)"
 
     if missing_sizes and require_full_coverage:

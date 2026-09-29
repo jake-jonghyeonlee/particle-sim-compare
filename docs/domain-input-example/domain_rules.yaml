@@ -51,6 +51,18 @@ ca:
     unit: "1/um^2"
     must_not_be_called_probability: true
   status: confirmed
+  particle_sim:
+    status: provisional
+    raw_unit: "um^2"
+    allowed_area_units: ["nm^2", "um^2", "mm^2"]
+    already_area_normalized: false
+    increases_with_analysis_area: true
+    source: "ca_nominal_um2 또는 ca_mean_um2"
+    normalized_unit: "1"
+    formula: "raw_ca_um2 / roi_area_um2"
+  cross_family_comparison:
+    allowed: false
+    enable_condition: "두 CA 단위 계열의 환산 근거가 확정된 뒤"
 
 fab:
   input_level: processed_summary
@@ -87,8 +99,10 @@ caa:
   enable_condition: "시뮬레이션/Fab 계산 담당자가 식, 조사 면적 기준, 평균 기준과 출력 의미를 확인한 뒤"
 
 vertical_short:
-  fab_layer_policy: upper_layer
-  upper_layer_source: layer_stack.csv
+  # 2026-09-27 contract 1.2; existing unversioned example tables remain legacy.
+  fab_layer_policy: source_step_fab_distribution_layer
+  legacy_1_1_fab_layer_policy: upper_layer
+  upper_layer_source: layer_stack.csv  # geometry validation; legacy assignment only
   infer_from_layer_a_or_layer_b: false
   missing_stack_behavior: block_caa
   status: confirmed

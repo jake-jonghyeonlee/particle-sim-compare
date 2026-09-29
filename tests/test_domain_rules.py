@@ -114,12 +114,12 @@ def test_processed_fab_csv_and_external_review_inputs(tmp_path):
         "surveyed_area_um2,averaging_basis,period_start,period_end\n"
     )
     rows = [f"SRC,FAB,F,M2,{size},{100-size},1000,per_glass,2026-01-01,2026-01-31"
-            for size in range(1, 51)]
+            for size in [*range(1, 31), 40, 50]]
     fab.write_text(header + "\n".join(rows) + "\n")
     loaded = _load_processed_fab_measurements(tmp_path, "real")
     assert loaded["SRC"].value_kind == "average_count_per_glass"
     assert loaded["SRC"].averaging_basis == "per_glass"
-    assert len(loaded["SRC"].raw_values) == 50
+    assert len(loaded["SRC"].raw_values) == 32
 
     reviews = tmp_path / "design_review_status.csv"
     reviews.write_text(
@@ -166,3 +166,45 @@ def test_held_out_queries_only_use_training_candidates():
     )
     assert report["n_queries"] == 2
     assert all(row["neighbors"] == ["train"] for row in report["queries"])
+
+
+@pytest.mark.parametrize("sizes,mode,valid", [
+    ([*range(1, 31), 40, 50], "real", True),
+    ([*range(1, 30), 40, 50], "real", False),
+    ([*range(1, 31), 40], "real", False),
+    ([*range(1, 31), 50], "real", False),
+    (list(range(1, 51)), "real", False),
+    (list(range(1, 51)), "demo", True),
+    ([2, 4], "demo", True),
+])
+def test_processed_fab_size_grid(tmp_path, sizes, mode, valid):
+    header = (
+        "source_id,fab_id,product_family,process_layer,particle_size_um,avg_detected_count,"
+        "surveyed_area_um2,averaging_basis,period_start,period_end\n"
+    )
+    rows = [f"SRC,FAB,F,M2,{size},1,1000,per_glass,2026-01-01,2026-01-31"
+            for size in sizes]
+    (tmp_path / "fab_measurements.csv").write_text(header + "\n".join(rows) + "\n")
+    if valid:
+        dist = _load_processed_fab_measurements(tmp_path, mode)["SRC"]
+        np.testing.assert_array_equal((dist.bin_lower + dist.bin_upper) / 2, sizes)
+    else:
+        with pytest.raises(DataContractError, match="32개.*누락"):
+            _load_processed_fab_measurements(tmp_path, mode)
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_f4_vertical_preserves_source_and_reports_geometry(reverse):
+    item = bundle(assigned_process_layer='SOURCE', mapping_contract_version='1.2',
+                  fab_pair_key='U:M2-M1' if reverse else 'U:M1-M2',
+                  layer_a='M2' if reverse else 'M1', layer_b='M1' if reverse else 'M2')
+    stack = {('P', '*', 'M1'): (1, 'FAB_LOW'), ('P', '*', 'M2'): (2, 'FAB_HIGH')}
+    assert _apply_vertical_layer(item, stack, 'real') == []
+    assert item.assigned_process_layer == 'SOURCE'
+    assert item.provenance.calc_settings['upper_physical_layer'] == 'M2'
+    with pytest.raises(DataContractError):
+        _apply_vertical_layer(item, {}, 'real')
+    assert _apply_vertical_layer(item, {}, 'demo')
+    stack[('P', 'v1', 'M2')] = (1, 'OTHER')
+    with pytest.raises(DataContractError):
+        _apply_vertical_layer(item, stack, 'real')

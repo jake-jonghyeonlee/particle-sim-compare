@@ -1,6 +1,6 @@
 """simcompare 명령행 인터페이스.
 
-demo-data, validate-data, train, embed, analyze, evaluate, all 명령을 제공한다.
+demo-data, merge-exports, validate-data, train, embed, analyze, evaluate, all 명령을 제공한다.
 데이터·설정 계약 오류는 트레이스백 대신 '오류:' 메시지와 종료 코드 2로 끝낸다.
 """
 from __future__ import annotations
@@ -36,6 +36,11 @@ def _parser() -> argparse.ArgumentParser:
     _korean_help(demo)
     demo.add_argument("--out", required=True, help="출력 디렉터리")
     demo.add_argument("--seed", type=int, default=0, help="난수 seed")
+    merge = _korean_help(sub.add_parser(
+        "merge-exports", add_help=False,
+        help="particle-sim export-simcompare 결과 여러 개(원안·변경본·다른 제품)를 data_dir 하나로 합침"))
+    merge.add_argument("--out", required=True, help="비어 있는 출력 디렉터리")
+    merge.add_argument("sources", nargs="+", help="export-simcompare 출력 디렉터리들")
     helps = {
         "validate-data": "입력 데이터 점검(누락·실제 크기·중복 의심·교락·CAA 적용 가능 여부)",
         "train": "제품·설계 계열 단위로 분리해 다중 입력 오토인코더 학습",
@@ -70,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
 
             print(DEMO_NOTICE, file=sys.stderr)
             _print(generate_demo_data(args.out, seed=args.seed))
+            return 0
+        if args.command == "merge-exports":
+            from simcompare.merge import merge_exports
+
+            _print(merge_exports([Path(s) for s in args.sources], Path(args.out)))
             return 0
         from simcompare import pipeline
         from simcompare.config import load_config

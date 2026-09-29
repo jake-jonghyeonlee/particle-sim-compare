@@ -51,6 +51,8 @@ class AnalysisConfig:
     filters: dict[str, list] = {}
     size_tolerance: float | None = None
     loo_top_k: int = 5
+    neighborhood_space: str = "with_risk_ae"   # with_risk_ae | ae_struct | ae_fab | shape_only | with_risk_baseline
+    pair_near_margin: float = 1.0              # canonical length unit, >= 0
 
 @dataclass
 class AppConfig:

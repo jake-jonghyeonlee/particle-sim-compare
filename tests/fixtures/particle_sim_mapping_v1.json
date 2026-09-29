@@ -1,0 +1,809 @@
+{
+  "applicability": {
+    "rule": "Classification must be uniform across sizes for each (source_step, unit); skip all not_applicable_source_step, reject mixed classifications; exported CA must be finite.",
+    "vectors": [
+      {
+        "classifications": [
+          "not_applicable_source_step",
+          "not_applicable_source_step"
+        ],
+        "result": "skip"
+      },
+      {
+        "classifications": [
+          "confirmed",
+          "confirmed"
+        ],
+        "result": "export"
+      },
+      {
+        "classifications": [
+          "confirmed",
+          "not_applicable_source_step"
+        ],
+        "result": "error"
+      }
+    ]
+  },
+  "contract_version": "1.2",
+  "excluded_open_warnings": {
+    "classifications": [
+      "baseline_open",
+      "insufficient_terminals",
+      "terminal_lost"
+    ],
+    "rule": "Keep exporting open units; emit one warning per (source_step, unit) with raw unit ID, step and classification: CA 0 reflects an excluded baseline condition, not low risk."
+  },
+  "fab_pair_key": {
+    "collision_vectors": [
+      [
+        [
+          "U",
+          "A-B",
+          "C"
+        ],
+        [
+          "U",
+          "A",
+          "B-C"
+        ]
+      ],
+      [
+        [
+          "U:A",
+          "B",
+          "C"
+        ],
+        [
+          "U",
+          "A:B",
+          "C"
+        ]
+      ]
+    ],
+    "invalid_components": [
+      "",
+      " ",
+      " leading",
+      "trailing "
+    ],
+    "rule": "<raw failure unit id>:<layer_a>-<layer_b>; ordered exported endpoints, open layer_b N/A; preserve case, punctuation and Unicode, never sanitize or parse delimiters; reject blank or whitespace-edged components and distinct raw tuples composing the same key.",
+    "same_key_multiple_steps": {
+      "key": "U:A-B",
+      "raw_tuple": [
+        "U",
+        "A",
+        "B"
+      ],
+      "steps": [
+        "S1",
+        "S2"
+      ]
+    },
+    "scope": "Pair IDs are product-local; automatic selection uses layer-wide entries only in all modes, and pair-specific distributions require an explicit validated fab_distribution_id.",
+    "vectors": [
+      {
+        "key": "PAIR_003339:METAL1-METAL1",
+        "raw_tuple": [
+          "PAIR_003339",
+          "METAL1",
+          "METAL1"
+        ]
+      },
+      {
+        "key": "PAIR_004201:GAT1-METAL1",
+        "raw_tuple": [
+          "PAIR_004201",
+          "GAT1",
+          "METAL1"
+        ]
+      },
+      {
+        "key": "PAIR_004201:METAL1-GAT1",
+        "raw_tuple": [
+          "PAIR_004201",
+          "METAL1",
+          "GAT1"
+        ]
+      },
+      {
+        "key": "W:path:METAL1-N/A",
+        "raw_tuple": [
+          "W:path",
+          "METAL1",
+          "N/A"
+        ]
+      },
+      {
+        "key": "auto_open:W:METAL1-N/A",
+        "raw_tuple": [
+          "auto_open:W",
+          "METAL1",
+          "N/A"
+        ]
+      },
+      {
+        "key": "a:b:M-1-M2",
+        "raw_tuple": [
+          "a:b",
+          "M-1",
+          "M2"
+        ]
+      },
+      {
+        "key": "a/b:M-1-M2",
+        "raw_tuple": [
+          "a/b",
+          "M-1",
+          "M2"
+        ]
+      },
+      {
+        "key": "a_b:M-1-M2",
+        "raw_tuple": [
+          "a_b",
+          "M-1",
+          "M2"
+        ]
+      },
+      {
+        "key": "한글:pair/α:금속-1-N/A",
+        "raw_tuple": [
+          "한글:pair/α",
+          "금속-1",
+          "N/A"
+        ]
+      }
+    ]
+  },
+  "mapping_rows": [
+    {
+      "electrode_b_role": null,
+      "layer_b": null,
+      "layout_slots": [
+        "a",
+        "b"
+      ],
+      "mode": "lateral_short",
+      "target": "lateral_short",
+      "unit_kind": "electrode_pair"
+    },
+    {
+      "electrode_b_role": null,
+      "layer_b": null,
+      "layout_slots": [
+        "a",
+        "b"
+      ],
+      "mode": "vertical_short",
+      "target": "vertical_short",
+      "unit_kind": "electrode_pair"
+    },
+    {
+      "electrode_b_role": "N/A",
+      "layer_b": "N/A",
+      "layout_slots": [
+        "a"
+      ],
+      "mode": "lateral_open",
+      "target": "lateral_open",
+      "unit_kind": "open_path"
+    },
+    {
+      "electrode_b_role": "N/A",
+      "layer_b": "N/A",
+      "layout_slots": [
+        "a"
+      ],
+      "mode": "lateral_open",
+      "target": "lateral_open",
+      "unit_kind": "open_electrode"
+    },
+    {
+      "electrode_b_role": null,
+      "layer_b": null,
+      "layout_slots": [],
+      "mode": "contact_not_open",
+      "target": null,
+      "unit_kind": "contact"
+    }
+  ],
+  "sample_id": {
+    "collision_vectors": [
+      {
+        "raw_tuples": [
+          [
+            "P",
+            "V",
+            "S",
+            "a:b"
+          ],
+          [
+            "P",
+            "V",
+            "S",
+            "a_b"
+          ]
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuples": [
+          [
+            "P",
+            "V",
+            "a:b",
+            "U"
+          ],
+          [
+            "P",
+            "V",
+            "a_b",
+            "U"
+          ]
+        ],
+        "sample_id": "P-V-a_b-U"
+      },
+      {
+        "raw_tuples": [
+          [
+            "P",
+            "V",
+            "S-X",
+            "U"
+          ],
+          [
+            "P",
+            "V",
+            "S",
+            "X-U"
+          ]
+        ],
+        "sample_id": "P-V-S-X-U"
+      }
+    ],
+    "raw_rule": "product_id-design_version-source_step-unit_id",
+    "sanitization_rule": "Replace each character outside [A-Za-z0-9_.-] with _, without collapsing underscores or adding suffixes.",
+    "vectors": [
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "safe_1.-"
+        ],
+        "sample_id": "P-V-S-safe_1.-"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "a:b"
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "a/b"
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "a b"
+        ],
+        "sample_id": "P-V-S-a_b"
+      },
+      {
+        "raw_tuple": [
+          "P",
+          "V",
+          "S",
+          "한글"
+        ],
+        "sample_id": "P-V-S-__"
+      }
+    ]
+  },
+  "selector": {
+    "default_bundle": {
+      "assigned_process_layer": "SOURCE",
+      "fab_id": "FAB",
+      "fab_pair_key": "U:A-B",
+      "mapping_contract_version": "1.2",
+      "product_family": "F"
+    },
+    "explicit_id_rule": "Resolve only explicit ID; 1.2 requires matching Fab/layer, family exact or null, pair exact or null, non-reference; mismatches error without fallback; pair-specific entries require an explicit fab_distribution_id in all modes. Legacy pair-specific explicit IDs error.",
+    "override_rule": "1.2 equal source assignment is harmless; conflicting override errors; legacy precedence remains.",
+    "reference_rule": "Reference distributions must have null pair key in 1.2.",
+    "tier_order": [
+      "exact family + null pair",
+      "null family + null pair"
+    ],
+    "vectors": [
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "exact-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "exact-family-layer-wide-despite-pair",
+        "result": "exact-family-layer-wide"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "exact-family-layer-wide",
+        "result": "exact-family-layer-wide"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "null-family-layer-wide-despite-pair",
+        "result": "generic-family-layer-wide"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "null-family-layer-wide",
+        "result": "generic-family-layer-wide"
+      },
+      {
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "family-first",
+        "result": "exact-family-layer-wide"
+      },
+      {
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "duplicate",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "ambiguity-no-lower-fallback",
+        "result": "ambiguity"
+      },
+      {
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "OTHER:A-B",
+            "id": "other",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          }
+        ],
+        "name": "no-match-other-pair",
+        "result": "no-match"
+      },
+      {
+        "bundle": {
+          "fab_pair_key": null,
+          "mapping_contract_version": null
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "exact-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "legacy-bundle-only-layer-wide",
+        "result": "exact-family-layer-wide"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_distribution_id": "exact-family-exact-pair",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "exact-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "explicit-pair-id",
+        "result": "exact-family-exact-pair"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "exact-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "matching-pairs-only-require-explicit-id",
+        "result": "no-match"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": "F"
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "exact-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "exact-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "duplicate-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": "F"
+          }
+        ],
+        "name": "duplicate-pairs-do-not-refine-layer-wide",
+        "result": "exact-family-layer-wide"
+      },
+      {
+        "bundle": {
+          "assigned_process_layer": "SOURCE",
+          "fab_id": "FAB",
+          "fab_pair_key": "U:A-B",
+          "mapping_contract_version": "1.2",
+          "product_family": null
+        },
+        "candidates": [
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": "U:A-B",
+            "id": "generic-family-exact-pair",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          },
+          {
+            "fab_id": "FAB",
+            "fab_pair_key": null,
+            "id": "generic-family-layer-wide",
+            "is_reference": false,
+            "process_layer": "SOURCE",
+            "product_family": null
+          }
+        ],
+        "name": "null-family-bundle-only-layer-wide",
+        "result": "generic-family-layer-wide"
+      }
+    ]
+  },
+  "source_layer": {
+    "rule": "Every supported failure type uses the nonblank source step fab_distribution_layer; when present CA labels must be nonblank, uniform per step and equal the manifest. Physical upper layer does not assign Fab layer.",
+    "vectors": [
+      {
+        "assigned_process_layer": "ASSUMED_SOURCE",
+        "failure_type": "lateral_short",
+        "physical_upper_layer": "METAL1",
+        "source_layer": "ASSUMED_SOURCE"
+      },
+      {
+        "assigned_process_layer": "ASSUMED_SOURCE",
+        "failure_type": "vertical_short",
+        "physical_upper_layer": "METAL1",
+        "source_layer": "ASSUMED_SOURCE"
+      },
+      {
+        "assigned_process_layer": "ASSUMED_SOURCE",
+        "failure_type": "lateral_open",
+        "physical_upper_layer": "METAL1",
+        "source_layer": "ASSUMED_SOURCE"
+      }
+    ]
+  },
+  "version_marker": {
+    "field": "provenance.json.mapping_contract_version",
+    "rule": "1.2 requires nonblank assignment and key in real and demo; missing/1.1 marker is legacy only without populated key; reject malformed/unknown markers before mutation.",
+    "vectors": [
+      {
+        "marker": null,
+        "pair_key": null,
+        "result": "legacy"
+      },
+      {
+        "marker": "1.1",
+        "pair_key": null,
+        "result": "legacy"
+      },
+      {
+        "assigned_process_layer": "SOURCE",
+        "marker": "1.2",
+        "pair_key": "U:A-B",
+        "result": "source"
+      },
+      {
+        "marker": null,
+        "pair_key": "U:A-B",
+        "result": "error"
+      },
+      {
+        "marker": "1.1",
+        "pair_key": "U:A-B",
+        "result": "error"
+      },
+      {
+        "marker": "1.2",
+        "pair_key": null,
+        "result": "error"
+      },
+      {
+        "marker": "1.2",
+        "pair_key": "",
+        "result": "error"
+      },
+      {
+        "assigned_process_layer": "",
+        "marker": "1.2",
+        "pair_key": "U:A-B",
+        "result": "error"
+      },
+      {
+        "marker": "1.3",
+        "result": "error"
+      },
+      {
+        "marker": 12,
+        "result": "error"
+      }
+    ]
+  }
+}

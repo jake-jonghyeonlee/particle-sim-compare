@@ -5,9 +5,61 @@ import pandas as pd
 import pytest
 
 from simcompare.analysis import (
-    cluster_embeddings, jaccard, leave_one_product_out, rank_agreement, ranking_comparison, risk_table,
+    InsufficientEmbeddingData, cluster_embeddings, jaccard, leave_one_product_out,
+    rank_agreement, ranking_comparison, risk_table,
 )
 from simcompare.cards import _order_value, build_review_cards
+from simcompare.baseline import BaselinePCA
+
+
+@pytest.mark.parametrize("n_products", [2, 3])
+def test_loo_pca_minimum_training_rows(ranked, demo_loaded, n_products):
+    sample = ranked.drop_duplicates("product_id").head(n_products).copy()
+    meta = sample.reset_index(drop=True)
+    bundles = {b.sample_id: b for b in demo_loaded.bundles}
+    for column in ("electrode_a_role", "electrode_b_role", "layer_a", "layer_b"):
+        meta[column] = [getattr(bundles[s], column) for s in meta["sample_id"]]
+    x = np.arange(n_products * 2, dtype=float).reshape(n_products, 2)
+    mask = np.ones_like(x, dtype=bool)
+
+    def embed_fn(fit_pos):
+        return BaselinePCA(2).fit(x, mask, fit_pos).transform(x, mask)
+
+    loo = leave_one_product_out(sample, meta, embed_fn, k=1, top_k=1)
+    if n_products == 2:
+        assert loo["status"].eq("skipped").all()
+        assert loo["reason"].eq("insufficient_training_rows").all()
+        assert loo[["top_items_jaccard", "neighbor_jaccard"]].isna().all().all()
+        assert loo["n_queries"].eq(0).all()
+    else:
+        assert loo["status"].eq("computed").all()
+        assert loo["reason"].isna().all()
+        # P3 is the full top item; removing it leaves an empty full-top set.
+        assert loo["top_items_jaccard"].tolist() == [1.0, 1.0, 0.0]
+        assert loo["neighbor_jaccard"].eq(1).all()
+
+
+def test_loo_records_missing_features_without_hiding_other_errors(ranked):
+    meta = ranked.reset_index(drop=True)
+    calls = []
+
+    def embed_fn(fit_pos):
+        calls.append(len(fit_pos))
+        if len(fit_pos) < len(meta):
+            raise InsufficientEmbeddingData("no_observed_features")
+        return np.arange(len(meta), dtype=float)[:, None]
+
+    loo = leave_one_product_out(ranked, meta, embed_fn, k=1, top_k=1)
+    assert loo["status"].eq("skipped").all()
+    assert loo["reason"].eq("no_observed_features").all()
+    assert loo[["top_items_jaccard", "neighbor_jaccard"]].isna().all().all()
+    assert len(calls) == len(loo) + 1
+
+    def broken_embed(fit_pos):
+        raise ValueError("unrelated error")
+
+    with pytest.raises(ValueError, match="unrelated error"):
+        leave_one_product_out(ranked, meta, broken_embed, k=1, top_k=1)
 
 
 @pytest.fixture()
@@ -110,3 +162,16 @@ def test_leave_one_product_out_and_cards(demo_loaded, ranked):
     candidates = [item for card in cards for item in card["improvement_candidates"]]
     assert all(item["applicable_conditions"]["comparison_group_id"] for item in candidates)
     assert all(item["counter_examples"] for item in candidates)
+
+
+def test_risk_table_area_units(demo_loaded, demo_cfg):
+    from copy import deepcopy
+    item = deepcopy(demo_loaded.bundles[0])
+    legacy = risk_table([item], demo_loaded.distributions, demo_cfg)
+    assert legacy.iloc[0].ca_area_unit == "1/um^2"
+    item.ca.unit = "um^2"
+    item.ca.values = item.ca.values * item.unit_area()
+    table = ranking_comparison(risk_table([item], demo_loaded.distributions, demo_cfg))
+    assert table.iloc[0].ca_area_unit == "1"
+    assert table.iloc[0].ca_unit == "um^2"
+    assert table.iloc[0].ca_area_max == pytest.approx(legacy.iloc[0].ca_max, rel=1e-12)

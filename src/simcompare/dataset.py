@@ -13,12 +13,12 @@ import pandas as pd
 
 from simcompare.caa import CAAError, bin_midpoints, fab_shape_and_total, select_distribution
 from simcompare.preprocess import Normalizer, align_curve, letterbox, safe_log10
-from simcompare.schema import AnalysisBundle, DataContractError, FabDistribution, convert_length
+from simcompare.schema import AnalysisBundle, DataContractError, FabDistribution, convert_length, prepare_ca_bundles
 
 META_COLUMNS = [
     "sample_id", "product_id", "product_family", "design_version", "design_lineage_id",
     "electrode_a_role", "electrode_b_role", "layer_a", "layer_b", "failure_type", "fab_id",
-    "fab_distribution_id", "assigned_process_layer", "unit_width", "unit_height",
+    "fab_distribution_id", "assigned_process_layer", "fab_pair_key", "mapping_contract_version", "unit_width", "unit_height",
     "physical_length_unit", "has_physical_scale", "is_open", "parent_design_id",
     "unit_width_canonical", "unit_height_canonical", "canonical_length_unit",
 ]
@@ -111,6 +111,7 @@ def encode_bundles(
     names = _geom_names(bundles)
     overrides = cfg.caa.process_layer_overrides
     canonical_unit = cfg.data.canonical_length_unit
+    prepare_ca_bundles(bundles, cfg.mode, canonical_unit)
 
     enc = EncodedSet(
         meta=pd.DataFrame([_meta_row(x, canonical_unit) for x in bundles], columns=META_COLUMNS),

@@ -16,6 +16,11 @@ DISCLAIMER = (
     "수율·불량률을 주장하지 않습니다."
 )
 RETRIEVAL_NOTE = "with_risk 공간의 유사 사례는 CA·hotspot 입력을 재사용하므로 독립적인 발견이 아닙니다"
+NEIGHBORHOOD_NOTE = (
+    "유사 제품 비교군 안의 면적 보정 CA 비교와 저위험 참고 사례와의 전극 쌍 치수 차이입니다. "
+    "관찰된 차이이며 개선 효과는 재시뮬레이션으로 확인해야 하고, 다른 불량 증가 허용 여부와 "
+    "설계 규칙은 설계자가 판단합니다"
+)
 
 
 def _clean(value):
@@ -34,9 +39,12 @@ def _clean(value):
 
 
 def _order_value(group: pd.DataFrame) -> pd.Series:
-    """정렬 기준 값: 실제 CAA, 면적 보정 CA, 원 CA 순으로 사용할 수 있는 값을 쓴다."""
-    value = group["caa_actual"].where(group["caa_actual"].notna(), group["ca_area_max"])
-    return value.where(value.notna(), group["ca_max"])
+    """Use one metric: first complete, else most observed (ties keep priority)."""
+    metrics = ["caa_actual", "ca_area_max", "ca_max"]
+    counts = {name: group[name].notna().sum() for name in metrics}
+    metric = next((name for name in metrics if counts[name] == len(group)),
+                  max(metrics, key=lambda name: counts[name]))
+    return group[metric]
 
 
 def _cv(values: pd.Series) -> float | None:
@@ -132,9 +140,45 @@ def _particle_size_summary(group: pd.DataFrame) -> list[dict]:
     return out
 
 
+def _neighborhood_entries(group_id: str, comparison: pd.DataFrame | None,
+                          geometry: pd.DataFrame | None) -> list[dict]:
+    """비교 그룹의 질의별 비교군 요약과 참고 사례와의 치수 차이."""
+    if comparison is None or comparison.empty:
+        return []
+    rows = comparison[comparison["comparison_group_id"] == group_id]
+    entries = []
+    for _, row in rows.sort_values(["query_rank", "query_id"], na_position="last").iterrows():
+        deltas = []
+        if geometry is not None and not geometry.empty:
+            deltas = geometry[geometry["query_id"] == row["query_id"]][[
+                "feature", "query_value", "reference_value", "delta", "review_direction",
+            ]].to_dict(orient="records")
+        entries.append({
+            "query_id": row["query_id"],
+            "product_id": row["product_id"],
+            "space": row["space"],
+            "neighbors": [n for n in str(row["neighbor_ids"]).split(";") if n and n != "nan"],
+            "compared_sizes": row["compared_sizes"],
+            "query_ca_area": row["query_risk"],
+            "rank_in_neighborhood": row["query_rank"],
+            "n_neighborhood": row["n_neighborhood"],
+            "ratio_to_neighbor_median": row["risk_ratio_to_median"],
+            "reference_case": row["reference_id"],
+            "reference_ca_area": row["reference_risk"],
+            "status": row["status"],
+            "geometry_vs_reference": deltas,
+            "resimulation_status": "pending" if deltas else None,
+            "decision": "designer_judgement" if deltas else None,
+        })
+    return entries
+
+
 def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: dict,
                        features: pd.DataFrame, *, min_products: int = 2,
-                       design_reviews: list[dict] | None = None) -> list[dict]:
+                       design_reviews: list[dict] | None = None,
+                       neighborhood: pd.DataFrame | None = None,
+                       neighborhood_geometry: pd.DataFrame | None = None,
+                       variants: pd.DataFrame | None = None) -> list[dict]:
     """불량 종류·전극 역할·layer 조합별 검토 카드 목록을 만든다.
 
     ranked는 순위 비교 표, neighbors는 공간별 검색 결과, clusters는 군집 라벨·대표·반대 사례,
@@ -221,6 +265,12 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             ].to_dict(orient="records"),
             "particle_size_summary": _particle_size_summary(group),
             "improvement_candidates": _feature_deltas(group, features),
+            "neighborhood": _neighborhood_entries(comparison_group_id, neighborhood,
+                                                  neighborhood_geometry),
+            "neighborhood_note": NEIGHBORHOOD_NOTE,
+            "variant_comparison": [] if variants is None or variants.empty else variants[
+                variants["comparison_group_id"] == comparison_group_id
+            ].to_dict(orient="records"),
             "retrieval": retrieval,
             "available_conditions": available,
             "unavailable_conditions": unavailable,
