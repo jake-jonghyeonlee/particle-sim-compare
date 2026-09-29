@@ -100,7 +100,7 @@ print(z.files, z["shape_only"].shape)
 
 ### 4.4 `analyze` 결과
 
-- `ranking.csv` / `risk_table.csv`: 비교 그룹별 크기별 원 CA(`ca@크기`, `ca_unit`), 면적 대비 CA(`ca_area@크기`, `ca_area_unit`: legacy `1/um^2`, 면적 CA `1`), `ca_max`, CAA와 각 사유 열. 순위는 불량 종류뿐 아니라 전극 역할과 layer가 같은 `comparison_group_id` 안에서만 계산한다.
+- `ranking.csv` / `risk_table.csv`: 비교 그룹별 크기별 원 CA(`ca@크기`, `ca_unit`), 면적 대비 CA(`ca_area@크기`, `ca_area_unit`: legacy `1/um^2`, 면적 CA `1`), `ca_max`, CAA와 각 사유 열. 순위는 불량 종류뿐 아니라 전극 역할과 layer가 같은 `comparison_group_id` 안에서만 계산한다. 사례마다 관측한 이물 크기가 다를 수 있으므로 원 CA·면적 대비 CA 순위는 그룹 안에서 모두 관측한 크기의 최댓값(`ca_max_common`, `ca_area_max_common`, 비교 크기는 `rank_sizes_ca`, `rank_sizes_ca_area`)으로 매긴다. `ca_max`, `ca_area_max`는 관측 범위 전체의 최댓값으로 참고용이다.
 - `rank_agreement.json`: 비교 그룹별 순위 상관(실제 Fab 대 기준 분포, 원 CA 대 면적 대비 CA).
 - `neighbors.csv`: 공간(`space`)별 유사 사례. `reuses_risk_inputs=True`인 행은 위험 수치를 입력으로 쓴 공간의 결과이므로 독립적인 발견으로 보지 않는다.
 - `clusters.json`, `cluster_map.png`: 학습 행으로 적합한 군집과 대표·반대 사례. 군집 번호에는 의미가 없다. PNG는 PC1/PC2 산점도(채운 점=학습, 테두리=평가)다.

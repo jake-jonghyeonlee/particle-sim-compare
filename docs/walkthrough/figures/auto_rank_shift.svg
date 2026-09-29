@@ -14,37 +14,37 @@
 <line x1="126.0" x2="232.0" y1="290.0" y2="290.0" stroke="#e8e7e2" stroke-width="0.6"/>
 <text x="126.0" y="306.0" font-size="11" fill="#0b0b0b" text-anchor="middle" font-weight="normal" dominant-baseline="middle">원 CA</text>
 <text x="232.0" y="306.0" font-size="11" fill="#0b0b0b" text-anchor="middle" font-weight="normal" dominant-baseline="middle">면적당 CA</text>
-<line x1="126.0" y1="187.3" x2="232.0" y2="161.7" stroke="#b9b7b0" stroke-width="1.1"/>
+<line x1="126.0" y1="187.3" x2="232.0" y2="187.3" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="126.0" cy="187.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="232.0" cy="161.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="126.0" y1="213.0" x2="232.0" y2="213.0" stroke="#b9b7b0" stroke-width="1.1"/>
+<circle cx="232.0" cy="187.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="126.0" y1="213.0" x2="232.0" y2="238.7" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="126.0" cy="213.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="232.0" cy="213.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="126.0" y1="290.0" x2="232.0" y2="264.3" stroke="#b9b7b0" stroke-width="1.1"/>
+<circle cx="232.0" cy="238.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="126.0" y1="290.0" x2="232.0" y2="213.0" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="126.0" cy="290.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="232.0" cy="264.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<circle cx="232.0" cy="213.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <line x1="126.0" y1="136.0" x2="232.0" y2="136.0" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="126.0" cy="136.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <circle cx="232.0" cy="136.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="126.0" cy="238.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="126.0" y1="161.7" x2="232.0" y2="238.7" stroke="#eb6834" stroke-width="2.2"/>
+<circle cx="126.0" cy="264.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="126.0" y1="238.7" x2="232.0" y2="161.7" stroke="#2a78d6" stroke-width="2.2"/>
+<circle cx="126.0" cy="238.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<circle cx="232.0" cy="161.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<line x1="126.0" y1="161.7" x2="232.0" y2="264.3" stroke="#eb6834" stroke-width="2.2"/>
 <circle cx="126.0" cy="161.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
-<circle cx="232.0" cy="238.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
-<line x1="126.0" y1="264.3" x2="232.0" y2="187.3" stroke="#2a78d6" stroke-width="2.2"/>
-<circle cx="126.0" cy="264.3" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
-<circle cx="232.0" cy="187.3" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<circle cx="232.0" cy="264.3" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
 <text x="118.0" y="187.3" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P1-v1-OPEN</text>
 <text x="118.0" y="213.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P1-v2-OPEN</text>
-<text x="118.0" y="290.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P2-v1-OPEN</text>
+<text x="118.0" y="238.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P2-v1-OPEN</text>
 <text x="118.0" y="161.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P3-v1-OPEN</text>
-<text x="118.0" y="264.3" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P4-v1-OPEN</text>
+<text x="118.0" y="290.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P4-v1-OPEN</text>
 <text x="118.0" y="136.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P5-v1-OPEN</text>
-<text x="118.0" y="238.7" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P6-v1-OPEN*</text>
-<text x="240.0" y="161.7" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v1-OPEN</text>
-<text x="240.0" y="213.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v2-OPEN</text>
-<text x="240.0" y="264.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P2-v1-OPEN</text>
-<text x="240.0" y="238.7" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P3-v1-OPEN  2위→5위</text>
-<text x="240.0" y="187.3" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P4-v1-OPEN  6위→3위</text>
+<text x="118.0" y="264.3" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P6-v1-OPEN*</text>
+<text x="240.0" y="187.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v1-OPEN</text>
+<text x="240.0" y="238.7" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v2-OPEN</text>
+<text x="240.0" y="161.7" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P2-v1-OPEN  5위→2위</text>
+<text x="240.0" y="264.3" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P3-v1-OPEN  2위→6위</text>
+<text x="240.0" y="213.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P4-v1-OPEN</text>
 <text x="240.0" y="136.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P5-v1-OPEN</text>
 <text x="20.0" y="136.0" font-size="9.5" fill="#8a8983" text-anchor="start" font-weight="normal" dominant-baseline="middle">1위</text>
 <text x="20.0" y="161.7" font-size="9.5" fill="#8a8983" text-anchor="start" font-weight="normal" dominant-baseline="middle">2위</text>
@@ -118,37 +118,37 @@
 <line x1="138.8" x2="219.2" y1="594.0" y2="594.0" stroke="#e8e7e2" stroke-width="0.6"/>
 <text x="138.8" y="610.0" font-size="11" fill="#0b0b0b" text-anchor="middle" font-weight="normal" dominant-baseline="middle">원 CA</text>
 <text x="219.2" y="610.0" font-size="11" fill="#0b0b0b" text-anchor="middle" font-weight="normal" dominant-baseline="middle">면적당 CA</text>
-<line x1="138.8" y1="491.3" x2="219.2" y2="465.7" stroke="#b9b7b0" stroke-width="1.1"/>
+<line x1="138.8" y1="491.3" x2="219.2" y2="491.3" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="138.8" cy="491.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="465.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="517.0" x2="219.2" y2="491.3" stroke="#b9b7b0" stroke-width="1.1"/>
-<circle cx="138.8" cy="517.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <circle cx="219.2" cy="491.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="594.0" x2="219.2" y2="568.3" stroke="#b9b7b0" stroke-width="1.1"/>
-<circle cx="138.8" cy="594.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="568.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="517.0" x2="219.2" y2="542.7" stroke="#b9b7b0" stroke-width="1.1"/>
+<circle cx="138.8" cy="517.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="542.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="568.3" x2="219.2" y2="517.0" stroke="#b9b7b0" stroke-width="1.1"/>
+<circle cx="138.8" cy="568.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="517.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <line x1="138.8" y1="440.0" x2="219.2" y2="440.0" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="138.8" cy="440.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <circle cx="219.2" cy="440.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="138.8" cy="542.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="465.7" x2="219.2" y2="542.7" stroke="#eb6834" stroke-width="2.2"/>
+<circle cx="138.8" cy="594.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="542.7" x2="219.2" y2="465.7" stroke="#2a78d6" stroke-width="2.2"/>
+<circle cx="138.8" cy="542.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="465.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="465.7" x2="219.2" y2="568.3" stroke="#eb6834" stroke-width="2.2"/>
 <circle cx="138.8" cy="465.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="542.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="568.3" x2="219.2" y2="517.0" stroke="#2a78d6" stroke-width="2.2"/>
-<circle cx="138.8" cy="568.3" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="517.0" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="568.3" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
 <text x="130.8" y="491.3" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P1-v1-LSHORT</text>
 <text x="130.8" y="517.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P1-v2-LSHORT</text>
-<text x="130.8" y="594.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P2-v1-LSHORT</text>
+<text x="130.8" y="542.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P2-v1-LSHORT</text>
 <text x="130.8" y="465.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P3-v1-LSHORT</text>
-<text x="130.8" y="568.3" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P4-v1-LSHORT</text>
+<text x="130.8" y="568.3" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P4-v1-LSHORT</text>
 <text x="130.8" y="440.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P5-v1-LSHORT</text>
-<text x="130.8" y="542.7" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P6-v1-LSHORT*</text>
-<text x="227.2" y="465.7" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v1-LSHORT</text>
-<text x="227.2" y="491.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v2-LSHORT</text>
-<text x="227.2" y="568.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P2-v1-LSHORT</text>
-<text x="227.2" y="542.7" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P3-v1-LSHORT  2위→5위</text>
-<text x="227.2" y="517.0" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P4-v1-LSHORT  6위→4위</text>
+<text x="130.8" y="594.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P6-v1-LSHORT*</text>
+<text x="227.2" y="491.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v1-LSHORT</text>
+<text x="227.2" y="542.7" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v2-LSHORT</text>
+<text x="227.2" y="465.7" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P2-v1-LSHORT  5위→2위</text>
+<text x="227.2" y="568.3" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P3-v1-LSHORT  2위→6위</text>
+<text x="227.2" y="517.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P4-v1-LSHORT</text>
 <text x="227.2" y="440.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P5-v1-LSHORT</text>
 <text x="20.0" y="440.0" font-size="9.5" fill="#8a8983" text-anchor="start" font-weight="normal" dominant-baseline="middle">1위</text>
 <text x="20.0" y="465.7" font-size="9.5" fill="#8a8983" text-anchor="start" font-weight="normal" dominant-baseline="middle">2위</text>
@@ -222,37 +222,37 @@
 <line x1="138.8" x2="219.2" y1="898.0" y2="898.0" stroke="#e8e7e2" stroke-width="0.6"/>
 <text x="138.8" y="914.0" font-size="11" fill="#0b0b0b" text-anchor="middle" font-weight="normal" dominant-baseline="middle">원 CA</text>
 <text x="219.2" y="914.0" font-size="11" fill="#0b0b0b" text-anchor="middle" font-weight="normal" dominant-baseline="middle">면적당 CA</text>
-<line x1="138.8" y1="795.3" x2="219.2" y2="769.7" stroke="#b9b7b0" stroke-width="1.1"/>
+<line x1="138.8" y1="795.3" x2="219.2" y2="795.3" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="138.8" cy="795.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="769.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="821.0" x2="219.2" y2="821.0" stroke="#b9b7b0" stroke-width="1.1"/>
+<circle cx="219.2" cy="795.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="821.0" x2="219.2" y2="846.7" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="138.8" cy="821.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="821.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="898.0" x2="219.2" y2="872.3" stroke="#b9b7b0" stroke-width="1.1"/>
+<circle cx="219.2" cy="846.7" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="898.0" x2="219.2" y2="821.0" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="138.8" cy="898.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="872.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="821.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <line x1="138.8" y1="744.0" x2="219.2" y2="744.0" stroke="#b9b7b0" stroke-width="1.1"/>
 <circle cx="138.8" cy="744.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <circle cx="219.2" cy="744.0" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
 <circle cx="138.8" cy="872.3" r="3" fill="#b9b7b0" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="769.7" x2="219.2" y2="846.7" stroke="#eb6834" stroke-width="2.2"/>
-<circle cx="138.8" cy="769.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="846.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
-<line x1="138.8" y1="846.7" x2="219.2" y2="795.3" stroke="#2a78d6" stroke-width="2.2"/>
+<line x1="138.8" y1="846.7" x2="219.2" y2="769.7" stroke="#2a78d6" stroke-width="2.2"/>
 <circle cx="138.8" cy="846.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
-<circle cx="219.2" cy="795.3" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="769.7" r="4" fill="#2a78d6" stroke="#ffffff" stroke-width="1"/>
+<line x1="138.8" y1="769.7" x2="219.2" y2="872.3" stroke="#eb6834" stroke-width="2.2"/>
+<circle cx="138.8" cy="769.7" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
+<circle cx="219.2" cy="872.3" r="4" fill="#eb6834" stroke="#ffffff" stroke-width="1"/>
 <text x="130.8" y="795.3" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P1-v1-VSHORT</text>
 <text x="130.8" y="821.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P1-v2-VSHORT</text>
-<text x="130.8" y="898.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P2-v1-VSHORT</text>
+<text x="130.8" y="846.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P2-v1-VSHORT</text>
 <text x="130.8" y="769.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P3-v1-VSHORT</text>
-<text x="130.8" y="846.7" font-size="10.5" fill="#0b0b0b" text-anchor="end" font-weight="bold" dominant-baseline="middle">P4-v1-VSHORT</text>
+<text x="130.8" y="898.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P4-v1-VSHORT</text>
 <text x="130.8" y="744.0" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P5-v1-VSHORT</text>
 <text x="130.8" y="872.3" font-size="10.5" fill="#52514e" text-anchor="end" font-weight="normal" dominant-baseline="middle">P6-v1-VSHORT*</text>
-<text x="227.2" y="769.7" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v1-VSHORT</text>
-<text x="227.2" y="821.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v2-VSHORT</text>
-<text x="227.2" y="872.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P2-v1-VSHORT</text>
-<text x="227.2" y="846.7" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P3-v1-VSHORT  2위→5위</text>
-<text x="227.2" y="795.3" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P4-v1-VSHORT  5위→3위</text>
+<text x="227.2" y="795.3" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v1-VSHORT</text>
+<text x="227.2" y="846.7" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P1-v2-VSHORT</text>
+<text x="227.2" y="769.7" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P2-v1-VSHORT  5위→2위</text>
+<text x="227.2" y="872.3" font-size="10.5" fill="#0b0b0b" text-anchor="start" font-weight="bold" dominant-baseline="middle">P3-v1-VSHORT  2위→6위</text>
+<text x="227.2" y="821.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P4-v1-VSHORT</text>
 <text x="227.2" y="744.0" font-size="10.5" fill="#52514e" text-anchor="start" font-weight="normal" dominant-baseline="middle">P5-v1-VSHORT</text>
 <text x="20.0" y="744.0" font-size="9.5" fill="#8a8983" text-anchor="start" font-weight="normal" dominant-baseline="middle">1위</text>
 <text x="20.0" y="769.7" font-size="9.5" fill="#8a8983" text-anchor="start" font-weight="normal" dominant-baseline="middle">2위</text>

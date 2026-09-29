@@ -82,7 +82,7 @@ table.mini { font-size:8.3pt; margin:4px 0; } table.mini th, table.mini td { pad
   <p class="lead">가짜(더미) 데이터를 만들고, 점검·학습·분석·평가를 실제로 돌린 뒤
   나온 결과를 그림으로 읽는 과정을 순서대로 보여 줍니다. 이 문서의 모든 숫자와 그림은
   아래 명령을 실제로 실행해서 얻은 값입니다.</p>
-  <div class="tiles"><div class="tile"><div class="num">약 11초</div><div class="lbl">전체 실행 시간(CPU)</div></div><div class="tile"><div class="num">21</div><div class="lbl">만든 사례 수</div></div><div class="tile"><div class="num">6</div><div class="lbl">비교한 제품 수</div></div><div class="tile"><div class="num">20개</div><div class="lbl">만들어진 결과 파일</div></div></div>
+  <div class="tiles"><div class="tile"><div class="num">약 12초</div><div class="lbl">전체 실행 시간(CPU)</div></div><div class="tile"><div class="num">21</div><div class="lbl">만든 사례 수</div></div><div class="tile"><div class="num">6</div><div class="lbl">비교한 제품 수</div></div><div class="tile"><div class="num">25개</div><div class="lbl">만들어진 결과 파일</div></div></div>
   <div class="note warn"><b>꼭 기억할 점</b> — 여기서 쓴 데이터는 간단한 수식으로 만든 <b>가짜</b>입니다. 그림 속 결과는 “프로그램이 이렇게 동작한다”를 보여 줄 뿐, 실제 제품에 대한 결론이 아닙니다.</div>
   <div class="toc">
     <div class="toc-title">차례</div>
@@ -93,7 +93,7 @@ table.mini { font-size:8.3pt; margin:4px 0; } table.mini th, table.mini td { pad
       <li>2단계 · 데이터 점검</li>
       <li>3단계 · 모델 학습</li>
       <li>4단계 · 사례를 좌표로 바꾸기</li>
-      <li>5단계 · 분석 (위험 비교 · 순위 · 비슷한 사례 · 검토 카드)</li>
+      <li>5단계 · 분석 (위험 비교 · 순위 · 비슷한 사례 · 검토 카드 · 회피안 후보)</li>
       <li>6단계 · 평가</li>
       <li>결과를 읽는 순서와 주의할 점</li>
       <li>내 데이터로 바꿔 실행하기</li>
@@ -139,9 +139,9 @@ table.mini { font-size:8.3pt; margin:4px 0; } table.mini th, table.mini td { pad
 <pre class="cmd"><span class="prompt">$</span> uv run simcompare all --config configs/demo.yaml --demo-out demo_data</pre>
 <p>결과는 <code>outputs/demo/</code>에 저장됩니다. 실행 중에
 <code>DEMO 모드: 합성/예시 설정이며 결과는 연구 근거가 아닙니다</code>라는 문구가 보이면 정상입니다.
-이 문서를 만들 때는 전체가 <b>약 11초</b> 걸렸습니다.</p>
+이 문서를 만들 때는 전체가 <b>약 12초</b> 걸렸습니다.</p>
 <p>아래부터는 같은 과정을 <b>한 단계씩</b> 실행하며 무엇이 만들어지는지 봅니다.</p>
-<table class=""><thead><tr><th>단계</th><th>명령</th><th>걸린 시간</th></tr></thead><tbody><tr><td>1</td><td><code>simcompare demo-data</code></td><td>0.1초</td></tr><tr><td>2</td><td><code>simcompare validate-data</code></td><td>1.6초</td></tr><tr><td>3</td><td><code>simcompare train</code></td><td>2.9초</td></tr><tr><td>4</td><td><code>simcompare embed</code></td><td>1.4초</td></tr><tr><td>5</td><td><code>simcompare analyze</code></td><td>2.0초</td></tr><tr><td>6</td><td><code>simcompare evaluate</code></td><td>2.9초</td></tr></tbody></table>
+<table class=""><thead><tr><th>단계</th><th>명령</th><th>걸린 시간</th></tr></thead><tbody><tr><td>1</td><td><code>simcompare demo-data</code></td><td>0.1초</td></tr><tr><td>2</td><td><code>simcompare validate-data</code></td><td>2.7초</td></tr><tr><td>3</td><td><code>simcompare train</code></td><td>2.6초</td></tr><tr><td>4</td><td><code>simcompare embed</code></td><td>1.6초</td></tr><tr><td>5</td><td><code>simcompare analyze</code></td><td>2.1초</td></tr><tr><td>6</td><td><code>simcompare evaluate</code></td><td>2.9초</td></tr></tbody></table>
 <p class="small">설정 파일 <code>configs/demo.yaml</code>의 주요 값: 이물 크기 1·2·4·8·16 µm, 학습 20회 반복, 평가용 비율 25%, seed 0.
 seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 </section>
@@ -238,7 +238,7 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 <pre class="cmd"><span class="prompt">$</span> uv run simcompare analyze --config configs/demo.yaml</pre>
 <p>분석 단계는 네 가지 질문에 답하는 파일을 만듭니다. 이번 실행에서 검토 카드 3장,
 비슷한 사례 315줄이 만들어졌습니다.</p>
-<table class=""><thead><tr><th>질문</th><th>보는 파일</th></tr></thead><tbody><tr><td>제품별로 위험이 얼마나 다른가?</td><td><code>risk_table.csv</code></td></tr><tr><td>크기·공장을 반영하면 순위가 바뀌나?</td><td><code>ranking.csv</code>, <code>rank_agreement.json</code></td></tr><tr><td>이 사례와 비슷한 다른 제품 사례는?</td><td><code>neighbors.csv</code>, <code>clusters.json</code></td></tr><tr><td>결과가 제품 하나에 좌우되지 않나?</td><td><code>loo_stability.csv</code></td></tr><tr><td>한 장으로 정리하면?</td><td><code>review_cards.json</code></td></tr><tr><td>그림으로 한눈에 보려면?</td><td><code>figures/ca_curves.svg</code>, <code>figures/loo_stability.svg</code>, <code>figures/rank_shift.svg</code></td></tr></tbody></table>
+<table class=""><thead><tr><th>질문</th><th>보는 파일</th></tr></thead><tbody><tr><td>제품별로 위험이 얼마나 다른가?</td><td><code>risk_table.csv</code></td></tr><tr><td>크기·공장을 반영하면 순위가 바뀌나?</td><td><code>ranking.csv</code>, <code>rank_agreement.json</code></td></tr><tr><td>이 사례와 비슷한 다른 제품 사례는?</td><td><code>neighbors.csv</code>, <code>clusters.json</code></td></tr><tr><td>결과가 제품 하나에 좌우되지 않나?</td><td><code>loo_stability.csv</code></td></tr><tr><td>유사 제품 비교군 안에서 어느 전극·layer가 위험하고 무엇이 다른가?</td><td><code>neighborhood_comparison.csv</code>, <code>neighborhood_geometry.csv</code></td></tr><tr><td>회피안 후보와 변경본 재비교는?</td><td><code>edit_candidates.json</code>, <code>variant_comparison.csv</code></td></tr><tr><td>한 장으로 정리하면?</td><td><code>review_cards.json</code></td></tr><tr><td>그림으로 한눈에 보려면?</td><td><code>figures/ca_curves.svg</code>, <code>figures/loo_stability.svg</code>, <code>figures/rank_shift.svg</code></td></tr></tbody></table>
 
 <h3>7-1. 제품별 위험 비교</h3>
 <figure><img src="figures/ca.svg" style="width:100%"><figcaption>그림 6. ① 끊김 불량의 이물 크기별 CA (risk_table.csv, 양쪽 축 모두 로그 눈금). ② P1 설계 변경 전후 가장 큰 CA의 변화율.</figcaption></figure>
@@ -252,8 +252,8 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 <h3>7-2. 크기·공장을 반영하면 순위가 바뀝니다</h3>
 <figure><img src="figures/rank.svg" style="width:100%"><figcaption>그림 7. 끊김 불량 7개 사례의 위험 순위 변화 (ranking.csv). 1위가 가장 위험합니다. 크게 바뀐 사례만 색으로 표시했습니다.</figcaption></figure>
 <ul>
-  <li>① <b>P3</b>는 CA 원값으로는 2위지만 면적당으로 보면 5위입니다.
-      화소가 커서(80×120 µm) CA가 크게 나온 것입니다. 반대로 작은 제품 <b>P4</b>는 6위 → 3위로 올라갑니다.</li>
+  <li>① <b>P3</b>는 CA 원값으로는 2위지만 면적당으로 보면 6위입니다.
+      화소가 커서(80×120 µm) CA가 크게 나온 것입니다. 반대로 작은 제품 <b>P4</b>는 7위 → 4위로 올라갑니다.</li>
   <li>② <b>P4</b>는 실제 공장(FAB_B) 분포를 쓰면 6위 → 4위로 올라갑니다.
       FAB_B에 큰 이물이 많기 때문입니다. 작은 이물이 많은 FAB_A의 <b>P1 v1</b>은 3위 → 5위로 내려갑니다.</li>
   <li>두 순위가 얼마나 비슷한지는 <code>rank_agreement.json</code>에 0~1 사이 값(1이면 완전히 같음)으로 나옵니다:
@@ -313,6 +313,29 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 </section>
 
 <section class="pagebreak">
+<h3>7-7. 유사 제품 비교군과 회피안 후보</h3>
+<p>질의 사례와 <b>오토인코더 공간</b>에서 가까운 다른 제품 사례를 묶어 비교군을 만들고, 그 안에서만 면적당 CA를 비교합니다.
+사례마다 관측한 이물 크기가 다를 수 있어 비교군이 <b>모두 관측한 크기</b>만 씁니다. 아래는 <b>P5 옆 전극 붙음</b> 사례입니다
+(<code>neighborhood_comparison.csv</code>).</p>
+<table class=""><thead><tr><th>비교군</th><th>거리</th></tr></thead><tbody><tr><td>P5 (질의)</td><td>-</td></tr><tr><td>P3</td><td>1번째로 가까움</td></tr><tr><td>P1 v1</td><td>2번째로 가까움</td></tr><tr><td>P2</td><td>3번째로 가까움</td></tr></tbody></table>
+<p>비교 크기 1, 4, 8 µm에서 P5는 비교군 <b>1위</b>이고,
+이웃 중앙값의 <b>3.4배</b>입니다. 비교군에서 가장 위험이 낮은 <b>P3</b>를
+참고 사례로 삼아 전극 쌍 치수를 비교합니다(<code>neighborhood_geometry.csv</code>, 단위 µm).</p>
+<table class=""><thead><tr><th>치수</th><th>P5</th><th>P3</th><th>차이</th><th>참고 사례 쪽 방향</th></tr></thead><tbody><tr><td>최소 간격</td><td>5</td><td>10</td><td>+5</td><td>늘리기</td></tr><tr><td>좁은 간격 길이</td><td>80</td><td>97.5</td><td>+17.5</td><td>늘리기</td></tr><tr><td>전극 a 최소 선폭</td><td>2.5</td><td>5</td><td>+2.5</td><td>늘리기</td></tr></tbody></table>
+<p>이 차이로 <b>국소 편집 후보</b>를 만듭니다(<code>edit_candidates.json</code>). 전극 전체를 바꾸지 않고 hotspot 부근 영역(ROI, µm)
+안에서만 후퇴·제거하며, 양은 간격 차이의 0.5배와 1배, 대상은 두 전극 각각입니다.</p>
+<table class=""><thead><tr><th>후보</th><th>편집</th><th>대상 전극</th><th>양</th><th>ROI (x0, y0, x1, y1)</th><th>ROI 근거</th></tr></thead><tbody><tr><td><code>P5-v1-LSHORT-e1</code></td><td>국소 후퇴</td><td>pixel_electrode (ITO)</td><td>2.5 µm</td><td>12, 4.5, 33, 95.5</td><td>hotspot@8</td></tr><tr><td><code>P5-v1-LSHORT-e2</code></td><td>국소 후퇴</td><td>pixel_electrode (ITO)</td><td>5 µm</td><td>12, 4.5, 33, 95.5</td><td>hotspot@8</td></tr><tr><td><code>P5-v1-LSHORT-e3</code></td><td>국소 후퇴</td><td>data (M2)</td><td>2.5 µm</td><td>12, 4.5, 33, 95.5</td><td>hotspot@8</td></tr><tr><td><code>P5-v1-LSHORT-e4</code></td><td>국소 후퇴</td><td>data (M2)</td><td>5 µm</td><td>12, 4.5, 33, 95.5</td><td>hotspot@8</td></tr></tbody></table>
+<div class="note info">끊김(open)의 선폭 보강처럼 금속을 추가하는 편집은 아직 지원하지 않아 10건이 사유와 함께 <code>edit_candidates.csv</code>에 남습니다. 후보는 관찰된 차이에 근거한 검토 대상일 뿐이며 채택은 설계자가 판단합니다.</div>
+<h3>변경본을 다시 계산해 원안과 비교합니다</h3>
+<p>후보 JSON은 particle-sim <code>make-variant</code>가 그대로 읽어 편집한 마스크로 변경본 입력을 만듭니다. 변경본을
+<code>simulate-nominal</code> → <code>export-simcompare</code>로 계산해 <code>merge-exports</code>로 원안과 합치면,
+<code>variant_comparison.csv</code>가 <b>불량 종류별</b>로 원안 대비 변화를 보여 줍니다. 다른 불량이 늘었는지도 이 표에서 봅니다.
+아래는 더미 데이터에 들어 있는 변경본 <b>P1 v2</b>(전극 간격 확대)의 결과입니다.</p>
+<table class=""><thead><tr><th>불량</th><th>원안 P1 v1</th><th>변경본 P1 v2</th><th>변화</th><th>비교 크기</th></tr></thead><tbody><tr><td>끊김</td><td>9.73e-07</td><td>7.89e-07</td><td>-19%</td><td>1, 2, 4, 8, 16 µm</td></tr><tr><td>옆 전극 붙음</td><td>9.37e-07</td><td>7.84e-07</td><td>-16%</td><td>1, 2, 4, 8, 16 µm</td></tr><tr><td>위아래 전극 붙음</td><td>1.22e-06</td><td>9.86e-07</td><td>-19%</td><td>1, 2, 4, 8, 16 µm</td></tr></tbody></table>
+<div class="note warn">다른 불량의 증가를 어디까지 허용할지와 설계 규칙은 도구가 판정하지 않습니다. 실제 재시뮬레이션에는 원안의 particle-sim 입력(manifest와 원본 마스크)이 필요합니다.</div>
+</section>
+
+<section class="pagebreak">
 <h2><span class="no">8</span>6단계 · 평가</h2>
 <pre class="cmd"><span class="prompt">$</span> uv run simcompare evaluate --config configs/demo.yaml</pre>
 <p>학습에 쓰지 않은 평가용 제품(P3, P4)으로 결과를 점검합니다. 결과는 <code>evaluation.json</code>에 있고,
@@ -337,7 +360,7 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 
 <section class="pagebreak">
 <h2><span class="no">9</span>결과를 읽는 순서와 주의할 점</h2>
-<p>결과 파일이 20개나 되지만, 아래 순서로 보면 충분합니다.</p>
+<p>결과 파일이 25개나 되지만, 아래 순서로 보면 충분합니다.</p>
 <ol class="checklist">
   <li><b><code>validation.json</code>의 경고</b> — 빠진 자료, 실제 크기 없는 제품, 공장·제품군 겹침부터 확인합니다. (그림 3)</li>
   <li><b><code>split.json</code></b> — 어떤 제품이 평가용으로 갔는지 확인합니다. (5장)</li>

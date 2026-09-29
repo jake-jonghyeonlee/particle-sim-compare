@@ -114,6 +114,10 @@ def build_html(work: Path, run: dict) -> str:
     loo = pd.read_csv(out / "loo_stability.csv")
     cards = json.loads((out / "review_cards.json").read_text())
     ev = json.loads((out / "evaluation.json").read_text())
+    hood = pd.read_csv(out / "neighborhood_comparison.csv")
+    hood_geo = pd.read_csv(out / "neighborhood_geometry.csv")
+    edits = pd.read_csv(out / "edit_candidates.csv")
+    variants = pd.read_csv(out / "variant_comparison.csv")
     total_sec = sum(secs.values())
     n_files = sum(1 for f in out.rglob("*") if f.is_file())
     auto_figs = sorted(f.name for f in (out / "figures").glob("*.svg"))
@@ -152,7 +156,7 @@ def build_html(work: Path, run: dict) -> str:
       <li>2단계 · 데이터 점검</li>
       <li>3단계 · 모델 학습</li>
       <li>4단계 · 사례를 좌표로 바꾸기</li>
-      <li>5단계 · 분석 (위험 비교 · 순위 · 비슷한 사례 · 검토 카드)</li>
+      <li>5단계 · 분석 (위험 비교 · 순위 · 비슷한 사례 · 검토 카드 · 회피안 후보)</li>
       <li>6단계 · 평가</li>
       <li>결과를 읽는 순서와 주의할 점</li>
       <li>내 데이터로 바꿔 실행하기</li>
@@ -374,6 +378,8 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
     ["크기·공장을 반영하면 순위가 바뀌나?", "<code>ranking.csv</code>, <code>rank_agreement.json</code>"],
     ["이 사례와 비슷한 다른 제품 사례는?", "<code>neighbors.csv</code>, <code>clusters.json</code>"],
     ["결과가 제품 하나에 좌우되지 않나?", "<code>loo_stability.csv</code>"],
+    ["유사 제품 비교군 안에서 어느 전극·layer가 위험하고 무엇이 다른가?", "<code>neighborhood_comparison.csv</code>, <code>neighborhood_geometry.csv</code>"],
+    ["회피안 후보와 변경본 재비교는?", "<code>edit_candidates.json</code>, <code>variant_comparison.csv</code>"],
     ["한 장으로 정리하면?", "<code>review_cards.json</code>"],
     ["그림으로 한눈에 보려면?", ", ".join(f"<code>figures/{esc(n)}</code>" for n in auto_figs)],
 ])}
@@ -433,6 +439,7 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 {figure("auto_rank_shift.svg", "그림 10. analyze가 자동으로 저장한 figures/rank_shift.svg의 윗부분 (끊김 불량 그룹). 이름 뒤 *는 한쪽 값이 없어 순위를 비교하지 못한 사례입니다.")}
 {note("그림은 결과 표를 옮긴 것일 뿐 새로운 판단을 더하지 않습니다. 사례 ID가 길면 그림에서는 줄여 표시하고, 전체 ID는 CSV 파일에 있습니다.")}
 </section>""")
+    p.append(hood_section(hood, hood_geo, edits, variants))
 
     # ---------------- 8. 평가
     lo = ev["leave_one_group_out"]
@@ -527,6 +534,56 @@ seed가 같으면 몇 번을 돌려도 같은 결과가 나옵니다.</p>
 </section>""")
 
     return HTML_HEAD + "\n".join(p) + "</body></html>"
+
+
+FEATURE_NAMES = {"pair:min_gap": "최소 간격", "pair:near_gap_len": "좁은 간격 길이",
+                 "pair:overlap_area": "겹침 면적", "pair:a_min_width": "전극 a 최소 선폭",
+                 "pair:b_min_width": "전극 b 최소 선폭"}
+
+
+def hood_section(hood: pd.DataFrame, geo: pd.DataFrame, edits: pd.DataFrame, variants: pd.DataFrame) -> str:
+    """7-7절: 유사 제품 비교군, 참고 사례와의 치수 차이, 회피안 후보, 변경본 재비교."""
+    query = "P5-v1-LSHORT"
+    row = hood.set_index("query_id").loc[query]
+    hood_rows = [[short(query) + " (질의)", "-"]] + [
+        [short(n), f"{i + 1}번째로 가까움"] for i, n in enumerate(str(row["neighbor_ids"]).split(";"))]
+    geo_rows = [[FEATURE_NAMES.get(g["feature"], g["feature"]), f"{g['query_value']:g}", f"{g['reference_value']:g}",
+                 f"{g['delta']:+g}", "늘리기" if g["review_direction"] == "increase" else "줄이기"]
+                for _, g in geo[geo["query_id"] == query].iterrows()]
+    mine = edits[(edits["query_id"] == query) & (edits["status"] == "proposed")]
+    op_names = {"trim_near": "국소 후퇴", "remove_overlap": "겹침 국소 제거"}
+    edit_rows = [[f"<code>{esc(e['candidate_id'])}</code>", op_names.get(e["op"], e["op"]),
+                  f"{esc(e['electrode_role'])} ({esc(e['layer'])})", f"{e['amount_um']:g} µm",
+                  esc(str(e["roi_um"]).replace(";", ", ")), esc(e["roi_source"])] for _, e in mine.iterrows()]
+    skipped = edits[edits["status"] == "skipped"]
+    fl = {"lateral_open": "끊김", "lateral_short": "옆 전극 붙음", "vertical_short": "위아래 전극 붙음"}
+    var_rows = [[fl.get(v["failure_type"], v["failure_type"]), f"{v['parent_ca_area']:.3g}", f"{v['variant_ca_area']:.3g}",
+                 f"{(v['ratio'] - 1) * 100:+.0f}%", esc(v["compared_sizes"].replace(";", ", ")) + " µm"]
+                for _, v in variants[variants["status"] == "ok"].iterrows()]
+    return f"""
+<section class="pagebreak">
+<h3>7-7. 유사 제품 비교군과 회피안 후보</h3>
+<p>질의 사례와 <b>오토인코더 공간</b>에서 가까운 다른 제품 사례를 묶어 비교군을 만들고, 그 안에서만 면적당 CA를 비교합니다.
+사례마다 관측한 이물 크기가 다를 수 있어 비교군이 <b>모두 관측한 크기</b>만 씁니다. 아래는 <b>P5 옆 전극 붙음</b> 사례입니다
+(<code>neighborhood_comparison.csv</code>).</p>
+{table(["비교군", "거리"], hood_rows)}
+<p>비교 크기 {esc(str(row["compared_sizes"]).replace(";", ", "))} µm에서 P5는 비교군 <b>{int(row["query_rank"])}위</b>이고,
+이웃 중앙값의 <b>{row["risk_ratio_to_median"]:.1f}배</b>입니다. 비교군에서 가장 위험이 낮은 <b>{short(row["reference_id"])}</b>를
+참고 사례로 삼아 전극 쌍 치수를 비교합니다(<code>neighborhood_geometry.csv</code>, 단위 µm).</p>
+{table(["치수", "P5", short(row["reference_id"]), "차이", "참고 사례 쪽 방향"], geo_rows)}
+<p>이 차이로 <b>국소 편집 후보</b>를 만듭니다(<code>edit_candidates.json</code>). 전극 전체를 바꾸지 않고 hotspot 부근 영역(ROI, µm)
+안에서만 후퇴·제거하며, 양은 간격 차이의 0.5배와 1배, 대상은 두 전극 각각입니다.</p>
+{table(["후보", "편집", "대상 전극", "양", "ROI (x0, y0, x1, y1)", "ROI 근거"], edit_rows)}
+{note(f"끊김(open)의 선폭 보강처럼 금속을 추가하는 편집은 아직 지원하지 않아 {len(skipped)}건이 사유와 함께 <code>edit_candidates.csv</code>에 남습니다. "
+      "후보는 관찰된 차이에 근거한 검토 대상일 뿐이며 채택은 설계자가 판단합니다.")}
+<h3>변경본을 다시 계산해 원안과 비교합니다</h3>
+<p>후보 JSON은 particle-sim <code>make-variant</code>가 그대로 읽어 편집한 마스크로 변경본 입력을 만듭니다. 변경본을
+<code>simulate-nominal</code> → <code>export-simcompare</code>로 계산해 <code>merge-exports</code>로 원안과 합치면,
+<code>variant_comparison.csv</code>가 <b>불량 종류별</b>로 원안 대비 변화를 보여 줍니다. 다른 불량이 늘었는지도 이 표에서 봅니다.
+아래는 더미 데이터에 들어 있는 변경본 <b>P1 v2</b>(전극 간격 확대)의 결과입니다.</p>
+{table(["불량", "원안 P1 v1", "변경본 P1 v2", "변화", "비교 크기"], var_rows)}
+{note("다른 불량의 증가를 어디까지 허용할지와 설계 규칙은 도구가 판정하지 않습니다. 실제 재시뮬레이션에는 원안의 particle-sim 입력(manifest와 원본 마스크)이 필요합니다.", "warn")}
+</section>"""
 
 
 def crop_svg(src: Path, dst: Path, height: int) -> None:

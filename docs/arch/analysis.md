@@ -25,7 +25,11 @@ retrieval (role_key, layer_key, search_all).
   (1 = highest, NaN values unranked, method "min"):
   rank_ca_max, rank_ca_area_max, rank_caa_actual, rank_caa_reference and
   rank_shift_fab = rank_caa_reference - rank_caa_actual, rank_shift_area =
-  rank_ca_area_max - rank_ca_max.
+  rank_ca_area_max - rank_ca_max. Raw and area CA ranks use `ca_max_common` /
+  `ca_area_max_common`: the maximum over sizes observed by every group member that has any
+  value (members without any value are left out; no filling/extrapolation), with the sizes in
+  `rank_sizes_ca` / `rank_sizes_ca_area`. Tables without per-size columns fall back to
+  ca_max / ca_area_max. The full-range ca_max / ca_area_max columns are kept unchanged.
 - `rank_agreement(ranked) -> list[dict]`: per comparison_group_id {"failure_type", "n",
   "spearman_actual_vs_reference", "spearman_raw_vs_area"} using rows where both
   values are finite; n < 3 -> None value.
