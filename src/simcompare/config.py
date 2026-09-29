@@ -80,7 +80,8 @@ class SplitConfig:
 
 @dataclass
 class AnalysisConfig:
-    """이웃 수, 군집 수, layer 조건, 다른 제품만 보기, 필터, 크기 허용 비율, 제품 제외 비교 상위 개수."""
+    """이웃 수, 군집 수, layer 조건, 다른 제품만 보기, 필터, 크기 허용 비율, 제품 제외 비교 상위 개수,
+    유사 제품 비교군을 만들 공간, 좁은 간격 구간을 셀 여유 폭(canonical 길이 단위)."""
     k_neighbors: int = 5
     n_clusters: int = 4
     layer_policy: str = "exact"
@@ -88,6 +89,8 @@ class AnalysisConfig:
     filters: dict[str, list] = field(default_factory=dict)
     size_tolerance: float | None = None
     loo_top_k: int = 5
+    neighborhood_space: str = "with_risk_ae"
+    pair_near_margin: float = 1.0
 
 
 @dataclass
@@ -112,6 +115,7 @@ CA_ALIGNMENT_VALUES = ("exact", "loglinear_within_range")
 MODE_VALUES = ("demo", "real")
 DEVICE_VALUES = ("cpu", "auto", "cuda", "mps")
 LAYER_POLICY_VALUES = ("exact", "ignore")
+NEIGHBORHOOD_SPACE_VALUES = ("with_risk_ae", "ae_struct", "ae_fab", "shape_only", "with_risk_baseline")
 
 
 def _is_int(value: Any) -> bool:
@@ -564,6 +568,7 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
     _check_unknown(raw, {
         "k_neighbors", "n_clusters", "layer_policy",
         "other_products_only", "filters", "size_tolerance", "loo_top_k",
+        "neighborhood_space", "pair_near_margin",
     }, path)
 
     k_neighbors = _opt_int(raw, "k_neighbors", path)
@@ -606,6 +611,16 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
     elif loo_top_k <= 0:
         raise ConfigError(f"{path}.loo_top_k: 양수여야 합니다")
 
+    neighborhood_space = raw.get("neighborhood_space", "with_risk_ae")
+    if neighborhood_space not in NEIGHBORHOOD_SPACE_VALUES:
+        raise ConfigError(f"{path}.neighborhood_space: {NEIGHBORHOOD_SPACE_VALUES} 중 하나여야 합니다")
+
+    pair_near_margin = _opt_float(raw, "pair_near_margin", path)
+    if pair_near_margin is None:
+        pair_near_margin = 1.0
+    elif pair_near_margin < 0:
+        raise ConfigError(f"{path}.pair_near_margin: 0 이상이어야 합니다")
+
     return AnalysisConfig(
         k_neighbors=k_neighbors,
         n_clusters=n_clusters,
@@ -614,6 +629,8 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
         filters=filters,
         size_tolerance=size_tolerance,
         loo_top_k=loo_top_k,
+        neighborhood_space=neighborhood_space,
+        pair_near_margin=pair_near_margin,
     )
 
 

@@ -33,6 +33,8 @@ from simcompare.checks import run_checks
 from simcompare.config import config_to_dict
 from simcompare.dataset import encode_bundles, fit_normalizers, to_model_arrays
 from simcompare.losses import LOSS_KINDS, masked_losses
+from simcompare.neighborhood import geometry_deltas, neighborhood_comparison
+from simcompare.pair_geometry import pair_metrics_table
 from simcompare.plots import write_analysis_figures
 from simcompare.retrieval import search_all
 from simcompare.schema import DataContractError
@@ -316,7 +318,8 @@ def run_analyze(cfg) -> dict:
     """분석을 실행하고 결과 파일을 저장한다.
 
     ranking.csv, risk_table.csv, rank_agreement.json, neighbors.csv, clusters.json,
-    cluster_map.png, loo_stability.csv, shape_features.csv, review_cards.json과
+    cluster_map.png, loo_stability.csv, shape_features.csv(전극 쌍 치수 pair:* 포함),
+    neighborhood_comparison.csv, neighborhood_geometry.csv, review_cards.json과
     figures/ 아래 SVG 그림(rank_shift.svg, ca_curves.svg, loo_stability.svg)을 만든다.
     neighbors.csv의 reuses_risk_inputs가 True인 공간은 위험 입력을 재사용한 결과다.
     """
@@ -388,9 +391,22 @@ def run_analyze(cfg) -> dict:
     x, mask, names = explicit_features(enc, include_risk=False)
     features = pd.DataFrame(np.where(mask, x, np.nan), columns=names)
     features.insert(0, "sample_id", ids)
+    pairs = pair_metrics_table(loaded.bundles, length_unit=cfg.data.canonical_length_unit,
+                               near_margin=cfg.analysis.pair_near_margin)
+    features = features.merge(pairs, on="sample_id", how="left")
     features.to_csv(out / "shape_features.csv", index=False)
+
+    space = cfg.analysis.neighborhood_space
+    if space not in spaces:
+        raise DataContractError(
+            f"analysis.neighborhood_space {space!r} 공간이 없습니다: 계산된 공간 {sorted(spaces)}")
+    comparison = neighborhood_comparison(ranked, neighbors, space=space)
+    comparison.to_csv(out / "neighborhood_comparison.csv", index=False)
+    deltas = geometry_deltas(comparison, features)
+    deltas.to_csv(out / "neighborhood_geometry.csv", index=False)
     cards = build_review_cards(
-        ranked, neighbors, cluster_json, features, design_reviews=loaded.design_reviews
+        ranked, neighbors, cluster_json, features, design_reviews=loaded.design_reviews,
+        neighborhood=comparison, neighborhood_geometry=deltas,
     )
     _write_json(out / "review_cards.json", {
         "note": "전문가 검토용 근거 요약이며 중요 인자 자동 판정이 아닙니다.",
@@ -399,7 +415,7 @@ def run_analyze(cfg) -> dict:
     })
     names_out = ["ranking.csv", "risk_table.csv", "rank_agreement.json", "neighbors.csv",
                  "clusters.json", "cluster_map.png", "loo_stability.csv", "shape_features.csv",
-                 "review_cards.json"]
+                 "neighborhood_comparison.csv", "neighborhood_geometry.csv", "review_cards.json"]
     return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures], "n_cards": len(cards),
             "n_neighbor_rows": len(neighbors)}
 

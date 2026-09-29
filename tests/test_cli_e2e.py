@@ -23,6 +23,7 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
     for name in ("model.pt", "train_history.csv", "split.json", "run_record.json", "embeddings.npz",
                  "neighbors.csv", "clusters.json", "cluster_map.png", "ranking.csv",
                  "loo_stability.csv", "review_cards.json", "evaluation.json",
+                 "neighborhood_comparison.csv", "neighborhood_geometry.csv",
                  "figures/rank_shift.svg", "figures/ca_curves.svg", "figures/loo_stability.svg"):
         assert (out / name).exists(), name
     split = json.loads((out / "split.json").read_text())
@@ -36,6 +37,9 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
     assert "연구 근거가 아닙니다" in evaluation["notes"][0]
     cards = json.loads((out / "review_cards.json").read_text())["cards"]
     assert cards and all("disclaimer" in card for card in cards)
+    assert all("neighborhood" in card for card in cards)
+    features = (out / "shape_features.csv").read_text().splitlines()[0]
+    assert "pair:min_gap" in features and "pair:a_min_width" in features
     assert "DEMO 모드" in capsys.readouterr().err
 
 

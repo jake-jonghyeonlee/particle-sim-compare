@@ -44,6 +44,8 @@ analysis:
   filters: {}                        # 예: {fab_id: [FAB_A]}
   size_tolerance: null               # 예: 0.2 (가로·세로 실제 크기 ±20% 안의 사례만)
   loo_top_k: 5
+  neighborhood_space: with_risk_ae   # 유사 제품 비교군을 만들 공간: with_risk_ae | ae_struct | ae_fab | shape_only | with_risk_baseline
+  pair_near_margin: 1.0              # 좁은 간격 구간을 셀 여유 폭(canonical 길이 단위)
 
 # Contract 1.2 preserves source-step assigned_process_layer; conflicting overrides are errors.
 # Unversioned/1.1 exports retain legacy upper-layer assignment and override precedence.

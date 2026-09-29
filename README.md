@@ -84,7 +84,8 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 | | `clusters.json`, `cluster_map.png` | 학습 행으로 적합한 군집, 대표·반대 사례(군집 번호는 의미 없음) |
 | | `figures/rank_shift.svg`, `figures/ca_curves.svg`, `figures/loo_stability.svg` | 비교 그룹별 순위 변화(원 CA→면적당 CA, 기준 분포→실제 Fab), 이물 크기별 CA 곡선, 제품 제외 유지율 그림. 브라우저로 열며 한글 설명 포함 |
 | | `loo_stability.csv` | 제품 하나씩 제외 시 상위 항목·이웃 유지율 |
-| | `shape_features.csv`, `review_cards.json` | 명시적 형상 특징, 검토 카드 |
+| | `shape_features.csv`, `review_cards.json` | 명시적 형상 특징과 전극 쌍 치수(`pair:*`: 최소 간격, 좁은 간격 길이, 겹침 면적, 최소 선폭), 검토 카드 |
+| | `neighborhood_comparison.csv`, `neighborhood_geometry.csv` | 유사 제품 비교군 안의 면적 보정 CA 순위와 저위험 참고 사례, 참고 사례와의 전극 쌍 치수 차이(회피안 검토 후보, 판정은 설계자) |
 | evaluate | `evaluation.json` | held-out 제품→학습 제품 형상 검색·면적 보정 CA 경향, 입력별 복원 손실, 입력 구성 비교, Fab·제품군 그룹 제외 검증과 교락 판정 |
 
 ## 실제 데이터 연결
@@ -102,6 +103,7 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 - `train.device`: `cpu`(기본) \| `auto`(CUDA→MPS→CPU) \| `cuda` \| `mps`; `train.seed`; `train.balance_products`
 - `split.test_fraction` 또는 `split.test_groups`(제품/설계 계열 ID)
 - `analysis.layer_policy`(`exact`\|`ignore`), `other_products_only`, `filters`(예: `{fab_id: [FAB_A]}`), `size_tolerance`(실제 크기 허용 비율), `k_neighbors`, `n_clusters`, `loo_top_k`
+- `analysis.neighborhood_space`(유사 제품 비교군을 만들 공간, 기본 `with_risk_ae`), `pair_near_margin`(좁은 간격 구간을 셀 여유 폭, canonical 길이 단위, 기본 1.0)
 - `data.canonical_length_unit`: `um` 권장. 입력 `nm`/`um`/`mm`는 명시적으로 환산된다.
 
 알 수 없는 설정 키, NaN, 잘못된 타입은 오류다.

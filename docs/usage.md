@@ -110,7 +110,13 @@ print(z.files, z["shape_only"].shape)
   - `loo_stability.svg`: `loo_stability.csv`의 두 유지율을 제품별 막대로 표시한다.
 - `loo_stability.csv`: 제품을 하나씩 뺐을 때 상위 항목(`top_items_jaccard`)과 형상 공간 이웃(`neighbor_jaccard`)이 얼마나 유지되는지(1에 가까울수록 안정).
   - 재적합 학습 행이 2개 미만이거나 관측 특징이 없으면 해당 제품은 `status=skipped`와 `reason`으로 기록하고 유지율은 비워 둔다. `run_record.json`의 `loo_stability`는 계산 가능한 제품이 없으면 `not_available`, 일부만 가능하면 `partial`로 기록한다.
-- `shape_features.csv`: 형상 특징 원표(누락은 빈 값).
+- `shape_features.csv`: 형상 특징 원표(누락은 빈 값). `pair:*` 열은 layout 마스크에서 잰 전극 쌍 치수다(canonical 길이 단위, 픽셀 단위 근사). 실제 픽셀 크기가 없으면 비워 둔다.
+  - `pair:min_gap`: 두 전극 사이 최소 간격(평면 투영이 겹치면 0)
+  - `pair:near_gap_len`: 전극 a 경계 중 간격이 최소 간격 + `pair_near_margin` 안인 길이(좁은 간격이 이어지는 구간)
+  - `pair:overlap_area`: 두 전극의 평면 투영 겹침 면적(vertical short)
+  - `pair:a_min_width`, `pair:b_min_width`: 전극별 가장 좁은 선폭
+- `neighborhood_comparison.csv`: 질의 사례마다 `analysis.neighborhood_space` 공간의 이웃으로 만든 유사 제품 비교군 안의 면적 보정 CA 비교. 사례마다 관측한 이물 크기가 다를 수 있어 비교군이 모두 관측한 크기(`compared_sizes`)의 최댓값으로 비교한다. `query_rank`(1 = 가장 위험), `risk_ratio_to_median`(이웃 중앙값 대비), `reference_id`(위험이 가장 낮은 이웃 = 참고 형상), `status`(`ok`, `query_is_lowest`, `query_risk_missing` 등).
+- `neighborhood_geometry.csv`: `status=ok`인 질의의 전극 쌍 치수를 참고 사례와 비교한 표. 불량 종류에 해당하는 치수만 쓴다(lateral short: 간격·좁은 간격 길이·선폭, vertical short: 겹침 면적·간격·선폭, open: 선폭). `delta = 참고 − 질의`, `review_direction`은 참고 사례 쪽 방향이다. 관찰된 차이일 뿐이며 개선 효과는 재시뮬레이션으로 확인해야 하고, 다른 불량 증가 허용 여부와 설계 규칙은 설계자가 판단한다.
 - `review_cards.json`: 검토 카드. 불량 종류·전극 역할·layer 조합마다 한 장이다.
 
 | 카드 필드 | 내용 |
@@ -122,6 +128,7 @@ print(z.files, z["shape_only"].shape)
 | `retrieval` | 공간별 유사 사례(형상 전용과 위험 포함을 구분) |
 | `available_conditions`, `unavailable_conditions` | 적용 가능한 조건과 자료가 없어 비교할 수 없는 조건 |
 | `expert_review_required` | 전문가 확인·재계산이 필요한 항목 |
+| `neighborhood` | 질의 사례별 유사 제품 비교군, 비교 크기, 비교군 내 순위, 참고 사례와 치수 차이(`geometry_vs_reference`). `decision`은 항상 `designer_judgement` |
 
 ### 4.5 `evaluation.json`
 

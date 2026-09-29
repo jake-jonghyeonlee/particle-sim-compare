@@ -2,7 +2,8 @@
 
 `build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: dict,
 features: pd.DataFrame, *, min_products: int = 2,
-design_reviews: list[dict] | None = None) -> list[dict]`
+design_reviews: list[dict] | None = None, neighborhood: pd.DataFrame | None = None,
+neighborhood_geometry: pd.DataFrame | None = None) -> list[dict]`
 - ranked: analysis.ranking_comparison output (has role_key, layer_key, product_id,
   sample_id, ca_max, ca_area_max, caa_actual, caa_reference, reasons, rank_* columns).
 - neighbors: retrieval.search_all output for spaces "shape_only" and "with_risk".
@@ -38,6 +39,13 @@ One card per `comparison_group_id` (failure_type + role_key + layer_key), sorted
    for resistance, capacitance, coupling, signal/integrity, design rules and other
    short/open risk,
  "external_design_reviews": entries whose comparison_group_id matches this card,
+ "neighborhood": per query of this group from neighborhood_comparison {query_id, product_id,
+   space, neighbors, compared_sizes, query_ca_area, rank_in_neighborhood, n_neighborhood,
+   ratio_to_neighbor_median, reference_case, reference_ca_area, status,
+   geometry_vs_reference: [{feature, query_value, reference_value, delta, review_direction}],
+   resimulation_status: "pending" | None, decision: "designer_judgement" | None},
+ "neighborhood_note": observed differences only; effect needs resimulation; tolerance and design
+   rules are the designer's decision,
  "disclaimer": "Evidence for expert review only. No causal importance, automatic
    factor ranking, or yield/defect-rate claim."}
 NaN -> None in output (JSON safe).

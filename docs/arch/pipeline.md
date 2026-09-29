@@ -27,8 +27,12 @@ ensure_ascii=False, NaN -> null. Every function returns dict {"outputs": [paths]
   via search_all for every space with cfg.analysis constraints -> `neighbors.csv`;
   clusters on "with_risk_ae" (train rows) -> `clusters.json`; loo stability using
   the shape_only baseline refit per held-out product -> `loo_stability.csv`;
-  review cards including broad geometry candidates and external design-review status
-  -> `review_cards.json`; `risk_table.csv`, `ranking.csv`,
+  `shape_features.csv` = explicit shape features + `pair_geometry.pair_metrics_table` columns;
+  `neighborhood.neighborhood_comparison` on `cfg.analysis.neighborhood_space` (missing space ->
+  DataContractError) -> `neighborhood_comparison.csv`, `geometry_deltas` ->
+  `neighborhood_geometry.csv`;
+  review cards including broad geometry candidates, the neighbourhood comparison and external
+  design-review status -> `review_cards.json`; `risk_table.csv`, `ranking.csv`,
   `rank_agreement.json`; `figures/rank_shift.svg`, `figures/ca_curves.svg`,
   `figures/loo_stability.svg` via `plots.write_analysis_figures(out, ranked, loo)` (dependency-free
   SVG, Korean text, per comparison group); `cluster_map.png` (Pillow scatter of the first two PCA
