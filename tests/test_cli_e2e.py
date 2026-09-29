@@ -23,7 +23,8 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
     for name in ("model.pt", "train_history.csv", "split.json", "run_record.json", "embeddings.npz",
                  "neighbors.csv", "clusters.json", "cluster_map.png", "ranking.csv",
                  "loo_stability.csv", "review_cards.json", "evaluation.json",
-                 "neighborhood_comparison.csv", "neighborhood_geometry.csv",
+                 "neighborhood_comparison.csv", "neighborhood_geometry.csv", "edit_candidates.json",
+                 "edit_candidates.csv", "variant_comparison.csv",
                  "figures/rank_shift.svg", "figures/ca_curves.svg", "figures/loo_stability.svg"):
         assert (out / name).exists(), name
     split = json.loads((out / "split.json").read_text())

@@ -44,6 +44,7 @@ One card per `comparison_group_id` (failure_type + role_key + layer_key), sorted
    ratio_to_neighbor_median, reference_case, reference_ca_area, status,
    geometry_vs_reference: [{feature, query_value, reference_value, delta, review_direction}],
    resimulation_status: "pending" | None, decision: "designer_judgement" | None},
+ "variant_comparison": variant_comparison rows of this group,
  "neighborhood_note": observed differences only; effect needs resimulation; tolerance and design
    rules are the designer's decision,
  "disclaimer": "Evidence for expert review only. No causal importance, automatic

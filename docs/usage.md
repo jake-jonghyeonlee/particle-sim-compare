@@ -116,6 +116,8 @@ print(z.files, z["shape_only"].shape)
   - `pair:overlap_area`: 두 전극의 평면 투영 겹침 면적(vertical short)
   - `pair:a_min_width`, `pair:b_min_width`: 전극별 가장 좁은 선폭
 - `neighborhood_comparison.csv`: 질의 사례마다 `analysis.neighborhood_space` 공간의 이웃으로 만든 유사 제품 비교군 안의 면적 보정 CA 비교. 사례마다 관측한 이물 크기가 다를 수 있어 비교군이 모두 관측한 크기(`compared_sizes`)의 최댓값으로 비교한다. `query_rank`(1 = 가장 위험), `risk_ratio_to_median`(이웃 중앙값 대비), `reference_id`(위험이 가장 낮은 이웃 = 참고 형상), `status`(`ok`, `query_is_lowest`, `query_risk_missing` 등).
+- `edit_candidates.json` / `edit_candidates.csv`: 회피안 국소 편집 후보. 전역 선폭 변경(CD bias)이나 정렬 이동(overlay)이 아니라 hotspot 부근 ROI 안의 편집만 제안한다. lateral short는 참고 사례보다 간격이 좁으면 한쪽 전극을 ROI 안에서 후퇴(`trim_near`, 차이의 0.5배·1배), vertical short는 겹침이 크면 ROI 안 겹침 제거(`remove_overlap`)다. open의 선폭 보강은 아직 지원하지 않고 CSV에 사유를 남긴다. JSON은 particle-sim `make-variant`가 그대로 읽는다(6.1절).
+- `variant_comparison.csv`: `parent_design_id`가 있는 변경본을 원안의 같은 불량 종류·전극 역할·layer·적용 공정 layer 사례와 짝지어, 둘 다 관측한 크기의 면적 보정 CA 최댓값 변화(`delta`, `ratio`, `direction`)를 보여 준다. 다른 불량이 늘었는지도 이 표에서 불량별로 본다. 판정은 설계자가 한다.
 - `neighborhood_geometry.csv`: `status=ok`인 질의의 전극 쌍 치수를 참고 사례와 비교한 표. 불량 종류에 해당하는 치수만 쓴다(lateral short: 간격·좁은 간격 길이·선폭, vertical short: 겹침 면적·간격·선폭, open: 선폭). `delta = 참고 − 질의`, `review_direction`은 참고 사례 쪽 방향이다. 관찰된 차이일 뿐이며 개선 효과는 재시뮬레이션으로 확인해야 하고, 다른 불량 증가 허용 여부와 설계 규칙은 설계자가 판단한다.
 - `review_cards.json`: 검토 카드. 불량 종류·전극 역할·layer 조합마다 한 장이다.
 
@@ -192,6 +194,28 @@ train:
 | 색상 hotspot | `hotspot_legend`가 없으면 흑백 강도로만 사용 |
 | 서로 다른 크기 구간 | 구간 중앙값과 CA 크기가 정확히 같은 점만 사용 |
 | 제품 간 layer 대응 | 현재 보류. 이름이 같은 layer끼리만 비교 |
+
+### 6.1 회피안 재시뮬레이션과 재비교
+
+회피안 후보는 국소 마스크 편집(제거·후퇴)으로 만들고, particle-sim으로 다시 계산한 뒤 원안과 함께 분석한다.
+원안의 particle-sim 입력(manifest와 원본 마스크)이 있어야 한다.
+
+```bash
+# 1) compare analyze 결과의 후보(또는 설계자가 쓴 YAML)로 변경본 입력을 만든다
+particle-sim make-variant --product-config base/manifest.yaml \
+  --edits outputs/real/edit_candidates.json --output variants [--candidate <candidate_id> ...]
+#    variants/<candidate_id>/edit_preview.png(빨강=제거)와 variant_record.json(제거 면적, 편집 전후 간격·겹침,
+#    전극 분리 여부)을 먼저 확인한다. 단자 연결이 끊기는 편집은 만들지 않고 오류로 멈춘다.
+# 2) 원안과 변경본을 각각 계산·내보내기
+particle-sim simulate-nominal --product-config variants/<id>/manifest.yaml --output runs/<id>
+particle-sim export-simcompare --run runs/<id> --product-config variants/<id>/manifest.yaml --output exports/<id>
+# 3) 원안 export와 변경본 export를 합치고 Fab 자료를 추가한 뒤 다시 분석
+uv run simcompare merge-exports --out data/merged exports/base exports/<id>
+uv run simcompare analyze --config configs/real.yaml    # data_dir: data/merged
+```
+
+변경본 bundle에는 `parent_design_id`와 `change_description`이 자동으로 기록되고, `variant_comparison.csv`가
+불량 종류별 변화를 보여 준다. 다른 불량 증가 허용 여부와 설계 규칙은 설계자가 판단한다.
 
 ## 7. 오류와 해결
 

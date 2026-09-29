@@ -45,6 +45,7 @@ from simcompare.train import (
     embed, load_checkpoint, model_config_from_arrays, save_checkpoint, select_device, to_tensors,
     train_model,
 )
+from simcompare.variants import edit_candidates, variant_comparison
 
 SYNTHETIC_NOTE = "합성/demo 결과는 코드 동작 확인용이며 연구 근거가 아닙니다."
 RECON_NOTE = "복원 오차는 해석이나 검색 품질을 보장하지 않습니다."
@@ -319,7 +320,8 @@ def run_analyze(cfg) -> dict:
 
     ranking.csv, risk_table.csv, rank_agreement.json, neighbors.csv, clusters.json,
     cluster_map.png, loo_stability.csv, shape_features.csv(전극 쌍 치수 pair:* 포함),
-    neighborhood_comparison.csv, neighborhood_geometry.csv, review_cards.json과
+    neighborhood_comparison.csv, neighborhood_geometry.csv, edit_candidates.json(particle-sim
+    make-variant 편집 지정서), edit_candidates.csv, variant_comparison.csv, review_cards.json과
     figures/ 아래 SVG 그림(rank_shift.svg, ca_curves.svg, loo_stability.svg)을 만든다.
     neighbors.csv의 reuses_risk_inputs가 True인 공간은 위험 입력을 재사용한 결과다.
     """
@@ -404,9 +406,15 @@ def run_analyze(cfg) -> dict:
     comparison.to_csv(out / "neighborhood_comparison.csv", index=False)
     deltas = geometry_deltas(comparison, features)
     deltas.to_csv(out / "neighborhood_geometry.csv", index=False)
+    spec, candidate_table = edit_candidates(comparison, deltas, loaded.bundles,
+                                            length_unit=cfg.data.canonical_length_unit)
+    _write_json(out / "edit_candidates.json", spec)
+    candidate_table.to_csv(out / "edit_candidates.csv", index=False)
+    variants = variant_comparison(ranked, loaded.bundles)
+    variants.to_csv(out / "variant_comparison.csv", index=False)
     cards = build_review_cards(
         ranked, neighbors, cluster_json, features, design_reviews=loaded.design_reviews,
-        neighborhood=comparison, neighborhood_geometry=deltas,
+        neighborhood=comparison, neighborhood_geometry=deltas, variants=variants,
     )
     _write_json(out / "review_cards.json", {
         "note": "전문가 검토용 근거 요약이며 중요 인자 자동 판정이 아닙니다.",
@@ -415,7 +423,8 @@ def run_analyze(cfg) -> dict:
     })
     names_out = ["ranking.csv", "risk_table.csv", "rank_agreement.json", "neighbors.csv",
                  "clusters.json", "cluster_map.png", "loo_stability.csv", "shape_features.csv",
-                 "neighborhood_comparison.csv", "neighborhood_geometry.csv", "review_cards.json"]
+                 "neighborhood_comparison.csv", "neighborhood_geometry.csv", "edit_candidates.json",
+                 "edit_candidates.csv", "variant_comparison.csv", "review_cards.json"]
     return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures], "n_cards": len(cards),
             "n_neighbor_rows": len(neighbors)}
 

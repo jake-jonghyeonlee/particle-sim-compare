@@ -30,7 +30,9 @@ ensure_ascii=False, NaN -> null. Every function returns dict {"outputs": [paths]
   `shape_features.csv` = explicit shape features + `pair_geometry.pair_metrics_table` columns;
   `neighborhood.neighborhood_comparison` on `cfg.analysis.neighborhood_space` (missing space ->
   DataContractError) -> `neighborhood_comparison.csv`, `geometry_deltas` ->
-  `neighborhood_geometry.csv`;
+  `neighborhood_geometry.csv`; `variants.edit_candidates` -> `edit_candidates.json` (particle-sim
+  make-variant spec) and `edit_candidates.csv`; `variants.variant_comparison` ->
+  `variant_comparison.csv`;
   review cards including broad geometry candidates, the neighbourhood comparison and external
   design-review status -> `review_cards.json`; `risk_table.csv`, `ranking.csv`,
   `rank_agreement.json`; `figures/rank_shift.svg`, `figures/ca_curves.svg`,

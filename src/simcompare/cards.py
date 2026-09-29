@@ -177,7 +177,8 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
                        features: pd.DataFrame, *, min_products: int = 2,
                        design_reviews: list[dict] | None = None,
                        neighborhood: pd.DataFrame | None = None,
-                       neighborhood_geometry: pd.DataFrame | None = None) -> list[dict]:
+                       neighborhood_geometry: pd.DataFrame | None = None,
+                       variants: pd.DataFrame | None = None) -> list[dict]:
     """불량 종류·전극 역할·layer 조합별 검토 카드 목록을 만든다.
 
     ranked는 순위 비교 표, neighbors는 공간별 검색 결과, clusters는 군집 라벨·대표·반대 사례,
@@ -267,6 +268,9 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             "neighborhood": _neighborhood_entries(comparison_group_id, neighborhood,
                                                   neighborhood_geometry),
             "neighborhood_note": NEIGHBORHOOD_NOTE,
+            "variant_comparison": [] if variants is None or variants.empty else variants[
+                variants["comparison_group_id"] == comparison_group_id
+            ].to_dict(orient="records"),
             "retrieval": retrieval,
             "available_conditions": available,
             "unavailable_conditions": unavailable,
