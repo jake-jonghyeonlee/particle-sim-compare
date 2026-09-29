@@ -138,15 +138,42 @@ def _as_row(bundle) -> dict:
     }
 
 
+def _common_size_max(table: pd.DataFrame, prefix: str, fallback: str) -> tuple[pd.Series, pd.Series]:
+    """비교 그룹마다 값이 있는 사례들이 모두 관측한 크기에서의 최댓값과 그 크기 목록.
+
+    사례마다 관측한 이물 크기가 다르면 전체 범위 최댓값끼리는 공정하게 비교할 수 없으므로,
+    그룹 안에서 값이 하나도 없는 사례를 뺀 나머지가 모두 관측한 크기만 쓴다(채우거나 외삽하지 않음).
+    크기별 열이 없는 표는 fallback 열을 그대로 쓴다.
+    """
+    columns = [c for c in table.columns if c.startswith(prefix)]
+    if not columns:
+        return pd.to_numeric(table[fallback], errors="coerce"), pd.Series(None, index=table.index, dtype=object)
+    values = table[columns].apply(pd.to_numeric, errors="coerce")
+    best = pd.Series(np.nan, index=table.index)
+    sizes = pd.Series(None, index=table.index, dtype=object)
+    for _, group in values.groupby(table["comparison_group_id"]):
+        members = group[group.notna().any(axis=1)]
+        common = [c for c in columns if len(members) and members[c].notna().all()]
+        sizes.loc[group.index] = ";".join(c[len(prefix):] for c in common)
+        if common:
+            best.loc[members.index] = members[common].max(axis=1)
+    return best, sizes
+
+
 def ranking_comparison(table: pd.DataFrame) -> pd.DataFrame:
     """같은 불량·전극 역할·layer 비교 그룹 안에서 네 위험 지표의 순위를 매긴다.
 
+    원 CA와 면적 보정 CA 순위는 그룹 안에서 모두 관측한 크기의 최댓값
+    (ca_max_common, ca_area_max_common; 비교 크기는 rank_sizes_ca, rank_sizes_ca_area)으로 매긴다.
     rank_shift_fab은 기준 분포 적용 시 순위 변화, rank_shift_area는 면적 보정 시 순위 변화다.
     NaN 값은 순위를 매기지 않는다.
     """
     ranked = table.copy()
+    ranked["ca_max_common"], ranked["rank_sizes_ca"] = _common_size_max(ranked, "ca@", "ca_max")
+    ranked["ca_area_max_common"], ranked["rank_sizes_ca_area"] = _common_size_max(
+        ranked, "ca_area@", "ca_area_max")
     for source, target in (
-        ("ca_max", "rank_ca_max"), ("ca_area_max", "rank_ca_area_max"),
+        ("ca_max_common", "rank_ca_max"), ("ca_area_max_common", "rank_ca_area_max"),
         ("caa_actual", "rank_caa_actual"), ("caa_reference", "rank_caa_reference"),
     ):
         ranked[target] = ranked.groupby("comparison_group_id")[source].rank(

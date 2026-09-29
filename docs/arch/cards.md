@@ -19,8 +19,9 @@ One card per `comparison_group_id` (failure_type + role_key + layer_key), sorted
  "counter_cases": the lowest-2 by the same value, plus counter_examples in group,
  "repeated_shape_features": up to 3 feature names with the lowest coefficient of
    variation among the group's upper-half-by-ca_max rows (descriptive only),
- "risk_comparison": per row {sample_id, product_id, ca_max, ca_area_max, caa_actual,
-   caa_reference, rank_shift_fab},
+ "risk_comparison": per row {sample_id, product_id, ca_max, ca_area_max, ca_max_common,
+   ca_area_max_common, caa_actual, caa_reference, rank_shift_fab}; ordering uses the
+   common-size maxima when present,
  "size_correction": rows whose rank_shift_area != 0: {sample_id, rank_ca_max,
    rank_ca_area_max},
  "particle_size_summary": observed CA range and peak size per sample,

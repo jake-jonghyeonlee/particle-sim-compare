@@ -39,8 +39,13 @@ def _clean(value):
 
 
 def _order_value(group: pd.DataFrame) -> pd.Series:
-    """Use one metric: first complete, else most observed (ties keep priority)."""
-    metrics = ["caa_actual", "ca_area_max", "ca_max"]
+    """Use one metric: first complete, else most observed (ties keep priority).
+
+    Area and raw CA use the common-observed-size maxima from ranking_comparison when present.
+    """
+    metrics = ["caa_actual",
+               "ca_area_max_common" if "ca_area_max_common" in group else "ca_area_max",
+               "ca_max_common" if "ca_max_common" in group else "ca_max"]
     counts = {name: group[name].notna().sum() for name in metrics}
     metric = next((name for name in metrics if counts[name] == len(group)),
                   max(metrics, key=lambda name: counts[name]))
@@ -257,8 +262,8 @@ def build_review_cards(ranked: pd.DataFrame, neighbors: pd.DataFrame, clusters: 
             "repeated_shape_features": _repeated_features(group, features),
             "repeated_shape_features_note": "CAA 또는 면적 보정 CA 기준 고위험 사례들 사이에서 변동이 작은 특징(기술적 요약이며 인과 아님)",
             "risk_comparison": group[[
-                "sample_id", "product_id", "ca_max", "ca_area_max", "caa_actual", "caa_reference",
-                "rank_shift_fab",
+                "sample_id", "product_id", "ca_max", "ca_area_max", "ca_max_common",
+                "ca_area_max_common", "caa_actual", "caa_reference", "rank_shift_fab",
             ]].to_dict(orient="records"),
             "size_correction": group.loc[
                 group["rank_shift_area"].fillna(0) != 0, ["sample_id", "rank_ca_max", "rank_ca_area_max"]

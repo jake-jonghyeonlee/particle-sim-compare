@@ -208,3 +208,25 @@ def test_f4_vertical_preserves_source_and_reports_geometry(reverse):
     stack[('P', 'v1', 'M2')] = (1, 'OTHER')
     with pytest.raises(DataContractError):
         _apply_vertical_layer(item, stack, 'real')
+
+
+def test_ranking_uses_sizes_observed_by_every_member_of_the_group():
+    base = dict(failure_type="lateral_short", role_key="r", layer_key="l", comparison_group_id="g",
+                caa_actual=np.nan, caa_reference=np.nan)
+    frame = pd.DataFrame([
+        # a는 16 um가 미관측이라 전체 범위 최댓값으로는 부당하게 낮아진다.
+        {**base, "sample_id": "a", "ca@4": 0.5, "ca@16": np.nan, "ca_area@4": 0.05, "ca_area@16": np.nan,
+         "ca_max": 0.5, "ca_area_max": 0.05},
+        {**base, "sample_id": "b", "ca@4": 0.2, "ca@16": 0.9, "ca_area@4": 0.02, "ca_area@16": 0.09,
+         "ca_max": 0.9, "ca_area_max": 0.09},
+        # 실제 크기가 없어 면적 CA가 전혀 없는 사례는 면적 공통 크기 계산에서 빠진다.
+        {**base, "sample_id": "c", "ca@4": 0.1, "ca@16": 0.3, "ca_area@4": np.nan, "ca_area@16": np.nan,
+         "ca_max": 0.3, "ca_area_max": np.nan},
+    ])
+    ranked = ranking_comparison(frame).set_index("sample_id")
+    assert ranked["rank_sizes_ca"].tolist() == ["4"] * 3
+    assert ranked["rank_sizes_ca_area"].tolist() == ["4"] * 3
+    assert ranked.loc["a", "rank_ca_max"] == 1 and ranked.loc["b", "rank_ca_max"] == 2
+    assert ranked.loc["a", "rank_ca_area_max"] == 1 and np.isnan(ranked.loc["c", "rank_ca_area_max"])
+    assert ranked.loc["b", "ca_area_max_common"] == pytest.approx(0.02)
+    assert ranked.loc["b", "ca_area_max"] == pytest.approx(0.09)  # 전체 범위 값은 그대로 보존
