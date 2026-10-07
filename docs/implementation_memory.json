@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-07T23:16:06.332653+09:00",
+  "updated_at": "2026-10-07T23:27:27.197398+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -443,6 +443,18 @@
         "absolute dimensions are lost in DL1; DL2 keeps the original um/pixel because local structure must match particle sizes"
       ],
       "supersedes": "The 2026-10-07 earlier suggestion in conversation to cut fixed-um tiles for DL1."
-    }
+    },
+    "closed_network": "General PyPI packages are available. Downloads from inside a package over the network are not possible. Pretrained weights can be brought in as a file and loaded. Open-source components are acceptable (user, 2026-10-07).",
+    "dl1_repo": {
+      "path": "~/git/particle-sim-dl1 (local only, not pushed)",
+      "package": "psdl1",
+      "status": "First version committed 2026-10-07; verified on synthetic layouts only.",
+      "entry_points": [
+        "python -m psdl1.train",
+        "python -m psdl1.search"
+      ],
+      "note": "See its README for the manifest format, the grid-size check, the relations file, and the licence caution on public ConvNeXt V2 weights."
+    },
+    "dl2_repo": "Not created yet."
   }
 }
