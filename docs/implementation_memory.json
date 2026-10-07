@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-07T23:03:16.630958+09:00",
+  "updated_at": "2026-10-07T23:16:06.332653+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -425,5 +425,24 @@
       "location-level attribution to a single layout change (same calculation as the on-hold changed-zone split)",
       "open defects"
     ]
+  },
+  "repo_split_and_dl1_input_2026_10_07": {
+    "authority": "User decisions on 2026-10-07; the DL1 input recommendation is the assistant's and awaits the user's confirmation.",
+    "repo_split": "DL models are implemented in repositories separate from this one for easier management; everything else (line/pixel values, overlap union, electrode-count map, comparison, report) stays in particle-sim-compare.",
+    "dl1_goal": "Find products whose shape and electrode connectivity are similar even when the unit size differs (user: this is what matters).",
+    "labels_and_training": "Correspondence labels and real layouts exist only in the closed network; the user trains and validates there using the delivered implementation.",
+    "dl1_input_recommendation": {
+      "choice": "Normalise each unit to a fixed pixel grid (isotropic resize, pad to keep the aspect ratio) instead of fixed-um patches, because the goal is similarity that does not depend on unit size.",
+      "elements": "One element per electrode x layer image of the whole unit, encoded by a shared encoder with role and layer condition; a Set Transformer aggregates the elements into one product feature.",
+      "scale_handling": [
+        "scale jitter / random-resized-crop during training so similarity survives size differences",
+        "unit size (um) given as an optional condition; compare with and without it"
+      ],
+      "cautions": [
+        "thin lines can vanish when a large unit is shrunk: choose the grid so the narrowest line stays at least about 2 px and resize by area averaging",
+        "absolute dimensions are lost in DL1; DL2 keeps the original um/pixel because local structure must match particle sizes"
+      ],
+      "supersedes": "The 2026-10-07 earlier suggestion in conversation to cut fixed-um tiles for DL1."
+    }
   }
 }
