@@ -25,6 +25,8 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
                  "loo_stability.csv", "review_cards.json", "evaluation.json",
                  "neighborhood_comparison.csv", "neighborhood_geometry.csv", "edit_candidates.json",
                  "edit_candidates.csv", "variant_comparison.csv",
+                 "regional_report.html", "regional_summary.json", "regional_measurements.csv",
+                 "regional_comparisons.csv",
                  "figures/rank_shift.svg", "figures/ca_curves.svg", "figures/loo_stability.svg"):
         assert (out / name).exists(), name
     split = json.loads((out / "split.json").read_text())
@@ -42,6 +44,10 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
     features = (out / "shape_features.csv").read_text().splitlines()[0]
     assert "pair:min_gap" in features and "pair:a_min_width" in features
     assert "DEMO 모드" in capsys.readouterr().err
+    regional = json.loads((out / "regional_summary.json").read_text())
+    assert regional["schema_version"] == "1" and regional["source_validations"]
+    assert all(row["status"] == "unavailable" for row in regional["source_validations"])
+    assert json.loads((out / "run_record.json").read_text())["regional"]["enabled"]
 
 
 def test_cli_reports_contract_errors(tmp_path, capsys):

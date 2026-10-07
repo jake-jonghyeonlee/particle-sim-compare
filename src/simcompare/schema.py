@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .regional_schema import SpatialCASource
+
 FAILURE_TYPES = ("lateral_open", "lateral_short", "vertical_short")
 OPEN_TYPES = ("lateral_open",)
 NOT_APPLICABLE = "N/A"
@@ -183,6 +185,7 @@ class AnalysisBundle:
     provenance: Provenance = field(default_factory=lambda: Provenance(adapter="unknown"))
     fab_pair_key: str | None = None
     mapping_contract_version: str | None = None
+    ca_spatial_sources: list[SpatialCASource] = field(default_factory=list)
 
     @property
     def is_open(self) -> bool:

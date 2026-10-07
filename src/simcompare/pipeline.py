@@ -37,6 +37,7 @@ from simcompare.neighborhood import geometry_deltas, neighborhood_comparison
 from simcompare.pair_geometry import pair_metrics_table
 from simcompare.plots import write_analysis_figures
 from simcompare.retrieval import search_all
+from simcompare.regional import write_regional_analysis
 from simcompare.schema import DataContractError
 from simcompare.split import (
     assert_no_leakage, confounding_report, group_ids, group_split, leave_one_group_out,
@@ -425,7 +426,12 @@ def run_analyze(cfg) -> dict:
                  "clusters.json", "cluster_map.png", "loo_stability.csv", "shape_features.csv",
                  "neighborhood_comparison.csv", "neighborhood_geometry.csv", "edit_candidates.json",
                  "edit_candidates.csv", "variant_comparison.csv", "review_cards.json"]
-    return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures], "n_cards": len(cards),
+    # 지역 분석은 원본 bundle만 받으며 기존 검색/편집 후보 계산에 결과를 되먹이지 않는다.
+    regional = write_regional_analysis(loaded.bundles, cfg.analysis.regional, out)
+    record["regional"] = regional.run_record
+    _write_json(record_path, record)
+    return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures]
+            + [str(f) for f in regional.outputs], "n_cards": len(cards),
             "n_neighbor_rows": len(neighbors)}
 
 

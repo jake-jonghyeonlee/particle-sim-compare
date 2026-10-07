@@ -26,13 +26,37 @@
 | `assigned_process_layer` | 조건부 | Fab 분포 매칭용 공정 layer. 1.2는 source-step Fab layer를 유지. legacy(미표시/1.1) vertical은 적층표 상부 Fab layer |
 | `unit_width`, `unit_height`, `physical_length_unit` | 선택 | unit-pixel 실제 크기. 없으면 물리 길이·면적 보정 비교 불가로 기록 |
 | `layouts` | 선택 | 전극별 `ImageInput` (open 1개, short 2개; slot a, b 순) |
-| `hotspots` | 선택 | 이물 크기별 가공 hotspot `ImageInput` |
+| `hotspots` | 선택 | 이물 크기별 binary 또는 가공 hotspot `ImageInput` |
 | `ca` | 선택 | `CACurve` |
 | `geometry` | 선택 | 두께(`thickness`), 형상 수치(`shape_metrics`), 길이 단위 |
 | `parent_design_id`, `change_description` | 선택 | 변경 설계 추적 |
 | `provenance` | ✔ | 어댑터 이름, 원본 파일, 계산 설정(몬테카를로 등), 계산 버전, 합성 여부 |
 
 `ImageInput`: `array`(2-D float32), `path`, `pixel_size`(픽셀당 실제 길이), `origin_xy`, `particle_size`와 `particle_size_unit`(hotspot의 원형 이물 지름), `value_semantics`(`binary` \| `processed_intensity` \| `probability`), `legend_id`. `probability`는 명시 범례가 있을 때만 허용된다. real 모드에서는 같은 묶음의 layout·hotspot 배열 크기, pixel size, 원점과 실제 영역이 일치해야 한다.
+
+### Hotspot 값과 binary nominal 기여
+
+범례 없는 hotspot의 `binary`는 값이 정확히 {0,1}의 부분집합이라는 뜻이다.
+PNG 0/255는 0/1로 읽고, 정수형 NPY의 정확한 0/255도 같은 값으로 복원한다.
+float 또는 정수 NPY의 0/1은 그대로 읽는다. 그 외 범례 없는 NPY는 [0,1] 범위만 허용하며
+범위 밖 값은 파일 이름을 포함한 `DataContractError`다(실수형 0/255는 허용하지 않는다).
+회색 PNG와 [0,1]의 비이진 NPY는 값 변경 없이 `processed_intensity`다.
+명시 범례 PNG의 `probability` 변환은 별도이며 binary 판정으로 바꾸지 않는다.
+
+확정된 binary nominal의 일반식은 `CA_R = k(source,d) × N_active,R`다.
+계수는 한 원천·지름 안에서 상수이며 원천 간 같은 계수라고 가정하지 않는다.
+**particle-sim 면적 nominal(`ca_nominal_um2`)만** 생산자 계산 정의와 보존 gate에 따라
+`k = pitch²`(µm²/활성 픽셀)이다. 경계 셀을 자르면 N_active,R에 셀 교집합 비율을 반영한다.
+다른 원천의 k는 별도 계약이 필요하며 이 확인은 legacy 무차원→µm² 환산 근거가 아니다.
+mean/probability는 픽셀별 확률을 면적으로 적분하는 별도 원천이다.
+`binary` 값 의미만으로 정량 원천을 승격하지 않는다. 생산자 선언과 보존 gate는 유지한다.
+
+학습 입력의 수치 변경은 잘못 읽던 정수 0/255 hotspot NPY를 0/1로 복원하는 수정에 한정된다.
+기존 0/1/회색 PNG와 모델 letterbox 보간은 그대로이며 binary 라벨은 원본 값의 의미를 기록한다.
+수정 전 정수 0/255 NPY hotspot으로 학습한 체크포인트는 반드시 재학습해야 한다.
+학습 fingerprint는 파일 바이트와 설정을 해시하고 복호 규칙 자체는 해시하지 않으므로,
+같은 파일로 analyze할 때 fingerprint가 일치해도 학습 당시의 입력값과 달라진다.
+이번 수정은 fingerprint 계약을 변경하지 않는다.
 
 `CACurve`: `particle_sizes`(원형 이물의 지름, 엄격 증가), `particle_size_unit`, `values`(비음수 유한값, 미관측은 NaN), `observed`(bool), `unit="1"` 또는 면적 단위 `nm^2`, `um^2`, `mm^2`, `calc_settings`. legacy 무차원 CA는 0~1 범위이며 `CA / unit-pixel 면적`은 `1/um^2` 위험 지표다. 면적 단위 원 CA는 canonical 길이 제곱으로 환산해 ROI 면적으로 한 번만 나누며 결과 단위는 `1`이다.
 

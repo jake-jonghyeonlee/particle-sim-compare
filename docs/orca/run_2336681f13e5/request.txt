@@ -1,0 +1,77 @@
+User-authorized implementation request: particle-sim-compare ROI CA comparison/report
+
+You are the sole Claude Opus 5.5 Orca coordinator for this NEW feature Run. The initiating Codex conversation is a read-only observer, not another coordinator. Read the installed /Users/jonghyeonlee/.agents/skills/orchestration/SKILL.md and the version-matched orca guides before lifecycle actions. Use /usr/local/bin/orca (resolved command: orca). Launch was claude --model claude-opus-5-5 --effort medium --permission-mode bypassPermissions; verify effective model/effort. Raise your own effort to high using supported installed CLI control for plan acceptance and difficult judgments; verify, then restore medium for routine coordination.
+
+User's latest instruction (Korean): "orca task로 진행해 코드 구현시 주석이나 기능 명확히 구분해서 나눠줘 나중에 수정하기 쉽도록". Implement via real Orca Tasks, separate functions/modules by responsibility and add clear Korean domain comments/docstrings so later changes are easy. This is implementation authorization, no further confirmation needed for scoped local work. Do not merely write a plan or create pending tasks and stop: carry through implementation, verification and independent review.
+
+Baseline / ownership:
+- Target /Users/jonghyeonlee/git/particle-sim-compare, branch record-cno-open-fab-decisions, HEAD b507da96554baa658171dcae61a99342c9ec36e3.
+- Existing dirty files MUST be preserved: docs/open_questions.md, src/simcompare/adapters/particle_sim_run.py, tests/test_particle_sim_export_integration.py. Read diff. Adapter and integration changes predate this request; docs includes recently agreed decisions. Do not reset/stash/revert or claim them as new work. Record baseline diff/hash.
+- Sibling /Users/jonghyeonlee/git/particle-sim may be read for CA/hotspot/export semantics, but not edited under this task.
+- No live Run is bound to initiating terminal term_83eeafed-39d4-4131-8831-497fb242c9f7. Relevant historical Runs run_b8caa345d874 and run_e97dac93a45e have only settled completed/failed Dispatches (worker-list inspected; no active entries). Existing older Claude term_94ee0d9c-67a2-4233-8f93-8238ae41ae37 is at idle prompt; do not repurpose it or touch historical Runs. Recheck liveness/work ownership before editing and check whether MMO applies.
+- Create and own a new Run from YOUR terminal. Do not bind the initiating Codex observer as coordinator. Write a checkpoint containing Run/Task/Dispatch IDs and milestones to docs or an output path and tell observer its path.
+
+Required routing (explicit user global Orca policy):
+- Opus claude-opus-5-5 medium coordinator; high for plan acceptance/recovery. No moving opus alias.
+- One read-only Codex gpt-6-astra high planner: versioned plan, task contracts, dependencies, target files, acceptance counterexamples. Opus reviews/adopts in its own session (no extra plan reviewer).
+- One editing worker maximum: Codex gpt-6.1-sol medium; high only documented concrete reasoning need. No nested workers.
+- One extra read-only worker maximum, sequential planner then independent reviewer.
+- Independent fresh Claude claude-opus-5-5 high review is required because this changes core area calculations/schema. Author/coordinator cannot issue independent PASS. Review exact candidate + tests and re-review fixes as needed.
+- No additional paid credits/API-key fallback. Subscription auth only. Preserve state on provider failures, do not silently switch required models/providers.
+- Runtime is 1.4.215. User policy requires explicit terminals until a fresh structured-worker end-to-end smoke passes; do not restore structured path merely due to version. Use terminal create with exact argv, wait tui-idle, then worker-start --task ... --terminal ... . Custom argv/known startup race justifies documented explicit-terminal route. Load low-level-topology guide. Use worker-start, NOT untracked dispatch, for supervised worker lifecycle.
+- Codex launch: codex --model gpt-6-astra -c model_reasoning_effort="high" --dangerously-bypass-approvals-and-sandbox [--dangerously-bypass-hook-trust only after reviewing ~/.codex/hooks.json]; implementation model gpt-6.1-sol with effort medium. Verify effective model/effort from terminal itself, not receipt alone. Claude launch uses --permission-mode bypassPermissions.
+- Process question/escalation/worker_done via canonical Orca coordinator loop; settle then reuse/release; do not use timer/silence as worker death. Preserve checkpoints. Inspect actual diff and run final acceptance against exact candidate.
+
+Agreed functional scope (first delivery):
+1. ROI CA contribution measurement from original quantitative CA data, not resized display images.
+2. Same electrode/layer/failure/process/particle diameter CA comparison and hotspot-containing ROI comparison.
+3. A clean location-centered integrated report: whole layout/hotspot overview with region labels, aligned ROI crops side by side, per-diameter CA curves, raw CA contribution/delta/share, selected reason, provenance and missing/unavailable explanations. HTML + machine-readable JSON/CSV + local/static figures is suitable; follow existing pipeline conventions, no external assets/network dependency. Not just cards.
+4. Existing AE/search pipeline preserved. Product correspondence mapping input interface can be built and tested with fixtures; real mapping will be supplied in production. Fab weighted scoring deferred until closed-network data confirmation. Tree/SHAP is explicitly AFTER regional outputs and real-case validation, not a required algorithm for this delivery; document extension boundary, do not claim implemented or add a placeholder explanation model.
+
+USER CONFIRMED domain decisions:
+- "hotspot좌표는 이물의 전체 크기까지 포함이된 궤적이야". Hotspot already includes the full particle footprint/trajectory. Do NOT treat it as just particle centers or dilate again by particle radius. Separate optional display context margin from physics and from integration area.
+- "제품 전극/layer 대응표는 실사용에 추가할게". Real correspondence data later. Unknown/unmatched is NOT absent or zero. No invented correspondence based only on names/embeddings. Same confirmed identity may compare; custom mappings configurable without code edits.
+- "비교영역은 hotspot을 포함한 영역으로 가자". ROI contains hotspot. For aligned comparable pairs/sizes, use fixed common physical windows covering relevant hotspots from BOTH sides, including new/moved/disappeared hotspots. Avoid changing window size per diameter/case which makes deltas misleading. Planner can define deterministic component grouping/common windows, document behavior and boundary cases. No pixel subtraction across unregistered products.
+- "fab 가중도 실제 폐쇄망에 가봐야알수있어". Defer actual Fab weighted formula, CAA/yield conversion. Not a blocker for CA/hotspot report.
+- ROI CA means the CA contribution area within selected ROI, not a new surrogate metric. Example total CA 100->80 um² while ROI CA 20->30 um² must appear as local worsening despite total improvement. ROI CA/total CA is contribution share; ROI CA/valid ROI area is a DIFFERENT optional normalized metric with distinct names/units.
+- User accepted calculation from original CA-generating area, clipped to ROI. FIRST verify full-domain sum matches simulator CA for applicable source mode. Footprint trajectory union is not automatically the quantitative CA mask. Inspect actual producer semantics; if existing arrays are only display/footprint masks incompatible with numeric CA, do not invent rescaling or divide global CA among pixels. Explicit typed quantitative source or unavailable-with-reason path is acceptable; implement functional measurement for verified source and report location+global CA otherwise. Report an upstream data dependency truthfully if needed.
+
+Calculation/comparison invariants:
+- Retain raw CA area and optional normalized metric separately. Legacy dimensionless CA cannot masquerade as um². Honor units, pixel scale, physical origin, valid domain/mask, missing values, provenance and nominal/mean source consistency.
+- Current direct run adapter sets hotspot origin (0,0); ImageInput has origin_xy. Do not discard true origin or assume crossproduct registration just because dimensions coincide. New explicit registration/common-frame contract may be needed.
+- Rank/select with CA level/delta and size-specific evidence, NOT overlap/matching rate, repeated shapes or heatmap peak alone. Both high/increased total CA and locally new/increased risk with same/decreased total must be covered. Avoid max-only curves hiding other diameter changes.
+- Risk appearance/disappearance is distinct from electrode structure addition/absence. Missing record/size is unknown, never risk zero. Reference CA=0 relative delta undefined; still show absolute delta/new risk. New structures retain own risk without fake reference zero.
+- Never double-count overlapping ROIs or electrode-pair CA into layer/product total. Union handling, aggregation eligibility and denominator semantics explicit. Partition sum conservation only where domains actually partition the same quantitative map. No sum of normalized ratios.
+- Tree is not needed to locate hotspots. Future training should use geometry/context features from vulnerable AND nonvulnerable regions and hotspot-derived labels only, no CA/hotspot/full AE z target leakage. Existing pair-global geometry cannot be copied as local measurements. Keep extension interfaces clean.
+- CNO remains EXCLUDED from compare, open metal reinforcement remains deliberately unsupported. No automatic layout edits/resimulation or electrical/yield causality claims. Retain existing legacy edit candidates behavior unless integration requires small documented fixes; new vulnerability selection must not rely on old brightest-hotspot ROI heuristic.
+
+Repository evidence already inspected (verify, do not assume):
+- schema.py ImageInput ~76, AnalysisBundle ~155; origin_xy exists, no regional contract.
+- adapters/particle_sim_run.py ~648 builds hotspot planes; nominal vs mean CA semantics need inspection.
+- neighborhood.py ~41 compares max area-normalized CA over common observed sizes; geometry_deltas follows.
+- variants.py _roi ~104 chooses largest available diameter then peak connected heat>=0.5*max, fallback nearest electrodes. This is edit-candidate heuristic, not the agreed new ROI CA selection.
+- retrieval.py candidate_mask ~42 layer exact/ignore only.
+- pair_geometry.py pair_metrics_px ~123 computes whole-pair gap/width/near boundary count/overlap, not local ROI measurements.
+- pipeline.py run_analyze ~318 is integration point; plots.py existing rank/CA/LOO SVGs; cards.py cards. Keep new physics, comparison, report rendering separated, thin orchestration in pipeline.
+- model.py MultiInputAE ~188 and pipeline compute_spaces ~248 already exist. ae_struct contains layout/hotspot/CA/geometry and is NOT shape-only.
+- caa.py interpret_fab only demo formula. README claims synthetic-only functionality, no real research accuracy.
+- tests cover domain contracts/CA units/adapters/E2E. Preserve baseline behavior and missing-data errors.
+
+Maintainability requirement (explicit):
+- Prefer small cohesive modules (e.g. regional contracts/measurement, ROI selection/comparison, reporting) over one large function or dumping into pipeline.py. Planner chooses names fitting project.
+- Public helpers use types/docstrings: input dimensions, units, origin convention, source semantics, missing handling, output meaning, side effects. Korean comments explain WHY especially non-double-dilation, conservation, registration, no-double-count and missing-vs-zero.
+- Configuration controls ROI selection/margins/comparison tolerances; no scattered unexplained magic constants.
+- Data calculations pure/testable; IO/adapters and plotting separate. Document extension points for mappings, Fab and future Tree.
+
+Meaningful acceptance counterexamples:
+- Entire valid quantitative domain integrates to source CA; disjoint partition sums conserve; overlapping ROIs union counts once.
+- Pixel size/origin/unit conversion and validity masks including nonzero origin; physical crop bounds, boundary clipping, anisotropy support or clear rejection.
+- Total CA falls but ROI CA rises; hotspots move/disappear/new; no peak-only omission; fixed common window across sizes.
+- Missing size/map/reference != zero; numeric zero and no hotspot distinguished; zero baseline no inf; mismatch source mode/semantics/registration explicitly unavailable rather than wrong number.
+- Inputs reordered => deterministic region IDs/results; no inputs mutated. Registered vs unregistered cases.
+- End-to-end analysis exports readable standalone report and structured outputs with provenance; visual inspect representative report/images. Old analysis still works when regional sources unavailable.
+- Regression tests appropriate to touched core plus independent Opus high review; don't fabricate real accuracy/yield claims.
+
+Expected reporting / communication:
+- Give Korean concise milestone summaries with actual Run and Task IDs. Persist plan/checkpoint/review evidence. Observer may read terminal and Run state but will not consume your inbox or make lifecycle decisions.
+- Final report: implemented modules and behavior, test commands/results, independent exact-candidate review, files/entry point to inspect report, limitations genuinely dependent on closed-network inputs. Do not email or regenerate slides in this task. Do not publish/push/merge without authorization. Local code/doc edits and validation authorized.

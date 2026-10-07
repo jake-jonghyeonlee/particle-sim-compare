@@ -56,7 +56,10 @@ for name in ('pilot', 'open_straight', 'auto_open'):
                                          applicable_particle_source_steps=['S_M1'])]
         case.manifest['open_applicable_steps_by_layer'] = {'M1': [], 'M2': ['S_M2']}
     for step in case.manifest['particle_source_steps']:
-        step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
+        if name == 'pilot':  # schema 1.0 keeps a free Fab label
+            step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
+        else:  # schema 2.0 derives the mask layer directly above the landing layer
+            step.pop('fab_distribution_layer', None)
     manifest = write_case(case, base / name / 'case')
     if name != 'pilot':
         Image.fromarray(holes.astype(np.uint8)*255).save(manifest.parent / 'masks/contact.png')
@@ -108,6 +111,13 @@ def test_export_load_contract(tmp_path):
             rows = raw[(raw.source_step == step) & (raw[id_col] == unit)].sort_values('particle_size_um')
             np.testing.assert_allclose(bundle.ca.values, rows.ca_nominal_um2)
             np.testing.assert_allclose(bundle.ca.particle_sizes, rows.particle_size_um)
+            # 원본 nominal 생성 map 전체 적분이 같은 unit/step/지름 CA를 보존해야 한다.
+            assert len(bundle.ca_spatial_sources) == len(bundle.ca.values)
+            for source in bundle.ca_spatial_sources:
+                assert source.validation.status == 'available'
+                assert source.validation.integrated_total_um2 == pytest.approx(source.total_ca)
+                assert source.provenance['source_step'] == step
+                assert source.provenance['unit_id'] == unit
             assert len(bundle.layouts) == (1 if bundle.is_open else 2)
             if bundle.is_open:
                 assert bundle.electrode_b_role == bundle.layer_b == 'N/A'
@@ -180,3 +190,6 @@ def test_export_roi_area_ratio_is_four_not_sixteen(tmp_path):
         np.testing.assert_array_equal(large[sid].ca.values, small[sid].ca.values)
         ratio = small[sid].ca_per_area()[0] / large[sid].ca_per_area()[0]
         np.testing.assert_array_equal(ratio, np.full_like(ratio, 4.0))
+        # 이 fixture는 scalar만 의도적으로 덮어썼으므로 map에 맞춰 rescale하면 안 된다.
+        assert large[sid].ca_spatial_sources
+        assert all(s.validation.reason == 'conservation_failed' for s in large[sid].ca_spatial_sources)

@@ -150,7 +150,7 @@ def test_contract_gate():
             and s1.layouts[0].pixel_size == 1.5
         )
         assert (
-            s1.hotspots[0].value_semantics == "processed_intensity"
+            s1.hotspots[0].value_semantics == "binary"
             and s1.hotspots[0].particle_size == 2.0
         )
         assert (
@@ -442,3 +442,45 @@ def test_legacy_bundle_whitespace_normalization(tmp_path, version, assignment):
     assert bundle.assigned_process_layer == "UPPER"
     assert bundle.fab_pair_key is None
     assert select_distribution(bundle, loaded.distributions).fab_distribution_id == "D"
+
+
+@pytest.mark.parametrize("encoding", ["png", "float_npy", "uint8_npy"])
+def test_binary_hotspot_encodings_have_identical_values_and_semantics(tmp_path, encoding):
+    import numpy as np
+    from PIL import Image
+    from simcompare.adapters.example import read_image
+
+    expected = np.array([[0, 1, 0], [1, 1, 0]], dtype=np.float32)
+    path = tmp_path / ("hot.png" if encoding == "png" else "hot.npy")
+    if encoding == "png":
+        Image.fromarray((expected * 255).astype(np.uint8)).save(path)
+    else:
+        values = expected if encoding == "float_npy" else (expected * 255).astype(np.uint8)
+        np.save(path, values)
+    values, semantics, legend_id = read_image(path, kind="hotspot", legend=None)
+    np.testing.assert_array_equal(values, expected)
+    assert values.dtype == np.float32
+    assert semantics == "binary" and legend_id is None
+
+
+def test_gray_hotspot_keeps_processed_intensity(tmp_path):
+    import numpy as np
+    from PIL import Image
+    from simcompare.adapters.example import read_image
+
+    path = tmp_path / "gray.png"
+    Image.fromarray(np.array([[0, 128, 255]], dtype=np.uint8)).save(path)
+    values, semantics, _ = read_image(path, kind="hotspot", legend=None)
+    np.testing.assert_array_equal(values, np.array([[0, 128 / 255, 1]], dtype=np.float32))
+    assert semantics == "processed_intensity"
+
+
+@pytest.mark.parametrize("values", [[-0.1, 1], [0, 2], [0.0, 255.0]])
+def test_out_of_range_nonlegend_hotspot_npy_is_rejected(tmp_path, values):
+    import numpy as np
+    from simcompare.adapters.example import read_image
+
+    path = tmp_path / "invalid-hot.npy"
+    np.save(path, np.array([values], dtype=np.float32))
+    with pytest.raises(DataContractError, match="invalid-hot.npy"):
+        read_image(path, kind="hotspot", legend=None)

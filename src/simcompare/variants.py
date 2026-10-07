@@ -5,15 +5,18 @@
 
 - lateral short: 참고 사례보다 간격이 좁으면 한쪽 전극을 ROI 안에서 후퇴(trim_near)시키는
   후보를 전극별·양(차이의 TRIM_FRACTIONS 배)별로 만든다.
-- vertical short: 참고 사례보다 겹침이 크면 ROI 안의 겹침을 한쪽 전극에서 제거(remove_overlap)한다.
-- lateral open: 선폭을 넓히는 보강(추가) 편집은 아직 지원하지 않으므로 사유와 함께 건너뛴다.
+- vertical short: 참고 사례보다 겹침이 크면 ROI 안의 겹침을 한쪽 전극에서
+  제거(remove_overlap)한다.
+- lateral open: 선폭을 넓히는 보강(추가) 편집은 아직 지원하지 않으므로 사유와 함께
+  건너뛴다.
 
-ROI는 질의 사례의 hotspot(비교에 쓴 가장 큰 이물 크기)에서 최댓값의 절반 이상인 연결 영역의
-경계 상자에 그 이물 크기만큼 여유를 더한 것이다. hotspot이 없거나 편집 전극이 ROI 밖이면
-두 전극이 가장 가까운(또는 겹치는) 구간의 경계 상자를 쓴다.
+ROI는 질의 사례의 hotspot(비교에 쓴 가장 큰 이물 크기)에서 최댓값의 절반 이상인
+연결 영역의 경계 상자에 그 이물 크기만큼 여유를 더한 것이다. hotspot이 없거나
+편집 전극이 ROI 밖이면 두 전극이 가장 가까운(또는 겹치는) 구간의 경계 상자를 쓴다.
 
-재비교는 parent_design_id가 있는 변경본마다 같은 제품의 원안에서 불량 종류·전극 역할·layer·
-적용 공정 layer가 같은 사례를 찾아, 두 사례가 모두 관측한 크기의 면적 보정 CA 최댓값을 비교한다.
+재비교는 parent_design_id가 있는 변경본마다 같은 제품의 원안에서 불량 종류·전극 역할·
+layer·적용 공정 layer가 같은 사례를 찾아, 두 사례가 모두 관측한 크기의 면적 보정 CA
+최댓값을 비교한다.
 판정은 하지 않는다(다른 불량 증가 허용 여부는 설계자 판단).
 """
 from __future__ import annotations
@@ -31,7 +34,8 @@ from simcompare.schema import AnalysisBundle, convert_length
 
 TRIM_FRACTIONS = (0.5, 1.0)
 SPEC_NOTE = (
-    "simcompare가 유사 제품 비교군의 저위험 참고 사례와의 치수 차이로 만든 국소 편집 후보입니다. "
+    "simcompare가 유사 제품 비교군의 저위험 참고 사례와의 치수 차이로 만든 "
+    "국소 편집 후보입니다. "
     "관찰된 차이에 근거한 검토 후보이며 효과는 particle-sim make-variant → simulate-nominal → "
     "export-simcompare 후 variant_comparison.csv로 확인합니다. 채택은 설계자가 판단합니다."
 )
@@ -63,17 +67,83 @@ def _flood(mask: np.ndarray, start: tuple[int, int]) -> np.ndarray:
     return out
 
 
+def _bounds_um(bounds: tuple[int, int, int, int], shape: tuple[int, int],
+               pixel_um: float, pad_um: float) -> list[float]:
+    """행/열 inclusive bbox를 기존 반올림·여백·격자 clipping으로 um 창으로 바꾼다."""
+    # 기존 mask bbox의 NumPy float64 반올림을 Python int bbox에서도 동일하게 유지한다.
+    row_min, col_min, row_max, col_max = map(np.float64, bounds)
+    h, w = shape
+    return [
+        round(max(0.0, col_min * pixel_um - pad_um), 6),
+        round(max(0.0, row_min * pixel_um - pad_um), 6),
+        round(min(w * pixel_um, (col_max + 1) * pixel_um + pad_um), 6),
+        round(min(h * pixel_um, (row_max + 1) * pixel_um + pad_um), 6),
+    ]
+
+
 def _bbox_um(region: np.ndarray, pixel_um: float, pad_um: float) -> list[float] | None:
     rows, cols = np.nonzero(region)
     if rows.size == 0:
         return None
-    h, w = region.shape
-    return [
-        round(max(0.0, cols.min() * pixel_um - pad_um), 6),
-        round(max(0.0, rows.min() * pixel_um - pad_um), 6),
-        round(min(w * pixel_um, (cols.max() + 1) * pixel_um + pad_um), 6),
-        round(min(h * pixel_um, (rows.max() + 1) * pixel_um + pad_um), 6),
-    ]
+    bounds = (rows.min(), cols.min(), rows.max(), cols.max())
+    return _bounds_um(bounds, region.shape, pixel_um, pad_um)
+
+
+def _component_bounds(mask: np.ndarray) -> list[tuple[int, tuple[int, int], tuple[int, int, int, int]]]:
+    """2D support를 4방향으로 한 번 탐색하여 개수·첫 raster 픽셀·inclusive bbox만 반환한다."""
+    visited = np.zeros_like(mask, dtype=bool)
+    components = []
+    h, w = mask.shape
+    # 성분별 전체 마스크를 쌓으면 checkerboard에서 메모리가 픽셀 수의 제곱으로 커진다.
+    for row in range(h):
+        for col in range(w):
+            if not mask[row, col] or visited[row, col]:
+                continue
+            first = (row, col)
+            queue = deque([first])
+            visited[first] = True
+            count = 0
+            row_min = row_max = row
+            col_min = col_max = col
+            while queue:
+                y, x = queue.popleft()
+                count += 1
+                row_min, row_max = min(row_min, y), max(row_max, y)
+                col_min, col_max = min(col_min, x), max(col_max, x)
+                for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    ny, nx = y + dy, x + dx
+                    if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not visited[ny, nx]:
+                        visited[ny, nx] = True
+                        queue.append((ny, nx))
+            components.append((count, first, (row_min, col_min, row_max, col_max)))
+    components.sort(key=lambda component: (-component[0], component[1]))
+    return components
+
+
+def _edited_prefix(mask: np.ndarray, pixel_um: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """편집 bool 격자의 누적합과 기존 판정과 동일한 um 픽셀 중심 축을 만든다.
+
+    입력은 불변이다.
+    """
+    h, w = mask.shape
+    prefix = np.zeros((h + 1, w + 1), dtype=np.int64)
+    prefix[1:, 1:] = mask
+    np.cumsum(prefix, axis=0, out=prefix)
+    np.cumsum(prefix, axis=1, out=prefix)
+    return prefix, (np.arange(w) + 0.5) * pixel_um, (np.arange(h) + 0.5) * pixel_um
+
+
+def _contains_prefix(roi: list[float], prefix: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> bool:
+    """um 닫힌 bbox 안의 편집 픽셀 유무를 기존 _contains와 동일하게 누적합으로 검사한다."""
+    x0, y0, x1, y1 = roi
+    # 나눗셈/floor 대신 동일한 중심 좌표를 비교해야 경계의 부동소수 판정이 달라지지
+    # 않는다.
+    left, right = np.searchsorted(xs, x0, side="left"), np.searchsorted(xs, x1, side="right")
+    top, bottom = np.searchsorted(ys, y0, side="left"), np.searchsorted(ys, y1, side="right")
+    if left >= right or top >= bottom:
+        return False
+    count = prefix[bottom, right] - prefix[top, right] - prefix[bottom, left] + prefix[top, left]
+    return bool(count > 0)
 
 
 def _contains(roi: list[float], mask: np.ndarray, pixel_um: float) -> bool:
@@ -111,7 +181,20 @@ def _roi(bundle: AnalysisBundle, sizes: list[float], pixel_um: float,
         if heat.shape != a.shape or not np.isfinite(heat).any() or np.nanmax(heat) <= 0:
             continue
         peak = np.unravel_index(int(np.nanargmax(heat)), heat.shape)
-        region = _flood(heat >= 0.5 * np.nanmax(heat), peak)
+        support = heat >= 0.5 * np.nanmax(heat)
+        if np.all((heat == 0) | (heat == np.nanmax(heat))):
+            components = _component_bounds(support)
+            if len(components) > 1:
+                # binary 동률은 큰 성분·첫 raster 순으로 검사하되 전체 mask 재탐색을
+                # 반복하지 않는다.
+                prefix, xs, ys = _edited_prefix(edited, pixel_um)
+                for _, _, bounds in components:
+                    roi = _bounds_um(bounds, support.shape, pixel_um, float(size))
+                    if _contains_prefix(roi, prefix, xs, ys):
+                        return roi, f"hotspot@{size:g}"
+                continue
+        # 단일 성분과 graded 입력은 기존 first-max 마스크·판정 경로를 그대로 유지한다.
+        region = _flood(support, peak)
         roi = _bbox_um(region, pixel_um, float(size))
         if roi is not None and _contains(roi, edited, pixel_um):
             return roi, f"hotspot@{size:g}"

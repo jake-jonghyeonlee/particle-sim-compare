@@ -1,0 +1,402 @@
+diff --git a/README.md b/README.md
+index 3b74549..f605b4a 100644
+--- a/README.md
++++ b/README.md
+@@ -92,6 +92,14 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
+ 
+ ## 실제 데이터 연결
+ 
++위치 중심 지역 CA 보고서는 기본 `analyze`의 부가 출력이다. 학습 없이 대표 합성 사례를
++보려면 `.venv/bin/python scripts/regional_demo.py`를 실행하고
++`outputs/regional-demo/regional_report.html`을 연다. HTML은 inline 그림을 포함하며
++JSON/측정 CSV/비교 CSV와 `figures/regional/*.svg`도 생성된다.
++실제 local delta에는 정량 원본 source, 명시 전극/layer/공정 대응과 좌표 등록이 필요하다.
++원천 누락/미등록은 사유와 null로 남으며 Fab 가중·수율·Tree·자동 설계 편집은 수행하지 않는다.
++설정, 원천 manifest/대응표 예제와 확장 경계는 [지역 분석 안내](docs/regional_analysis.md)를 참고한다.
++
+ 1. **어댑터 작성**: `src/simcompare/adapters/example.py`를 참고해 원본 형식을 `AnalysisBundle`/`FabDistribution`(`src/simcompare/schema.py`)으로 바꾸는 `load_dataset`을 만든다. 형식이 같다면 예시 어댑터를 그대로 쓴다. 파일 형식과 규칙은 [docs/data_contract.md](docs/data_contract.md)에 있다.
+ 2. **설정 작성**: `configs/real.example.yaml`을 복사해 `data.data_dir`, `ca_grid`, `hotspot_sizes`, `fab_grid`를 실제 격자로 맞춘다.
+ 3. **도메인 입력 작성**: [docs/domain-input-example](docs/domain-input-example/README.md)을 참고해 `fab_measurements.csv`와 `layer_stack.csv`를 작성한다. CAA 규칙을 확정해 `caa.interpret_fab`에 추가하고 `caa.confirmed: true`로 명시하기 전까지 CAA 값은 사유와 함께 비어 있다.
+diff --git a/docs/open_questions.md b/docs/open_questions.md
+index 55faa6d..1a44db5 100644
+--- a/docs/open_questions.md
++++ b/docs/open_questions.md
+@@ -8,15 +8,26 @@
+ | Hotspot 색상·투명도·축척 | grayscale 강도를 "가공 강도"로만 사용 | 범례(`data.hotspot_legend`) 없으면 확률 변환 금지 | `preprocess.legend_to_values`, 어댑터 |
+ | CA 의미·범위 | legacy **확정**: 0~1 무차원 확률 기반 누적 위험값, 보통 최대 0.02~0.03, 면적 정규화 전 값. particle-sim 면적 규칙은 provisional; 환산 근거 확정 전 교차 계열 비교 금지 | 원 CA와 `CA / unit-pixel 면적`을 함께 사용; 혼합 계열 real 오류/demo 경고 | `schema.AnalysisBundle.ca_per_area`; 계산 담당자 환산 기준 확인 |
+ | Fab 자료 | **확정**: 특정 기간의 glass 1장당 평균 검출 개수와 glass 한 장의 실제 조사 면적을 가공자료로 입력 | `fab_measurements.csv`, 총량은 조사 면적으로 정규화 | `adapters.example`, `caa.fab_shape_and_total` |
+-| CAA 실제 계산식 | `demo_probability_per_bin`: 동일 크기 격자의 확률 가중치 × CA 합 | demo 규칙 사용 시 설정 오류, 확정 규칙 미구현 시 `CAAError` | `caa.interpret_fab`에 확정 규칙 추가, `caa.confirmed: true` |
++| CAA 실제 계산식 | **2026-10-01 사용자 결정**: 실제 Fab 가중은 폐쇄망에서 확인 후 확정. 현재는 `demo_probability_per_bin`: 동일 크기 격자의 확률 가중치 × CA 합 | demo 규칙 사용 시 설정 오류, 확정 규칙 미구현 시 `CAAError`. 확정 전 CA 기반 비교·위치 리포트는 별도 진행 | `caa.interpret_fab`에 확정 규칙 추가, `caa.confirmed: true` |
+ | 크기 격자 | 확정: 1–30 um 1 um 간격 + 40, 50 um (32개), CA·hotspot·Fab 전체 제공 | `exact`, 보간하지 않음 | `data.ca_alignment` |
+ | Vertical short 적용 공정 layer | **2026-09-27 계약 1.2**: source-step Fab layer; **legacy(미표시/1.1)**: 적층표 상부 Fab layer | `layer_stack.csv`가 없거나 순서를 판정할 수 없으면 오류 | 입력 데이터/어댑터 |
+-| 제품 간 layer 대응·비교 가능 조건 | layer 이름 문자열 일치(`layer_policy: exact`) 또는 무시(`ignore`) | 대응표 없음 | `retrieval.candidate_mask`에 대응표 추가 |
++| 이물 유입 공정의 Fab 분포 layer | **결정**(2026-09-30): 착지 layer 바로 위 마스크 layer(patterned 또는 contact hole layer, 마스크 없는 절연막 제외)의 Fab 값을 쓴다. particle-sim manifest가 `fab_distribution_layer`를 이 규칙으로 정하고, 계약 1.2 export는 그 값을 `assigned_process_layer`로 넘긴다. 위에 마스크 layer가 없으면 manifest에 직접 적는다 | compare는 `assigned_process_layer`를 그대로 쓴다(추정하지 않음) | particle-sim `ProductManifest.upper_mask_layer`, extractor `export_config.upper_mask_row` |
++| 제품 간 전극/layer 대응·비교 가능 조건 | **2026-10-01 사용자 결정**: 제품 전극/layer 대응표는 실사용 시 추가. 현재 layer 이름 문자열 일치(`layer_policy: exact`) 또는 무시(`ignore`) | 대응표 연결 미구현. 대응 불명은 부재·위험 0으로 해석하지 않음 | 대응표 입력 계약과 `retrieval.candidate_mask` 및 비교 리포트에 대응표 적용 |
+ | Lateral open 전극 치수 정의 | 형상 수치(`shape_metrics`)의 이름만 전달, 의미 해석 없음 | 해석하지 않음 | `geometry.json` 정의 확정 |
+-| 국부 이미지 범위·이물 영향 영역 | 전체 이미지만 사용 | 국부 조각 미지원 | 확장 지점: 같은 `sample_id` 아래 추가 이미지 목록 (독립 제품으로 취급 금지) |
++| 국부 이미지 범위·이물 영향 영역 | **2026-10-01 사용자 확정**: hotspot 좌표는 이물 전체 크기를 포함한 궤적이며, 비교 영역은 hotspot을 포함한 영역으로 선정 | 현재 국부 비교 미구현. 이물 중심 좌표로 간주하거나 이물 반경으로 다시 팽창하지 않음 | 같은 `sample_id` 아래 영역 ID·좌표·실제 크기·대상 이물 크기 연결 및 국부 리포트 추가 |
+ | 전문가 검토 기준·개선 후보 제약 | 간격·폭·평행 길이·겹침·우회 후보를 넓게 제시하고 사람이 검토 | 외부 저항·Cap·coupling·신호·DRC·다른 short/open 결과 상태만 연결 | `cards.build_review_cards` |
+ | 전문가 정답 라벨 | 현재 없음 | 정확도·precision·recall을 주장하지 않고 held-out 반복성만 보고 | `pipeline.run_evaluate` |
+ | 학습/평가 분리 단위 | 제품 ID와 설계 계열 ID의 연결 성분 | 그룹 2개 미만이면 오류 | `split.group_split` |
+-| CNO(`contact_not_open`, contact·via hole 막힘) 불량 유형 | **보류**(2026-09-27): `FAILURE_TYPES`에 없음. particle-sim exporter는 CNO unit을 제외하고 `export_warnings.json`에 남기며, `particle_sim_run` 검사기는 미지원 경고를 낸다 | 기본은 경고, `--strict`면 실패 | 재개 시 결정: hole 형상 표현(3번째 layout 또는 형상 수치), 아래·위 전극 식별, 가림 기준(잠정: hole 면적 절반 이상, hole 하나라도 막히면 CNO), Fab layer(hole layer 이물 불량 Fab 자료는 있음), CAA에서 자동 open과의 중복 방지. 수정 위치: `schema.FAILURE_TYPES`, 어댑터, `dataset`/`model`(layout 2 slot 고정), `caa`, 분석·카드 |
+-| open 불량 회피안(선폭 보강) | **보류**(2026-09-29): 금속을 추가하는 편집이 없어 `edit_candidates`는 open 질의를 사유와 함께 건너뛴다(`edit_candidates.csv`의 `status=skipped`). 비교군 비교와 선폭 차이(`pair:a_min_width`)는 계속 계산한다 | 편집 후보 없음 | 재개 시 결정: particle-sim `make-variant`에 국소 추가(보강) 편집을 넣을지, 설계자 YAML로만 처리할지. 수정 위치: particle-sim `variant/edits.py`, simcompare `variants.edit_candidates` |
++| CNO(`contact_not_open`, contact·via hole 막힘) 불량 유형 | **결정**(2026-09-30): compare에 넣지 않고 particle-sim 단독 항목으로 둔다. `FAILURE_TYPES`에 없음. particle-sim exporter는 CNO unit을 제외하고 `export_warnings.json`에 남기며, `particle_sim_run` 검사기는 미지원 경고를 낸다. 가림 기준은 particle-sim에서 "margin 없는 이물 원판이 hole 중심을 덮으면 막힘, hole 하나라도 막히면 CNO"로 확정(`cno_coverage_rule=hole_centre_any_hole`) | 기본은 경고, `--strict`면 실패 | 없음(결정이 바뀌면 `schema.FAILURE_TYPES`, 어댑터, `dataset`/`model`, `caa`, 분석·카드) |
++| open 불량 회피안(선폭 보강) | **결정**(2026-09-30): 보강(금속 추가) 편집은 하지 않는다. `edit_candidates`는 open 질의를 사유와 함께 건너뛴다(`edit_candidates.csv`의 `status=skipped`). 비교군 비교와 선폭 차이(`pair:a_min_width`)는 참고용으로 계속 계산한다 | 편집 후보 없음 | 없음 |
+ | 설계 규칙(최소 선폭·간격) 입력 | **보류**(2026-09-29): 입력 가능 여부 미확인 | 규칙 위반 편집 후보도 걸러지지 않고 제시된다. 다른 불량 증가 허용 여부와 함께 설계자가 판단 | 재개 시 `analysis` 설정 또는 별도 규칙 파일, `variants.edit_candidates`에서 후보 제외 |
++
++## 2026-10-01 결정에 따른 구현 기준
++
++아래는 사용자 확정 사항을 반영한 후속 구현 기준이며, 기능 구현 완료를 뜻하지 않는다.
++
++- Hotspot은 이물의 전체 크기가 이미 반영된 궤적이다. 표시·위치 선정에 이를 그대로 사용하고, 이물 크기를 반영한다는 이유로 다시 팽창시키지 않는다. 주변 전극을 보기 위한 문맥 여백은 별도 설정으로 구분한다.
++- 비교 영역은 hotspot을 포함하도록 잡는다. 위치 정렬이 가능한 비교에서는 양쪽 hotspot과 비교할 이물 크기들의 범위를 포함하는 공통 창을 고정하여, 각각 다른 crop 면적 때문에 증감이 달라지지 않도록 한다. 정렬이 불가능하면 위치별 차영상·직접 증감은 제공하지 않고 별도 영역으로 표시한다.
++- 궤적의 합집합 면적이 CA 계산값과 같다고 가정하지 않는다. CA 수치는 기존 시뮬레이션 결과에서 읽고, hotspot은 위치 근거로 연결한다. 국부 CA는 원 계산 정의에 맞는 영역별 기여 데이터 또는 별도 계산이 확보되어야 제공하며, 화면 밝기나 궤적 픽셀 수를 임의로 CA로 바꾸지 않는다.
++- 대응표는 실사용 시 사용자가 제공한다. 사전 개발은 입력 형식과 연결 지점을 준비할 수 있으나, 대응 관계를 임의 확정하지 않는다. Fab 가중은 폐쇄망에서 확인하며, 미확정 동안 Fab 가중 점수·수율 환산을 제시하지 않는다.
++- 보고용 취약부는 hotspot을 포함한 영역으로 선정한다. 향후 Tree 학습 표본은 이와 구분하여 비취약 영역도 포함하고, hotspot은 정답·위치 근거로만 사용해 정답 누출을 방지한다.
+diff --git a/src/simcompare/adapters/example.py b/src/simcompare/adapters/example.py
+index 670dabe..395e0c4 100644
+--- a/src/simcompare/adapters/example.py
++++ b/src/simcompare/adapters/example.py
+@@ -19,6 +19,7 @@ import numpy as np
+ from PIL import Image
+ 
+ from simcompare import schema
++from .regional import exported_particle_sim_sources
+ from simcompare.preprocess import legend_to_values
+ 
+ REAL_PARTICLE_SIZE_GRID_UM = (*range(1, 31), 40, 50)
+@@ -816,6 +817,9 @@ def load_dataset(
+         warnings.extend(schema.validate_bundle(bundle, mode))
+         warnings.extend(_validate_image_registration(bundle, mode))
+ 
++    for bundle in bundles:
++        bundle.ca_spatial_sources = exported_particle_sim_sources(bundle, data_dir, provenance_payload)
++
+     warnings.extend(schema.prepare_ca_bundles(bundles, mode, canonical_length_unit))
+ 
+     return LoadedDataset(
+diff --git a/src/simcompare/adapters/particle_sim_run.py b/src/simcompare/adapters/particle_sim_run.py
+index 3e9d105..6aec01f 100644
+--- a/src/simcompare/adapters/particle_sim_run.py
++++ b/src/simcompare/adapters/particle_sim_run.py
+@@ -35,6 +35,7 @@ import pandas as pd
+ import yaml
+ 
+ from simcompare import schema
++from .regional import particle_sim_sources
+ 
+ SUPPORTED_SCHEMAS = ("1.0", "2.0")
+ NOT_APPLICABLE = "N/A"
+@@ -470,6 +471,19 @@ def _sample_id(meta: dict, step: str, unit: str) -> str:
+     return SAMPLE_ID_ALLOWED.sub("_", f"{meta['product_id']}-{meta['design_version']}-{step}-{unit}")
+ 
+ 
++def _upper_mask_layer(config: dict | None, layer: object) -> str | None:
++    """particle-sim의 생략 규칙: 착지 layer 바로 위 마스크 layer(patterned 또는 contact hole layer)."""
++    stack = sorted((config or {}).get("stack", []), key=lambda row: row.get("process_order", 0))
++    holes = {c.get("hole_layer") for c in (config or {}).get("contacts", []) if isinstance(c, dict)}
++    names = [row.get("layer_name") for row in stack]
++    if layer not in names:
++        return None
++    for row in stack[names.index(layer) + 1:]:
++        if row.get("patterned") or row.get("layer_name") in holes:
++            return row.get("layer_name")
++    return None
++
++
+ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping], store,
+                   config: dict | None, args,
+                   seen_ids: dict[str, tuple[str, tuple[str, str, str, str]]]) -> list[schema.AnalysisBundle]:
+@@ -489,7 +503,8 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
+             if not isinstance(source, dict) or source.get("step_id") in step_map:
+                 report.add("error", "contract", "source_steps", "duplicate or invalid configured source step")
+                 return []
+-            step_map[source.get("step_id")] = source.get("fab_distribution_layer")
++            step_map[source.get("step_id")] = source.get("fab_distribution_layer") or _upper_mask_layer(
++                config, source.get("lands_after_layer"))
+         for step, rows in ca.groupby("source_step", sort=False):
+             labels = rows.get("fab_distribution_layer")
+             if labels is None or not labels.map(lambda x: isinstance(x, str) and bool(x.strip()) and x == x.strip()).all() or labels.nunique() != 1:
+@@ -661,6 +676,12 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
+                 is_synthetic=meta["is_synthetic"],
+             ),
+         )
++        bundle.ca_spatial_sources = particle_sim_sources(
++            bundle, map_mode="nominal" if run.run_type == "nominal" else "mean",
++            ca_mode="mean" if use_mean else "nominal", source_step=str(step), unit_id=str(unit),
++            grid_pitch_xy=(run.manifest["pixel_size_x_um"], run.manifest["pixel_size_y_um"])
++            if run.manifest.get("pixel_size_x_um") is not None and run.manifest.get("pixel_size_y_um") is not None else None,
++        )
+         mode = args.mode
+         if vertical and config is None and mode == "real" and not modern:
+             # real 모드의 assigned_process_layer 필수 검사만 simcompare 적층표 단계로 넘긴다.
+diff --git a/src/simcompare/config.py b/src/simcompare/config.py
+index f5203c4..a25885d 100644
+--- a/src/simcompare/config.py
++++ b/src/simcompare/config.py
+@@ -14,6 +14,7 @@ from typing import Any
+ import yaml
+ 
+ from simcompare.schema import DataContractError, normalize_length_unit
++from simcompare.regional_schema import DEFAULT_CONSERVATION_ATOL_UM2, DEFAULT_CONSERVATION_RTOL
+ 
+ 
+ class ConfigError(DataContractError):
+@@ -78,6 +79,23 @@ class SplitConfig:
+     seed: int = 0
+ 
+ 
++@dataclass
++class RegionalConfig:
++    """지역 보고/적분 설정. 표시 여백은 정량 창이나 입자 모델을 바꾸지 않는다."""
++    enabled: bool = True
++    correspondence_file: str | None = None
++    source_manifest: str | None = None
++    connectivity: int = 8
++    merge_gap_um: float = 0.0
++    display_context_margin_um: float = 0.0
++    conservation_rtol: float = DEFAULT_CONSERVATION_RTOL
++    conservation_atol_um2: float = DEFAULT_CONSERVATION_ATOL_UM2
++    # 좌표/증감은 절대 오차만 사용한다. 큰 원점이나 0 baseline으로 오차를 확대하지 않는다.
++    coordinate_atol_um: float = 1e-9
++    delta_atol_um2: float = 1e-9
++    include_area_normalized: bool = False
++
++
+ @dataclass
+ class AnalysisConfig:
+     """이웃 수, 군집 수, layer 조건, 다른 제품만 보기, 필터, 크기 허용 비율, 제품 제외 비교 상위 개수,
+@@ -91,6 +109,7 @@ class AnalysisConfig:
+     loo_top_k: int = 5
+     neighborhood_space: str = "with_risk_ae"
+     pair_near_margin: float = 1.0
++    regional: RegionalConfig = field(default_factory=RegionalConfig)
+ 
+ 
+ @dataclass
+@@ -563,12 +582,38 @@ def _parse_split(raw: dict, path: str = "split") -> SplitConfig:
+     )
+ 
+ 
++def _parse_regional(raw: dict, path: str = "analysis.regional") -> RegionalConfig:
++    """지역 설정의 unknown/null/type/range를 검사한다. 경로는 load_config에서 푼다."""
++    defaults = RegionalConfig()
++    _check_unknown(raw, set(defaults.__dataclass_fields__), path)
++    values = {}
++    for key in ("enabled", "include_area_normalized"):
++        value = _opt_bool(raw, key, path)
++        values[key] = getattr(defaults, key) if value is None else value
++    for key in ("correspondence_file", "source_manifest"):
++        value = _opt_str(raw, key, path, allow_none=True)
++        if value is not None and not value.strip():
++            raise ConfigError(f"{path}.{key}: 비어 있지 않은 경로가 필요합니다")
++        values[key] = value
++    value = _opt_int(raw, "connectivity", path)
++    values["connectivity"] = defaults.connectivity if value is None else value
++    if values["connectivity"] not in (4, 8):
++        raise ConfigError(f"{path}.connectivity: 4 또는 8이어야 합니다")
++    for key in ("merge_gap_um", "display_context_margin_um", "conservation_rtol",
++                "conservation_atol_um2", "coordinate_atol_um", "delta_atol_um2"):
++        value = _opt_float(raw, key, path)
++        if value is not None and value < 0:
++            raise ConfigError(f"{path}.{key}: 0 이상이어야 합니다")
++        values[key] = getattr(defaults, key) if value is None else value
++    return RegionalConfig(**values)
++
++
+ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
+     """analysis 절을 읽는다."""
+     _check_unknown(raw, {
+         "k_neighbors", "n_clusters", "layer_policy",
+         "other_products_only", "filters", "size_tolerance", "loo_top_k",
+-        "neighborhood_space", "pair_near_margin",
++        "neighborhood_space", "pair_near_margin", "regional",
+     }, path)
+ 
+     k_neighbors = _opt_int(raw, "k_neighbors", path)
+@@ -631,6 +676,7 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
+         loo_top_k=loo_top_k,
+         neighborhood_space=neighborhood_space,
+         pair_near_margin=pair_near_margin,
++        regional=_parse_regional(_opt_dict(raw, "regional", path) or {}),
+     )
+ 
+ 
+@@ -745,6 +791,13 @@ def load_config(path: str | Path) -> AppConfig:
+         cfg.data.data_dir = str((parent / cfg.data.data_dir).resolve())
+     if cfg.output_dir and not Path(cfg.output_dir).is_absolute():
+         cfg.output_dir = str((parent / cfg.output_dir).resolve())
++    for key in ("correspondence_file", "source_manifest"):
++        value = getattr(cfg.analysis.regional, key)
++        if value is not None:
++            resolved = (parent / value).resolve()
++            if not resolved.is_file():
++                raise ConfigError(f"analysis.regional.{key}: 파일을 찾을 수 없습니다: {resolved}")
++            setattr(cfg.analysis.regional, key, str(resolved))
+     return cfg
+ 
+ 
+diff --git a/src/simcompare/pipeline.py b/src/simcompare/pipeline.py
+index 84c4ce8..1f30334 100644
+--- a/src/simcompare/pipeline.py
++++ b/src/simcompare/pipeline.py
+@@ -37,6 +37,7 @@ from simcompare.neighborhood import geometry_deltas, neighborhood_comparison
+ from simcompare.pair_geometry import pair_metrics_table
+ from simcompare.plots import write_analysis_figures
+ from simcompare.retrieval import search_all
++from simcompare.regional import write_regional_analysis
+ from simcompare.schema import DataContractError
+ from simcompare.split import (
+     assert_no_leakage, confounding_report, group_ids, group_split, leave_one_group_out,
+@@ -425,7 +426,12 @@ def run_analyze(cfg) -> dict:
+                  "clusters.json", "cluster_map.png", "loo_stability.csv", "shape_features.csv",
+                  "neighborhood_comparison.csv", "neighborhood_geometry.csv", "edit_candidates.json",
+                  "edit_candidates.csv", "variant_comparison.csv", "review_cards.json"]
+-    return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures], "n_cards": len(cards),
++    # 지역 분석은 원본 bundle만 받으며 기존 검색/편집 후보 계산에 결과를 되먹이지 않는다.
++    regional = write_regional_analysis(loaded.bundles, cfg.analysis.regional, out)
++    record["regional"] = regional.run_record
++    _write_json(record_path, record)
++    return {"outputs": [str(out / n) for n in names_out] + [str(f) for f in figures]
++            + [str(f) for f in regional.outputs], "n_cards": len(cards),
+             "n_neighbor_rows": len(neighbors)}
+ 
+ 
+diff --git a/src/simcompare/schema.py b/src/simcompare/schema.py
+index 42dad93..6ddd2ad 100644
+--- a/src/simcompare/schema.py
++++ b/src/simcompare/schema.py
+@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
+ 
+ import numpy as np
+ 
++from .regional_schema import SpatialCASource
++
+ FAILURE_TYPES = ("lateral_open", "lateral_short", "vertical_short")
+ OPEN_TYPES = ("lateral_open",)
+ NOT_APPLICABLE = "N/A"
+@@ -183,6 +185,7 @@ class AnalysisBundle:
+     provenance: Provenance = field(default_factory=lambda: Provenance(adapter="unknown"))
+     fab_pair_key: str | None = None
+     mapping_contract_version: str | None = None
++    ca_spatial_sources: list[SpatialCASource] = field(default_factory=list)
+ 
+     @property
+     def is_open(self) -> bool:
+diff --git a/tests/test_cli_e2e.py b/tests/test_cli_e2e.py
+index 8647f6d..e5ded10 100644
+--- a/tests/test_cli_e2e.py
++++ b/tests/test_cli_e2e.py
+@@ -25,6 +25,8 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
+                  "loo_stability.csv", "review_cards.json", "evaluation.json",
+                  "neighborhood_comparison.csv", "neighborhood_geometry.csv", "edit_candidates.json",
+                  "edit_candidates.csv", "variant_comparison.csv",
++                 "regional_report.html", "regional_summary.json", "regional_measurements.csv",
++                 "regional_comparisons.csv",
+                  "figures/rank_shift.svg", "figures/ca_curves.svg", "figures/loo_stability.svg"):
+         assert (out / name).exists(), name
+     split = json.loads((out / "split.json").read_text())
+@@ -42,6 +44,10 @@ def test_cli_full_demo_run_on_cpu(tmp_path, capsys):
+     features = (out / "shape_features.csv").read_text().splitlines()[0]
+     assert "pair:min_gap" in features and "pair:a_min_width" in features
+     assert "DEMO 모드" in capsys.readouterr().err
++    regional = json.loads((out / "regional_summary.json").read_text())
++    assert regional["schema_version"] == "1" and regional["source_validations"]
++    assert all(row["status"] == "unavailable" for row in regional["source_validations"])
++    assert json.loads((out / "run_record.json").read_text())["regional"]["enabled"]
+ 
+ 
+ def test_cli_reports_contract_errors(tmp_path, capsys):
+diff --git a/tests/test_config_contract.py b/tests/test_config_contract.py
+index c286fae..e5d3c9b 100644
+--- a/tests/test_config_contract.py
++++ b/tests/test_config_contract.py
+@@ -25,3 +25,51 @@ def test_contract_gate():
+     bad(("split", "test_fraction"), nan); bad(("analysis", "size_tolerance"), nan)
+     raw = copy.deepcopy(base); raw["analysis"]["size_tolerance"] = None; raw["caa"]["reference_distribution_id"] = None
+     config_from_dict(raw)
++
++
++def test_regional_config_defaults_and_strict_values():
++    import copy
++    from pathlib import Path
++    import pytest
++    import yaml
++    from simcompare.config import ConfigError, config_from_dict
++    base = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs/demo.yaml").read_text())
++    regional = config_from_dict(base).analysis.regional
++    assert regional.enabled and regional.connectivity == 8
++    assert regional.source_manifest is None and regional.correspondence_file is None
++    assert regional.conservation_rtol == 1e-6 and regional.conservation_atol_um2 == 1e-9
++    assert not regional.include_area_normalized
++    invalid = [{"unknown":1}, {"enabled":None}, {"enabled":1}, {"connectivity":5},
++               {"connectivity":True}, {"connectivity":None}, {"merge_gap_um":-1},
++               {"conservation_rtol":float("nan")}, {"coordinate_atol_um":float("inf")},
++               {"delta_atol_um2":None}, {"source_manifest":False}, {"source_manifest":""},
++               {"include_area_normalized":None}]
++    for values in invalid:
++        raw = copy.deepcopy(base)
++        raw.setdefault("analysis",{})["regional"] = values
++        with pytest.raises(ConfigError):
++            config_from_dict(raw)
++    raw = copy.deepcopy(base)
++    raw.setdefault("analysis",{})["regional"] = None
++    with pytest.raises(ConfigError):
++        config_from_dict(raw)
++    raw["analysis"]["regional"] = {"source_manifest":None,"correspondence_file":None,"enabled":False,"connectivity":4}
++    assert config_from_dict(raw).analysis.regional.connectivity == 4
++
++
++def test_regional_config_paths_resolve_from_yaml_and_require_files(tmp_path):
++    from pathlib import Path
++    import pytest
++    import yaml
++    from simcompare.config import ConfigError, load_config
++    base = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs/demo.yaml").read_text())
++    base.setdefault("analysis",{})["regional"] = {"source_manifest":"source.json","correspondence_file":"pairs.json"}
++    path = tmp_path / "config.yaml"
++    path.write_text(yaml.safe_dump(base))
++    with pytest.raises(ConfigError,match="source_manifest|correspondence_file"):
++        load_config(path)
++    for name in ("source.json","pairs.json"):
++        (tmp_path/name).write_text("{}")
++    cfg = load_config(path)
++    assert cfg.analysis.regional.source_manifest == str(tmp_path / "source.json")
++    assert cfg.analysis.regional.correspondence_file == str(tmp_path / "pairs.json")
+diff --git a/tests/test_particle_sim_export_integration.py b/tests/test_particle_sim_export_integration.py
+index 6ed0421..e8e0a2f 100644
+--- a/tests/test_particle_sim_export_integration.py
++++ b/tests/test_particle_sim_export_integration.py
+@@ -56,7 +56,10 @@ for name in ('pilot', 'open_straight', 'auto_open'):
+                                          applicable_particle_source_steps=['S_M1'])]
+         case.manifest['open_applicable_steps_by_layer'] = {'M1': [], 'M2': ['S_M2']}
+     for step in case.manifest['particle_source_steps']:
+-        step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
++        if name == 'pilot':  # schema 1.0 keeps a free Fab label
++            step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
++        else:  # schema 2.0 derives the mask layer directly above the landing layer
++            step.pop('fab_distribution_layer', None)
+     manifest = write_case(case, base / name / 'case')
+     if name != 'pilot':
+         Image.fromarray(holes.astype(np.uint8)*255).save(manifest.parent / 'masks/contact.png')
+@@ -108,6 +111,13 @@ def test_export_load_contract(tmp_path):
+             rows = raw[(raw.source_step == step) & (raw[id_col] == unit)].sort_values('particle_size_um')
+             np.testing.assert_allclose(bundle.ca.values, rows.ca_nominal_um2)
+             np.testing.assert_allclose(bundle.ca.particle_sizes, rows.particle_size_um)
++            # 원본 nominal 생성 map 전체 적분이 같은 unit/step/지름 CA를 보존해야 한다.
++            assert len(bundle.ca_spatial_sources) == len(bundle.ca.values)
++            for source in bundle.ca_spatial_sources:
++                assert source.validation.status == 'available'
++                assert source.validation.integrated_total_um2 == pytest.approx(source.total_ca)
++                assert source.provenance['source_step'] == step
++                assert source.provenance['unit_id'] == unit
+             assert len(bundle.layouts) == (1 if bundle.is_open else 2)
+             if bundle.is_open:
+                 assert bundle.electrode_b_role == bundle.layer_b == 'N/A'
+@@ -180,3 +190,6 @@ def test_export_roi_area_ratio_is_four_not_sixteen(tmp_path):
+         np.testing.assert_array_equal(large[sid].ca.values, small[sid].ca.values)
+         ratio = small[sid].ca_per_area()[0] / large[sid].ca_per_area()[0]
+         np.testing.assert_array_equal(ratio, np.full_like(ratio, 4.0))
++        # 이 fixture는 scalar만 의도적으로 덮어썼으므로 map에 맞춰 rescale하면 안 된다.
++        assert large[sid].ca_spatial_sources
++        assert all(s.validation.reason == 'conservation_failed' for s in large[sid].ca_spatial_sources)

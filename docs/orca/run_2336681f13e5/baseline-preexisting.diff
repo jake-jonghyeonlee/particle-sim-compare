@@ -1,0 +1,86 @@
+diff --git a/docs/open_questions.md b/docs/open_questions.md
+index 55faa6d..1a44db5 100644
+--- a/docs/open_questions.md
++++ b/docs/open_questions.md
+@@ -8,15 +8,26 @@
+ | Hotspot 색상·투명도·축척 | grayscale 강도를 "가공 강도"로만 사용 | 범례(`data.hotspot_legend`) 없으면 확률 변환 금지 | `preprocess.legend_to_values`, 어댑터 |
+ | CA 의미·범위 | legacy **확정**: 0~1 무차원 확률 기반 누적 위험값, 보통 최대 0.02~0.03, 면적 정규화 전 값. particle-sim 면적 규칙은 provisional; 환산 근거 확정 전 교차 계열 비교 금지 | 원 CA와 `CA / unit-pixel 면적`을 함께 사용; 혼합 계열 real 오류/demo 경고 | `schema.AnalysisBundle.ca_per_area`; 계산 담당자 환산 기준 확인 |
+ | Fab 자료 | **확정**: 특정 기간의 glass 1장당 평균 검출 개수와 glass 한 장의 실제 조사 면적을 가공자료로 입력 | `fab_measurements.csv`, 총량은 조사 면적으로 정규화 | `adapters.example`, `caa.fab_shape_and_total` |
+-| CAA 실제 계산식 | `demo_probability_per_bin`: 동일 크기 격자의 확률 가중치 × CA 합 | demo 규칙 사용 시 설정 오류, 확정 규칙 미구현 시 `CAAError` | `caa.interpret_fab`에 확정 규칙 추가, `caa.confirmed: true` |
++| CAA 실제 계산식 | **2026-10-01 사용자 결정**: 실제 Fab 가중은 폐쇄망에서 확인 후 확정. 현재는 `demo_probability_per_bin`: 동일 크기 격자의 확률 가중치 × CA 합 | demo 규칙 사용 시 설정 오류, 확정 규칙 미구현 시 `CAAError`. 확정 전 CA 기반 비교·위치 리포트는 별도 진행 | `caa.interpret_fab`에 확정 규칙 추가, `caa.confirmed: true` |
+ | 크기 격자 | 확정: 1–30 um 1 um 간격 + 40, 50 um (32개), CA·hotspot·Fab 전체 제공 | `exact`, 보간하지 않음 | `data.ca_alignment` |
+ | Vertical short 적용 공정 layer | **2026-09-27 계약 1.2**: source-step Fab layer; **legacy(미표시/1.1)**: 적층표 상부 Fab layer | `layer_stack.csv`가 없거나 순서를 판정할 수 없으면 오류 | 입력 데이터/어댑터 |
+-| 제품 간 layer 대응·비교 가능 조건 | layer 이름 문자열 일치(`layer_policy: exact`) 또는 무시(`ignore`) | 대응표 없음 | `retrieval.candidate_mask`에 대응표 추가 |
++| 이물 유입 공정의 Fab 분포 layer | **결정**(2026-09-30): 착지 layer 바로 위 마스크 layer(patterned 또는 contact hole layer, 마스크 없는 절연막 제외)의 Fab 값을 쓴다. particle-sim manifest가 `fab_distribution_layer`를 이 규칙으로 정하고, 계약 1.2 export는 그 값을 `assigned_process_layer`로 넘긴다. 위에 마스크 layer가 없으면 manifest에 직접 적는다 | compare는 `assigned_process_layer`를 그대로 쓴다(추정하지 않음) | particle-sim `ProductManifest.upper_mask_layer`, extractor `export_config.upper_mask_row` |
++| 제품 간 전극/layer 대응·비교 가능 조건 | **2026-10-01 사용자 결정**: 제품 전극/layer 대응표는 실사용 시 추가. 현재 layer 이름 문자열 일치(`layer_policy: exact`) 또는 무시(`ignore`) | 대응표 연결 미구현. 대응 불명은 부재·위험 0으로 해석하지 않음 | 대응표 입력 계약과 `retrieval.candidate_mask` 및 비교 리포트에 대응표 적용 |
+ | Lateral open 전극 치수 정의 | 형상 수치(`shape_metrics`)의 이름만 전달, 의미 해석 없음 | 해석하지 않음 | `geometry.json` 정의 확정 |
+-| 국부 이미지 범위·이물 영향 영역 | 전체 이미지만 사용 | 국부 조각 미지원 | 확장 지점: 같은 `sample_id` 아래 추가 이미지 목록 (독립 제품으로 취급 금지) |
++| 국부 이미지 범위·이물 영향 영역 | **2026-10-01 사용자 확정**: hotspot 좌표는 이물 전체 크기를 포함한 궤적이며, 비교 영역은 hotspot을 포함한 영역으로 선정 | 현재 국부 비교 미구현. 이물 중심 좌표로 간주하거나 이물 반경으로 다시 팽창하지 않음 | 같은 `sample_id` 아래 영역 ID·좌표·실제 크기·대상 이물 크기 연결 및 국부 리포트 추가 |
+ | 전문가 검토 기준·개선 후보 제약 | 간격·폭·평행 길이·겹침·우회 후보를 넓게 제시하고 사람이 검토 | 외부 저항·Cap·coupling·신호·DRC·다른 short/open 결과 상태만 연결 | `cards.build_review_cards` |
+ | 전문가 정답 라벨 | 현재 없음 | 정확도·precision·recall을 주장하지 않고 held-out 반복성만 보고 | `pipeline.run_evaluate` |
+ | 학습/평가 분리 단위 | 제품 ID와 설계 계열 ID의 연결 성분 | 그룹 2개 미만이면 오류 | `split.group_split` |
+-| CNO(`contact_not_open`, contact·via hole 막힘) 불량 유형 | **보류**(2026-09-27): `FAILURE_TYPES`에 없음. particle-sim exporter는 CNO unit을 제외하고 `export_warnings.json`에 남기며, `particle_sim_run` 검사기는 미지원 경고를 낸다 | 기본은 경고, `--strict`면 실패 | 재개 시 결정: hole 형상 표현(3번째 layout 또는 형상 수치), 아래·위 전극 식별, 가림 기준(잠정: hole 면적 절반 이상, hole 하나라도 막히면 CNO), Fab layer(hole layer 이물 불량 Fab 자료는 있음), CAA에서 자동 open과의 중복 방지. 수정 위치: `schema.FAILURE_TYPES`, 어댑터, `dataset`/`model`(layout 2 slot 고정), `caa`, 분석·카드 |
+-| open 불량 회피안(선폭 보강) | **보류**(2026-09-29): 금속을 추가하는 편집이 없어 `edit_candidates`는 open 질의를 사유와 함께 건너뛴다(`edit_candidates.csv`의 `status=skipped`). 비교군 비교와 선폭 차이(`pair:a_min_width`)는 계속 계산한다 | 편집 후보 없음 | 재개 시 결정: particle-sim `make-variant`에 국소 추가(보강) 편집을 넣을지, 설계자 YAML로만 처리할지. 수정 위치: particle-sim `variant/edits.py`, simcompare `variants.edit_candidates` |
++| CNO(`contact_not_open`, contact·via hole 막힘) 불량 유형 | **결정**(2026-09-30): compare에 넣지 않고 particle-sim 단독 항목으로 둔다. `FAILURE_TYPES`에 없음. particle-sim exporter는 CNO unit을 제외하고 `export_warnings.json`에 남기며, `particle_sim_run` 검사기는 미지원 경고를 낸다. 가림 기준은 particle-sim에서 "margin 없는 이물 원판이 hole 중심을 덮으면 막힘, hole 하나라도 막히면 CNO"로 확정(`cno_coverage_rule=hole_centre_any_hole`) | 기본은 경고, `--strict`면 실패 | 없음(결정이 바뀌면 `schema.FAILURE_TYPES`, 어댑터, `dataset`/`model`, `caa`, 분석·카드) |
++| open 불량 회피안(선폭 보강) | **결정**(2026-09-30): 보강(금속 추가) 편집은 하지 않는다. `edit_candidates`는 open 질의를 사유와 함께 건너뛴다(`edit_candidates.csv`의 `status=skipped`). 비교군 비교와 선폭 차이(`pair:a_min_width`)는 참고용으로 계속 계산한다 | 편집 후보 없음 | 없음 |
+ | 설계 규칙(최소 선폭·간격) 입력 | **보류**(2026-09-29): 입력 가능 여부 미확인 | 규칙 위반 편집 후보도 걸러지지 않고 제시된다. 다른 불량 증가 허용 여부와 함께 설계자가 판단 | 재개 시 `analysis` 설정 또는 별도 규칙 파일, `variants.edit_candidates`에서 후보 제외 |
++
++## 2026-10-01 결정에 따른 구현 기준
++
++아래는 사용자 확정 사항을 반영한 후속 구현 기준이며, 기능 구현 완료를 뜻하지 않는다.
++
++- Hotspot은 이물의 전체 크기가 이미 반영된 궤적이다. 표시·위치 선정에 이를 그대로 사용하고, 이물 크기를 반영한다는 이유로 다시 팽창시키지 않는다. 주변 전극을 보기 위한 문맥 여백은 별도 설정으로 구분한다.
++- 비교 영역은 hotspot을 포함하도록 잡는다. 위치 정렬이 가능한 비교에서는 양쪽 hotspot과 비교할 이물 크기들의 범위를 포함하는 공통 창을 고정하여, 각각 다른 crop 면적 때문에 증감이 달라지지 않도록 한다. 정렬이 불가능하면 위치별 차영상·직접 증감은 제공하지 않고 별도 영역으로 표시한다.
++- 궤적의 합집합 면적이 CA 계산값과 같다고 가정하지 않는다. CA 수치는 기존 시뮬레이션 결과에서 읽고, hotspot은 위치 근거로 연결한다. 국부 CA는 원 계산 정의에 맞는 영역별 기여 데이터 또는 별도 계산이 확보되어야 제공하며, 화면 밝기나 궤적 픽셀 수를 임의로 CA로 바꾸지 않는다.
++- 대응표는 실사용 시 사용자가 제공한다. 사전 개발은 입력 형식과 연결 지점을 준비할 수 있으나, 대응 관계를 임의 확정하지 않는다. Fab 가중은 폐쇄망에서 확인하며, 미확정 동안 Fab 가중 점수·수율 환산을 제시하지 않는다.
++- 보고용 취약부는 hotspot을 포함한 영역으로 선정한다. 향후 Tree 학습 표본은 이와 구분하여 비취약 영역도 포함하고, hotspot은 정답·위치 근거로만 사용해 정답 누출을 방지한다.
+diff --git a/src/simcompare/adapters/particle_sim_run.py b/src/simcompare/adapters/particle_sim_run.py
+index 3e9d105..cb22ce9 100644
+--- a/src/simcompare/adapters/particle_sim_run.py
++++ b/src/simcompare/adapters/particle_sim_run.py
+@@ -470,6 +470,19 @@ def _sample_id(meta: dict, step: str, unit: str) -> str:
+     return SAMPLE_ID_ALLOWED.sub("_", f"{meta['product_id']}-{meta['design_version']}-{step}-{unit}")
+ 
+ 
++def _upper_mask_layer(config: dict | None, layer: object) -> str | None:
++    """particle-sim의 생략 규칙: 착지 layer 바로 위 마스크 layer(patterned 또는 contact hole layer)."""
++    stack = sorted((config or {}).get("stack", []), key=lambda row: row.get("process_order", 0))
++    holes = {c.get("hole_layer") for c in (config or {}).get("contacts", []) if isinstance(c, dict)}
++    names = [row.get("layer_name") for row in stack]
++    if layer not in names:
++        return None
++    for row in stack[names.index(layer) + 1:]:
++        if row.get("patterned") or row.get("layer_name") in holes:
++            return row.get("layer_name")
++    return None
++
++
+ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping], store,
+                   config: dict | None, args,
+                   seen_ids: dict[str, tuple[str, tuple[str, str, str, str]]]) -> list[schema.AnalysisBundle]:
+@@ -489,7 +502,8 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
+             if not isinstance(source, dict) or source.get("step_id") in step_map:
+                 report.add("error", "contract", "source_steps", "duplicate or invalid configured source step")
+                 return []
+-            step_map[source.get("step_id")] = source.get("fab_distribution_layer")
++            step_map[source.get("step_id")] = source.get("fab_distribution_layer") or _upper_mask_layer(
++                config, source.get("lands_after_layer"))
+         for step, rows in ca.groupby("source_step", sort=False):
+             labels = rows.get("fab_distribution_layer")
+             if labels is None or not labels.map(lambda x: isinstance(x, str) and bool(x.strip()) and x == x.strip()).all() or labels.nunique() != 1:
+diff --git a/tests/test_particle_sim_export_integration.py b/tests/test_particle_sim_export_integration.py
+index 6ed0421..9d904e7 100644
+--- a/tests/test_particle_sim_export_integration.py
++++ b/tests/test_particle_sim_export_integration.py
+@@ -56,7 +56,10 @@ for name in ('pilot', 'open_straight', 'auto_open'):
+                                          applicable_particle_source_steps=['S_M1'])]
+         case.manifest['open_applicable_steps_by_layer'] = {'M1': [], 'M2': ['S_M2']}
+     for step in case.manifest['particle_source_steps']:
+-        step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
++        if name == 'pilot':  # schema 1.0 keeps a free Fab label
++            step['fab_distribution_layer'] = 'SOURCE_' + step['step_id']
++        else:  # schema 2.0 derives the mask layer directly above the landing layer
++            step.pop('fab_distribution_layer', None)
+     manifest = write_case(case, base / name / 'case')
+     if name != 'pilot':
+         Image.fromarray(holes.astype(np.uint8)*255).save(manifest.parent / 'masks/contact.png')

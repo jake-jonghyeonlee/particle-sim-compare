@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from simcompare.schema import DataContractError, normalize_length_unit
+from simcompare.regional_schema import DEFAULT_CONSERVATION_ATOL_UM2, DEFAULT_CONSERVATION_RTOL
 
 
 class ConfigError(DataContractError):
@@ -79,6 +80,23 @@ class SplitConfig:
 
 
 @dataclass
+class RegionalConfig:
+    """지역 보고/적분 설정. 표시 여백은 정량 창이나 입자 모델을 바꾸지 않는다."""
+    enabled: bool = True
+    correspondence_file: str | None = None
+    source_manifest: str | None = None
+    connectivity: int = 8
+    merge_gap_um: float = 0.0
+    display_context_margin_um: float = 0.0
+    conservation_rtol: float = DEFAULT_CONSERVATION_RTOL
+    conservation_atol_um2: float = DEFAULT_CONSERVATION_ATOL_UM2
+    # 좌표/증감은 절대 오차만 사용한다. 큰 원점이나 0 baseline으로 오차를 확대하지 않는다.
+    coordinate_atol_um: float = 1e-9
+    delta_atol_um2: float = 1e-9
+    include_area_normalized: bool = False
+
+
+@dataclass
 class AnalysisConfig:
     """이웃 수, 군집 수, layer 조건, 다른 제품만 보기, 필터, 크기 허용 비율, 제품 제외 비교 상위 개수,
     유사 제품 비교군을 만들 공간, 좁은 간격 구간을 셀 여유 폭(canonical 길이 단위)."""
@@ -91,6 +109,7 @@ class AnalysisConfig:
     loo_top_k: int = 5
     neighborhood_space: str = "with_risk_ae"
     pair_near_margin: float = 1.0
+    regional: RegionalConfig = field(default_factory=RegionalConfig)
 
 
 @dataclass
@@ -563,12 +582,38 @@ def _parse_split(raw: dict, path: str = "split") -> SplitConfig:
     )
 
 
+def _parse_regional(raw: dict, path: str = "analysis.regional") -> RegionalConfig:
+    """지역 설정의 unknown/null/type/range를 검사한다. 경로는 load_config에서 푼다."""
+    defaults = RegionalConfig()
+    _check_unknown(raw, set(defaults.__dataclass_fields__), path)
+    values = {}
+    for key in ("enabled", "include_area_normalized"):
+        value = _opt_bool(raw, key, path)
+        values[key] = getattr(defaults, key) if value is None else value
+    for key in ("correspondence_file", "source_manifest"):
+        value = _opt_str(raw, key, path, allow_none=True)
+        if value is not None and not value.strip():
+            raise ConfigError(f"{path}.{key}: 비어 있지 않은 경로가 필요합니다")
+        values[key] = value
+    value = _opt_int(raw, "connectivity", path)
+    values["connectivity"] = defaults.connectivity if value is None else value
+    if values["connectivity"] not in (4, 8):
+        raise ConfigError(f"{path}.connectivity: 4 또는 8이어야 합니다")
+    for key in ("merge_gap_um", "display_context_margin_um", "conservation_rtol",
+                "conservation_atol_um2", "coordinate_atol_um", "delta_atol_um2"):
+        value = _opt_float(raw, key, path)
+        if value is not None and value < 0:
+            raise ConfigError(f"{path}.{key}: 0 이상이어야 합니다")
+        values[key] = getattr(defaults, key) if value is None else value
+    return RegionalConfig(**values)
+
+
 def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
     """analysis 절을 읽는다."""
     _check_unknown(raw, {
         "k_neighbors", "n_clusters", "layer_policy",
         "other_products_only", "filters", "size_tolerance", "loo_top_k",
-        "neighborhood_space", "pair_near_margin",
+        "neighborhood_space", "pair_near_margin", "regional",
     }, path)
 
     k_neighbors = _opt_int(raw, "k_neighbors", path)
@@ -631,6 +676,7 @@ def _parse_analysis(raw: dict, path: str = "analysis") -> AnalysisConfig:
         loo_top_k=loo_top_k,
         neighborhood_space=neighborhood_space,
         pair_near_margin=pair_near_margin,
+        regional=_parse_regional(_opt_dict(raw, "regional", path) or {}),
     )
 
 
@@ -745,6 +791,13 @@ def load_config(path: str | Path) -> AppConfig:
         cfg.data.data_dir = str((parent / cfg.data.data_dir).resolve())
     if cfg.output_dir and not Path(cfg.output_dir).is_absolute():
         cfg.output_dir = str((parent / cfg.output_dir).resolve())
+    for key in ("correspondence_file", "source_manifest"):
+        value = getattr(cfg.analysis.regional, key)
+        if value is not None:
+            resolved = (parent / value).resolve()
+            if not resolved.is_file():
+                raise ConfigError(f"analysis.regional.{key}: 파일을 찾을 수 없습니다: {resolved}")
+            setattr(cfg.analysis.regional, key, str(resolved))
     return cfg
 
 

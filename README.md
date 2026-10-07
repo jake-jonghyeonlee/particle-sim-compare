@@ -92,6 +92,14 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 
 ## 실제 데이터 연결
 
+위치 중심 지역 CA 보고서는 기본 `analyze`의 부가 출력이다. 학습 없이 대표 합성 사례를
+보려면 `.venv/bin/python scripts/regional_demo.py`를 실행하고
+`outputs/regional-demo/regional_report.html`을 연다. HTML은 inline 그림을 포함하며
+JSON/측정 CSV/비교 CSV와 `figures/regional/*.svg`도 생성된다.
+실제 local delta에는 정량 원본 source, 명시 전극/layer/공정 대응과 좌표 등록이 필요하다.
+원천 누락/미등록은 사유와 null로 남으며 Fab 가중·수율·Tree·자동 설계 편집은 수행하지 않는다.
+설정, 원천 manifest/대응표 예제와 확장 경계는 [지역 분석 안내](docs/regional_analysis.md)를 참고한다.
+
 1. **어댑터 작성**: `src/simcompare/adapters/example.py`를 참고해 원본 형식을 `AnalysisBundle`/`FabDistribution`(`src/simcompare/schema.py`)으로 바꾸는 `load_dataset`을 만든다. 형식이 같다면 예시 어댑터를 그대로 쓴다. 파일 형식과 규칙은 [docs/data_contract.md](docs/data_contract.md)에 있다.
 2. **설정 작성**: `configs/real.example.yaml`을 복사해 `data.data_dir`, `ca_grid`, `hotspot_sizes`, `fab_grid`를 실제 격자로 맞춘다.
 3. **도메인 입력 작성**: [docs/domain-input-example](docs/domain-input-example/README.md)을 참고해 `fab_measurements.csv`와 `layer_stack.csv`를 작성한다. CAA 규칙을 확정해 `caa.interpret_fab`에 추가하고 `caa.confirmed: true`로 명시하기 전까지 CAA 값은 사유와 함께 비어 있다.
@@ -125,3 +133,9 @@ uv run simcompare all --config configs/demo.yaml --demo-out demo_data
 이 저장소는 로컬 Mac mini 오케스트레이터(mmo)로 구현했다. 계약 문서와 공통 schema는 계획 단계에서 작성했고, 기본 모듈은 로컬 Qwen(OpenCode) 작업으로 생성한 뒤 Codex/Claude 독립 검토의 blocking finding을 반영했다. 통합 계층(dataset/train/baseline/synthetic/analysis/checks/cards/pipeline/cli)과 테스트 일부는 직접 작성했다. 자세한 작업 기록은 오케스트레이터 상태 DB에 보존되어 있다.
 
 CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은 `ca_mean_um2`)를 `um^2`로 전달합니다. ROI 크기는 유지하고 simcompare에서 한 번만 면적으로 나눠 `ca_area_unit="1"`로 기록합니다. legacy 무차원 입력은 기존 `1/um^2` 경로를 유지합니다. 도메인 해석은 담당자 확인 필요입니다. 면적 CA는 적재/분석 전에 canonical 길이 제곱으로 통일하며 CAA 단위는 `relative_index*um^2`(legacy: `relative_index`)다. 두 단위 계열 혼합은 real 오류/demo 경고이며, 수정 전 particle-sim 무차원 export는 재-export해야 한다.
+
+확정된 binary nominal hotspot은 한 원천·지름 안에서 활성 픽셀 기여가 같다.
+PNG 0/255와 정수 NPY 0/255는 0/1·`binary`로 읽으며 다른 범례 없는 NPY는 [0,1]만 허용한다.
+일반식은 `CA_R = k(source,d) × N_active,R`이고 particle-sim 면적 nominal만 `k = pitch²`다.
+binary 라벨만으로 정량 원천을 승격하거나 legacy 무차원 CA를 µm²로 환산하지 않는다.
+분모와 비교 범위의 제한은 [지역 분석 계약](docs/regional_analysis.md)을 따른다.

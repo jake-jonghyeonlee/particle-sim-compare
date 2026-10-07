@@ -169,3 +169,103 @@ def test_merge_exports_rejects_conflicts(tmp_path):
     with pytest.raises(DataContractError, match="두 개 이상"):
         merge_exports([base], tmp_path / "o4")
     assert main(["merge-exports", "--out", str(tmp_path / "o5"), str(base)]) == 2
+
+
+def test_binary_roi_considers_large_component_after_small_raster_first_component():
+    from simcompare.variants import _roi
+
+    heat = np.zeros((80, 80), dtype=np.float32)
+    heat[1:3, 1:3] = 1
+    heat[50:54, 50:55] = 1
+    edited = np.zeros_like(heat, dtype=bool)
+    edited[51, 52] = True
+    other = np.zeros_like(edited)
+    other[51, 60] = True
+    bundle = _bundle("binary", "lateral_short", edited, other, heat)
+    roi, source = _roi(bundle, [4.0], 0.5, edited, other, edited)
+    assert source == "hotspot@4"
+    assert roi == [21.0, 21.0, 31.5, 31.0]
+
+
+def test_graded_roi_keeps_first_max_component_and_legacy_fallback():
+    from simcompare.variants import _roi, _bbox_um, _closest_zone
+
+    heat = np.zeros((80, 80), dtype=np.float32)
+    heat[1:3, 1:3] = 1
+    heat[50:54, 50:55] = 0.75
+    edited = np.zeros_like(heat, dtype=bool)
+    edited[51, 52] = True
+    other = np.zeros_like(edited)
+    other[51, 60] = True
+    bundle = _bundle("graded", "lateral_short", edited, other, heat)
+    roi, source = _roi(bundle, [4.0], 0.5, edited, other, edited)
+    assert source == "closest_zone"
+    assert roi == _bbox_um(_closest_zone(edited, other), 0.5, 4.0)
+
+
+def test_binary_roi_checkerboard_has_linear_memory():
+    import tracemalloc
+    from simcompare.variants import _roi
+
+    rows, cols = np.indices((128, 128))
+    heat = ((rows + cols) % 2 == 0).astype(np.float32)
+    edited = np.zeros_like(heat, dtype=bool)
+    edited[0, 0] = True
+    bundle = _bundle("checkerboard", "lateral_short", edited, edited, heat)
+    tracemalloc.start()
+    try:
+        result = _roi(bundle, [4.0], 0.5, edited, edited, edited)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert result == ([0.0, 0.0, 4.5, 4.5], "hotspot@4")
+    # 8192개 성분의 전체 마스크만 128 MiB다. 16 MiB 제한은 메타데이터·누적합에는 충분하다.
+    assert peak < 16 * 1024 * 1024, peak
+
+
+def _reference_binary_roi(bundle, edited):
+    from simcompare.variants import _bbox_um, _contains, _flood, _closest_zone
+
+    remaining = bundle.hotspots[0].array > 0
+    components = []
+    while remaining.any():
+        first = tuple(np.argwhere(remaining)[0])
+        component = _flood(remaining, first)
+        components.append(component)
+        remaining[component] = False
+    components.sort(key=lambda component: (-int(component.sum()), tuple(np.argwhere(component)[0])))
+    for component in components:
+        roi = _bbox_um(component, 0.5, 4.0)
+        if _contains(roi, edited, 0.5):
+            return roi, "hotspot@4"
+    return _bbox_um(_closest_zone(edited, edited), 0.5, 4.0), "closest_zone"
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_binary_roi_matches_small_random_reference_with_area_ties(seed):
+    from simcompare.variants import _roi
+
+    rng = np.random.default_rng(seed)
+    heat = (rng.random((32, 32)) < 0.12).astype(np.float32)
+    edited = rng.random(heat.shape) < (0.02 if seed % 2 else 0)
+    bundle = _bundle("random", "lateral_short", edited, edited, heat)
+    assert _roi(bundle, [4.0], 0.5, edited, edited, edited) == _reference_binary_roi(bundle, edited)
+
+
+@pytest.mark.parametrize("pixel_um", [0.1, 0.5, 1.3])
+def test_prefix_contains_matches_legacy_at_random_and_exact_center_bounds(pixel_um):
+    from simcompare.variants import _contains, _contains_prefix, _edited_prefix
+
+    rng = np.random.default_rng(715)
+    edited = rng.random((17, 23)) < 0.08
+    prefix, xs, ys = _edited_prefix(edited, pixel_um)
+    bounds = []
+    for _ in range(100):
+        x0, x1 = sorted(rng.uniform(-pixel_um, 25 * pixel_um, 2))
+        y0, y1 = sorted(rng.uniform(-pixel_um, 19 * pixel_um, 2))
+        bounds.append([x0, y0, x1, y1])
+    # 닫힌 경계가 픽셀 중심에 정확히 겹쳐도 기존 포함 판정과 같아야 한다.
+    for y, x in ((0, 0), (8, 11), (16, 22)):
+        bounds.extend([[xs[x], ys[y], xs[x], ys[y]], [xs[0], ys[0], xs[x], ys[y]]])
+    for roi in bounds:
+        assert _contains_prefix(roi, prefix, xs, ys) == _contains(roi, edited, pixel_um)

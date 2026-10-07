@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image
 
 from simcompare import schema
+from .regional import exported_particle_sim_sources
 from simcompare.preprocess import legend_to_values
 
 REAL_PARTICLE_SIZE_GRID_UM = (*range(1, 31), 40, 50)
@@ -110,12 +111,14 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
     """이미지 파일 하나를 읽어 (float32 배열, 값 의미, 범례 ID)를 반환한다.
 
     - .npy: allow_pickle=False로 읽으며 2차원이어야 한다.
-    - .png: hotspot이고 범례가 있으면 범례로 변환(probability), 그 외는 흑백 0~1(processed_intensity).
+    - 범례 없는 hotspot은 정확한 0/1이면 binary, 그 외 [0,1] 값은 processed_intensity다.
+    - 정수 NPY의 정확한 0/255 인코딩과 PNG는 0/1로 복원한다. 범례 PNG는 probability다.
     - layout은 0.5 기준으로 이진화(binary)한다.
     읽기 실패나 범례 대응 실패는 DataContractError로 알린다.
     """
     path = Path(path)
     suffix = path.suffix.lower()
+    binary_hotspot = False
     if suffix == ".npy":
         try:
             arr = np.load(path, allow_pickle=False)
@@ -125,6 +128,16 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
             raise schema.DataContractError(
                 f"이미지 {path}는 2차원이어야 합니다(현재 {arr.ndim}차원)"
             )
+        if kind == "hotspot" and legend is None:
+            # 파일 형식만 다르다는 이유로 같은 binary 입력의 CA·학습 강도가 달라지면 안 된다.
+            integer_binary = np.issubdtype(arr.dtype, np.integer) and np.all((arr == 0) | (arr == 255))
+            if integer_binary:
+                arr = arr / 255.0
+            if np.any((arr < 0) | (arr > 1)):
+                raise schema.DataContractError(
+                    f"hotspot 이미지 {path}: 범례 없는 NPY 값은 [0,1] 또는 정수 0/255여야 합니다"
+                )
+        binary_hotspot = bool(np.all((arr == 0) | (arr == 1)))
         arr = np.asarray(arr, dtype=np.float32)
     elif suffix == ".png":
         try:
@@ -135,6 +148,7 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
                     return arr, "probability", str(legend.get("legend_id", ""))
                 gray = np.asarray(im.convert("L"), dtype=np.float32) / 255.0
                 arr = gray
+                binary_hotspot = bool(np.all((arr == 0) | (arr == 1)))
         except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
             raise schema.DataContractError(f"이미지 {path}를 읽을 수 없습니다: {exc!r}") from None
     else:
@@ -142,6 +156,8 @@ def read_image(path: Path, *, kind: str, legend: dict | None) -> tuple[np.ndarra
 
     if kind == "layout":
         arr = (arr > 0.5).astype(np.float32)
+        return arr, "binary", None
+    if kind == "hotspot" and legend is None and binary_hotspot:
         return arr, "binary", None
     return arr, "processed_intensity", None
 
@@ -663,6 +679,10 @@ def load_dataset(
         source_files.append("provenance.json")
     if not isinstance(provenance_payload, dict):
         raise schema.DataContractError("provenance.json must be an object")
+    # 잘못된 설정 문자열을 dict로 바꾸기 전에 계약 오류로 설명한다.
+    declared_settings = provenance_payload.get("calc_settings")
+    if declared_settings is not None and not isinstance(declared_settings, dict):
+        raise schema.DataContractError("provenance calc_settings must be a mapping")
     if provenance_payload.get("mapping_contract_version") not in (None, "1.1", "1.2"):
         raise schema.DataContractError(f"unknown mapping_contract_version {provenance_payload.get('mapping_contract_version')!r}")
 
@@ -815,6 +835,9 @@ def load_dataset(
         warnings.extend(_apply_vertical_layer(bundle, layer_stack, mode))
         warnings.extend(schema.validate_bundle(bundle, mode))
         warnings.extend(_validate_image_registration(bundle, mode))
+
+    for bundle in bundles:
+        bundle.ca_spatial_sources = exported_particle_sim_sources(bundle, data_dir, provenance_payload)
 
     warnings.extend(schema.prepare_ca_bundles(bundles, mode, canonical_length_unit))
 

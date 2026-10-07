@@ -35,6 +35,7 @@ import pandas as pd
 import yaml
 
 from simcompare import schema
+from .regional import particle_sim_sources
 
 SUPPORTED_SCHEMAS = ("1.0", "2.0")
 NOT_APPLICABLE = "N/A"
@@ -470,6 +471,19 @@ def _sample_id(meta: dict, step: str, unit: str) -> str:
     return SAMPLE_ID_ALLOWED.sub("_", f"{meta['product_id']}-{meta['design_version']}-{step}-{unit}")
 
 
+def _upper_mask_layer(config: dict | None, layer: object) -> str | None:
+    """particle-sim의 생략 규칙: 착지 layer 바로 위 마스크 layer(patterned 또는 contact hole layer)."""
+    stack = sorted((config or {}).get("stack", []), key=lambda row: row.get("process_order", 0))
+    holes = {c.get("hole_layer") for c in (config or {}).get("contacts", []) if isinstance(c, dict)}
+    names = [row.get("layer_name") for row in stack]
+    if layer not in names:
+        return None
+    for row in stack[names.index(layer) + 1:]:
+        if row.get("patterned") or row.get("layer_name") in holes:
+            return row.get("layer_name")
+    return None
+
+
 def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping], store,
                   config: dict | None, args,
                   seen_ids: dict[str, tuple[str, tuple[str, str, str, str]]]) -> list[schema.AnalysisBundle]:
@@ -489,7 +503,8 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
             if not isinstance(source, dict) or source.get("step_id") in step_map:
                 report.add("error", "contract", "source_steps", "duplicate or invalid configured source step")
                 return []
-            step_map[source.get("step_id")] = source.get("fab_distribution_layer")
+            step_map[source.get("step_id")] = source.get("fab_distribution_layer") or _upper_mask_layer(
+                config, source.get("lands_after_layer"))
         for step, rows in ca.groupby("source_step", sort=False):
             labels = rows.get("fab_distribution_layer")
             if labels is None or not labels.map(lambda x: isinstance(x, str) and bool(x.strip()) and x == x.strip()).all() or labels.nunique() != 1:
@@ -660,6 +675,12 @@ def build_bundles(run: RunData, report: RunReport, mapped: dict[str, UnitMapping
                 calc_version=f"particle-sim-{run.manifest.get('simulator_version')}",
                 is_synthetic=meta["is_synthetic"],
             ),
+        )
+        bundle.ca_spatial_sources = particle_sim_sources(
+            bundle, map_mode="nominal" if run.run_type == "nominal" else "mean",
+            ca_mode="mean" if use_mean else "nominal", source_step=str(step), unit_id=str(unit),
+            grid_pitch_xy=(run.manifest["pixel_size_x_um"], run.manifest["pixel_size_y_um"])
+            if run.manifest.get("pixel_size_x_um") is not None and run.manifest.get("pixel_size_y_um") is not None else None,
         )
         mode = args.mode
         if vertical and config is None and mode == "real" and not modern:
