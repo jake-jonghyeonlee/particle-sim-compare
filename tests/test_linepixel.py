@@ -1,113 +1,311 @@
-"""layer별 line/pixel 값과 전극 쌍별 몫 — 손으로 검산할 수 있는 작은 예."""
+"""Independent set oracles for canonical full-mask area and pair membership."""
+from dataclasses import replace
+import itertools
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
-from simcompare.linepixel import (
-    ShortHotspot,
-    compare_rates,
-    compute_rates,
-    normalize_pair_table,
-    pair_of,
-    unit_count,
+from simcompare.adapters.numeric import load_dataset
+from simcompare.linepixel import bucket_key, compute_areas, pair_of
+from simcompare.numeric_schema import (
+    DIAMETERS_UM, CaseIdentity, Endpoint, Frame, MaskRecord, NumericCase,
+    NumericContractError, SourceCA,
 )
 
-TABLE = normalize_pair_table([("gate", "data", "line"), ("gate", "com", "line"), ("data", "pixel", "pixel"), ("com", "pixel", "pixel")])
-GD, GC, DP, CP = pair_of("gate", "data"), pair_of("gate", "com"), pair_of("data", "pixel"), pair_of("com", "pixel")
+
+def make_case(case_id, a, b, columns, kind='line', *, diameter=5, width=6,
+              pitch=1, origin=(0,0), step='step', exposure='exposure', source='source',
+              product='product', layer='M2', valid=None, failure_type='lateral_short',
+              pair_id=None, frame_id='frame'):
+    frame=Frame(frame_id,pitch,origin,(1,width),[[1]*width] if valid is None else valid)
+    identity=CaseIdentity(product,'design',source,step,exposure,case_id,frame_id,'synthetic_v2')
+    endpoints=(Endpoint(a,'gate','M1' if failure_type=='vertical_short' else layer),Endpoint(b,'data',layer))
+    pair_id=pair_id or '-'.join(sorted((a,b)))
+    raw={'case_id':case_id,'fab_pair_key':f'RAW:{a}-{b}',
+         'assigned_process_layer':step,'ordered_endpoints':[vars(ep) for ep in endpoints]}
+    records={}; metadata={'unit_id':'unit','height_um':3 if failure_type=='vertical_short' else None,
+                         'height_evidence':'synthetic height' if failure_type=='vertical_short' else None,'records':[]}
+    for d in DIAMETERS_UM:
+        mask=np.zeros((1,width),bool)
+        if d==diameter:mask[0,list(columns)]=True
+        na=failure_type=='vertical_short' and d<3
+        status='not_applicable' if na else 'observed'
+        reasons=('below_height_vertical_short',) if na else ()
+        records[d]=MaskRecord(d,frame,None if na else mask,status,reasons,identity=identity,analysis_layer=layer)
+        metadata['records'].append({'diameter_um':d,'applicability_evidence':{
+            'height_um':3,'comparison':'diameter_um < height_um','source':'synthetic'} if na else None})
+    return NumericCase(identity,endpoints,failure_type,pair_id if kind else None,kind,layer,
+                       'density-'+layer,records,raw,metadata)
 
 
-def mask(*cols):
-    """1 x 10 격자. cols에 든 열만 True."""
-    m = np.zeros((1, 10), dtype=bool)
-    m[0, list(cols)] = True
-    return m
+def group(result,diameter=5,**fields):
+    matches=[v for k,v in result.groups.items() if k.diameter_um==diameter and all(getattr(k,n)==v for n,v in fields.items())]
+    assert len(matches)==1
+    return matches[0]
 
 
-def hs(a, b, cols, layer="L1", d=5.0):
-    return ShortHotspot(layer, a, b, d, mask(*cols))
+def values(share):
+    return {b.pair_ids:b.area.observed_area_um2 for b in (*share.exclusive,*share.shared)}
 
 
-def test_line_takes_the_overlap_and_pixel_is_what_remains():
-    r = compute_rates([hs("gate", "data", range(0, 4)), hs("data", "pixel", range(2, 7))], TABLE, {("L1", 5.0): 1.0}, pixel_area_um2=1.0)
-    layer = r.layers["L1"]
-    assert layer.line.value == 4.0  # 열 0~3
-    assert layer.pixel.value == 3.0  # 열 4~6 (2~3은 line으로)
-    assert layer.moved_to_line == 2.0
-    assert layer.line.exclusive == {GD: 4.0} and layer.pixel.exclusive == {DP: 3.0}
+def set_oracle(pair_sets):
+    """Pure Python sets, independent from the production mask/bitset operations."""
+    line_sets={p:s for p,(kind,s) in pair_sets.items() if kind=='line'}
+    pixel_sets={p:s for p,(kind,s) in pair_sets.items() if kind=='pixel'}
+    line=set().union(*line_sets.values())
+    pixel_raw=set().union(*pixel_sets.values())
+    effective=pixel_raw-line
+    transfer=pixel_raw & line
+    union=line | pixel_raw
+    buckets={}
+    for kind,sets,keep in [('line',line_sets,line),('pixel',pixel_sets,effective)]:
+        counts={}
+        for cell in keep:
+            members=tuple(sorted(p for p,s in sets.items() if cell in s))
+            counts[members]=counts.get(members,0)+1
+        buckets[kind]=counts
+    return line,effective,transfer,union,buckets
 
 
-def test_union_counts_once_and_shares_add_up_to_the_total():
-    r = compute_rates([hs("gate", "data", range(0, 5)), hs("gate", "com", range(3, 8))], TABLE, {("L1", 5.0): 1.0}, pixel_area_um2=1.0)
-    line = r.layers["L1"].line
-    assert line.value == 8.0  # 합집합 0~7, 겹친 3~4는 한 번
-    assert line.exclusive == {GD: 3.0, GC: 3.0}
-    assert line.shared == {frozenset({GD, GC}): 2.0}
-    assert sum(line.exclusive.values()) + sum(line.shared.values()) == line.value
+def oracle_cases():
+    return [make_case('lat_AB','A','B',{0,1,2}),make_case('lat_AC','A','C',{2,3}),
+            make_case('lat_DE','D','E',{1,3,4},'pixel'),make_case('lat_EF','E','F',{4,5},'pixel')]
 
 
-def test_each_diameter_is_weighted_by_its_density_and_pixel_area():
-    spots = [hs("data", "pixel", range(0, 2), d=5.0), hs("data", "pixel", range(0, 6), d=7.0)]
-    r = compute_rates(spots, TABLE, {("L1", 5.0): 0.5, ("L1", 7.0): 2.0}, pixel_area_um2=0.25)
-    assert r.layers["L1"].pixel.value == pytest.approx(2 * 0.25 * 0.5 + 6 * 0.25 * 2.0)
-    assert r.layers["L1"].area_um2[7.0]["pixel"] == pytest.approx(1.5)
+def test_priority_union_and_shares_hand_written_counterexample():
+    g=group(compute_areas(oracle_cases(),chunk_cells=2))
+    assert g.line.area.value==4 and g.pixel.area.value==2
+    assert g.transfer.value==2 and g.union.value==6
+    assert values(g.line)=={('A-B',):2,('A-C',):1,('A-B','A-C'):1}
+    assert values(g.pixel)=={('E-F',):1,('D-E','E-F'):1}
+    assert g.union.value==g.line.area.value+g.pixel.area.value
+    for share in (g.line,g.pixel):
+        assert sum(b.area.value for b in share.exclusive)+sum(b.area.value for b in share.shared)==share.area.value
+    assert [s.measurement.ca_um2 for s in g.source_cases]==[3,2,3,2]
 
 
-def test_layers_are_separate_and_totals_add_across_layers():
-    spots = [hs("gate", "data", range(0, 3), layer="L1"), hs("gate", "data", range(0, 3), layer="L2")]
-    r = compute_rates(spots, TABLE, {("L1", 5.0): 1.0, ("L2", 5.0): 3.0}, pixel_area_um2=1.0)
-    assert r.layers["L1"].line.value == 3.0 and r.layers["L2"].line.value == 9.0
-    assert r.total("line") == 12.0 and r.total("pixel") == 0.0
+@pytest.mark.parametrize('chunk',[1,2,3,65536])
+def test_membership_matches_independent_set_oracle_and_permutation(chunk):
+    expected=set_oracle({'A-B':('line',{0,1,2}),'A-C':('line',{2,3}),
+                         'D-E':('pixel',{1,3,4}),'E-F':('pixel',{4,5})})
+    cases=oracle_cases()
+    baseline=group(compute_areas(cases,chunk_cells=chunk)).to_dict()
+    for order in itertools.permutations(cases):
+        g=group(compute_areas(order,chunk_cells=chunk))
+        assert [g.line.area.value,g.pixel.area.value,g.transfer.value,g.union.value]==[len(s) for s in expected[:4]]
+        assert values(g.line)==expected[4]['line'] and values(g.pixel)==expected[4]['pixel']
+        assert g.to_dict()==baseline
 
 
-def test_lateral_and_vertical_of_the_same_pair_merge_into_one_pair():
-    r = compute_rates([hs("gate", "data", range(0, 3)), hs("data", "gate", range(2, 5))], TABLE, {("L1", 5.0): 1.0}, pixel_area_um2=1.0)
-    assert r.layers["L1"].line.exclusive == {GD: 5.0} and r.layers["L1"].line.shared == {}
+def test_same_pair_union_keeps_both_source_failure_types_and_ca():
+    a=make_case('lat','A','B',{0,1,2})
+    b=make_case('vert','A','B',{2,3,4},failure_type='vertical_short')
+    g=group(compute_areas([a,b]))
+    assert g.line.area.value==5
+    assert values(g.line)=={('A-B',):5} and not g.line.shared
+    assert {s.failure_type for s in g.source_cases}=={'lateral_short','vertical_short'}
+    assert [s.measurement.ca_um2 for s in g.source_cases]==[3,3]
+    assert len(g.line.exclusive[0].source_case_keys)==2
+    assert g.source_cases[1].endpoints[0].actual_layer=='M1'
+    assert g.pair_membership=={'A-B':('A','B')}
 
 
-def test_pair_missing_from_the_table_is_reported_not_counted_as_zero():
-    r = compute_rates([hs("gate", "data", range(0, 2)), hs("gate", "pixel", range(0, 9))], TABLE, {("L1", 5.0): 1.0}, pixel_area_um2=1.0)
-    assert r.unmapped_pairs == (pair_of("gate", "pixel"),)
-    assert r.layers["L1"].line.value == 2.0 and r.layers["L1"].pixel.value == 0.0
+def test_loader_coverage_same_pair_lateral_vertical_raw_identity_roundtrip():
+    path=Path(__file__).parent/'fixtures/numeric_v2'
+    data=load_dataset(path)
+    result=compute_areas(data)
+    g=group(result)
+    assert g.line.area.value==2 and g.pixel.area.value==0 and g.union.value==2
+    assert g.coverage.expected==3 and g.coverage.observed==3
+    assert len(g.source_cases)==3 and len(g.line.exclusive)==1
+    assert {s.failure_type for s in g.source_cases}=={'lateral_short','vertical_short'}
+    assert {s.raw['fab_pair_key'] for s in g.source_cases}=={'EXAMPLE_UNIT:M2-M2','EXAMPLE_UNIT:M1-M2','EXAMPLE_UNIT:M2-M1'}
+    assert result.input_hash==data.provenance['input_hash']
+    assert result.pair_table_hash==data.provenance['pair_table_hash']
+    assert result.pair_table_version=='EXAMPLE_pairs_v2_1'
+    missing=group(result,diameter=40)
+    assert missing.coverage.missing==1 and missing.union.status=='partial'
+    below=group(result,diameter=1)
+    assert below.coverage.not_applicable==2 and below.union.status=='available'
+    assert below.line.area.value==0
+    assert result.gates['G7a']['status']=='pending'
 
 
-def test_two_by_two_mask_is_divided_by_the_units_it_holds():
-    r = compute_rates([hs("gate", "data", range(0, 8))], TABLE, {("L1", 5.0): 1.0}, pixel_area_um2=1.0, units_in_mask=4)
-    assert r.layers["L1"].line.value == 2.0
+@pytest.mark.parametrize('pair_count',[63,65,129])
+def test_63_pairs_shared_membership_single_cell_without_pair_limit(pair_count):
+    cases=[make_case(f'case-{i:03}',f'A{i:03}',f'B{i:03}',{0},width=1) for i in range(pair_count)]
+    g=group(compute_areas(cases,chunk_cells=1))
+    assert g.union.value==1 and g.line.area.value==1
+    assert not g.line.exclusive and len(g.line.shared)==1
+    bucket=g.line.shared[0]
+    assert bucket.area.value==1 and len(bucket.pair_ids)==pair_count and len(bucket.source_case_keys)==pair_count
+    assert group(compute_areas(reversed(cases),chunk_cells=1)).to_dict()==g.to_dict()
 
 
-def test_missing_density_and_mismatched_grid_are_errors():
-    with pytest.raises(ValueError, match="defect density"):
-        compute_rates([hs("gate", "data", [0])], TABLE, {}, pixel_area_um2=1.0)
-    other = ShortHotspot("L1", "gate", "com", 5.0, np.zeros((2, 10), dtype=bool))
-    with pytest.raises(ValueError, match="격자"):
-        compute_rates([hs("gate", "data", [0]), other], TABLE, {("L1", 5.0): 1.0}, pixel_area_um2=1.0)
+def test_three_way_shared_membership_is_one_unsplit_bucket():
+    cases=[make_case('a','A','B',{0,1}),make_case('b','A','C',{1,2}),make_case('c','A','D',{1,3})]
+    g=group(compute_areas(cases))
+    oracle=set_oracle({'A-B':('line',{0,1}),'A-C':('line',{1,2}),'A-D':('line',{1,3})})
+    assert g.line.area.value==4
+    assert values(g.line)==oracle[4]['line']=={('A-B',):1,('A-C',):1,('A-D',):1,('A-B','A-C','A-D'):1}
+    assert len(g.line.shared)==1 and g.line.shared[0].area.value==1
 
 
-def test_pair_table_rejects_conflicting_or_unknown_types():
-    with pytest.raises(ValueError, match="유형이 둘"):
-        normalize_pair_table([("a", "b", "line"), ("b", "a", "pixel")])
-    with pytest.raises(ValueError, match="line 또는 pixel"):
-        normalize_pair_table([("a", "b", "open")])
+def test_union_conditions_and_diameters_remain_separate():
+    base=make_case('a','A','B',{0,1},diameter=5,pitch=0.5)
+    d7=make_case('b','A','B',{0,1,2,3},diameter=7,pitch=0.5)
+    other_step=make_case('c','A','B',{0},step='step2',pitch=0.5)
+    other_source=make_case('d','A','B',{0,1,2},source='source2',pitch=0.5)
+    result=compute_areas([base,d7,other_step,other_source])
+    assert len(result.groups)==96
+    assert group(result,5,process_step_id='step',source_id='source').union.value==0.5
+    assert group(result,7,process_step_id='step',source_id='source').union.value==1
+    assert group(result,5,process_step_id='step2',source_id='source').union.value==0.25
+    assert group(result,5,process_step_id='step',source_id='source2').union.value==0.75
 
 
-def test_unit_count_from_panel_and_unit_size():
-    assert unit_count((1000.0, 500.0), (10.0, 10.0)) == 100 * 50
-    assert unit_count((1005.0, 500.0), (10.0, 10.0)) == 100 * 50
-    assert unit_count((1005.0, 500.0), (10.0, 10.0), rounding="round") == 101 * 50
+@pytest.mark.parametrize('field,value',[('exposure','exposure2'),('product','product2'),('layer','M3')])
+def test_union_product_layer_and_exposure_are_not_collapsed(field,value):
+    result=compute_areas([make_case('a','A','B',{0}),make_case('b','A','B',{0,1},**{field:value})])
+    assert len(result.groups)==64
+    assert sorted(g.union.value for k,g in result.groups.items() if k.diameter_um==5)==[1,2]
 
 
-def test_design_change_reads_as_pixel_up_line_down_with_pair_shares():
-    density = {("L1", 5.0): 1.0}
-    a = compute_rates([hs("gate", "data", range(0, 4)), hs("data", "pixel", range(6, 8))], TABLE, density, pixel_area_um2=1.0)
-    b = compute_rates([hs("gate", "data", range(0, 2)), hs("data", "pixel", range(1, 8))], TABLE, density, pixel_area_um2=1.0)
-    d = compare_rates(a, b)["L1"]
-    assert d.line == -2.0 and d.pixel == 4.0  # line 4→2, pixel 2→6
-    assert d.moved_to_line == 1.0  # B에서 열 1이 pixel 쌍에도 덮이지만 line
-    assert d.line_by_pair == {GD: -2.0} and d.pixel_by_pair == {DP: 4.0}
+def test_shared_serialisation_stable_keys_not_failure_fragment_metrics():
+    g=group(compute_areas(oracle_cases()))
+    document=json.loads(json.dumps(g.to_dict(),ensure_ascii=False))
+    shared=document['line']['shared'][0]
+    assert shared['kind']=='shared' and shared['pair_ids']==['A-B','A-C']
+    assert shared['area']['value']==1
+    assert shared['bucket_id']==bucket_key(g.key,'line',['A-C','A-B'])
+    assert shared['bucket_id']!=bucket_key(g.key,'pixel',['A-B','A-C'])
+    assert 'simultaneous' not in json.dumps(document)
+    assert document['failure_fragment_policy']=={'status':'pending','value':None,'reasons':['failure_fragment_scope_unconfirmed']}
+    assert len({b.bucket_id for share in (g.line,g.pixel) for b in (*share.exclusive,*share.shared)})==5
 
 
-def test_comparison_scales_each_product_by_its_own_unit_count():
-    density = {("L1", 5.0): 1.0}
-    a = compute_rates([hs("gate", "data", range(0, 2))], TABLE, density, pixel_area_um2=1.0)
-    b = compute_rates([hs("gate", "data", range(0, 3))], TABLE, density, pixel_area_um2=1.0)
-    d = compare_rates(a, b, scale_reference=100, scale_target=50)["L1"]
-    assert d.line == 3.0 * 50 - 2.0 * 100
+def test_coverage_missing_vertical_stays_missing_without_height_inference():
+    a=make_case('a','A','B',{0})
+    b=make_case('b','A','B',{0,1},failure_type='vertical_short')
+    # Missing d5 remains missing; a lack of height never becomes N/A.
+    b.records[5]=replace(b.records[5],mask=None,input_status='missing',reasons=('missing_input',))
+    b.metadata['height_evidence']=None
+    # Other known N/A records still need their evidence; make them explicit missing too.
+    for d in [1,2]:b.records[d]=replace(b.records[d],input_status='missing',reasons=('missing_input',))
+    g=group(compute_areas([a,b]))
+    assert g.union.status==g.line.area.status==g.pixel.area.status=='partial'
+    assert g.union.value==1 and g.coverage.missing==1 and g.coverage.not_applicable==0
+    assert g.source_cases[1].input_status=='missing'
+    assert g.source_cases[1].measurement.ca_um2 is None
+
+
+def test_coverage_unmapped_and_missing_only_are_not_available_zero():
+    known=make_case('a','A','B',{0})
+    unknown=make_case('b','C','D',{1,2},kind=None)
+    g=group(compute_areas([known,unknown]))
+    assert g.union.status=='partial' and g.union.value==1 and g.coverage.unmapped==1
+    assert g.source_cases[1].measurement.ca_um2==2
+    unknown_only=group(compute_areas([unknown]))
+    assert unknown_only.union.status=='unavailable' and unknown_only.union.value is None
+    missing=make_case('c','A','B',set())
+    missing.records[5]=replace(missing.records[5],mask=None,input_status='missing',reasons=('missing_input',))
+    unavailable=group(compute_areas([missing]))
+    assert unavailable.union.status=='unavailable' and unavailable.union.value is None
+    assert unavailable.union.observed_area_um2==0
+    zero=group(compute_areas([make_case('zero','A','B',set())]))
+    assert zero.union.status=='available' and zero.union.value==0
+
+
+def test_coverage_valid_holes_are_not_observed_zero():
+    g=group(compute_areas([make_case('a','A','B',{0,1},valid=[[1,0,1,1,1,1]])]))
+    assert g.line.area.value==1 and g.line.area.status=='partial'
+    assert g.coverage.observed_cells==5 and g.coverage.expected_cells==6
+
+
+def test_coverage_conservation_failure_does_not_enter_union():
+    bad=make_case('a','A','B',{0})
+    r=bad.records[5]
+    bad.records[5]=replace(r,source_ca=SourceCA(2,r.frame.frame_id,r.frame.valid_hash))
+    g=group(compute_areas([bad]))
+    assert g.union.status=='unavailable' and g.union.value is None
+    assert g.coverage.rejected==1
+    assert g.source_cases[0].measurement.residual_um2==-1
+    assert 'conservation_failed' in g.union.reasons
+
+
+@pytest.mark.parametrize('override',[dict(origin=(1,0)),dict(pitch=0.5),dict(valid=[[1,0,1,1,1,1]])])
+def test_union_rejects_incompatible_origin_pitch_or_valid(override):
+    with pytest.raises(NumericContractError,match='incompatible_source_frame'):
+        compute_areas([make_case('a','A','B',{0}),make_case('b','A','C',{1},**override)])
+
+
+def test_coverage_not_applicable_needs_source_evidence():
+    vertical=make_case('v','A','B',{0},failure_type='vertical_short')
+    assert group(compute_areas([vertical]),1).union.status=='not_applicable'
+    vertical.metadata['height_evidence']=None
+    with pytest.raises(NumericContractError,match='not_applicable_evidence_required'):
+        compute_areas([vertical])
+
+
+def test_coverage_duplicate_source_case_or_missing_diameter_rejected():
+    case=make_case('a','A','B',{0})
+    with pytest.raises(NumericContractError,match='duplicate_case_identity'):
+        compute_areas([case,case])
+    case.records.pop(50)
+    with pytest.raises(NumericContractError,match='incomplete_case_coverage'):
+        compute_areas([case])
+
+
+@pytest.mark.parametrize('chunk',[0,-1,True,0.5])
+def test_membership_invalid_chunk_sizes(chunk):
+    with pytest.raises(NumericContractError,match='invalid_membership_chunk_size'):
+        compute_areas(oracle_cases(),chunk_cells=chunk)
+
+
+def test_pair_table_collision_and_raw_ids_not_rewritten():
+    with pytest.raises(NumericContractError,match='pair_id_collision'):
+        compute_areas([make_case('a','A','B',{0},pair_id='same'),make_case('b','C','D',{1},pair_id='same')])
+    assert pair_of(' A:α ','B-β')==frozenset(['B-β',' A:α '])
+    with pytest.raises(NumericContractError):pair_of('','B')
+
+
+def test_t4_weighting_unit_divisor_and_comparison_are_not_executable_here():
+    import simcompare.linepixel as module
+    for name in ('compute_rates','unit_count','compare_rates','LayerRate','LayerDelta'):
+        assert not hasattr(module,name)
+    with pytest.raises(TypeError):compute_areas(oracle_cases(),units_in_mask=4)
+
+
+def test_duplicate_pair_masks_union_once_with_two_case_links():
+    a=make_case('a','A','B',{0,1})
+    b=make_case('b','B','A',{0,1})
+    g=group(compute_areas([a,b]))
+    assert g.union.value==2 and len(g.line.exclusive)==1 and not g.line.shared
+    assert len(g.line.exclusive[0].source_case_keys)==2
+    assert [s.measurement.ca_um2 for s in g.source_cases]==[2,2]
+
+
+def test_membership_conflicting_pair_ids_or_classes_rejected():
+    for b in [make_case('b','B','A',{0},pair_id='different'),
+              make_case('b','B','A',{0},kind='pixel')]:
+        with pytest.raises(NumericContractError,match='conflicting_pair_definition'):
+            compute_areas([make_case('a','A','B',{0}),b])
+
+
+def test_coverage_expected_case_absence_in_dataset_is_not_zero():
+    dataset=load_dataset(Path(__file__).parent/'fixtures/numeric_v2')
+    dataset.cases.pop(0)
+    with pytest.raises(NumericContractError,match='expected_case_coverage_mismatch'):
+        compute_areas(dataset)
+
+
+def test_coverage_converted_raw_diameter_na_evidence_is_preserved():
+    case=make_case('v','A','B',{0},failure_type='vertical_short')
+    raw_record=case.metadata['records'][0]
+    del raw_record['diameter_um']
+    raw_record.update(diameter=1000,diameter_unit='nm')
+    g=group(compute_areas([case]),1)
+    assert g.union.status=='not_applicable'
+    assert g.source_cases[0].applicability_evidence['source']=='synthetic'
