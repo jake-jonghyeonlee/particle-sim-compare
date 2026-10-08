@@ -1,32 +1,71 @@
-"""전극 수 지도: 이물 하나가 동시에 건드리는 서로 다른 전극의 수.
+"""Full-mask 전극 수 지도와 검토 영역. 확률·온셋·단독 원인 지도가 아니다.
 
-취약 위치를 찾는 줄기(제품 하나만으로 계산)다. 방법은
-docs/implementation_memory.json의 electrode_count_map_2026_10_07을 따른다.
-
-- 대표 지름의 hotspot에서, 픽셀마다 그 자리를 덮는 모든 불량에 나오는 전극을 모아 센다.
-- layer마다 한 장. vertical short는 짝의 위 layer에 넣는다.
-- 제품 전체 요약은 layer별 지도에서 픽셀마다 가장 큰 값.
-- 전극 수가 높다고 불량 확률이 가장 높은 것은 아니다. CA와 함께 읽는다.
+canonical 경로는 short-only이며 G7b pending 때문에 항상 제한된 부분 결과다.
+DefectHotspot 경로는 기존 open(전극 하나) 의미를 보존하는 호환 API다.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import copy
+import hashlib
+import json
 from typing import Iterable
 
 import numpy as np
-from scipy import ndimage
+
+from .measurement import measure_full_mask, measure_union
+from .numeric_schema import (CaseIdentity, Frame, Measurement, NumericCase, NumericDataset,
+    NumericContractError, NumericFrameError, PhysicalWindow, binary_mask,
+    diameter_key, finite, require_same_frame, text)
 
 DEFAULT_DIAMETER_UM = 5.0
+SCOPE_REASON = 'map_scope_unconfirmed'
+
+
+def _threshold(value):
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 1:
+        raise NumericContractError('invalid_count_threshold')
+    return int(value)
+
+
+def _components(active):
+    """행 우선의 안정적인 4-neighbour 연결 성분. scipy 의존성 없음."""
+    seeds = [tuple(map(int, cell)) for cell in np.argwhere(active)]
+    remaining = set(seeds)
+    for seed in seeds:
+        if seed not in remaining:
+            continue
+        remaining.remove(seed)
+        cells, stack = [seed], [seed]
+        while stack:
+            r, c = stack.pop()
+            for other in ((r-1, c), (r+1, c), (r, c-1), (r, c+1)):
+                if other in remaining:
+                    remaining.remove(other)
+                    cells.append(other)
+                    stack.append(other)
+        inside = np.zeros(active.shape, bool)
+        rows, cols = zip(*cells)
+        inside[rows, cols] = True
+        yield inside, (min(rows), min(cols), max(rows)+1, max(cols)+1)
 
 
 @dataclass(frozen=True)
 class DefectHotspot:
-    """불량 한 건의 hotspot. open은 전극 하나, short는 전극 둘."""
-
+    """호환 입력: open은 전극 하나, short는 전극 둘. 물리 frame은 제공하지 않음."""
     layer: str
     electrodes: tuple[str, ...]
     diameter_um: float
     mask: np.ndarray
+
+    def __post_init__(self):
+        text(self.layer, 'layer')
+        finite(self.diameter_um, 'diameter_um', positive=True)
+        if not self.electrodes:
+            raise NumericContractError('empty_electrodes')
+        for name in self.electrodes:
+            text(name, 'electrode_id')
+        object.__setattr__(self, 'mask', binary_mask(self.mask))
 
 
 @dataclass(frozen=True)
@@ -35,43 +74,337 @@ class Region:
     label: int
     max_count: int
     area_px: int
-    bbox: tuple[int, int, int, int]  # row0, col0, row1, col1 (끝 제외)
+    bbox: tuple[int, int, int, int]  # row0,col0,row1,col1 끝 제외
     electrodes: tuple[str, ...]
 
 
-def electrode_count_maps(hotspots: Iterable[DefectHotspot], diameter_um: float = DEFAULT_DIAMETER_UM) -> dict[str, np.ndarray]:
-    """layer → 전극 수 지도(int). 대표 지름의 hotspot만 쓴다."""
-    per_layer: dict[str, dict[str, np.ndarray]] = {}
+def electrode_count_maps(hotspots: Iterable[DefectHotspot], diameter_um=DEFAULT_DIAMETER_UM):
+    """기존 frame 없는 입력의 layer별 distinct electrode 지도(open 의미 보존)."""
+    diameter_key(diameter_um)
+    per_layer = {}
     shape = None
     for h in hotspots:
-        if float(h.diameter_um) != float(diameter_um):
+        if diameter_key(h.diameter_um) != diameter_key(diameter_um):
             continue
-        mask = np.asarray(h.mask).astype(bool)
-        if shape is None:
-            shape = mask.shape
-        elif mask.shape != shape:
-            raise ValueError(f"hotspot 격자가 다르다: {mask.shape} != {shape}")
+        if shape is not None and h.mask.shape != shape:
+            raise ValueError('hotspot 격자가 다르다')
+        shape = h.mask.shape
         touched = per_layer.setdefault(h.layer, {})
         for name in h.electrodes:
-            touched[name] = touched[name] | mask if name in touched else mask
-    return {layer: np.sum(np.stack(list(touched.values())), axis=0).astype(np.int32) for layer, touched in per_layer.items()}
+            touched[name] = touched.get(name, np.zeros(shape, bool)) | h.mask
+    return {layer: np.sum(list(names.values()), axis=0, dtype=np.int64)
+            for layer, names in per_layer.items()}
 
 
-def summary_map(maps: dict[str, np.ndarray]) -> np.ndarray:
-    """layer별 지도에서 픽셀마다 가장 큰 값."""
+def summary_map(maps):
+    """호환 API: 물리 frame 호환성은 canonical compute_electrode_maps에서 검사."""
     if not maps:
-        raise ValueError("대표 지름의 hotspot이 없다")
+        raise ValueError('대표 지름의 hotspot이 없다')
     return np.max(np.stack(list(maps.values())), axis=0)
 
 
-def find_regions(hotspots: Iterable[DefectHotspot], min_count: int = 3, diameter_um: float = DEFAULT_DIAMETER_UM) -> list[Region]:
-    """전극 수가 min_count 이상인 픽셀이 이어진 덩어리. 전극 수, 면적 순으로 정렬."""
-    spots = [h for h in hotspots if float(h.diameter_um) == float(diameter_um)]
-    regions: list[Region] = []
+def find_regions(hotspots, min_count=3, diameter_um=DEFAULT_DIAMETER_UM):
+    threshold = _threshold(min_count)
+    spots = list(hotspots)
+    regions = []
     for layer, counts in electrode_count_maps(spots, diameter_um).items():
-        labels, n = ndimage.label(counts >= min_count)
-        for i, box in enumerate(ndimage.find_objects(labels), start=1):
-            inside = labels == i
-            names = sorted({e for h in spots if h.layer == layer and (np.asarray(h.mask).astype(bool) & inside).any() for e in h.electrodes})
-            regions.append(Region(layer, i, int(counts[inside].max()), int(inside.sum()), (box[0].start, box[1].start, box[0].stop, box[1].stop), tuple(names)))
+        for label, (inside, bbox) in enumerate(_components(counts >= threshold), 1):
+            names = sorted({e for h in spots if h.layer == layer
+                            and diameter_key(h.diameter_um) == diameter_key(diameter_um)
+                            and (h.mask & inside).any() for e in h.electrodes})
+            regions.append(Region(layer, label, int(counts[inside].max()),
+                                  int(inside.sum()), bbox, tuple(names)))
     return sorted(regions, key=lambda r: (-r.max_count, -r.area_px, r.layer, r.label))
+
+
+@dataclass(frozen=True, order=True)
+class MapKey:
+    product_id: str
+    design_version: str
+    source_id: str
+    process_step_id: str
+    exposure_id: str
+    source_contract_version: str
+    unit_id: str
+    layer: str
+
+    @property
+    def summary_key(self):
+        return tuple(asdict(self).values())[:-1]
+
+
+@dataclass(frozen=True)
+class CaseLink:
+    identity: dict
+    failure_type: str
+    endpoints: tuple[dict, ...]
+    original_case_ca: Measurement
+    case_ca_in_region: Measurement
+    raw: dict
+    source_metadata: dict
+
+
+@dataclass(frozen=True, eq=False)
+class ElectrodeRegion:
+    region_id: str
+    key: MapKey
+    max_count: int
+    area_px: int
+    area_um2: float
+    bbox_yx: tuple[int, int, int, int]
+    region_bbox_um: tuple[float, float, float, float]
+    center_xy_um: tuple[float, float]
+    frame: Frame
+    mask: np.ndarray
+    electrodes: tuple[str, ...]
+    cases: tuple[CaseLink, ...]
+    coverage: dict
+    provenance: dict
+    review_roi_status: str = 'blocked'
+    review_roi_reasons: tuple[str, ...] = (SCOPE_REASON,)
+
+
+@dataclass(frozen=True, eq=False)
+class LayerMap:
+    key: MapKey
+    frame: Frame
+    counts: np.ndarray
+    status: str
+    reasons: tuple[str, ...]
+    coverage: dict
+    regions: tuple[ElectrodeRegion, ...]
+
+
+@dataclass(frozen=True, eq=False)
+class ProductMap:
+    key: tuple[str, ...]
+    frame: Frame | None
+    counts: np.ndarray | None
+    status: str
+    reasons: tuple[str, ...]
+    coverage: dict
+
+
+@dataclass(frozen=True)
+class ElectrodeMaps:
+    layers: tuple[LayerMap, ...]
+    summaries: tuple[ProductMap, ...]
+    representative_diameter_um: float
+    provenance: dict
+
+    def to_dict(self):
+        """JSON용 수치/ROI provenance; 원본 layout asset 연결은 T6가 확인한다."""
+        def encode(value):
+            if isinstance(value, Frame):
+                return {'frame_id': value.frame_id, 'length_unit': 'um',
+                        'pixel_pitch_um': value.pixel_pitch_um, 'origin_xy_um': list(value.origin_xy_um),
+                        'shape_yx': list(value.shape_yx), 'axis_order': value.axis_order,
+                        'origin_convention': value.origin_convention, 'valid_hash': value.valid_hash,
+                        'valid': value.valid.tolist()}
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            if isinstance(value, np.generic):
+                return value.item()
+            if hasattr(value, '__dataclass_fields__'):
+                return {name: encode(getattr(value, name)) for name in value.__dataclass_fields__}
+            if isinstance(value, dict):
+                return {name: encode(item) for name, item in value.items()}
+            if isinstance(value, (tuple, list)):
+                return [encode(item) for item in value]
+            return value
+        return encode(self)
+
+
+def _validate_case(case):
+    text(case.analysis_layer, 'analysis_layer')
+    if not case.endpoints:
+        raise NumericContractError('empty_electrodes')
+    for endpoint in case.endpoints:
+        text(endpoint.electrode_id, 'electrode_id')
+    keys = set()
+    for diameter, record in case.records.items():
+        key = diameter_key(diameter)
+        if key in keys:
+            raise NumericContractError('duplicate_case_diameter')
+        keys.add(key)
+        if key != diameter_key(record.diameter_um):
+            raise NumericContractError('record_diameter_mismatch')
+        if record.identity != case.identity or record.analysis_layer != case.analysis_layer:
+            raise NumericContractError('record_case_binding_mismatch')
+        if record.frame.frame_id != case.identity.frame_id:
+            raise NumericFrameError('record_identity_frame_mismatch')
+        if record.input_status == 'observed':
+            binary_mask(record.mask)
+        if record.input_status == 'not_applicable':
+            height = case.metadata.get('height_um')
+            evidence = case.metadata.get('height_evidence')
+            raw = next((r for r in case.metadata.get('records', [])
+                        if r.get('diameter_um') == diameter), {})
+            applicability = raw.get('applicability_evidence', {})
+            if (case.failure_type != 'vertical_short' or not isinstance(evidence, str)
+                    or not evidence.strip() or not isinstance(applicability, dict)
+                    or not isinstance(applicability.get('source'), str)
+                    or not applicability['source'].strip()
+                    or applicability.get('height_um') != height
+                    or applicability.get('comparison') != 'diameter_um < height_um'
+                    or 'below_height_vertical_short' not in record.reasons):
+                raise NumericContractError('not_applicable_evidence_required')
+            if not diameter < finite(height, 'height_um', positive=True) < 5:
+                raise NumericContractError('invalid_not_applicable_height')
+
+
+def _key(case):
+    i = case.identity
+    return MapKey(i.product_id, i.design_version, i.source_id, i.process_step_id,
+                  i.exposure_id, i.source_contract_version, case.metadata.get('unit_id', ''),
+                  case.analysis_layer)
+
+
+def _region_windows(inside, frame):
+    # 각 행의 연속 셀을 합쳐 정확한 성분을 유지하며 T2 창 수를 줄인다.
+    x, y = frame.origin_xy_um
+    pitch = frame.pixel_pitch_um
+    windows = []
+    for r, row in enumerate(inside):
+        edges = np.diff(np.r_[False, row, False].astype(np.int8))
+        for c0, c1 in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+            windows.append(PhysicalWindow(x+int(c0)*pitch, y+r*pitch,
+                                          x+int(c1)*pitch, y+(r+1)*pitch))
+    return windows
+
+
+def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
+                           diameter_um=DEFAULT_DIAMETER_UM, min_count=3) -> ElectrodeMaps:
+    """T2 원본 binary/valid에서 계산. pair 표·density·unit divisor를 사용하지 않는다.
+
+    counts는 관측된 short의 하한이며 coverage와 scope를 함께 읽어야 한다.
+    서로 다른 source/process/exposure/unit은 별도 제품 요약으로 보존한다.
+    """
+    diameter = float(diameter_key(diameter_um))
+    threshold = _threshold(min_count)
+    dataset = inputs if isinstance(inputs, NumericDataset) else None
+    cases = list(dataset.cases if dataset else inputs)
+    provenance = {'domain': 'full_mask_valid', 'defect_scope': 'short_only',
+                  'scope_status': 'partial', 'count_semantics': 'observed_short_lower_bound',
+                  'G7b': {'status': 'pending', 'value': None, 'reason': SCOPE_REASON},
+                  'representative_diameter_um': diameter, 'threshold': threshold,
+                  'connectivity': 4, 'selection_policy_version': 'electrode_count_region_v1',
+                  'source_manifest_hash': dataset.provenance.get('input_hash') if dataset else None,
+                  'real_coverage_status': 'pending', 'real_coverage_reason': 'unit_area_basis_unconfirmed'}
+    grouped, seen, excluded = {}, set(), []
+    for case in cases:
+        _validate_case(case)
+        identity = tuple(asdict(case.identity).values())
+        if identity in seen:
+            raise NumericContractError('duplicate_source_case')
+        seen.add(identity)
+        if case.failure_type not in ('lateral_short', 'vertical_short'):
+            excluded.append({'identity': asdict(case.identity), 'failure_type': case.failure_type,
+                             'reason': 'outside_provisional_short_scope'})
+            continue
+        grouped.setdefault(_key(case), []).append(case)
+    provenance['excluded_cases'] = sorted(excluded, key=lambda r: json.dumps(r, sort_keys=True))
+    # Dataset manifest에 있는 case가 사라졌으면 전체 완전성도 보류한다.
+    missing_manifest = []
+    if dataset:
+        identity_fields = tuple(CaseIdentity.__dataclass_fields__)
+        actual = {tuple(getattr(c.identity, k) for k in identity_fields) for c in cases}
+        for raw in dataset.provenance.get('cases', []):
+            identity = tuple(raw.get(k) for k in identity_fields)
+            if identity not in actual:
+                missing_manifest.append(identity)
+    provenance['missing_manifest_cases'] = missing_manifest
+    layers = []
+    for key, entries in sorted(grouped.items()):
+        frames = [r.frame for c in entries for r in c.records.values()]
+        if not frames:
+            # frame 없이 위치를 추정하지 않는다.
+            raise NumericFrameError('source_frame_required')
+        frame = frames[0]
+        for other in frames[1:]:
+            require_same_frame(frame, other)
+        coverage = {'observed': [], 'missing': [], 'not_applicable': [], 'measurement_errors': [],
+                    'source_coverage_status': 'available', 'valid_area_um2': float(frame.valid.sum())*frame.pixel_pitch_um**2,
+                    'full_area_um2': frame.valid.size*frame.pixel_pitch_um**2,
+                    'valid_fraction': float(frame.valid.mean())}
+        touched, observed = {}, []
+        reasons = {SCOPE_REASON}
+        for case in sorted(entries, key=lambda c: c.identity.case_id):
+            record = next((r for d, r in case.records.items() if diameter_key(d) == diameter_key(diameter)), None)
+            identity = asdict(case.identity)
+            if record is None or record.input_status == 'missing':
+                coverage['missing'].append({'identity': identity, 'reasons': list(record.reasons) if record else ['representative_diameter_missing']})
+                reasons.add('source_case_missing')
+                continue
+            coverage[record.input_status].append(identity)
+            if record.input_status == 'not_applicable':
+                continue
+            measured = measure_full_mask(record)
+            if measured.status == 'unavailable':
+                coverage['measurement_errors'].append({'identity': identity, 'reasons': measured.reasons, 'original_case_ca': asdict(measured)})
+                reasons.update(measured.reasons)
+                continue
+            active = record.mask & frame.valid
+            for endpoint in case.endpoints:
+                name = endpoint.electrode_id
+                touched[name] = touched.get(name, np.zeros(frame.shape_yx, bool)) | active
+            observed.append((case, record, measured))
+        if coverage['missing'] or coverage['measurement_errors'] or missing_manifest:
+            coverage['source_coverage_status'] = 'partial' if observed else 'unavailable'
+        if missing_manifest:
+            reasons.add('manifest_case_missing')
+        if not frame.valid.all():
+            reasons.add('valid_coverage_partial')
+            if coverage['source_coverage_status'] == 'available':
+                coverage['source_coverage_status'] = 'partial'
+        counts = (np.sum(list(touched.values()), axis=0, dtype=np.int64) if touched
+                  else np.zeros(frame.shape_yx, np.int64))
+        counts.setflags(write=False)
+        regions = []
+        for inside, bbox in _components((counts >= threshold) & frame.valid):
+            r0, c0, r1, c1 = bbox
+            x, y = frame.origin_xy_um
+            p = frame.pixel_pitch_um
+            physical = (x+c0*p, y+r0*p, x+c1*p, y+r1*p)
+            names = tuple(sorted(name for name, mask in touched.items() if (mask & inside).any()))
+            windows = _region_windows(inside, frame)
+            links = tuple(CaseLink(asdict(case.identity), case.failure_type,
+                                  tuple(asdict(e) for e in case.endpoints), measured,
+                                  measure_union(record, windows), copy.deepcopy(case.raw), copy.deepcopy(case.metadata))
+                          for case, record, measured in observed if (record.mask & inside).any())
+            payload = [asdict(key), diameter, threshold, frame.frame_id, frame.pixel_pitch_um,
+                       frame.origin_xy_um, frame.shape_yx, frame.valid_hash, np.argwhere(inside).tolist()]
+            stable_id = 'region_' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            inside.setflags(write=False)
+            region_coverage = copy.deepcopy(coverage)
+            region_coverage.update(region_valid_area_um2=float(inside.sum())*p*p,
+                                   bbox_valid_area_um2=float(frame.valid[r0:r1, c0:c1].sum())*p*p,
+                                   bbox_area_um2=(r1-r0)*(c1-c0)*p*p)
+            regions.append(ElectrodeRegion(stable_id, key, int(counts[inside].max()), int(inside.sum()),
+                           float(inside.sum())*p*p, bbox, physical,
+                           ((physical[0]+physical[2])/2, (physical[1]+physical[3])/2),
+                           frame, inside, names, links, region_coverage, copy.deepcopy(provenance)))
+        regions.sort(key=lambda r: (-r.max_count, -r.area_um2, r.region_id))
+        status = 'partial' if observed or coverage['not_applicable'] else 'unavailable'
+        layers.append(LayerMap(key, frame, counts, status, tuple(sorted(reasons)), coverage, tuple(regions)))
+    summaries = []
+    summary_groups = {}
+    for layer in layers:
+        summary_groups.setdefault(layer.key.summary_key, []).append(layer)
+    for key, maps in sorted(summary_groups.items()):
+        reasons = {reason for m in maps for reason in m.reasons}
+        frame = maps[0].frame
+        coverage = {'layers': {m.key.layer: copy.deepcopy(m.coverage) for m in maps}}
+        try:
+            for m in maps[1:]:
+                require_same_frame(frame, m.frame)
+        except NumericFrameError:
+            summaries.append(ProductMap(key, None, None, 'unavailable',
+                             tuple(sorted(reasons | {'incompatible_layer_frames'})), coverage))
+            continue
+        counts = np.max(np.stack([m.counts for m in maps]), axis=0)
+        counts.setflags(write=False)
+        summaries.append(ProductMap(key, frame, counts,
+                                    'partial' if any(m.status == 'partial' for m in maps) else 'unavailable',
+                                    tuple(sorted(reasons)), coverage))
+    return ElectrodeMaps(tuple(layers), tuple(summaries), diameter, provenance)
