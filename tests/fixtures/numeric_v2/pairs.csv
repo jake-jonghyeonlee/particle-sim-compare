@@ -1,0 +1,3 @@
+pair_id,electrode_a_id,electrode_b_id,class,pair_table_version
+EXAMPLE_PAIR_AB,EXAMPLE_A,EXAMPLE_B,line,EXAMPLE_pairs_v2_1
+EXAMPLE_PAIR_CD,EXAMPLE_C,EXAMPLE_D,pixel,EXAMPLE_pairs_v2_1
