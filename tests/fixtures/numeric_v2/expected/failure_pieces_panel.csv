@@ -1,0 +1,10 @@
+side,piece,value,unit,status
+reference,lateral_only,500.0,1,available
+reference,vertical_only,0.0,1,available
+reference,simultaneous,100.0,1,available
+target,lateral_only,250.0,1,available
+target,vertical_only,0.0,1,available
+target,simultaneous,50.0,1,available
+delta,lateral_only,-250.0,1,available
+delta,vertical_only,0.0,1,available
+delta,simultaneous,-50.0,1,available

@@ -319,6 +319,6 @@ def current_gate_decisions():
                                  'decided_on':'2026-10-08'}},
         'G4': {'status':'pending','answer':None,'reason':'crop_recipe_unconfirmed'},
         'G7a': {'status':'answered','answer':'implement_lateral_only_vertical_only_simultaneous',
-                'decided_on':'2026-10-08','implementation_status':'pending_separate_task'},
+                'decided_on':'2026-10-08','implementation_status':'implemented'},
         'G7b': {'status':'answered','answer':'short_only','authority':'user','decided_on':'2026-10-08'},
     }

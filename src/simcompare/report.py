@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from .numeric_schema import NumericContractError, current_gate_decisions
+from .linepixel import FAILURE_PIECES, FAILURE_PIECE_POLICY
 
 
 def json_value(value):
@@ -59,10 +60,11 @@ def comparison_report(reference, target, deltas):
                'applied_gate_decisions':current_gate_decisions(),
                'reference':reference.to_dict(),'target':target.to_dict(),
                'deltas':[v.to_dict() for _,v in sorted(deltas.items())],
-               'failure_fragment_policy':{'status':'pending','value':None,'reasons':['failure_fragment_implementation_pending']}}
+               'failure_fragment_policy':dict(FAILURE_PIECE_POLICY),
+               'failure_piece_axis_note':'불량 유형 조각은 line / pixel과 다른 축입니다. 두 축의 값을 서로 더하거나 빼지 않습니다.'}
     summary, areas, buckets, cases = [], [], [], []
     weighted_buckets, delta_buckets = [], []
-    bucket_checks = []
+    bucket_checks, pieces = [], []
     for side, result in (('reference',reference), ('target',target)):
         for key, layer in sorted(result.layers.items()):
             for classification in ('line','pixel'):
@@ -79,6 +81,11 @@ def comparison_report(reference, target, deltas):
             for domain in ('unit','panel'):
                 summary.append(_metric_row(side,key.product_id,key.analysis_layer,'transfer',domain,
                                            asdict(getattr(layer,'transfer_'+domain)),context=asdict(key)))
+            for name in FAILURE_PIECES:
+                for domain in ('unit','panel'):
+                    pieces.append({**_metric_row(side,key.product_id,key.analysis_layer,name,domain,
+                                                asdict(getattr(layer.failure_pieces[name],domain)),context=asdict(key)),
+                                   'axis':'failure_type','piece':name})
         for key, group in sorted(result.areas.groups.items()):
             group_id = json.dumps(asdict(key), sort_keys=True, separators=(',',':'),ensure_ascii=False)
             for classification, metric in (('line',group.line.area),('pixel',group.pixel.area),
@@ -86,6 +93,11 @@ def comparison_report(reference, target, deltas):
                 areas.append({'side':side,'group_id':group_id,'product_id':key.product_id,'layer':key.analysis_layer,
                               'diameter_um':key.diameter_um,'class':classification,**asdict(metric),
                               'frame':group.to_dict()['frame']})
+            for name,metric in group.failure_pieces.items():
+                pieces.append({'side':side,'group_id':group_id,'product_id':key.product_id,
+                               'layer':key.analysis_layer,'diameter_um':key.diameter_um,
+                               'axis':'failure_type','piece':name,'domain':'full_mask',
+                               **asdict(metric),'frame':group.to_dict()['frame']})
             for classification in ('line','pixel'):
                 share = getattr(group,classification)
                 links = []
@@ -125,14 +137,19 @@ def comparison_report(reference, target, deltas):
                     delta_buckets.append({**_metric_row('delta',delta.target_product_id,key.analysis_layer,classification,
                                                       'panel',asdict(metric),context=asdict(key)),
                                           'comparison_key':asdict(key),'kind':kind,'pair_ids':json.loads(members)})
+        for name in FAILURE_PIECES:
+            pieces.append({**_metric_row('delta',delta.target_product_id,key.analysis_layer,name,'panel',
+                                        asdict(delta.failure_pieces[name]),context=asdict(key)),
+                           'axis':'failure_type','piece':name})
     payload['bucket_totals'] = bucket_checks
+    payload['failure_pieces_table'] = pieces
     complete = bool(deltas) and all(getattr(d,c).status == 'available'
                                    for d in deltas.values() for c in ('line','pixel','transfer'))
     payload['status'] = 'available' if complete else 'partial'
     payload['reasons'] = sorted({r for d in deltas.values() for c in ('line','pixel','transfer')
                                  for r in getattr(d,c).reasons})
     return json_value(payload), {'summary':summary,'areas':areas,'buckets':buckets,'case_ca':cases,
-                                  'weighted_buckets':weighted_buckets,'delta_buckets':delta_buckets}
+                                  'weighted_buckets':weighted_buckets,'delta_buckets':delta_buckets,'failure_pieces':pieces}
 
 
 def map_report(result):
@@ -191,11 +208,21 @@ def write_numeric_report(out, name, payload, tables):
                 writer.writerow({k:json.dumps(v,ensure_ascii=False,allow_nan=False,separators=(',',':'))
                                  if v is None or isinstance(v,(dict,list,bool)) else v for k,v in row.items()})
         paths.append(str(path))
+    table_html = ''
+    if 'failure_pieces' in tables:
+        table_html += '<p>'+escape(payload['failure_piece_axis_note'])+'</p>'
+        for table,title,label in (('summary','Line / pixel 및 transfer','class'),
+                                  ('failure_pieces','불량 유형 조각','piece')):
+            columns=['side','product_id','layer','domain',label,'value','partial_value','unit','status','reasons']
+            table_html += '<h2>'+escape(title)+'</h2><table><tr>'+''.join('<th>'+escape(k)+'</th>' for k in columns)+'</tr>'
+            for row in tables[table]:
+                table_html += '<tr>'+''.join('<td>'+escape(json.dumps(json_value(row.get(k)),ensure_ascii=False,allow_nan=False))+'</td>' for k in columns)+'</tr>'
+            table_html += '</table>'
     # JSON을 script에 삽입하지 않고 모든 텍스트를 escape하여 정적으로 표시한다.
     html = ('<!doctype html><html lang="ko"><meta charset="utf-8"><title>'+escape(name)+
             '</title><style>body{font-family:system-ui;max-width:1100px;margin:2rem auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'+
             '<h1>'+escape(name)+'</h1><p>상태: '+escape(payload.get('status','partial'))+
-            ' · 합성 동작 검증. 원본 좌표와 관측 범위를 함께 확인하세요.</p><pre>'+escape(encoded)+'</pre></html>')
+            ' · 합성 동작 검증. 원본 좌표와 관측 범위를 함께 확인하세요.</p>'+table_html+'<pre>'+escape(encoded)+'</pre></html>')
     html_path = out/(name+'.html')
     html_path.write_text(html,encoding='utf-8')
     paths.append(str(html_path))

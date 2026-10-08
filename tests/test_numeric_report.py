@@ -55,8 +55,9 @@ def test_every_weighted_value_preserves_units_basis_distribution_and_rounding(tm
     payload=json.loads((out/'comparison.json').read_text())
     assert payload['reference']['areas']['groups'][0]['frame']['origin_xy_um']==[100,200]
     assert payload['reference']['areas']['pair_table_version']=='synthetic_pairs_v1'
-    assert payload['failure_fragment_policy']['value'] is None
-    assert payload['failure_fragment_policy']['reasons']==['failure_fragment_implementation_pending']
+    assert payload['failure_fragment_policy']['value']==['lateral_only','vertical_only','simultaneous']
+    assert payload['failure_fragment_policy']['reasons']==[]
+    assert payload['failure_fragment_policy']['status']=='implemented'
     assert payload['applied_gate_decisions']['G7b']['answer']=='short_only'
     assert payload['applied_gate_decisions']['G1']['answer'] is None
     assert payload['applied_gate_decisions']['G1']['answered_parts']['bin_semantics']=='per_bin'

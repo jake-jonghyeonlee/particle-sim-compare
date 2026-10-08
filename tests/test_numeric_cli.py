@@ -205,3 +205,27 @@ def test_explicit_cli_and_config_threshold_create_regions(tmp_path):
     rois=json.loads((tmp_path/'roi/review_rois.json').read_text())
     assert len(rois['rois'])==4
     assert all(r['status']=='ready' and 'map_scope_unconfirmed' not in r['reasons'] for r in rois['rois'])
+
+
+def test_subprocess_failure_pieces_match_hand_json_and_csv_existing_values_unchanged(tmp_path):
+    data=tmp_path/'demo'
+    assert run_cli('demo-data','--numeric-only','--out',data).returncode==0
+    assert run_cli('compare','--config',data/'config.yaml').returncode==0
+    out=data/'numeric_outputs';payload=json.loads((out/'comparison.json').read_text())
+    expected=json.loads((EXPECTED/'failure_pieces.json').read_text())
+    actual={}
+    for side in ('reference','target'):
+        g=next(g for g in payload[side]['areas']['groups'] if g['group']['diameter_um']==5)
+        actual[side+'_d5']={n:m['value'] for n,m in g['failure_pieces'].items()}
+        actual[side+'_panel']={n:m['panel']['value'] for n,m in payload[side]['layers'][0]['failure_pieces'].items()}
+    actual['delta_panel']={n:m['value'] for n,m in payload['deltas'][0]['failure_pieces'].items()}
+    assert actual==expected
+    assert projection(payload)==json.loads((EXPECTED/'comparison.json').read_text())
+    with (EXPECTED/'failure_pieces_panel.csv').open() as f:expected_csv=list(csv.DictReader(f))
+    with (out/'comparison_failure_pieces.csv').open() as f:
+        actual_csv=[{k:r[k] for k in expected_csv[0]} for r in csv.DictReader(f) if r['domain']=='panel']
+    assert actual_csv==expected_csv
+    html=(out/'comparison.html').read_text()
+    assert '<h2>불량 유형 조각</h2><table>' in html
+    assert 'line / pixel과 다른 축' in html
+    assert payload['applied_gate_decisions']['G7a']['implementation_status']=='implemented'

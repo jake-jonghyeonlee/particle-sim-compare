@@ -181,8 +181,10 @@ def test_shared_serialisation_stable_keys_not_failure_fragment_metrics():
     assert shared['area']['value']==1
     assert shared['bucket_id']==bucket_key(g.key,'line',['A-C','A-B'])
     assert shared['bucket_id']!=bucket_key(g.key,'pixel',['A-B','A-C'])
-    assert 'simultaneous' not in json.dumps(document)
-    assert document['failure_fragment_policy']=={'status':'pending','value':None,'reasons':['failure_fragment_scope_unconfirmed']}
+    assert 'simultaneous' not in json.dumps({k:document[k] for k in ('line','pixel','transfer')})
+    assert document['failure_pieces']['simultaneous']['value']==0
+    assert document['failure_fragment_policy']=={'status':'implemented','value':['lateral_only','vertical_only','simultaneous'],
+                                                 'decided_on':'2026-10-08','axis':'failure_type','reasons':[]}
     assert len({b.bucket_id for share in (g.line,g.pixel) for b in (*share.exclusive,*share.shared)})==5
 
 

@@ -45,7 +45,7 @@ Coverage는 `expected/observed/missing/not_applicable/unmapped`와 valid 관측 
 
 Union key는 `(product,design,source/process 조건,exposure,analysis_layer,diameter,frame)`다. 같은 layer라는 이유로 다른 노출·원천 조건을 합치지 않는다. layer와 step의 일대일 대응 여부는 G2 pending이다. `L`=line pair union, `P`=pixel pair union, `P_effective=P\L`, `transfer=P∩L`, `U=L∪P`다. 면적은 valid 내 셀 수 × pitch²이며 `area(U)=area(L)+area(P_effective)`. transfer는 별도 진단으로 총합에 더하지 않는다. 원 case CA와 union CA를 둘 다 보존한다.
 
-Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket이다. bucket에는 안정 ID, 구성 pair ID, 지름·layer·면적·상태가 있다. pair_lineage_case_keys는 해당 pair의 원천 계보 전체이며 missing/관측 0 case도 포함할 수 있다. contributing_source_case_keys는 해당 지름에서 원본 관측 mask가 실제 그 bucket과 겹치는 case만 나열한다. 리포트는 계보를 면적 기여자로 표시하지 않는다. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산한다. `exclusive+shared=class_total`을 지름/layer/panel에서 검사한다. shared 또는 transfer를 종류별 simultaneous라고 부르지 않는다. G7a 사용자 답변(2026-10-08)은 lateral-only/vertical-only/simultaneous 지표 구현이다. 이 Task에서는 유형 보존 및 기존 line/pixel만 유지하며 종류별 지표는 후속 Task에서 구현한다.
+Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket이다. bucket에는 안정 ID, 구성 pair ID, 지름·layer·면적·상태가 있다. pair_lineage_case_keys는 해당 pair의 원천 계보 전체이며 missing/관측 0 case도 포함할 수 있다. contributing_source_case_keys는 해당 지름에서 원본 관측 mask가 실제 그 bucket과 겹치는 case만 나열한다. 리포트는 계보를 면적 기여자로 표시하지 않는다. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산한다. `exclusive+shared=class_total`을 지름/layer/panel에서 검사한다. shared 또는 transfer를 종류별 simultaneous라고 부르지 않는다. G7a 사용자 답변(2026-10-08)은 lateral-only/vertical-only/simultaneous 지표 구현이다. 같은 그룹의 mapped short 원본 mask에서 종류별 조각을 계산하며 기존 line/pixel은 독립 축으로 유지한다.
 
 | density 필드 | 의미 |
 |---|---|
@@ -81,7 +81,7 @@ G7b answered(사용자, 2026-10-08): 지도는 현재 short-only이며 canonical
 
 ### 질문 상태와 범위
 
-[open_questions.md](open_questions.md)의 numeric_v2 표가 질문 상태를 추적한다. G1/G2는 일부 answered이며 미답변 부분은 pending/null, G4는 pending이다. G7b는 short-only로 answered다. G7a도 종류별 지표 구현으로 answered지만 구현은 별도 Task에 맡기며 현재 line/pixel·shared의 의미를 바꾸지 않는다. G1 단위/조사면적은 실자료 가중값을, G2 한 unit 환산·원천 승인은 unit/panel 및 migration을 차단한다. 합성 문서 검산은 가능하며 게이트 승인이나 실자료 성능 검증이 아니다.
+[open_questions.md](open_questions.md)의 numeric_v2 표가 질문 상태를 추적한다. G1/G2는 일부 answered이며 미답변 부분은 pending/null, G4는 pending이다. G7b는 short-only로 answered다. G7a는 answered이며 종류별 조각의 면적·가중·panel·delta가 구현됐다. 현재 line/pixel·shared의 의미는 유지한다. G1 단위/조사면적은 실자료 가중값을, G2 한 unit 환산·원천 승인은 unit/panel 및 migration을 차단한다. 합성 문서 검산은 가능하며 게이트 승인이나 실자료 성능 검증이 아니다.
 
 ---
 
@@ -251,3 +251,15 @@ with ties resolved in that priority order and missing values preserved.
 개별 layer 지도는 원천 조건별로 보존한다. 제품 요약은 product_id/design_version/unit_id별 모든 layer의 pixelwise max이며 combined_steps/combined_sources/combined_exposures 및 layer_inputs를 provenance에 남긴다. 서로 다른 frame은 조용히 분리하지 않고 summary unavailable/counts=null 및 incompatible_layer_frames로 표시한다. unavailable layer도 counts=null이며 관측 0 배열과 구별한다. G7b short-only 사용자 결정으로 인한 partial 사유는 없다. source 누락·valid hole은 여전히 partial이며 incompatible summary는 unavailable이다. PNG는 count마다 discrete colour와 legend를 가지며 물리 extent(um)·원본 shape/pitch/origin·status·scope는 sidecar JSON에 남긴다. 미관측/invalid 회색과 관측 0 색을 구별한다.
 
 원천 manifest의 gates는 작성 당시 선언을 그대로 보존할 수 있다. 최신 사용자 결정은 comparison의 applied_gate_decisions, 지도 scope provenance, validation/ROI의 gates에 별도로 표시한다. 원천 pending 선언이나 최신 bin 의미 답변 어느 쪽도 실제 밀도 단위 또는 한 unit 환산 승인으로 사용하지 않는다.
+
+### 불량 유형 조각 (`failure_pieces`) — G7a 구현
+
+사용자 답변(2026-10-08)에 따라 line/pixel union과 같은 product/design/unit/source/process/exposure/layer/diameter/frame 그룹에서 mapped short case의 유형을 사용한다. lateral mask 합집합을 A, vertical mask 합집합을 B라 하면 `lateral_only=A\B`, `vertical_only=B\A`, `simultaneous=A∩B`다. 세 조각은 서로 겹치지 않고 합이 U다. 같은 pair의 lateral/vertical도 원천 유형을 잃지 않아 겹친 셀은 simultaneous다. open 조각은 없고 line/pixel class와 무관하게 mapped short 전체를 사용한다. pair가 미매핑이면 원본 CA는 보존하고 union/조각의 완전값을 차단한다. shared는 서로 다른 pair membership이며 simultaneous와 다르다.
+
+GroupArea.failure_pieces에는 세 AreaMetric(um^2), LayerRate.failure_pieces에는 각각 unit/panel WeightedMetric(명시 synthetic 역면적 density × area의 단위 1), LayerDelta.failure_pieces에는 각각 panel target−reference가 있다. 지름별 원 면적에 같은 density를 곱해 합산하고 제품마다 N을 따로 쓴다. 평균이나 density 정규화는 없다. 선/화소값·transfer·pair bucket에 조각을 더하거나 빼지 않는다. JSON은 각 그룹/가중 layer/delta 및 failure_pieces_table에 보존하며 CSV는 comparison_failure_pieces.csv, HTML은 line/pixel 옆 별도 조각 표와 서로 다른 축이라는 설명을 제공한다.
+
+height 근거 있는 vertical N/A는 해당 case만 제외하므로 다른 lateral 값은 available일 수 있다. source/density 누락·valid 불완전·미매핑은 value=null과 별도 partial_value 및 사유다. 관측 원천만의 부분 조각은 추가 관측에 따라 다른 조각으로 이동할 수 있어 완전한 분류나 delta가 아니다. 두 제품 모두 complete일 때만 delta가 available이다. 실제 density 단위/조사면적(G1)과 2×2→한 unit 환산(G2)은 pending이며 area는 보존하지만 weighted/unit/panel/delta는 null이다. 기본 /4나 위치별 인과 기여는 구현하지 않는다.
+
+### heat-map 셀 표시 크기
+
+작은 원본 격자의 표시 scale은 `max(1, ceil(400 / max(height_px, width_px)))` 정수다. 2×4는 scale=100, 표시 영역 400×200이며 2000 px 격자는 scale=1이다. 이는 Pillow nearest-neighbour 표시 확대이며 원본 count/frame/물리 extent/CA를 바꾸지 않는다. sidecar.rendering.scale 및 cell_pixels는 같은 정수이고 grid_bbox_px는 확대된 표시 영역이다. discrete 색·invalid 회색·legend는 유지하며 좌표값은 원본 um다. 큰 격자를 축소하지 않는다.

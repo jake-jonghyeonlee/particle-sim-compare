@@ -14,7 +14,7 @@
 | N6 | answered | ROI 생산 C/T6, 소비 DL2/T10, 왕복 T12; 출처는 지도 영역·manual | review_roi_v1 문서·위치 export 계약 | 제품 간 구간 대응/검색 결과로 ROI 자동 선택 금지 |
 | G1 | pending (일부 answered) | 지름마다 한 값(per_bin, 2026-10-08), 연속 per-um 아님; bin 폭 질문은 종료. null — 실제 단위·조사면적 변환·공정/기간 근거 미답변 | 지름별 raw 값·명시 합성 per-bin 검산·면적 | 실자료 가중값 및 parser 최종 승인 |
 | G2 | pending (일부 answered) | 제품 간 동일 um/pixel·제품별 pixel 수·제품 내 같은 layer 크기, 2×2 약 100 um/2000 px(2026-10-08). null — 한 unit 환산 및 원천/migration 세부 미답변 | 원본 2×2 지도 표시·full-mask 면적 | 자동 /4·unit/panel 완료 및 reader 최종 승인 |
-| G7a | answered | lateral-only/vertical-only/simultaneous 지표 구현, open 제외(2026-10-08) | case 유형·기존 line/pixel 보존 | 구현은 별도 후속 Task, 현재 shared/transfer를 simultaneous로 이름 변경 금지 |
+| G7a | answered | lateral-only/vertical-only/simultaneous 지표 구현, open 제외(2026-10-08) | case 유형·기존 line/pixel 보존 | 면적·가중·panel·delta 구현; G1/G2 미답변 real 값은 null, shared/transfer를 simultaneous로 이름 변경 금지 |
 | G7b | answered | 지도는 현재 short-only, 사용자 결정 2026-10-08 | count 배열·heat-map, 수동 ROI 기본, 명시 threshold 영역 ROI | 누락 source/valid/frame/shape의 차단 사유 유지; legacy open helper는 보존 |
 | G3 | pending | null — DL1/DL2 별도 repo 이름·경로 확인 | 교환 계약 초안 | DL2 생성/rename/remote/push; 이름 답변은 push 허가 아님 |
 | G4 | pending | null — near/wide 물리 크기 및 비인접 pair 중간 layer 정책 | 매개변수 crop 시험·원본 layer·ROI 위치 계약 | 실자료 기본 crop/channel/학습 recipe 확정; 위치 export 자체는 가능 |

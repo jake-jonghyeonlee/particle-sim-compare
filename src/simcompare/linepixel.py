@@ -1,13 +1,13 @@
 """numeric_v2 full-mask line/pixel unions and exact pair membership areas.
 
 T3 area/membership is preserved independently from T4 synthetic weighting and
-panel comparison. No default mask divisor or yield conversion is applied. Source failure types remain provenance; G7a's
-lateral-only/vertical-only/simultaneous decomposition is not implemented.
+panel comparison. No default mask divisor or yield conversion is applied. G7a failure pieces are a separate axis of the same mapped-short union;
+they do not change line/pixel priority, pair buckets or transfer.
 """
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import copy
 import hashlib
 import json
@@ -24,6 +24,9 @@ from .numeric_schema import (
 
 LINE = 'line'
 PIXEL = 'pixel'
+FAILURE_PIECES = ('lateral_only', 'vertical_only', 'simultaneous')
+FAILURE_PIECE_POLICY = {'status':'implemented','value':list(FAILURE_PIECES),
+                        'decided_on':'2026-10-08','axis':'failure_type','reasons':[]}
 
 
 def _json(value) -> str:
@@ -135,6 +138,8 @@ class GroupArea:
     transfer_mask: np.ndarray
     union_mask: np.ndarray
     pair_table_version: str | None
+    failure_pieces: dict[str, AreaMetric]
+    failure_piece_masks: dict[str, np.ndarray]
 
     @property
     def coverage(self) -> Coverage:
@@ -155,8 +160,8 @@ class GroupArea:
             'source_cases': [asdict(source) for source in self.source_cases],
             'bucket_source_relationship': {'pair_lineage_case_keys':'pair_lineage',
                                            'contributing_source_case_keys':'observed_mask_intersects_bucket_at_diameter'},
-            'failure_fragment_policy': {'status': 'pending', 'value': None,
-                                        'reasons': ['failure_fragment_scope_unconfirmed']},
+            'failure_pieces': {name:asdict(metric) for name,metric in self.failure_pieces.items()},
+            'failure_fragment_policy': copy.deepcopy(FAILURE_PIECE_POLICY),
         }
 
 
@@ -263,6 +268,7 @@ def _group(key, entries, chunk_cells, table_version):
         require_same_frame(frame, record.frame)
     sources, usable, lineage, electrodes = [], {LINE: {}, PIXEL: {}}, {}, {}
     contributor_records = {}
+    type_masks = {name:np.zeros(frame.shape_yx, bool) for name in ('lateral_short','vertical_short')}
     observed = missing = na = unmapped = rejected = computable = 0
     reasons = set()
     for case, record in entries:
@@ -297,6 +303,7 @@ def _group(key, entries, chunk_cells, table_version):
                 computable += 1
                 usable[case.classification].setdefault(case.pair_id, []).append(record)
                 contributor_records[source_key] = record
+                type_masks[case.failure_type] |= record.mask & frame.valid
     coverage = Coverage(len(entries), observed, missing, na, unmapped, rejected, computable,
                         frame.valid.size, int(frame.valid.sum()))
     if not frame.valid.all():
@@ -347,11 +354,17 @@ def _group(key, entries, chunk_cells, table_version):
             (exclusive if len(members) == 1 else shared).append(bucket)
         return ClassShare(metric(sum(counts.values()) * pixel_area), tuple(exclusive), tuple(shared))
 
-    for mask in (line, effective, transfer, union):
+    lateral, vertical = type_masks['lateral_short'], type_masks['vertical_short']
+    piece_masks = {'lateral_only': lateral & ~vertical,
+                   'vertical_only': vertical & ~lateral, 'simultaneous': lateral & vertical}
+    pieces = {name:replace(metric(int(mask.sum())*pixel_area),
+                          basis='full_mask_valid_observed_sources_failure_type_union')
+              for name,mask in piece_masks.items()}
+    for mask in (line, effective, transfer, union, *piece_masks.values()):
         mask.setflags(write=False)
     return GroupArea(key, frame, shares(LINE, frame.valid), shares(PIXEL, frame.valid & ~line),
                      metric(int(transfer.sum()) * pixel_area), metric(int(union.sum()) * pixel_area),
-                     tuple(sources), electrodes, line, effective, transfer, union, table_version)
+                     tuple(sources), electrodes, line, effective, transfer, union, table_version, pieces, piece_masks)
 
 
 def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells: int = 65536) -> AreaResult:
@@ -536,6 +549,12 @@ class WeightedClass:
     shared: tuple[WeightedBucket,...]
 
 
+@dataclass(frozen=True)
+class WeightedPiece:
+    unit: WeightedMetric
+    panel: WeightedMetric
+
+
 @dataclass
 class LayerRate:
     key: LayerKey
@@ -545,6 +564,7 @@ class LayerRate:
     transfer_panel: WeightedMetric
     distribution_contract: dict | None
     distribution_fingerprint: str | None
+    failure_pieces: dict[str, WeightedPiece]
 
 
 @dataclass
@@ -586,7 +606,7 @@ def _weighted_layer(key, groups, distribution, basis, panel):
         error=set(group.union.reasons)
         if group.union.status=='not_applicable':
             coverage.append({'diameter_um':d,'status':'not_applicable','source':asdict(group.coverage)})
-            contributions[d]={LINE:0.0,PIXEL:0.0,'transfer':0.0}
+            contributions[d]={LINE:0.0,PIXEL:0.0,'transfer':0.0,**{name:0.0 for name in FAILURE_PIECES}}
             continue
         density_bin=None if distribution is None else distribution.bins[d]
         if density_bin is not None:error.update(density_bin.reasons)
@@ -600,7 +620,8 @@ def _weighted_layer(key, groups, distribution, basis, panel):
             continue
         factor=density_bin.value_per_um2
         amounts={LINE:group.line.area.observed_area_um2*factor,PIXEL:group.pixel.area.observed_area_um2*factor,
-                 'transfer':group.transfer.observed_area_um2*factor}
+                 'transfer':group.transfer.observed_area_um2*factor,
+                 **{name:group.failure_pieces[name].observed_area_um2*factor for name in FAILURE_PIECES}}
         for value in amounts.values():finite(value,'weighted value',nonnegative=True)
         contributions[d]=amounts;known+=1
         reasons.update(error)
@@ -641,9 +662,12 @@ def _weighted_layer(key, groups, distribution, basis, panel):
             (exclusive if len(members)==1 else shared).append(bucket)
         return WeightedClass(metric(total),metric(total,count,True),tuple(exclusive),tuple(shared))
     transfer=sum(values['transfer'] for values in contributions.values())
+    pieces={name:WeightedPiece(metric(sum(values[name] for values in contributions.values())),
+                              metric(sum(values[name] for values in contributions.values()),count,True))
+            for name in FAILURE_PIECES}
     return LayerRate(key,share(LINE),share(PIXEL),metric(transfer),metric(transfer,count,True),
                      None if distribution is None or distribution.contract is None else asdict(distribution.contract),
-                     None if distribution is None else _key('density_v1',distribution.to_dict())),tuple(sorted(blockers))
+                     None if distribution is None else _key('density_v1',distribution.to_dict()),pieces),tuple(sorted(blockers))
 
 
 def compute_rates(areas: AreaResult, densities, *, unit_bases, panels=None) -> RateResult:
@@ -686,6 +710,7 @@ class LayerDelta:
     reference_product_id: str
     target_product_id: str
     comparison_basis: str
+    failure_pieces: dict[str, WeightedMetric]
 
     def to_dict(self):return asdict(self)
 
@@ -792,5 +817,8 @@ def compare_rates(reference: RateResult,target: RateResult,*,reference_product_i
                               delta(None if a is None else a.pixel.panel,None if b is None else b.pixel.panel),
                               delta(None if a is None else a.transfer_panel,None if b is None else b.transfer_panel),
                               buckets(LINE,'exclusive'),buckets(LINE,'shared'),buckets(PIXEL,'exclusive'),buckets(PIXEL,'shared'),
-                              reference_product_id,target_product_id,comparison_basis)
+                              reference_product_id,target_product_id,comparison_basis,
+                              {name:delta(None if a is None else a.failure_pieces[name].panel,
+                                          None if b is None else b.failure_pieces[name].panel)
+                               for name in FAILURE_PIECES})
     return output

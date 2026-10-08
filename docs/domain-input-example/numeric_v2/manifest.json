@@ -603,11 +603,104 @@
       "reasons": []
     },
     "failure_fragment_policy": {
-      "value": null,
-      "status": "pending",
-      "reasons": [
-        "failure_fragment_implementation_pending"
-      ]
+      "status": "implemented",
+      "value": [
+        "lateral_only",
+        "vertical_only",
+        "simultaneous"
+      ],
+      "axis": "failure_type",
+      "decided_on": "2026-10-08",
+      "reasons": []
+    },
+    "failure_pieces_d5": {
+      "lateral_only": {
+        "area": {
+          "value": 1,
+          "partial_value": null,
+          "unit": "um^2",
+          "status": "available",
+          "reasons": []
+        },
+        "unit": {
+          "value": null,
+          "partial_value": null,
+          "unit": null,
+          "status": "unavailable",
+          "reasons": [
+            "density_contract_unconfirmed",
+            "unit_area_basis_unconfirmed"
+          ]
+        },
+        "panel": {
+          "value": null,
+          "partial_value": null,
+          "unit": null,
+          "status": "unavailable",
+          "reasons": [
+            "density_contract_unconfirmed",
+            "unit_area_basis_unconfirmed"
+          ]
+        }
+      },
+      "vertical_only": {
+        "area": {
+          "value": 0,
+          "partial_value": null,
+          "unit": "um^2",
+          "status": "available",
+          "reasons": []
+        },
+        "unit": {
+          "value": null,
+          "partial_value": null,
+          "unit": null,
+          "status": "unavailable",
+          "reasons": [
+            "density_contract_unconfirmed",
+            "unit_area_basis_unconfirmed"
+          ]
+        },
+        "panel": {
+          "value": null,
+          "partial_value": null,
+          "unit": null,
+          "status": "unavailable",
+          "reasons": [
+            "density_contract_unconfirmed",
+            "unit_area_basis_unconfirmed"
+          ]
+        }
+      },
+      "simultaneous": {
+        "area": {
+          "value": 1,
+          "partial_value": null,
+          "unit": "um^2",
+          "status": "available",
+          "reasons": []
+        },
+        "unit": {
+          "value": null,
+          "partial_value": null,
+          "unit": null,
+          "status": "unavailable",
+          "reasons": [
+            "density_contract_unconfirmed",
+            "unit_area_basis_unconfirmed"
+          ]
+        },
+        "panel": {
+          "value": null,
+          "partial_value": null,
+          "unit": null,
+          "status": "unavailable",
+          "reasons": [
+            "density_contract_unconfirmed",
+            "unit_area_basis_unconfirmed"
+          ]
+        }
+      }
     }
   },
   "gates": {
@@ -647,7 +740,7 @@
       "status": "answered",
       "answer": "implement_lateral_only_vertical_only_simultaneous",
       "decided_on": "2026-10-08",
-      "implementation_status": "pending_separate_task"
+      "implementation_status": "implemented"
     },
     "G7b": {
       "status": "answered",

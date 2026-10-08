@@ -56,7 +56,7 @@ unit 치수는 합성 2×1 um이고 측정 domain은 4×2 um(2×2 배열)이다.
 |---|---|---|
 | G1 | pending / null | 지름별 한 값 answered, 단위·조사면적·공정/기간 pending → 실자료 parser 최종 승인·가중값 불가 |
 | G2 | pending / null | 실제 mask/frame/case/height·layer↔step·unit 환산 근거 없음 → 실자료 reader/migration 승인·unit/panel 완료 불가 |
-| G7a | answered | 종류별 지표 구현 요청; 별도 Task에서 구현, 기존 line/pixel 보존 |
+| G7a | answered | 종류별 지표 구현 요청; 면적·가중·panel·delta 구현, 기존 line/pixel 보존 |
 | G7b | answered / short_only | 사용자 결정 2026-10-08; 자동 threshold·영역 없음, 수동 위치 기본 |
 
 합성 stack M1<M2와 STEP_M2 대응은 synthetic_only이며 G2 실자료 답변이 아니다. 1.2 원천 source-step assignment를 상부 layer로 자동 바꾸지 않는다. 실제 변환에서 두 의미가 충돌하면 `migration_assignment_conflict`와 raw 값·상부 판정·대응 근거를 보고하고 명시 확인 전 실패/pending으로 둔다. 변환 없는 기존 1.x/CAA/AE 입력은 unsupported다.
@@ -127,6 +127,12 @@ C/T6이 두 출처를 내보내고 DL2/T10은 ready 행만 같은 물리 중심�
 python3 -m json.tool docs/domain-input-example/numeric_v2/manifest.json
 ```
 
-질문 상태는 [open_questions.md](../../open_questions.md)의 answered/pending 표로 추적한다. G1/G2의 미답변 부분과 G4는 pending이다. G7b는 answered이며 G7a 구현은 별도 Task다. 문서·합성 검산이 실자료 수락을 대신하지 않는다.
+질문 상태는 [open_questions.md](../../open_questions.md)의 answered/pending 표로 추적한다. G1/G2의 미답변 부분과 G4는 pending이다. G7b는 answered이며 G7a 조각 지표는 별도 축으로 구현됐다. 문서·합성 검산이 실자료 수락을 대신하지 않는다.
 
 2026-10-08 G2 사실: 제품 간 um/pixel은 같고 pixel 수는 다르며 한 제품의 layer 크기는 같다. 실제 2×2는 대략 100 um/2000 px다. 이 문서의 작은 합성 frame에는 이 근사치를 대입하지 않는다. 2×2→한 unit 환산은 pending이며 /4를 하지 않는다. 지도는 원본 2×2를 그대로 표시하고 사용자가 위치를 판단하며 DL2는 그 위치와 유사한 구조를 찾는다.
+
+## 불량 유형 조각 검산
+
+d5에서 lateral 셀은 {0,1}, vertical(두 원천 모두)은 {0}이므로 lateral_only=1 um^2, vertical_only=0 um^2, simultaneous=1 um^2이며 합=U=2 um^2다. 이는 기존 line=2, pixel=0, transfer=0과 독립 축이다. d1 vertical은 height N/A이며 lateral 관측 zero만 적용돼 세 조각이 available 0이다. d40 lateral은 missing이므로 완전값은 null, 관측된 vertical 두 원천만의 부분 조각은 vertical_only=1, 나머지=0이다. 부분 조각 분류는 누락 원천 추가에 따라 바뀔 수 있다.
+
+manifest.outputs.failure_pieces_d5는 세 면적과 pending weighted/unit/panel 값을 별도 보존한다. 실제 단위와 한 unit 환산을 추측하지 않으므로 weighted/panel은 null이다. 작은 heat-map은 정수 셀 확대(긴 축 약 400 px 이상)를 사용하고 원본 2000 px 지도는 1:1이며 scale은 sidecar에 기록한다. 물리 frame/2×2 domain 자체는 변하지 않는다.

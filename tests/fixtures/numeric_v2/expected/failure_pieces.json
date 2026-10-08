@@ -1,0 +1,7 @@
+{
+  "reference_d5": {"lateral_only":5,"vertical_only":0,"simultaneous":1},
+  "target_d5": {"lateral_only":5,"vertical_only":0,"simultaneous":1},
+  "reference_panel": {"lateral_only":500,"vertical_only":0,"simultaneous":100},
+  "target_panel": {"lateral_only":250,"vertical_only":0,"simultaneous":50},
+  "delta_panel": {"lateral_only":-250,"vertical_only":0,"simultaneous":-50}
+}

@@ -90,7 +90,8 @@ def test_delta_bucket_union_and_transfer_net_change_without_spatial_claim():
     assert delta.line.value==-100 and delta.pixel.value==100 and delta.transfer.value==-100
     assert sum(m.value for m in delta.line_exclusive.values())+sum(m.value for m in delta.line_shared.values())==delta.line.value
     assert sum(m.value for m in delta.pixel_exclusive.values())+sum(m.value for m in delta.pixel_shared.values())==delta.pixel.value
-    assert 'simultaneous' not in json.dumps(delta.to_dict())
+    assert 'simultaneous' not in json.dumps({k:v for k,v in delta.to_dict().items() if k!='failure_pieces'})
+    assert delta.failure_pieces['simultaneous'].value==0
 
 
 def test_missing_density_even_at_zero_area_does_not_become_observed_zero():
