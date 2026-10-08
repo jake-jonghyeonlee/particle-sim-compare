@@ -58,3 +58,21 @@ Notes
   review batch R2 (T6-T7).
 - Measurements: first-pass coordinator acceptance T1-T6 6/6; independent review found 2 blocking defects the
   coordinator's checks missed; retries 1 (reviewer start); user interventions 0 in this stretch.
+
+# Orca checkpoint — 2026-10-09 (phase 1 closed)
+
+| Task | Orca task / dispatch | Result | Commit |
+|---|---|---|---|
+| R1 re-review | task_cea61f0678f8 / ctx_bfe532461370 | PASS-WITH-NOTES at 8a35c0e | 6a65834 |
+| Gate answers applied | task_f64a31bf24b4 / ctx_315ed091ec9e | accepted by coordinator | 957d581 |
+| Pieces metric + heat-map scale | task_5108f879d389 / ctx_c31cc2d9a7ca | accepted by coordinator | a3001fc |
+| T7 retirement | task_f61cbf050c5d / ctx_d6b7212f17eb | accepted by coordinator | e4086dd |
+| R2 independent review | task_063588e21ad3 / ctx_bd344bd2567a | PASS-WITH-NOTES at e4086dd, 0 blocking, 13 notes | 3a91cdb |
+| R2 notes fixed | task_3acccc23e982 / ctx_7b9eb70798db | accepted by coordinator, not re-reviewed | this commit's parent |
+
+Phase 1 (numeric, T1-T7) state: code and synthetic acceptance done; independent verdicts PASS-WITH-NOTES for R1 and R2.
+Open for real data: density unit and inspected-area conversion (rest of G1); unit value from the 2x2 result, real hotspot
+delivery format, source-id meaning for comparison (N5) and conservation tolerance (N9) (rest of G2).
+User decisions since the plan: G7b short-only; heat map without automatic threshold; density one value per diameter;
+G7a implement the pieces metric (done). The map and DL2 are complementary (user, 2026-10-08).
+Next: phase 2 DL1 (T8) limited to the answer-independent scope while G3 and G5 are unanswered.
