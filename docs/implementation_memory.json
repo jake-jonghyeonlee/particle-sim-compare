@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-07T23:27:27.197398+09:00",
+  "updated_at": "2026-10-08T14:38:39.993327+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -456,5 +456,20 @@
       "note": "See its README for the manifest format, the grid-size check, the relations file, and the licence caution on public ConvNeXt V2 weights."
     },
     "dl2_repo": "Not created yet."
+  },
+  "gate_answers_2026_10_08": {
+    "authority": "Answers the user gave on 2026-10-08 in a separate non-Orca session, recorded there in the shared memory note gate-answers-2026-10-08 and picked up by the Orca coordinator from that note. To be confirmed with the user in the next report; not yet applied to code.",
+    "G7b": "Electrode-count map: open excluded for now (short-only).",
+    "map_usage": "No automatic threshold or region ranking: draw the electrode count as a heat map and the user judges. Reading of the recording session: map-derived automatic ROI selection is not wanted as the default; ROI picking is manual.",
+    "representative_diameter_um": 5,
+    "two_by_two_display": "Showing the 2x2 result as it is, is fine.",
+    "G1_partial": "Defect density is one value per diameter (1 um, 2 um, ...), not a continuous per-um density. The unit and the inspected-area conversion were not stated.",
+    "G2_partial": "um/pixel is the same across models and the pixel count differs per model; within one model all layers have the same size. A 2x2 domain is roughly 100 um and 2000 px (about 0.05 um/pixel). How one unit's value is taken from the 2x2 result is still open.",
+    "G7a": "Undecided: the user did not know what the defect-type pieces meant and asked for an explanation.",
+    "unchanged": [
+      "validation against existing values is done by the user",
+      "yield conversion on hold",
+      "per-location attribution on hold"
+    ]
   }
 }

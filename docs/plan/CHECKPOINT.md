@@ -31,3 +31,30 @@ seen the plan; T1 and the synthetic paths of T2–T6 do not need the gate answer
 - Coordinator plan review: v1 three blocking and five advisory findings; v2 none blocking.
 - Retries: none. User interventions: one mid-run message (scope must include DL2 and the rest of this repo —
   already in the request). Subscription usage: not observable from here.
+
+# Orca checkpoint — 2026-10-08
+
+- Editor terminal: `term_5b11ff02-39ce-467f-a5e5-c02e2234b0d6` — Codex GPT-6.1-Sol medium, verified on the terminal.
+- Reviewer terminals: `term_ac7750a5-917c-4ce0-b0ba-7643ee8fda88` (R1) and `term_37f70292-65fa-498b-ae71-74fb5b688758` (R1 re-review) — Claude Opus 5.5 high, verified on the terminal.
+
+| Task | Orca task / dispatch | Result | Commit |
+|---|---|---|---|
+| T1 contract | task_adced84d0ad7 / ctx_17007db2e6f9 | accepted by coordinator | 60ac76a |
+| T2 inputs and measurement | task_1bcad5461300 / ctx_63417b19c2ff | accepted by coordinator | b497ba8 |
+| T3 union and pair shares | task_ff191e3b4305 / ctx_40975a423cc3 | accepted by coordinator | 53681a4 |
+| T4 density, panel, delta | task_caa1c1b705e3 / ctx_bacc2fdd0f20 | accepted by coordinator | beb9a15 |
+| T5 electrode-count map | task_0aada545540e / ctx_2d8515cf6047 | accepted by coordinator | d0cde4d |
+| R1 independent review | task_b5a098349aaf / ctx_2eb243133370 | FAIL for d0cde4d: B1, B2 blocking, 10 notes | 3e4411b |
+| T6 CLI, report, ROI export | task_c40bb0170703 / ctx_eff632185133 | accepted by coordinator, R2 pending | ad3b664 |
+| R1 fixes | task_56bf8aaff534 / ctx_a8f36e6577e3 | accepted by coordinator | 8a35c0e |
+| R1 re-review | task_cea61f0678f8 / ctx_c2af37b67dd1 failed at agent readiness (terminal showed an update banner); retried as ctx_bfe532461370 on a fresh reviewer terminal | running | — |
+
+Notes
+- The fix worker finished but its worker_done did not arrive until the coordinator asked for it by message.
+- Gate answers from the user's separate session on 2026-10-08 are recorded in `docs/implementation_memory.json`
+  (`gate_answers_2026_10_08`): G7b short-only, heat map without automatic threshold, density one value per diameter,
+  grid facts. Not yet applied to code. G7a undecided. Unit value from the 2x2 result still open.
+- Remaining in phase 1: apply the gate answers, T7 (retire old paths, needs the coordinator's reference inventory first),
+  review batch R2 (T6-T7).
+- Measurements: first-pass coordinator acceptance T1-T6 6/6; independent review found 2 blocking defects the
+  coordinator's checks missed; retries 1 (reviewer start); user interventions 0 in this stretch.
