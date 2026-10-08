@@ -1,7 +1,6 @@
 """Pillow 전극 수 지도: 원본 셀·2x2 domain 유지, 확률/자동 영역 선택 없음."""
 from __future__ import annotations
 
-import colorsys
 from dataclasses import asdict
 import hashlib
 import json
@@ -14,18 +13,13 @@ from PIL import Image, ImageDraw
 from .numeric_schema import NumericContractError
 
 UNAVAILABLE_COLOR = (160, 160, 160)
-# 고정 discrete palette: 제품/레이어마다 같은 count는 같은 색이다.
-COLORS = ((255, 255, 255), (49, 130, 189), (107, 174, 214),
-          (255, 187, 120), (255, 127, 14), (214, 39, 40), (148, 103, 189))
 
 
 def count_color(count):
     if isinstance(count, bool) or not isinstance(count, (int, np.integer)) or count < 0:
         raise NumericContractError('invalid_electrode_count')
-    if count < len(COLORS):
-        return COLORS[count]
-    # 많은 전극에도 discrete count별 안정 색상. density/확률 scale을 쓰지 않는다.
-    return tuple(round(c*255) for c in colorsys.hsv_to_rgb((count*.61803398875)%1, .75, .85))
+    # Sequential white-to-deep-blue; every channel decreases as count increases.
+    return tuple(255 - (span * int(count)) // (int(count) + 8) for span in (240, 200, 120))
 
 
 def write_heatmap(out, name, counts, frame, *, status, reasons=(), provenance=None):
@@ -59,10 +53,11 @@ def write_heatmap(out, name, counts, frame, *, status, reasons=(), provenance=No
         metadata['rendering']['grid_bbox_px'] = [0,0,display_width,display_height]
         image = Image.new('RGB',(display_width+240,max(display_height,45+18*(len(values)+1))),UNAVAILABLE_COLOR)
         if counts is not None:
-            grid=Image.new('RGB',(width,height),UNAVAILABLE_COLOR)
-            pixels = grid.load()
-            for r,c in np.ndindex(frame.shape_yx):
-                pixels[c,r] = count_color(int(counts[r,c])) if frame.valid[r,c] else UNAVAILABLE_COLOR
+            rgb = np.empty((height,width,3),dtype=np.uint8)
+            rgb[:] = UNAVAILABLE_COLOR
+            for n in values:
+                rgb[(counts == n) & frame.valid] = count_color(n)
+            grid = Image.fromarray(rgb)
             image.paste(grid.resize((display_width,display_height),Image.Resampling.NEAREST),(0,0))
         draw = ImageDraw.Draw(image)
         draw.rectangle((display_width,0,image.width,image.height),fill='white')

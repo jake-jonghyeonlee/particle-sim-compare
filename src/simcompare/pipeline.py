@@ -48,28 +48,42 @@ def _numeric_rates(dataset, section):
     from simcompare.density import DensityContract, adapt_density
     from simcompare.linepixel import PanelSpec, UnitAreaBasis, compute_areas, compute_rates
     from simcompare.numeric_schema import NumericContractError
-    contracts = {}
-    for raw in section.get('density_contracts',[]):
-        contract = DensityContract(**raw)
-        if contract.distribution_id in contracts:
-            raise NumericContractError('duplicate_density_contract')
-        contracts[contract.distribution_id] = contract
-    distributions = {}
-    selected = dataset.provenance['density']['distribution_id']
-    # 원천이 지정한 distribution을 사용한다. layer별 다중 분포를 임의 합산하지 않는다.
-    rows = [r for r in dataset.density if r.distribution_id == selected]
-    distribution = adapt_density(rows,contract=contracts.get(selected))
-    distributions[distribution.process_layer] = distribution
-    if set(contracts)-{selected}:
-        raise NumericContractError('unused_density_contract')
-    bases = {}
-    for raw in section.get('unit_bases',[]):
-        basis = UnitAreaBasis(**{**raw,'unit_size_um':tuple(raw['unit_size_um'])})
-        key = (section['product_id'],basis.frame_id)
-        if key in bases:
-            raise NumericContractError('duplicate_unit_basis')
-        bases[key] = basis
-    panels = {} if section.get('panel') is None else {section['product_id']:PanelSpec(**section['panel'])}
+    def declarations(name):
+        values=section.get(name,[])
+        if not isinstance(values,list) or any(not isinstance(v,dict) for v in values):
+            raise NumericContractError('invalid_numeric_config', name+'는 객체 목록이어야 합니다')
+        return values
+    contracts={}
+    for raw in declarations('density_contracts'):
+        try:contract=DensityContract(**raw)
+        except TypeError as exc:raise NumericContractError('invalid_numeric_config','density_contracts 필드를 확인하세요') from exc
+        if contract.distribution_id in contracts:raise NumericContractError('duplicate_density_contract')
+        contracts[contract.distribution_id]=contract
+    distributions={}
+    for selected in sorted({r.distribution_id for r in dataset.density}):
+        distribution=adapt_density([r for r in dataset.density if r.distribution_id==selected],contract=contracts.get(selected))
+        if distribution.process_layer in distributions:raise NumericContractError('ambiguous_layer_density_distribution')
+        distributions[distribution.process_layer]=distribution
+    if set(contracts)-{r.distribution_id for r in dataset.density}:raise NumericContractError('unused_density_contract')
+    bases={}
+    domain=dataset.unit_domain
+    for raw in declarations('unit_bases'):
+        try:basis=UnitAreaBasis(**{**raw,'unit_size_um':tuple(raw['unit_size_um'])})
+        except (KeyError,TypeError) as exc:raise NumericContractError('invalid_numeric_config','unit_bases의 frame/unit_size_um/evidence를 확인하세요') from exc
+        key=(section['product_id'],basis.frame_id)
+        if key in bases:raise NumericContractError('duplicate_unit_basis')
+        declared=(domain['unit_width_um'],domain['unit_height_um'])
+        measured=(domain['measured_width_um'],domain['measured_height_um'])
+        if (domain['frame_id']!=basis.frame_id or declared!=tuple(basis.unit_size_um) or declared!=measured
+                or domain.get('domain_shape_units_yx',[1,1])!=[1,1]):
+            from dataclasses import replace
+            basis=replace(basis,basis='manifest_unit_domain_mismatch')
+        bases[key]=basis
+    raw_panel=section.get('panel')
+    if raw_panel is not None and not isinstance(raw_panel,dict):
+        raise NumericContractError('invalid_numeric_config','panel은 치수와 length_unit을 가진 객체여야 합니다')
+    try:panels={} if raw_panel is None else {section['product_id']:PanelSpec(**raw_panel)}
+    except TypeError as exc:raise NumericContractError('invalid_numeric_config','panel 필드를 확인하세요') from exc
     return compute_rates(compute_areas(dataset),distributions,unit_bases=bases,panels=panels)
 
 
@@ -92,8 +106,13 @@ def _numeric_map(cfg):
     from simcompare.electrode_map import compute_electrode_maps
     from simcompare.numeric_schema import NumericContractError
     spec = cfg.get('map')
-    if not isinstance(spec,dict) or set(spec)-{'input','diameter_um','min_count'}:
+    if not isinstance(spec,dict) or set(spec)-{'input','diameter_um','min_count','per_cell_text'}:
         raise NumericContractError('numeric_map_config_required')
+    if type(spec.get('per_cell_text',False)) is not bool:
+        raise NumericContractError('invalid_numeric_config','map.per_cell_text는 boolean이어야 합니다')
+    from .numeric_schema import DIAMETERS_UM
+    if spec.get('diameter_um',5) not in DIAMETERS_UM:
+        raise NumericContractError('invalid_representative_diameter', '지름은 1..30, 40, 50 um 중 하나여야 합니다')
     root,dataset = _numeric_input(cfg,spec.get('input'))
     maps = compute_electrode_maps(dataset,diameter_um=spec.get('diameter_um',5),min_count=spec.get('min_count'))
     return root,dataset,maps
@@ -101,13 +120,21 @@ def _numeric_map(cfg):
 
 def run_numeric_map(cfg, out=None):
     from simcompare.report import map_report, write_numeric_report
-    _,_,maps = _numeric_map(cfg)
-    payload,tables = map_report(maps)
+    _,dataset,maps = _numeric_map(cfg)
+    if any(m.status!='available' for m in (*maps.layers,*maps.summaries)):
+        from .numeric_schema import NumericContractError
+        raise NumericContractError('electrode_map_incomplete', ', '.join(sorted({r for m in (*maps.layers,*maps.summaries) for r in m.reasons})))
+    payload,tables = map_report(maps,per_cell=cfg['map'].get('per_cell_text',False))
     output = Path(out) if out is not None else _numeric_path(cfg,cfg['output_dir'])
+    for old in output.glob('electrode_map*'):
+        if old.is_file() and old.suffix in ('.json','.html','.csv','.npz','.png'):old.unlink()
     from simcompare.heatmap import write_heatmaps
     heatmaps = write_heatmaps(output, maps)
     payload['heatmaps'] = heatmaps
-    paths = write_numeric_report(output,'electrode_map',payload,tables)
+    payload['is_synthetic']=bool(dataset.provenance.get('is_synthetic',False))
+    from .report import write_map_arrays
+    paths=write_map_arrays(output,maps,payload)
+    paths += write_numeric_report(output,'electrode_map',payload,tables)
     paths += [str(output/ref[k]) for ref in heatmaps for k in ('png','sidecar') if ref[k] is not None]
     usable = any(m.coverage['source_coverage_status'] in ('available','partial') for m in maps.layers)
     return {'status':payload['status'],'reasons':payload['reasons'],'outputs':paths,'exit_code':0 if payload['status']=='available' else 3 if usable else 2}

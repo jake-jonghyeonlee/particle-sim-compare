@@ -1,3 +1,5 @@
+> **legacy / archived** — 이 페이지의 모듈은 T7에서 폐기되었습니다. 현재 실행 계약이 아닙니다.
+
 # checks.py contract (validate-data report)
 
 Imports: numpy, schema, split (group_ids, confounding_report), caa, dataset.EncodedSet,

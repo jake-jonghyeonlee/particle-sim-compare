@@ -154,11 +154,39 @@ def test_available_map_report_csv_has_counts_and_no_pending_scope(tmp_path):
     assert result['status']=='available' and result['exit_code']==0
     out=tmp_path/'demo/numeric_outputs'
     document=json.loads((out/'electrode_map.json').read_text())
-    assert document['layers'][0]['counts']==document['summaries'][0]['counts']==[[2,4,3,4,3,2]]
+    import numpy as np
+    for entry in (document['layers'][0],document['summaries'][0]):
+        with np.load(out/entry['array_file']) as arrays:
+            assert arrays['counts'].tolist()==[[2,4,3,4,3,2]]
     assert document['layers'][0]['regions']==[]
     assert 'map_scope_unconfirmed' not in document['reasons']
-    with (out/'electrode_map_map.csv').open() as f:
-        rows=list(csv.DictReader(f))
+    assert not (out/'electrode_map_map.csv').exists()
+    config=load_numeric_config(tmp_path/'demo/config.yaml');config['map']['per_cell_text']=True
+    run_numeric_map(config)
+    with (out/'electrode_map_map.csv').open() as f: rows=list(csv.DictReader(f))
     assert [int(row['value']) for row in rows]==[2,4,3,4,3,2]
     assert all(row['partial_value']=='null' and row['status']=='available' for row in rows)
     assert document['provenance']['G7b']['decided_on']=='2026-10-08'
+
+
+def test_r2_synthetic_label_and_consistent_gate_status_follow_input(tmp_path):
+    from simcompare.adapters.numeric import load_dataset
+    from simcompare.pipeline import _numeric_rates
+    from simcompare.report import comparison_report
+    from simcompare.linepixel import compare_rates
+    from simcompare.numeric_schema import current_gate_decisions
+    generate_numeric_demo(tmp_path/'demo');cfg=load_numeric_config(tmp_path/'demo/config.yaml')
+    ref=load_dataset(tmp_path/'demo/reference');tgt=load_dataset(tmp_path/'demo/target')
+    ref.provenance['is_synthetic']=False;tgt.provenance['is_synthetic']=False
+    rr=_numeric_rates(ref,cfg['reference']);tr=_numeric_rates(tgt,cfg['target'])
+    payload,tables=comparison_report(rr,tr,compare_rates(rr,tr,reference_product_id='reference',target_product_id='target'))
+    assert payload['is_synthetic'] is False
+    assert payload['reference']['gates']==payload['target']['gates']==payload['applied_gate_decisions']==current_gate_decisions()
+    write_numeric_report(tmp_path/'out','input',payload,tables)
+    assert '합성 동작 검증' not in (tmp_path/'out/input.html').read_text()
+
+
+def test_r2_retired_arch_pages_label_themselves_legacy():
+    root=Path(__file__).resolve().parents[1]
+    for name in ('config','checks'):
+        assert (root/f'docs/arch/{name}.md').read_text().startswith('> **legacy / archived**')

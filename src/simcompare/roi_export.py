@@ -268,11 +268,23 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
     # 중복 지정은 같은 ROI 한 행으로 묶고 입력 순서와 무관하게 정렬한다.
     rows = sorted({row['roi_id']:row for row in rows}.values(),key=lambda r:r['roi_id'])
     excluded = sorted(excluded,key=lambda r:json.dumps(r,sort_keys=True,ensure_ascii=False))
+    commit_reason=None
     if producer_commit is None:
-        result = subprocess.run(['git','rev-parse','HEAD'],cwd=Path(__file__).resolve().parents[2],
-                                capture_output=True,text=True)
-        producer_commit = result.stdout.strip() if result.returncode == 0 else None
-    payload = {'schema_version':'review_roi_v1','producer_commit':producer_commit,
+        package_root=Path(__file__).resolve().parents[2]
+        if not (package_root/'.git').exists():
+            commit_reason='producer_not_in_git_checkout'
+        else:
+            try:
+                tracked=subprocess.run(['git','ls-files','--error-unmatch','src/simcompare/roi_export.py'],cwd=package_root,capture_output=True,text=True)
+                if tracked.returncode!=0:
+                    commit_reason='producer_source_not_tracked'
+                else:
+                    result=subprocess.run(['git','rev-parse','HEAD'],cwd=package_root,capture_output=True,text=True)
+                    producer_commit=result.stdout.strip() if result.returncode==0 else None
+                    if producer_commit is None:commit_reason='producer_git_revision_unavailable'
+            except OSError:
+                commit_reason='producer_git_unavailable'
+    payload = {'schema_version':'review_roi_v1','producer_commit':producer_commit,'producer_commit_reason':commit_reason,
                'source_manifest_hash':dataset.provenance['input_hash'],'assets_root':str(root.resolve()),
                'rois':rows,'excluded_records':excluded,
                'gates':current_gate_decisions(),

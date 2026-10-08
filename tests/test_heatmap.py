@@ -15,11 +15,11 @@ def test_hand_checked_cells_legend_extent_and_valid_hole(tmp_path):
                          status='partial',reasons=['valid_coverage_partial'])
     with Image.open(tmp_path/result['png']) as image:
         assert image.getpixel((0,0))==(255,255,255)  # observed zero
-        assert image.getpixel((134,0))==(107,174,214)  # count 2
-        assert image.getpixel((268,0))==(255,187,120)  # count 3
-        assert image.getpixel((0,134))==(49,130,189)  # count 1
+        assert image.getpixel((134,0))==(207,215,231)  # count 2
+        assert image.getpixel((268,0))==(190,201,223)  # count 3
+        assert image.getpixel((0,134))==(229,233,242)  # count 1
         assert image.getpixel((134,134))==(160,160,160)  # invalid, not 7 or 0
-        assert image.getpixel((268,134))==(255,127,14)  # count 4
+        assert image.getpixel((268,134))==(175,189,215)  # count 4
     sidecar=json.loads((tmp_path/result['sidecar']).read_text())
     assert sidecar['extent_um']==[100,200,101.5,201]
     assert sidecar['rendering']['grid_bbox_px']==[0,0,402,268]
@@ -54,9 +54,9 @@ def test_two_by_four_grid_visible_integer_scale_and_exact_cells(tmp_path):
     assert meta['rendering']['grid_bbox_px']==[0,0,400,200]
     assert meta['extent_um']==[100,200,102,201]
     with Image.open(tmp_path/result['png']) as image:
-        assert image.getpixel((199,99))==(49,130,189)
-        assert image.getpixel((200,0))==(107,174,214)
-        assert image.getpixel((250,150))==(148,103,189)
+        assert image.getpixel((199,99))==(229,233,242)
+        assert image.getpixel((200,0))==(207,215,231)
+        assert image.getpixel((250,150))==(153,170,204)
         assert image.getpixel((399,199))==(255,255,255)
 
 
@@ -70,4 +70,12 @@ def test_large_2000_pixel_grid_stays_one_to_one(tmp_path):
     assert meta['extent_um']==[0,0,100,.05]
     with Image.open(tmp_path/result['png']) as image:
         assert image.getpixel((1998,0))==(255,255,255)
-        assert image.getpixel((1999,0))==(255,187,120)
+        assert image.getpixel((1999,0))==(190,201,223)
+
+
+def test_r2_sequential_palette_above_six_hand_checked():
+    from simcompare.heatmap import count_color
+    assert count_color(7)==(143,162,199)
+    assert count_color(8)==(135,155,195)
+    assert count_color(16)==(95,122,175)
+    assert all(all(b<=a for a,b in zip(count_color(n),count_color(n+1))) for n in range(199))

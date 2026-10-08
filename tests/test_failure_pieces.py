@@ -55,8 +55,9 @@ def test_below_height_na_is_excluded_while_missing_vertical_makes_pieces_partial
     a=make_case('lat','A','B',{0,1},diameter=1)
     b=make_case('vert','A','C',{2},failure_type='vertical_short')
     g=group(compute_areas([a,b]),diameter=1)
-    assert piece_values(g)=={'lateral_only':2,'vertical_only':0,'simultaneous':0}
-    assert all(m.status=='available' for m in g.failure_pieces.values())
+    assert piece_values(g)=={'lateral_only':2,'vertical_only':None,'simultaneous':None}
+    assert g.failure_pieces['lateral_only'].status=='available'
+    assert all(g.failure_pieces[n].status=='not_applicable' for n in ('vertical_only','simultaneous'))
     assert g.coverage.not_applicable==1
     b.records[1]=replace(b.records[1],input_status='missing',mask=None,reasons=('source_input_missing',))
     g=group(compute_areas([a,b]),diameter=1)

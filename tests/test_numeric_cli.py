@@ -56,7 +56,8 @@ def test_subprocess_demo_then_compare_matches_hand_authored_json_and_csv(tmp_pat
     assert frames == [[1,6],[2,3]]
     assert payload['coordinate_policy'] == 'independent_product_frames'
     for side in ('reference','target'):
-        assert all(state['status']=='pending' and state['answer'] is None for state in payload[side]['gates'].values())
+        assert payload[side]['gates']['G7a']['status']=='answered'
+        assert payload[side]['gates']==payload['applied_gate_decisions']
     assert (out/'comparison.html').exists()
     assert not (out/'model.pt').exists()
 
@@ -69,7 +70,9 @@ def test_single_product_map_validation_roi_and_gate_pending(tmp_path):
     map_payload = json.loads((data/'numeric_outputs/electrode_map.json').read_text())
     assert {r['key']['product_id'] for r in map_payload['layers']} == {'reference'}
     assert map_payload['status'] == 'available'
-    assert map_payload['layers'][0]['counts'] == [[2,4,3,4,3,2]]
+    import numpy as np
+    with np.load(data/'numeric_outputs'/map_payload['layers'][0]['array_file']) as arrays:
+        assert arrays['counts'].tolist()==[[2,4,3,4,3,2]]
     assert run_cli('validate-data','--config',data/'pending.yaml').returncode == 3
     pending = run_cli('compare','--config',data/'pending.yaml')
     assert pending.returncode == 3, pending.stderr
@@ -159,11 +162,8 @@ def test_absent_representative_diameter_is_unavailable_null_not_zero(tmp_path):
     result=run_cli('electrode-map','--config',config)
     assert result.returncode==2
     out=tmp_path/'demo/numeric_outputs'
-    payload=json.loads((out/'electrode_map.json').read_text())
-    assert payload['status']=='unavailable'
-    assert payload['layers'][0]['counts'] is None
-    with (out/'electrode_map_map.csv').open() as f:
-        assert all(r['value']=='null' and r['status']=='unavailable' for r in csv.DictReader(f))
+    assert not (out/'electrode_map.json').exists()
+    assert json.loads((out/'error.json').read_text())['status']=='unavailable'
 
 
 def test_invalid_empty_output_config_has_nonzero_without_traceback(tmp_path):
@@ -231,3 +231,96 @@ def test_subprocess_failure_pieces_match_hand_json_and_csv_existing_values_uncha
     assert '<h2>불량 유형 조각</h2><table>' in html
     assert 'line / pixel과 다른 축' in html
     assert payload['applied_gate_decisions']['G7a']['implementation_status']=='implemented'
+
+
+def _rewrite_manifest(root, change):
+    path=root/'manifest.json';m=json.loads(path.read_text());change(m)
+    m['input_hash']=m['source_manifest_hash']=source_payload_hash(m)
+    path.write_text(json.dumps(m))
+
+
+def test_r2_unit_basis_compares_manifest_not_config_only(tmp_path):
+    generate_numeric_demo(tmp_path/'demo');root=tmp_path/'demo'
+    def multi(m):
+        m['unit_domain'].update(unit_width_um=3,domain_shape_units_yx=[1,2])
+    _rewrite_manifest(root/'reference',multi)
+    assert main(['compare','--config',str(root/'config.yaml')])==3
+    payload=json.loads((root/'numeric_outputs/comparison.json').read_text())
+    layer=payload['reference']['layers'][0]
+    assert layer['line']['unit']['value'] is None and layer['line']['panel']['value'] is None
+    assert 'unit_area_basis_unconfirmed' in layer['line']['unit']['reasons']
+    assert payload['reference']['areas']['groups'][4]['line']['area']['value']==4
+
+
+def test_r2_error_cleanup_and_success_clears_marker(tmp_path):
+    generate_numeric_demo(tmp_path/'demo');cfg=tmp_path/'demo/config.yaml';out=tmp_path/'out'
+    assert main(['compare','--config',str(cfg),'--out',str(out)])==0
+    bad=tmp_path/'bad.yaml';bad.write_text('bad: true\n')
+    assert main(['compare','--config',str(bad),'--out',str(out)])==2
+    assert sorted(p.name for p in out.iterdir())==['error.json','execution.json']
+    assert main(['compare','--config',str(cfg),'--out',str(out)])==0
+    assert not (out/'error.json').exists()
+
+
+def test_r2_map_nonzero_never_leaves_report_set(tmp_path):
+    generate_numeric_demo(tmp_path/'demo');path=tmp_path/'demo/config.yaml';out=tmp_path/'out'
+    assert main(['electrode-map','--config',str(path),'--out',str(out)])==0
+    cfg=yaml.safe_load(path.read_text());cfg['map']['diameter_um']=7.5;path.write_text(yaml.safe_dump(cfg))
+    assert main(['electrode-map','--config',str(path),'--out',str(out)])==2
+    assert sorted(p.name for p in out.iterdir())==['error.json','execution.json']
+    cfg['map']['diameter_um']=5;path.write_text(yaml.safe_dump(cfg))
+    def missing(m):
+        r=m['cases'][0]['records'][4];r.pop('mask');r.update(input_status='missing',reasons=['missing_input'])
+    _rewrite_manifest(tmp_path/'demo/reference',missing)
+    assert main(['electrode-map','--config',str(path),'--out',str(out)])==2
+    assert not list(out.glob('electrode_map*'))
+
+
+@pytest.mark.parametrize('key,value,detail',[('unit_bases',[5],'객체 목록'),('panel',7,'객체')])
+def test_r2_config_errors_name_user_field(tmp_path,capsys,key,value,detail):
+    generate_numeric_demo(tmp_path/'demo');path=tmp_path/'demo/config.yaml'
+    cfg=yaml.safe_load(path.read_text());cfg['reference'][key]=value;path.write_text(yaml.safe_dump(cfg))
+    assert main(['compare','--config',str(path)])==2
+    err=capsys.readouterr().err
+    assert key in err and detail in err
+    assert 'argument after' not in err and 'int' not in err
+
+
+def test_r2_full_2000_square_map_is_bounded_binary_output(tmp_path):
+    """3 source cases, 4 million cells: <=2MB total reports and <30s wall time.
+
+    Includes actual loader, mask reading, count computation, NPZ/PNG/report writing.
+    The threshold is a generous local CPU regression bound, not a real-data SLA.
+    """
+    import hashlib,time,copy
+    import numpy as np
+    generate_numeric_demo(tmp_path/'demo');root=tmp_path/'demo/reference'
+    array=np.zeros((2000,2000),np.uint8);array[0,:2]=1
+    np.save(root/'large.npy',array);np.save(root/'valid.npy',np.ones((2000,2000),np.uint8))
+    def asset(name):return {'path':name,'sha256':hashlib.sha256((root/name).read_bytes()).hexdigest()}
+    def change(m):
+        m['frames'][0].update(shape_yx=[2000,2000],pixel_pitch_um=.05,valid=asset('valid.npy'))
+        m['unit_domain'].update(unit_width_um=100,unit_height_um=100,measured_width_um=100,measured_height_um=100)
+        m['cases']=m['cases'][:2]+[copy.deepcopy(m['cases'][0])]
+        m['cases'][2]['case_id']=m['cases'][2]['raw']['case_id']='duplicate_AB'
+        for c in m['cases']:
+            for r in c['records']:
+                r.pop('mask',None)
+                if r['diameter_um']==5:r['asset']=asset('large.npy')
+                else:r.update(input_status='missing',reasons=['missing_input','unobserved_other_diameter'])
+    _rewrite_manifest(root,change)
+    out=tmp_path/'out';started=time.monotonic()
+    result=run_cli('electrode-map','--config',tmp_path/'demo/config.yaml','--out',out)
+    elapsed=time.monotonic()-started
+    assert result.returncode==0,result.stderr
+    assert elapsed<30
+    assert sum(p.stat().st_size for p in out.iterdir())<2_000_000
+    payload=json.loads((out/'electrode_map.json').read_text())
+    assert payload['layers'][0]['histogram']=={'0':3999998,'3':2}
+    assert (out/'electrode_map.json').stat().st_size<50_000
+    assert not (out/'electrode_map_map.csv').exists()
+    with np.load(out/payload['layers'][0]['array_file']) as arrays:
+        assert arrays['counts'].shape==(2000,2000)
+        assert arrays['counts'][0,0]==arrays['counts'][0,1]==3
+        assert arrays['counts'][1999,1999]==0 and arrays['valid'].all()
+    print('large map elapsed_s=',elapsed,'bytes=',sum(p.stat().st_size for p in out.iterdir()))

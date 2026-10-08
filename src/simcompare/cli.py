@@ -44,6 +44,8 @@ def _parser() -> argparse.ArgumentParser:
         command = _korean_help(sub.add_parser(name, add_help=False, help="numeric_v2 수치/검토 위치 명령(학습 호출 없음)"))
         command.add_argument("--config", required=True, help="numeric_config_v1 YAML")
         command.add_argument("--out", required=name == "export-review-rois", help="출력 디렉터리")
+        if name == "electrode-map":
+            command.add_argument("--per-cell-text", action="store_true", help="4096 cells 이하에서만 셀별 텍스트 출력")
         if name in ("electrode-map", "export-review-rois"):
             command.add_argument("--min-count", type=int, help="명시할 때만 4-neighbour 영역 계산")
     merge = _korean_help(sub.add_parser(
@@ -60,6 +62,14 @@ def _parser() -> argparse.ArgumentParser:
 def _print(payload) -> None:
     """결과 dict를 한글이 깨지지 않는 JSON으로 표준 출력에 쓴다."""
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def _remove_reports(folder):
+    """Only this application's report files, never inputs/user assets."""
+    for prefix in ('comparison','electrode_map','validation','review_rois'):
+        for path in Path(folder).glob(prefix+'*'):
+            if path.is_file() and path.suffix in ('.json','.csv','.html','.png','.npz'):
+                path.unlink()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,11 +94,14 @@ def main(argv: list[str] | None = None) -> int:
         cfg = pipeline.load_numeric_config(args.config)
         if getattr(args, "min_count", None) is not None:
             cfg.setdefault("map", {})["min_count"] = args.min_count
+        if getattr(args,"per_cell_text",False):
+            cfg.setdefault("map",{})["per_cell_text"]=True
         runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
                    "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}
         result = runners[args.command](cfg,args.out)
         output = Path(args.out) if args.out is not None else pipeline._numeric_path(cfg,cfg["output_dir"])
         (output/"execution.json").write_text(json.dumps({"command":args.command,**result},ensure_ascii=False,indent=2),encoding="utf-8")
+        (output/"error.json").unlink(missing_ok=True)
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
@@ -106,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     folder = Path(output)
                     folder.mkdir(parents=True,exist_ok=True)
+                    _remove_reports(folder)
                     encoded_error = json.dumps(error,ensure_ascii=False,indent=2)
                     (folder/"error.json").write_text(encoded_error,encoding="utf-8")
                     (folder/"execution.json").write_text(encoded_error,encoding="utf-8")

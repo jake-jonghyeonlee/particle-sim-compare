@@ -5,6 +5,7 @@ panel comparison. No default mask divisor or yield conversion is applied. G7a fa
 they do not change line/pixel priority, pair buckets or transfer.
 """
 from __future__ import annotations
+from .numeric_schema import current_gate_decisions
 
 from collections import Counter
 from dataclasses import asdict, dataclass, replace
@@ -172,11 +173,12 @@ class AreaResult:
     input_hash: str | None
     pair_table_version: str | None
     pair_table_hash: str | None
+    is_synthetic: bool = False
 
     def to_dict(self) -> dict:
         return {'schema_version': 'linepixel_area_v1', 'basis': 'full_mask_valid',
-                'input_hash': self.input_hash, 'pair_table_version': self.pair_table_version,
-                'pair_table_hash': self.pair_table_hash, 'gates': copy.deepcopy(self.gates),
+                'is_synthetic':self.is_synthetic, 'input_hash': self.input_hash, 'pair_table_version': self.pair_table_version,
+                'pair_table_hash': self.pair_table_hash, 'gates': current_gate_decisions() if self.gates else {},
                 'groups': [self.groups[key].to_dict() for key in sorted(self.groups)]}
 
 
@@ -360,6 +362,11 @@ def _group(key, entries, chunk_cells, table_version):
     pieces = {name:replace(metric(int(mask.sum())*pixel_area),
                           basis='full_mask_valid_observed_sources_failure_type_union')
               for name,mask in piece_masks.items()}
+    vertical_entries = [record for case,record in entries if case.failure_type=='vertical_short']
+    if vertical_entries and all(record.input_status=='not_applicable' for record in vertical_entries):
+        for name in ('vertical_only','simultaneous'):
+            pieces[name]=replace(pieces[name],value=None,partial_value=None,status='not_applicable',
+                                 reasons=('all_vertical_sources_not_applicable',))
     for mask in (line, effective, transfer, union, *piece_masks.values()):
         mask.setflags(write=False)
     return GroupArea(key, frame, shares(LINE, frame.valid), shares(PIXEL, frame.valid & ~line),
@@ -418,7 +425,7 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
     table_version = provenance.get('pair_table_version')
     return AreaResult({key: _group(key, grouped[key], chunk_cells, table_version) for key in sorted(grouped)},
                       copy.deepcopy(dataset.gates) if dataset else {}, provenance.get('input_hash'),
-                      table_version, provenance.get('pair_table_hash'))
+                      table_version, provenance.get('pair_table_hash'), bool(provenance.get('is_synthetic',False)))
 
 
 # T4: explicit synthetic density + one-unit basis; G1/G2 real decisions remain pending.
@@ -576,7 +583,7 @@ class RateResult:
     densities: dict
 
     def to_dict(self):
-        return {'schema_version':'linepixel_weighted_v1','gates':copy.deepcopy(self.areas.gates),
+        return {'schema_version':'linepixel_weighted_v1','gates':current_gate_decisions() if self.areas.gates else {},
                 'areas':self.areas.to_dict(),'layers':[asdict(self.layers[k]) for k in sorted(self.layers)],
                 'synthetic_contract_reasons':self.synthetic_contract_reasons,'metric_semantics':'weighted_short_index',
                 'density_distributions':{name:dist.to_dict() for name,dist in sorted(self.densities.items())}}
@@ -586,7 +593,7 @@ def _weighted_layer(key, groups, distribution, basis, panel):
     groups=sorted(groups,key=lambda g:g.key.diameter_um)
     declared_basis={} if basis is None else asdict(basis)
     rounding={'policy':None,'unit_count':None} if panel is None else panel.metadata
-    blockers=set(() if distribution is not None else ('density_contract_unconfirmed',))
+    blockers=set(() if distribution is not None else ('density_contract_unconfirmed','missing_layer_density_distribution'))
     if distribution is not None:
         blockers.update(distribution.reasons)
         if distribution.process_layer!=key.density_process_layer:

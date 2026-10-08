@@ -1,3 +1,5 @@
+> **legacy / archived** — 이 페이지의 모듈은 T7에서 폐기되었습니다. 현재 실행 계약이 아닙니다.
+
 # config.py contract
 
 YAML (yaml.safe_load) -> nested dataclasses. `class ConfigError(DataContractError)`.

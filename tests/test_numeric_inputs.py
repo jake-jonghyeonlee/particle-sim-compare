@@ -234,3 +234,45 @@ def test_converted_source_diameter_na_evidence_matches_area_and_map(package):
     areas=compute_areas(dataset)
     group=next(g for g in areas.groups.values() if g.key.diameter_um==1)
     assert group.coverage.not_applicable==2 and group.line.area.value==0
+
+
+def test_r2_multiple_layers_select_own_distribution_and_missing_blocks_only_layer(tmp_path):
+    from simcompare.synthetic import generate_numeric_demo
+    from simcompare.pipeline import load_numeric_config, _numeric_rates
+    generate_numeric_demo(tmp_path/'demo');root=tmp_path/'demo/reference'
+    path=root/'manifest.json';manifest=json.loads(path.read_text())
+    extra=copy.deepcopy(manifest['cases'][0]);extra['case_id']=extra['raw']['case_id']='AB_M3'
+    extra['analysis_layer']='M3';extra['density_process_layer']=extra['process_step_id']='step_M3'
+    extra['raw']['assigned_process_layer']='step_M3'
+    for ep in extra['endpoints']:ep['actual_layer']='M3'
+    extra['raw']['ordered_endpoints']=extra['endpoints']
+    manifest['cases'].append(extra)
+    manifest['layer_stack'].append({'actual_layer':'M3','stack_order':3,'density_process_layer':'step_M3'})
+    path.write_text(json.dumps(manifest))
+    def add(rows):
+        copies=copy.deepcopy(rows)
+        for row in copies:
+            row.update(distribution_id='D3',process_layer='step_M3',raw_value='.5' if row['diameter_um']=='5' else '0')
+        rows.extend(copies)
+    modify_csv(root,'density.csv',add)
+    cfg=load_numeric_config(tmp_path/'demo/config.yaml');section=cfg['reference']
+    section['density_contracts'].append({**section['density_contracts'][0],'distribution_id':'D3','process_layer':'step_M3'})
+    result=_numeric_rates(load_dataset(root),section)
+    bylayer={key.analysis_layer:value for key,value in result.layers.items()}
+    assert bylayer['M2'].line.unit.value==4
+    assert bylayer['M3'].line.unit.value==1.5
+    assert bylayer['M3'].line.panel.value==150
+    modify_csv(root,'density.csv',lambda rows:rows.__setitem__(slice(None),[r for r in rows if r['distribution_id']!='D3']))
+    section['density_contracts']=section['density_contracts'][:1]
+    result=_numeric_rates(load_dataset(root),section)
+    bylayer={key.analysis_layer:value for key,value in result.layers.items()}
+    assert bylayer['M2'].line.unit.value==4
+    assert bylayer['M3'].line.unit.value is None
+    assert 'missing_layer_density_distribution' in bylayer['M3'].line.unit.reasons
+
+
+def test_r2_kept_parquet_and_zarr_reader_dependencies_declared():
+    import tomllib
+    deps=tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())['project']['dependencies']
+    assert any(d.startswith('pyarrow') for d in deps)
+    assert any(d.startswith('zarr') for d in deps)

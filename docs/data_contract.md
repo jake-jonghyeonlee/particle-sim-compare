@@ -162,3 +162,15 @@ CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은
 legacy 무차원 CA(1)와 원 면적 CA(nm^2, um^2, mm^2)는 다른 계열이다. real loader는 혼합 계열을 거부하고 legacy demo 모드 loader는 경고한다. 여러 면적 단위는 canonical 길이 제곱으로 환산한다. 원 면적 CA는 ROI 면적으로 한 번만 나눠 단위 1이며 legacy 무차원 입력의 면적 보정은 1/um^2다. pre-fix particle-sim dimensionless export는 real 오류/demo 경고로 re-export를 요구한다. 이 호환 규칙은 numeric G1/G2의 답변이 아니다.
 
 source-step assignment는 1.2 원천 의미로 보존한다. legacy 미표시/1.1 vertical의 상부-layer 검증과 구별하며 numeric 실제 상부 귀속으로 조용히 reinterpret하지 않는다. 모든 경로는 ID, 상대 경로, 단위, 중복 지름과 missing/zero의 구별을 유지한다.
+
+## R2 출력 및 설정 검산 보완
+
+one_unit config는 manifest의 unit_domain frame·unit_width_um/unit_height_um·measured size 및 domain_shape_units_yx와 대조한다. 다-unit 측정 domain을 one_unit으로 선언하면 unit/panel 값은 null과 unit_area_basis_unconfirmed로 차단한다. 한 unit 추출 방식 G2는 pending이며 /4를 적용하지 않는다.
+
+여러 layer는 각 density_process_layer의 별도 distribution을 사용한다. 같은 layer의 여러 후보는 ambiguity 오류이며 임의 합산하지 않는다. 분포가 없는 layer에 missing_layer_density_distribution을 남기고 나머지 layer의 값은 유지한다. 실제 밀도 단위 G1은 여전히 pending이다.
+
+지름별로 vertical case가 존재하지만 모두 height evidence로 N/A이면 vertical_only와 simultaneous는 not_applicable/value=null이다. lateral_only와 전체 short union은 적용 가능한 lateral case로 계산한다. missing vertical은 N/A로 바꾸지 않는다. 합계 보존에서 N/A는 기여 없음이며 관측 0으로 표시하지 않는다.
+
+numeric_electrode_map_report_v2의 counts/valid는 compressed NPZ 참조다. 기본 JSON/HTML은 frame·histogram·상태·provenance만 포함하고 셀별 CSV는 없다. --per-cell-text는 최대 4096 cells다. PNG는 순서형 discrete palette와 physical sidecar를 유지한다. default regions는 없고 명시 threshold를 요구한다.
+
+직렬화 출력의 gate는 current_gate_decisions를 하나의 기준으로 사용한다. 원 source manifest의 gate 기록은 loader 내부에 보존하며 현행 적용 결정과 혼합해 출력하지 않는다. is_synthetic은 실제 입력 provenance에서 유도하고 고정 true로 쓰지 않는다. producer_commit의 checkout 부재는 이유를 붙여 null로 기록한다. CLI 오류는 관리 리포트를 제거하고 실패 marker만 남기며 성공은 stale error.json을 지운다.

@@ -158,3 +158,54 @@ uv pip install --python .venv/bin/python pyarrow zarr
 - tests/test_review_findings.py
 - tests/test_synthetic.py
 - uv.lock
+
+## R2 PASS-WITH-NOTES 후속 수정 (2026-10-08)
+
+이 기록은 구현자 검산이며 독립 재검토 PASS를 대신하지 않는다. 실제 밀도 단위/조사면적(G1), 2×2에서 한 unit 값을 취하는 방식(G2), crop 정책(G4)은 pending이다. 임의 /4와 실자료 승인 표시는 추가하지 않았다.
+
+| Note | 결과 | 수정 및 회귀 근거 |
+|---|---|---|
+| R2-1 / N6 | fixed | config one_unit의 frame/unit size를 manifest unit_domain의 unit·measured size 및 domain_shape_units_yx와 대조. multi-unit 모순은 weighted/unit/panel null, 면적 유지. test_numeric_cli::test_r2_unit_basis_compares_manifest_not_config_only |
+| R2-2 | fixed | 기본 map JSON/HTML에서 count/valid 배열을 제거하고 압축 NPZ relative path/hash로 연결; shape/pitch/origin/histogram/status/provenance 제공. 기본 셀별 CSV 없음. 명시 --per-cell-text는 최대 4096 cells. 실제 2000×2000 subprocess 시험은 전체 출력 <2 MB, wall time <30 s를 검증. test_numeric_cli::test_r2_full_2000_square_map_is_bounded_binary_output |
+| R2-3 | fixed | white→deep blue 순서형 discrete palette, count 증가 시 각 채널이 단조 감소. Pillow RGB 배열 처리를 vector화하여 원 셀 색 유지. test_heatmap::test_r2_sequential_palette_above_six_hand_checked와 기존 픽셀 literal oracle |
+| R2-4 | fixed | CLI 오류 시 해당 출력 디렉터리의 관리 리포트 JSON/CSV/HTML/PNG/NPZ를 이전 실행분까지 제거하고 error/execution marker만 남김; 정상 실행은 stale error.json 제거. test_numeric_cli::test_r2_error_cleanup_and_success_clears_marker |
+| R2-5 | fixed | 대표 지름은 승인된 32 지름 중 선택. incomplete/unavailable map은 CLI exit 2와 marker뿐이며 report set 없음. API의 per-layer 하한/상태는 보존. test_numeric_cli::test_r2_map_nonzero_never_leaves_report_set |
+| R2-6 | fixed | layer별 density_process_layer에 대응하는 분포 사용, 같은 layer의 복수 후보는 ambiguity 오류. 누락 layer만 missing_layer_density_distribution 사유로 차단. M2=4, M3=1.5 및 panel=150 손계산. test_numeric_inputs::test_r2_multiple_layers_select_own_distribution_and_missing_blocks_only_layer |
+| R2-7 | fixed | 비교 is_synthetic은 입력 AreaResult provenance에서 유도; HTML도 해당 값으로 라벨 생성. test_numeric_report::test_r2_synthetic_label_and_consistent_gate_status_follow_input |
+| R2-8 | fixed | 지름에서 존재하는 vertical source가 전부 근거 있는 N/A이면 vertical_only/simultaneous는 not_applicable/value=null; lateral_only·line/pixel·union 계산 유지. 기존 test_failure_pieces::test_below_height_na_is_excluded_while_missing_vertical_makes_pieces_partial를 이 규칙으로 강화, missing 상태 기대는 유지 |
+| R2-9 | fixed | source manifest gate 선언은 내부에 보존하고 직렬화된 numeric output은 current_gate_decisions로 통일. low-level gate 없는 API는 빈 기록을 유지. test_numeric_report의 일관 gate 시험 및 test_numeric_cli의 출력 확인 |
+| R2-10 | fixed | producer 자체 root에 .git 및 tracked src/simcompare/roi_export.py가 있을 때만 HEAD 기록. 설치 사본이 부모 git 아래에 있어도 HEAD를 가져오지 않음. null에는 producer_not_in_git_checkout/producer_source_not_tracked/producer_git_revision_unavailable/producer_git_unavailable 이유. test_roi_export::test_r2_commit_outside_checkout_has_reason_and_does_not_capture_parent_git |
+| R2-11 | fixed | docs/arch/config.md, checks.md 자체 최상단 legacy / archived 라벨. test_numeric_report::test_r2_retired_arch_pages_label_themselves_legacy |
+| R2-12 | fixed | kept particle_sim_run.py의 pd.read_parquet와 lazy import zarr 경로가 실제 사용되어 pyarrow>=14, zarr>=3를 직접 선언하고 lock 갱신. reader를 삭제하지 않음. test_numeric_inputs::test_r2_kept_parquet_and_zarr_reader_dependencies_declared |
+| R2-13 | fixed | unit_bases/density_contracts의 객체 목록 및 panel 객체를 먼저 검사; 필드명을 포함한 사용자 문구, Python **/mapping 내부 오류 노출 없음. test_numeric_cli::test_r2_config_errors_name_user_field |
+| N5 | not changed | source/condition 비교 ID 의미는 미답변 G2 사항; 제품별 source ID를 임의 대응하지 않음 |
+| N9 | not changed | 원천 measured-domain float 비교와 CA 보존 허용오차는 미답변 G2 사항; adapter/measurement 계산을 변경하지 않음 |
+
+### 변경한 기존 기대값
+
+- test_numeric_cli의 single product map과 test_numeric_report의 map CSV 시험: 기본 inline count 목록/셀별 CSV 기대를 NPZ 로딩 후 **동일** count 목록으로 이관. 셀별 CSV assertion은 명시 per-cell-text 실행에서 그대로 검증한다.
+- test_numeric_cli의 absent representative diameter: unavailable 지도 report를 기대하던 부분을 exit 2, error marker, 지도 report 부재로 변경(R2-5).
+- test_numeric_cli의 manifest pending G7a/G7b 표시 기대: 출력에는 현행 answered 결정과 applied_gate_decisions가 일치해야 한다(R2-9). raw loader source gate 선언과 기존 low-level API 시험은 그대로 유지한다.
+- test_heatmap의 기존 RGB literal을 순서형 palette literal로 변경(R2-3). 셀 경계·원점·valid hole·scale/extent 검산은 그대로다.
+- test_failure_pieces의 below-height vertical_only/simultaneous 0 available 기대를 null/not_applicable로 변경(R2-8). lateral_only=2, missing partial_value 및 기존 union/line/pixel 수치는 유지한다.
+
+### 실행 결과
+
+```bash
+.venv/bin/python -m pytest -p no:warnings
+```
+
+최종 **476 passed, 2 skipped in 17.56s**. skip은 외부 PARTICLE_SIM_ROOT/PARTICLE_SIM_PYTHON을 요구하는 기존 exporter integration 두 개다.
+
+```bash
+.venv/bin/python -m pytest -p no:warnings -s tests/test_numeric_cli.py::test_r2_full_2000_square_map_is_bounded_binary_output
+```
+
+**1 passed in 0.71s**; loader·계산·NPZ·PNG·summary 쓰기를 포함한 subprocess 0.4900496 s, 관리 출력 총 **137,993 bytes**. histogram 손계산은 count 0=3,999,998 cells / count 3=2 cells이고 원 NPZ의 shape=(2000,2000), 두 active cells=3, 나머지=0, valid 전체 true를 확인한다. 시험 bound는 2,000,000 bytes 및 30 s이며 합성 local CPU regression 기준이고 real-data 성능 SLA가 아니다.
+
+```bash
+.venv/bin/python -m simcompare demo-data --out /tmp/simcompare-r2-demo
+.venv/bin/python -m simcompare electrode-map --config /tmp/simcompare-r2-demo/config.yaml
+```
+
+둘 다 exit 0. 지도는 available이며 작은 summary JSON/HTML, layer·summary NPZ 두 개, PNG 두 개와 physical sidecar 두 개를 기록한다. 기본 셀별 CSV는 없다. git diff --check 통과, commit하지 않고 작업 트리에 남겼다.

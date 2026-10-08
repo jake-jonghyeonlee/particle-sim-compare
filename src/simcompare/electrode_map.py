@@ -194,7 +194,7 @@ class ElectrodeMaps:
     representative_diameter_um: float
     provenance: dict
 
-    def to_dict(self):
+    def to_dict(self, *, include_arrays=True):
         """JSON용 수치/ROI provenance; 원본 layout asset 연결은 T6가 확인한다."""
         def encode(value):
             if isinstance(value, Frame):
@@ -202,9 +202,9 @@ class ElectrodeMaps:
                         'pixel_pitch_um': value.pixel_pitch_um, 'origin_xy_um': list(value.origin_xy_um),
                         'shape_yx': list(value.shape_yx), 'axis_order': value.axis_order,
                         'origin_convention': value.origin_convention, 'valid_hash': value.valid_hash,
-                        'valid': value.valid.tolist()}
+                        'valid': value.valid.tolist() if include_arrays else None}
             if isinstance(value, np.ndarray):
-                return value.tolist()
+                return value.tolist() if include_arrays else None
             if isinstance(value, np.generic):
                 return value.item()
             if hasattr(value, '__dataclass_fields__'):

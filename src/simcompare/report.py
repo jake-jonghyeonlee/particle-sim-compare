@@ -54,7 +54,7 @@ def _metric_row(side, product, layer, classification, domain, metric, *, context
 
 def comparison_report(reference, target, deltas):
     """계산은 T3/T4에 맡기고 별도 line/pixel 및 진단 transfer를 표시한다."""
-    payload = {'schema_version':'numeric_comparison_report_v1','is_synthetic':True,
+    payload = {'schema_version':'numeric_comparison_report_v1','is_synthetic':reference.areas.is_synthetic and target.areas.is_synthetic,
                'metric_semantics':'weighted_short_index','direction':'target_minus_reference',
                'coordinate_policy':'independent_product_frames',
                'applied_gate_decisions':current_gate_decisions(),
@@ -152,39 +152,54 @@ def comparison_report(reference, target, deltas):
                                   'weighted_buckets':weighted_buckets,'delta_buckets':delta_buckets,'failure_pieces':pieces}
 
 
-def map_report(result):
-    payload = result.to_dict()
-    statuses = [m.status for m in (*result.layers, *result.summaries)]
+def map_report(result, *, per_cell=False):
+    """Default text is bounded by layers/counts, never by grid cells."""
+    if per_cell and any(m.frame is not None and m.frame.valid.size > 4096
+                        for m in (*result.layers,*result.summaries)):
+        raise NumericContractError('per_cell_text_grid_too_large', '최대 4096 cells')
+    payload = result.to_dict(include_arrays=per_cell)
+    statuses = [m.status for m in (*result.layers,*result.summaries)]
     status = ('available' if statuses and all(s=='available' for s in statuses) else
               'partial' if any(s in ('available','partial') for s in statuses) else 'unavailable')
-    payload.update(schema_version='numeric_electrode_map_report_v1',status=status,
+    payload.update(schema_version='numeric_electrode_map_report_v2',status=status,
+                   array_format='numpy_npz',unit='distinct_electrodes',
                    reasons=sorted({r for m in (*result.layers,*result.summaries) for r in m.reasons}))
-    for layer, encoded in zip(result.layers,payload['layers']):
-        encoded['observed_lower_bound_counts'] = encoded['counts']
-        encoded['counts'] = None if layer.counts is None else [
-            [int(layer.counts[r,c]) if layer.frame.valid[r,c] else None
-             for c in range(layer.frame.shape_yx[1])] for r in range(layer.frame.shape_yx[0])]
-    for summary, encoded in zip(result.summaries,payload['summaries']):
-        if summary.counts is not None:
-            encoded['observed_lower_bound_counts'] = encoded['counts']
-            encoded['counts'] = [[int(summary.counts[r,c]) if summary.frame.valid[r,c] and summary.status!='unavailable' else None
-                                  for c in range(summary.counts.shape[1])] for r in range(summary.counts.shape[0])]
-    rows = []
-    for layer in result.layers:
-        x,y = layer.frame.origin_xy_um
-        p = layer.frame.pixel_pitch_um
-        for r,c in np.ndindex(layer.frame.shape_yx):
-            valid = bool(layer.frame.valid[r,c])
-            rows.append({'product_id':layer.key.product_id,'layer':layer.key.layer,'frame_id':layer.frame.frame_id,
-                         'row':r,'col':c,'x0_um':x+c*p,'y0_um':y+r*p,
-                         'value':int(layer.counts[r,c]) if valid and layer.status=='available' else None,
-                         'unit':'distinct_electrodes',
-                         'partial_value':int(layer.counts[r,c]) if valid and layer.counts is not None and layer.status=='partial' else None,
-                         'observed_lower_bound':int(layer.counts[r,c]) if layer.counts is not None else None,
-                         'status':layer.status if valid else 'unavailable',
-                         'reasons':layer.reasons if valid else ('outside_valid_domain',),'valid':valid,
-                         'coverage':layer.coverage})
-    return json_value(payload), {'map':rows}
+    rows=[]
+    for kind,entries in (('layers',result.layers),('summaries',result.summaries)):
+        for index,(entry,encoded) in enumerate(zip(entries,payload[kind])):
+            path=f'electrode_map_{kind}_{index}.npz'
+            counts=entry.counts
+            encoded['array_file']=path if entry.frame is not None else None
+            encoded['histogram']={} if counts is None else {
+                str(int(n)):int(freq) for n,freq in zip(*np.unique(counts[entry.frame.valid],return_counts=True))}
+            if not per_cell:
+                encoded['counts']=None if counts is None else {'path':path,'key':'counts'}
+                if encoded['frame'] is not None:
+                    encoded['frame']['valid']={'path':path,'key':'valid'}
+            if per_cell and kind=='layers':
+                for r,c in np.ndindex(entry.frame.shape_yx):
+                    valid=bool(entry.frame.valid[r,c])
+                    rows.append({'layer':entry.key.layer,'row':r,'col':c,'valid':valid,
+                                 'value':int(counts[r,c]) if valid and entry.status=='available' else None,
+                                 'partial_value':int(counts[r,c]) if valid and counts is not None and entry.status=='partial' else None,
+                                 'status':entry.status if valid else 'unavailable',
+                                 'reasons':entry.reasons if valid else ('outside_valid_domain',)})
+    return json_value(payload), {'map':rows} if per_cell else {}
+
+
+def write_map_arrays(out, maps, payload):
+    paths=[]
+    for kind,entries in (('layers',maps.layers),('summaries',maps.summaries)):
+        for entry,encoded in zip(entries,payload[kind]):
+            if encoded['array_file'] is None:continue
+            path=Path(out)/encoded['array_file']
+            arrays={'valid':entry.frame.valid}
+            if entry.counts is not None:arrays['counts']=entry.counts
+            np.savez_compressed(path,**arrays)
+            import hashlib
+            encoded['array_sha256']=hashlib.sha256(path.read_bytes()).hexdigest()
+            paths.append(str(path))
+    return paths
 
 
 def write_numeric_report(out, name, payload, tables):
@@ -222,7 +237,7 @@ def write_numeric_report(out, name, payload, tables):
     html = ('<!doctype html><html lang="ko"><meta charset="utf-8"><title>'+escape(name)+
             '</title><style>body{font-family:system-ui;max-width:1100px;margin:2rem auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'+
             '<h1>'+escape(name)+'</h1><p>상태: '+escape(payload.get('status','partial'))+
-            ' · 합성 동작 검증. 원본 좌표와 관측 범위를 함께 확인하세요.</p>'+table_html+'<pre>'+escape(encoded)+'</pre></html>')
+            (' · 합성 동작 검증.' if payload.get('is_synthetic') else ' · 입력 자료 결과.')+' 원본 좌표와 관측 범위를 함께 확인하세요.</p>'+table_html+'<pre>'+escape(encoded)+'</pre></html>')
     html_path = out/(name+'.html')
     html_path.write_text(html,encoding='utf-8')
     paths.append(str(html_path))

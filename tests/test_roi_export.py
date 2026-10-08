@@ -228,3 +228,18 @@ def test_manual_default_and_map_requires_explicit_threshold(tmp_path):
     ready=export_review_rois(dataset,root,tmp_path/'threshold',maps=maps,selections={'map_region_ids':'all'},
                             asset_manifest=asset_reference(root),producer_commit='test')
     assert ready['n_ready']==4 and ready['exit_code']==0
+
+
+def test_r2_commit_outside_checkout_has_reason_and_does_not_capture_parent_git(tmp_path,monkeypatch):
+    import subprocess
+    import simcompare.roi_export as producer
+    foreign=tmp_path/'foreign';foreign.mkdir()
+    subprocess.run(['git','init',str(foreign)],check=True,capture_output=True)
+    (foreign/'package').mkdir()
+    subprocess.run(['git','-C',str(foreign),'-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','fixture'],check=True,capture_output=True)
+    monkeypatch.setattr(producer,'__file__',str(foreign/'package/src/simcompare/roi_export.py'))
+    dataset=load_dataset(FIXTURE)
+    producer.export_review_rois(dataset,FIXTURE,tmp_path/'out',selections={'manual':[]},asset_manifest=asset_reference(FIXTURE))
+    payload=json.loads((tmp_path/'out/review_rois.json').read_text())
+    assert payload['producer_commit'] is None
+    assert payload['producer_commit_reason']=='producer_not_in_git_checkout'

@@ -1,6 +1,6 @@
 # numeric_v2 CLI와 review_roi_v1 위치 계약
 
-근거는 채택된 [PLAN_v2 §2.2–2.4, T6](plan/PLAN_v2.md)다. 2026-10-08 사용자 답변은 implementation_memory.json의 gate_answers_2026_10_08에 기록돼 있다. G7b는 short-only로 answered다. G1 지름별 한 값과 G2 격자 크기 사실은 answered이며 단위/조사면적 및 한 unit 환산은 pending/null이다. G4는 pending, G7a 구현은 별도 Task다. 실자료 수락은 보류다. 합성 계약으로 계산하는 숫자는 사용자 답변을 대신하지 않는다. 실제 원천 형식은 G2 확인 전 실행하지 않는다.
+근거는 채택된 [PLAN_v2 §2.2–2.4, T6](plan/PLAN_v2.md)다. 2026-10-08 사용자 답변은 implementation_memory.json의 gate_answers_2026_10_08에 기록돼 있다. G7b는 short-only로 answered다. G1 지름별 한 값과 G2 격자 크기 사실은 answered이며 단위/조사면적 및 한 unit 환산은 pending/null이다. G4는 pending, G7a 조각 지표는 구현되었으며 line/pixel과 별도 축이다. 실자료 수락은 보류다. 합성 계약으로 계산하는 숫자는 사용자 답변을 대신하지 않는다. 실제 원천 형식은 G2 확인 전 실행하지 않는다.
 
 ## 명령과 종료 코드
 
@@ -12,7 +12,7 @@ simcompare validate-data --config demo_data/pending.yaml
 simcompare export-review-rois --config demo_data/config.yaml --out demo_data/review_rois
 ```
 
-`demo-data` 기본은 기존 1.x 예제 파일을 유지하며 별도 reference/target numeric 데이터와 `config.yaml`, `pending.yaml`을 추가한다. `--numeric-only`와 `--legacy-only`로 생성 범위를 선택할 수 있다. `generate_demo_data` 및 기존 train/embed/analyze/evaluate/all 명령은 호환을 위해 남아 있다. 새 compare/electrode-map/export 및 numeric validate는 학습을 호출하지 않는다. 기존 `configs/demo.yaml`은 legacy 시험용이며 새 명령은 생성된 설정을 사용한다. `scripts/2_demo.sh`와 3/4 스크립트는 수치 경로만 실행한다.
+`demo-data`는 numeric_v2만 생성한다. legacy generator와 train/embed/analyze/evaluate/all은 T7에서 폐기되었다. 수치 명령은 학습을 호출하지 않는다.
 
 | exit code | 의미 |
 |---|---|
@@ -20,7 +20,8 @@ simcompare export-review-rois --config demo_data/config.yaml --out demo_data/rev
 | 3 | 읽을 수 있는 부분 결과 또는 blocked 검토 위치 목록. status/reasons를 반드시 확인 |
 | 2 | 설정/입력 계약 오류 또는 사용 불가 입력. stderr 오류 및 가능한 경우 error.json, 완성 리포트는 새로 쓰지 않음 |
 
-관측이 완전한 short-only 지도는 available/exit 0이다. 누락·valid hole은 partial/exit 3, 사용 가능한 지도가 없거나 입력 오류면 exit 2다. numeric validation은 G1/G2 pending을 포함하여 exit 3이다. comparison은 명시 synthetic per-bin inverse-area density 및 synthetic one-unit basis에 한해 exit 0으로 수치 검산한다. 실제 또는 미확정 계약은 가중값/panel/delta가 null이며 exit 3이다. 오류 후 기존 출력 파일이 있으면 이전 실행 파일이며 `error.json`의 outputs=[]가 현재 실패를 나타낸다. 자동화는 exit code를 먼저 확인한다. `execution.json`은 해당 출력 디렉터리의 마지막 CLI 명령 상태/outputs를 기록한다. 성공 후 남아 있는 error.json은 과거 기록이며 execution.json이 현재 상태다.
+관측이 완전한 short-only 지도는 available/exit 0이다. CLI electrode-map의 누락·valid hole·frame 불일치는 exit 2로 처리하고 리포트 세트를 쓰지 않는다. API의 per-layer/summary 상태와 부분 하한은 별도로 보존한다. numeric validation은 pending으로 exit 3, comparison은 명시 합성 계약에서 complete 0 또는 부분 3이다. CLI 오류 시 관리 리포트 파일은 이전 실행분까지 제거하고 error.json/execution.json만 남긴다. 정상 출력 후에는 stale error.json을 제거한다.
+
 
 ## numeric_config_v1
 
@@ -63,10 +64,15 @@ manual에는 product_id/design_version/frame_id/center_xy_um와 case_id 또는 �
 
 ## heat-map 출력
 
-`electrode_map.json`은 layer와 product/design/unit summary의 원본 count 배열, frame, 상태 및 short-only 사용자 결정(2026-10-08)을 담는다. `heatmaps`에는 각각의 PNG 및 sidecar 상대경로가 있다. Pillow로 원본 셀을 1셀=1픽셀로 보존하고 오른쪽에 discrete count legend를 그린다. 2×2 domain을 그대로 표시하며 /4, resize, 제품 간 overlay는 없다. 회색은 invalid/미관측, 흰색은 관측 count 0이다. 부분 배열은 관측 count 하한이며 partial 상태를 표시한다. sidecar는 physical extent_um=[x0,y0,x1,y1](끝 제외), origin/pitch/shape/valid hash, 상태·사유와 scope provenance를 갖는다. frame 불일치 summary에는 PNG를 만들지 않고 unavailable sidecar만 남긴다.
+`electrode_map.json`은 layer와 product/design/unit summary의 작은 메타데이터이며 count·valid 압축 NPZ를 상대 경로·hash로 참조한다. shape, origin/pitch, histogram, 상태와 short-only 사용자 결정을 기록한다. 기본 셀별 텍스트는 없고 --per-cell-text는 4096 cells 이하에서만 가능하다. PNG와 sidecar는 그대로 제공하며 작은 grid는 정수 nearest 확대, 2000 px grid는 1:1이다. 순서형 색은 count가 증가하면 한 방향으로 진해지고 회색 invalid와 흰색 count 0은 구별된다. 2×2 domain을 그대로 표시하며 /4나 제품 간 overlay는 없다. 명시 threshold가 있어야 regions를 만들고 exporter는 API의 원 source/frame 연결을 사용한다.
+
 
 ```sh
 simcompare electrode-map --config demo_data/config.yaml --min-count 3
 # 영역을 선택하여 export할 때 설정에 review_rois.map_region_ids를 명시
 simcompare export-review-rois --config demo_data/config.yaml --min-count 3 --out demo_data/review_rois
 ```
+
+## producer revision 출처
+
+producer_commit은 이 패키지 자체의 git checkout root에 .git이 있을 때만 HEAD를 읽는다. 설치 패키지/사본이 다른 git 저장소 아래에 있어도 부모 저장소 HEAD를 기록하지 않는다. git checkout 밖에서는 producer_commit=null, producer_commit_reason=producer_not_in_git_checkout이다. 명시 producer_commit을 전달할 수 있으며 producer source가 해당 root에 tracked되지 않으면 producer_source_not_tracked이고, git 실패는 producer_git_revision_unavailable 또는 producer_git_unavailable로 기록한다.
