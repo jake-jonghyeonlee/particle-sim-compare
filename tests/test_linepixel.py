@@ -271,10 +271,7 @@ def test_pair_table_collision_and_raw_ids_not_rewritten():
     with pytest.raises(NumericContractError):pair_of('','B')
 
 
-def test_t4_weighting_unit_divisor_and_comparison_are_not_executable_here():
-    import simcompare.linepixel as module
-    for name in ('compute_rates','unit_count','compare_rates','LayerRate','LayerDelta'):
-        assert not hasattr(module,name)
+def test_area_path_still_does_not_accept_a_unit_divisor():
     with pytest.raises(TypeError):compute_areas(oracle_cases(),units_in_mask=4)
 
 

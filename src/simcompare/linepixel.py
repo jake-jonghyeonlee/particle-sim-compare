@@ -1,7 +1,7 @@
 """numeric_v2 full-mask line/pixel unions and exact pair membership areas.
 
-T3 owns only original area/membership: no density, unit divisor, panel count,
-comparison or yield conversion. Source failure types remain provenance; G7a's
+T3 area/membership is preserved independently from T4 synthetic weighting and
+panel comparison. No default mask divisor or yield conversion is applied. Source failure types remain provenance; G7a's
 lateral-only/vertical-only/simultaneous decomposition is not implemented.
 """
 from __future__ import annotations
@@ -388,3 +388,377 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
     return AreaResult({key: _group(key, grouped[key], chunk_cells, table_version) for key in sorted(grouped)},
                       copy.deepcopy(dataset.gates) if dataset else {}, provenance.get('input_hash'),
                       table_version, provenance.get('pair_table_hash'))
+
+
+# T4: explicit synthetic density + one-unit basis; G1/G2 real decisions remain pending.
+@dataclass(frozen=True)
+class UnitAreaBasis:
+    basis: str
+    is_synthetic: bool
+    frame_id: str
+    unit_size_um: tuple[float, float]
+    evidence: str
+
+    def __post_init__(self):
+        text(self.basis,'area basis')
+        text(self.frame_id,'basis frame_id')
+        text(self.evidence,'basis evidence')
+        if type(self.is_synthetic) is not bool:
+            raise NumericContractError('invalid_synthetic_marker')
+        _size_um(self.unit_size_um,'um')
+
+
+def _size_um(values, unit):
+    from .numeric_schema import convert_length
+    if not isinstance(values,(tuple,list)) or len(values)!=2:
+        raise NumericContractError('invalid_dimension_length')
+    for value in values: finite(value,'dimension',positive=True)
+    converted=convert_length(values,unit)
+    return tuple(finite(v,'converted dimension',positive=True) for v in converted)
+
+
+@dataclass(frozen=True)
+class PanelSpec:
+    panel_size: tuple[float,float]
+    unit_size: tuple[float,float]
+    length_unit: str = 'um'
+    rounding: str = 'floor'
+
+    def __post_init__(self):
+        _size_um(self.panel_size,self.length_unit)
+        _size_um(self.unit_size,self.length_unit)
+        if self.rounding not in ('floor','half_up_round'):
+            raise NumericContractError('invalid_panel_rounding_policy')
+
+    @property
+    def metadata(self):
+        return {'policy':self.rounding,'unit_count':unit_count(self.panel_size,self.unit_size,
+                    length_unit=self.length_unit,rounding=self.rounding),
+                'panel_size_um':_size_um(self.panel_size,self.length_unit),
+                'unit_size_um':_size_um(self.unit_size,self.length_unit),'length_unit':'um'}
+
+
+def unit_count(panel_size, unit_size, *, length_unit='um', rounding='floor') -> int:
+    """Round each axis then multiply. Decimal preserves declared half-up semantics."""
+    from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
+    panel,unit=_size_um(panel_size,length_unit),_size_um(unit_size,length_unit)
+    if rounding not in ('floor','half_up_round'):
+        raise NumericContractError('invalid_panel_rounding_policy')
+    mode=ROUND_FLOOR if rounding=='floor' else ROUND_HALF_UP
+    counts=[int((Decimal(str(p))/Decimal(str(u))).to_integral_value(rounding=mode)) for p,u in zip(panel,unit)]
+    return counts[0]*counts[1]
+
+
+@dataclass(frozen=True,order=True)
+class LayerKey:
+    product_id: str
+    design_version: str
+    unit_id: str
+    source_id: str
+    process_step_id: str
+    exposure_id: str
+    analysis_layer: str
+    density_process_layer: str
+    source_contract_version: str
+    frame_id: str
+
+    @property
+    def comparison_key(self):
+        return ComparisonKey(self.analysis_layer,self.process_step_id,self.source_id,self.exposure_id,
+                             self.density_process_layer,self.source_contract_version)
+
+
+@dataclass(frozen=True,order=True)
+class ComparisonKey:
+    analysis_layer: str
+    process_step_id: str
+    source_id: str
+    exposure_id: str
+    density_process_layer: str
+    source_contract_version: str
+
+
+@dataclass(frozen=True)
+class WeightedMetric:
+    value: float | None
+    partial_value: float | None
+    status: Status
+    reasons: tuple[str,...]
+    distribution_ids: tuple[str,...]
+    area_basis: dict
+    rounding: dict
+    coverage: tuple[dict,...]
+    unit: str = '1'  # area * inverse area; weighted index, never yield/probability
+
+
+@dataclass(frozen=True)
+class WeightedBucket:
+    bucket_id: str
+    kind: str
+    pair_ids: tuple[str,...]
+    source_bucket_ids: tuple[str,...]
+    unit: WeightedMetric
+    panel: WeightedMetric
+
+
+@dataclass(frozen=True)
+class WeightedClass:
+    unit: WeightedMetric
+    panel: WeightedMetric
+    exclusive: tuple[WeightedBucket,...]
+    shared: tuple[WeightedBucket,...]
+
+
+@dataclass
+class LayerRate:
+    key: LayerKey
+    line: WeightedClass
+    pixel: WeightedClass
+    transfer_unit: WeightedMetric
+    transfer_panel: WeightedMetric
+    distribution_contract: dict | None
+    distribution_fingerprint: str | None
+
+
+@dataclass
+class RateResult:
+    areas: AreaResult
+    layers: dict[LayerKey,LayerRate]
+    synthetic_contract_reasons: dict[str,tuple[str,...]]
+    panels: dict[str,PanelSpec]
+    densities: dict
+
+    def to_dict(self):
+        return {'schema_version':'linepixel_weighted_v1','gates':copy.deepcopy(self.areas.gates),
+                'areas':self.areas.to_dict(),'layers':[asdict(self.layers[k]) for k in sorted(self.layers)],
+                'synthetic_contract_reasons':self.synthetic_contract_reasons,'metric_semantics':'weighted_short_index',
+                'density_distributions':{name:dist.to_dict() for name,dist in sorted(self.densities.items())}}
+
+
+def _weighted_layer(key, groups, distribution, basis, panel):
+    groups=sorted(groups,key=lambda g:g.key.diameter_um)
+    declared_basis={} if basis is None else asdict(basis)
+    rounding={'policy':None,'unit_count':None} if panel is None else panel.metadata
+    blockers=set(() if distribution is not None else ('density_contract_unconfirmed',))
+    if distribution is not None:
+        blockers.update(distribution.reasons)
+        if distribution.process_layer!=key.density_process_layer:
+            blockers.add('density_process_layer_mismatch')
+    frame=groups[0].frame
+    if basis is None or not basis.is_synthetic or basis.basis!='one_unit':
+        blockers.add('unit_area_basis_unconfirmed')
+    elif (basis.frame_id!=frame.frame_id or tuple(basis.unit_size_um)!=
+          (frame.shape_yx[1]*frame.pixel_pitch_um,frame.shape_yx[0]*frame.pixel_pitch_um)):
+        blockers.add('one_unit_domain_mismatch')
+    if panel is not None and basis is not None and _size_um(panel.unit_size,panel.length_unit)!=tuple(basis.unit_size_um):
+        blockers.add('panel_unit_basis_mismatch')
+    coverage=[]; contributions={}; bucket_amounts={LINE:{},PIXEL:{}}; bucket_sources={LINE:{},PIXEL:{}}
+    known=0; complete=True; reasons=set(blockers)
+    for group in groups:
+        d=group.key.diameter_um
+        error=set(group.union.reasons)
+        if group.union.status=='not_applicable':
+            coverage.append({'diameter_um':d,'status':'not_applicable','source':asdict(group.coverage)})
+            contributions[d]={LINE:0.0,PIXEL:0.0,'transfer':0.0}
+            continue
+        density_bin=None if distribution is None else distribution.bins[d]
+        if density_bin is not None:error.update(density_bin.reasons)
+        if group.union.status!='available':complete=False
+        if group.union.status not in ('available','partial') or density_bin is None or density_bin.value_per_um2 is None or blockers:
+            complete=False
+            error.update(blockers)
+            reasons.update(error)
+            coverage.append({'diameter_um':d,'status':'unavailable','reasons':sorted(error),'source':asdict(group.coverage),
+                             'density_per_um2':None if density_bin is None else density_bin.value_per_um2})
+            continue
+        factor=density_bin.value_per_um2
+        amounts={LINE:group.line.area.observed_area_um2*factor,PIXEL:group.pixel.area.observed_area_um2*factor,
+                 'transfer':group.transfer.observed_area_um2*factor}
+        for value in amounts.values():finite(value,'weighted value',nonnegative=True)
+        contributions[d]=amounts;known+=1
+        reasons.update(error)
+        coverage.append({'diameter_um':d,'status':group.union.status,'reasons':sorted(error),'source':asdict(group.coverage),
+                         'density_per_um2':factor,'distribution_id':distribution.distribution_id})
+        for kind,share in [(LINE,group.line),(PIXEL,group.pixel)]:
+            for bucket in (*share.exclusive,*share.shared):
+                members=bucket.pair_ids
+                bucket_amounts[kind][members]=bucket_amounts[kind].get(members,0.0)+bucket.area.observed_area_um2*factor
+                bucket_sources[kind].setdefault(members,[]).append(bucket.bucket_id)
+    if len(groups)!=len(DIAMETERS_UM) or {g.key.diameter_um for g in groups}!=set(DIAMETERS_UM):
+        complete=False;reasons.add('diameter_coverage_incomplete')
+    status='available' if complete and not blockers else 'partial' if known and not blockers else 'unavailable'
+    distribution_ids=() if distribution is None else (distribution.distribution_id,)
+    coverage=tuple(coverage)
+
+    def metric(amount,scale=1,panel_metric=False):
+        errors=set(reasons)
+        state=status
+        if panel_metric and panel is None:
+            errors.add('panel_dimensions_missing');state='unavailable'
+        number=finite(amount*scale,'weighted aggregate',nonnegative=True)
+        partial=number if known and not blockers and state!='available' and not (panel_metric and panel is None) else None
+        return WeightedMetric(number if state=='available' else None,partial,state,tuple(sorted(errors)),
+                              distribution_ids,declared_basis,rounding,coverage)
+
+    count=1 if panel is None else rounding['unit_count']
+    def share(kind):
+        total=sum(values[kind] for values in contributions.values())
+        exclusive=[];shared=[]
+        for members,amount in sorted(bucket_amounts[kind].items()):
+            bucket=WeightedBucket(_key('weighted_bucket_v1',{'layer':asdict(key),'class':kind,'pair_ids':members,
+                                              'pair_table_version':groups[0].pair_table_version}),
+                                  'exclusive' if len(members)==1 else 'shared',members,
+                                  tuple(sorted(bucket_sources[kind][members])),metric(amount),metric(amount,count,True))
+            (exclusive if len(members)==1 else shared).append(bucket)
+        return WeightedClass(metric(total),metric(total,count,True),tuple(exclusive),tuple(shared))
+    transfer=sum(values['transfer'] for values in contributions.values())
+    return LayerRate(key,share(LINE),share(PIXEL),metric(transfer),metric(transfer,count,True),
+                     None if distribution is None or distribution.contract is None else asdict(distribution.contract),
+                     None if distribution is None else _key('density_v1',distribution.to_dict())),tuple(sorted(blockers))
+
+
+def compute_rates(areas: AreaResult, densities, *, unit_bases, panels=None) -> RateResult:
+    """Sum diameters per layer/source condition only under explicit synthetic contracts.
+
+    Densities are keyed by density_process_layer, bases by (product_id,frame_id),
+    panels by product_id. T2 raw rows may be passed through adapt_density with no
+    contract to produce blocked results. G1/G2 answers are never manufactured.
+    """
+    from .density import DensityDistribution
+    if not isinstance(areas,AreaResult):raise NumericContractError('expected_area_result')
+    grouped={}
+    for group in areas.groups.values():
+        data=asdict(group.key);data.pop('diameter_um');key=LayerKey(**data)
+        grouped.setdefault(key,[]).append(group)
+    result={};contract_reasons={};panels={} if panels is None else dict(panels)
+    for key,groups in sorted(grouped.items()):
+        distribution=densities.get(key.density_process_layer)
+        if distribution is not None and not isinstance(distribution,DensityDistribution):
+            raise NumericContractError('expected_density_distribution')
+        basis=unit_bases.get((key.product_id,key.frame_id));panel=panels.get(key.product_id)
+        if basis is not None and not isinstance(basis,UnitAreaBasis):raise NumericContractError('expected_unit_area_basis')
+        if panel is not None and not isinstance(panel,PanelSpec):raise NumericContractError('expected_panel_spec')
+        result[key],errors=_weighted_layer(key,groups,distribution,basis,panel)
+        contract_reasons.setdefault(key.product_id,set()).update(errors)
+    return RateResult(areas,result,{p:tuple(sorted(errors)) for p,errors in contract_reasons.items()},panels,
+                      {name:dist for name,dist in densities.items() if isinstance(dist,DensityDistribution)})
+
+
+@dataclass(frozen=True)
+class LayerDelta:
+    key: ComparisonKey
+    line: WeightedMetric
+    pixel: WeightedMetric
+    transfer: WeightedMetric
+    line_exclusive: dict[str,WeightedMetric]
+    line_shared: dict[str,WeightedMetric]
+    pixel_exclusive: dict[str,WeightedMetric]
+    pixel_shared: dict[str,WeightedMetric]
+    reference_product_id: str
+    target_product_id: str
+    comparison_basis: str
+
+    def to_dict(self):return asdict(self)
+
+
+def compare_rates(reference: RateResult,target: RateResult,*,reference_product_id: str,target_product_id: str,
+                  reference_absent=None,target_absent=None) -> dict[ComparisonKey,LayerDelta]:
+    """Panel target minus reference. Absence requires explicit observed evidence.
+
+    Partial sums are preserved on each side in coverage, never subtracted into
+    an improvement claim. Shared buckets are joined by the entire pair-ID tuple,
+    not the product-scoped bucket hash, and are never allocated to individual pairs.
+    """
+    def index(result,product):
+        out={}
+        for key,layer in result.layers.items():
+            if key.product_id==product:
+                if key.comparison_key in out:raise NumericContractError('ambiguous_comparison_layer')
+                out[key.comparison_key]=layer
+        return out
+    ra,ta=index(reference,reference_product_id),index(target,target_product_id)
+    reference_absent={} if reference_absent is None else reference_absent
+    target_absent={} if target_absent is None else target_absent
+    for absent in (reference_absent,target_absent):
+        for evidence in absent.values():text(evidence,'observed absence evidence')
+    if set(ra)&set(reference_absent) or set(ta)&set(target_absent):raise NumericContractError('conflicting_absence_evidence')
+    output={}
+    for key in sorted(set(ra)|set(ta)):
+        a,b=ra.get(key),ta.get(key)
+        compatibility=set()
+        if reference.areas.pair_table_version is None or target.areas.pair_table_version is None:
+            compatibility.add('pair_table_version_unconfirmed')
+        if reference.areas.pair_table_version!=target.areas.pair_table_version:
+            compatibility.add('pair_table_version_mismatch')
+        if a and b and a.distribution_contract and b.distribution_contract:
+            for field in ('bin_semantics','basis_version'):
+                if a.distribution_contract[field]!=b.distribution_contract[field]:compatibility.add('density_basis_mismatch')
+        if a and b:
+            def pair_definitions(result,layer):
+                return {pid:electrodes for g in result.areas.groups.values()
+                        if all(getattr(g.key,n)==v for n,v in asdict(layer.key).items())
+                        for pid,electrodes in g.pair_membership.items()}
+            ap,bp=pair_definitions(reference,a),pair_definitions(target,b)
+            if any(ap[pid]!=bp[pid] for pid in set(ap)&set(bp)):
+                compatibility.add('pair_identity_mismatch')
+        same_density=a is not None and b is not None and a.distribution_fingerprint==b.distribution_fingerprint
+        comparison_basis='same_density_basis' if same_density else 'different_or_absent_density_distributions'
+
+        def delta(am,bm,members=None):
+            from dataclasses import replace
+            # An absent bucket uses its complete class observation metadata, not missing metadata.
+            if members is not None:
+                if am is None and a is not None:
+                    cls=a.line if members[0]==LINE else a.pixel
+                    if cls.panel.status=='available':am=replace(cls.panel,value=0.0,partial_value=None)
+                if bm is None and b is not None:
+                    cls=b.line if members[0]==LINE else b.pixel
+                    if cls.panel.status=='available':bm=replace(cls.panel,value=0.0,partial_value=None)
+            def absent_zero(result,product,evidence):
+                return WeightedMetric(0.0,None,'available',(),(),
+                    {'basis':'observed_absent','evidence':evidence},result.panels[product].metadata,())
+            if a is None and key in reference_absent and not reference.synthetic_contract_reasons.get(reference_product_id,('unconfirmed',)) and reference_product_id in reference.panels:
+                am=absent_zero(reference,reference_product_id,reference_absent[key])
+            if b is None and key in target_absent and not target.synthetic_contract_reasons.get(target_product_id,('unconfirmed',)) and target_product_id in target.panels:
+                bm=absent_zero(target,target_product_id,target_absent[key])
+            errors=set(compatibility);av=None if am is None else am.value;bv=None if bm is None else bm.value
+            for value in (am,bm):
+                if value is not None and value.status!='available':errors.update(value.reasons);errors.add('incomplete_comparison')
+            for side,metric,layer,absent,result,product in [('reference',am,a,reference_absent,reference,reference_product_id),
+                                                         ('target',bm,b,target_absent,target,target_product_id)]:
+                if layer is None:
+                    auth=result.synthetic_contract_reasons.get(product,('comparison_product_unconfirmed',))
+                    if key not in absent or auth or product not in result.panels:
+                        errors.update(auth);errors.add(side+'_layer_unknown')
+                    elif side=='reference':av=0.0
+                    else:bv=0.0
+                elif metric is None:
+                    # Bucket absence is observed only when both class totals are complete.
+                    cls=layer.line if members[0]==LINE else layer.pixel
+                    if cls.panel.status=='available':
+                        if side=='reference':av=0.0
+                        else:bv=0.0
+                    else:errors.update(cls.panel.reasons);errors.add('bucket_coverage_incomplete')
+            if av is None or bv is None:errors.add('incomplete_comparison')
+            complete=not errors
+            value=finite(bv-av,'delta') if complete else None
+            distributions=tuple(sorted(set(pid for metric in (am,bm) if metric for pid in metric.distribution_ids)))
+            basis={'reference':None if am is None else am.area_basis,'target':None if bm is None else bm.area_basis}
+            rounding={'reference':None if am is None else am.rounding,'target':None if bm is None else bm.rounding}
+            coverage=tuple({'side':side,'status':None if metric is None else metric.status,
+                            'partial_value':None if metric is None else metric.partial_value,
+                            'bins':() if metric is None else metric.coverage,
+                            'observed_absence':absent.get(key)} for side,metric,absent in
+                           [('reference',am,reference_absent),('target',bm,target_absent)])
+            return WeightedMetric(value,None,'available' if complete else 'unavailable',tuple(sorted(errors)),distributions,basis,rounding,coverage)
+
+        def buckets(kind,category):
+            amap={} if a is None else {x.pair_ids:x.panel for x in getattr(getattr(a,kind),category)}
+            bmap={} if b is None else {x.pair_ids:x.panel for x in getattr(getattr(b,kind),category)}
+            return {_json(members):delta(amap.get(members),bmap.get(members),(kind,members)) for members in sorted(set(amap)|set(bmap))}
+        output[key]=LayerDelta(key,delta(None if a is None else a.line.panel,None if b is None else b.line.panel),
+                              delta(None if a is None else a.pixel.panel,None if b is None else b.pixel.panel),
+                              delta(None if a is None else a.transfer_panel,None if b is None else b.transfer_panel),
+                              buckets(LINE,'exclusive'),buckets(LINE,'shared'),buckets(PIXEL,'exclusive'),buckets(PIXEL,'shared'),
+                              reference_product_id,target_product_id,comparison_basis)
+    return output
