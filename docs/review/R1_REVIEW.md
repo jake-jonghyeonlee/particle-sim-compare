@@ -127,3 +127,68 @@
 - 실자료 입력, 실제 density 단위, 2×2 unit 환산은 게이트 미답변이라 검토 범위 밖이다.
 - `cli.py`·`pipeline.py`·`report.py`·`roi_export.py`·`synthetic.py`와 legacy 모듈은 보지 않았다 (R2 범위).
 - N6은 코드 판독만 했고 실행으로 재현하지 않았다.
+
+---
+
+# Re-review of 8a35c0e
+
+- 검토자: R1을 작성한 독립 검토 세션 (Claude Opus 5.5, 읽기 전용). 수정 코드를 작성하지 않았다.
+- **후보 commit: `8a35c0e2b0de93bc8684e23b567cf02376c3a83c`**, 수정 diff `ad3b664..8a35c0e` (14개 파일, +305 −63)
+- 범위: 수치 계산 (T1 계약 + T2~T5)의 수정분만. `pipeline.py`·`report.py`는 N3·N4·N8 때문에 바뀐 줄만 읽었다. T6 전체는 R2 범위다.
+- 방법: `git archive 8a35c0e`를 저장소 밖 임시 폴더에 풀어 그 사본으로 실행했다 (`PYTHONPATH=<사본>/src`, 저장소 `.venv/bin/python`). 작업 트리는 clean이었다.
+
+## 판정: **PASS-WITH-NOTES**
+
+B1·B2는 둘 다 해결됐다. 수정 diff에서 값이 틀리게 나오는 새 결함은 찾지 못했다. 아래 "새로 생긴 지적" 3건은 막지 않는다. 이 판정은 위 후보 commit의 수치 계산 범위에만 유효하며, 모든 결과는 합성 자료 기준이다.
+
+## 막는 결함의 상태
+
+| 결함 | 상태 | 실행한 것 | 결과 |
+|---|---|---|---|
+| B1 | **해결** | R1의 두 재현을 그대로 다시 실행 | 요약 1개, 기대값과 일치 |
+| B2 | **해결** | R1의 표 4건과 정수배 탐색을 다시 실행 | 4건 모두 기대값, 탐색 0건 실패 |
+
+**B1.** `MapKey.summary_key`가 `(product_id, design_version, unit_id)`가 됐다 (`electrode_map.py:132-133`).
+- 작은 재현: L1에 AB·AC (`STEP_L1`), L2에 CD (`STEP_L2`) → layer 2개, **요약 1개 `[[3,0]]`**, `combined_steps=['STEP_L1','STEP_L2']`.
+- loader 경유 재현: T1 fixture에 M1 lateral case(`EXAMPLE_STEP_M1`, 전극 C·D)를 추가 → layer 2개 각 `[[2,2,0,0],[0,0,0,0]]`, **요약 1개** `[[2,2,0,0],[0,0,0,0]]`, `combined_steps` 2개.
+- 경계: frame이 다른 두 layer → 요약 `unavailable`, `counts=None`, `incompatible_layer_frames` (조용히 쪼개지 않음). 모든 layer가 missing → 요약 `unavailable`, `counts=None`. 한 layer만 missing → 알려진 layer의 값으로 `partial` + `source_case_missing`.
+- 새 시험 `test_product_summary_combines_two_layer_steps_with_hand_written_maximum`은 리터럴 `[[3,0]]`을 쓴다.
+
+**B2.** `unit_count`가 선언 단위의 원값을 `Decimal(str(x))`로 나눈 뒤 축별 반올림한다 (`linepixel.py:461-475`). epsilon 없음.
+- 표 4건: 201, 323, 217, 1001 (모두 기대값).
+- 정수배 탐색: unit ∈ {0.1, 0.01, 0.05, 0.3, 0.001, 0.7, 1.3}, n=1..1999, mm·um·nm 각 13,993개 → **실패 0건**.
+- 정수배가 아닌 값(±1/4 unit, +1/2 unit) 1,996개: floor와 half-up 모두 실패 0건. 기존 um 사례 `(2.5,3.5)` → 6 / 12, `0.3/0.1` → 3 유지.
+- 0, inf, 길이 1, bool, 미지원 단위, 잘못된 반올림 정책은 모두 `NumericContractError`.
+
+## 막지 않는 지적의 상태
+
+| 지적 | 상태 | 근거 |
+|---|---|---|
+| N1 | 해결 | `diameter`+`diameter_unit`(nm) N/A record → 지도 `partial`, N/A 1건 집계; 면적 `not_applicable` (직접 실행 + 새 loader 시험) |
+| N2 | 해결 (보고만) | 이유: 값을 바꾸지 않고 사유만 남기는 것이 R1의 기대였다. `valid=[[1,0,1,1,1,1]]`, 열 {0,1} → 사유에 `active_cells_outside_valid:1` 추가. clipping 정책은 그대로이며 `data_contract.md`에 적혔다 |
+| N3 | 해결 | 같은 입력 → `value=None`, `partial_value=1.0`, `partial`. 원 case `ca_um2`도 같은 규칙. 완전 관측은 `value=2.0`, `partial_value=None`. 계약 문서 갱신됨 |
+| N4 | 해결 | `unavailable` layer·요약 모두 `counts=None`; 관측 0은 `[[0,0]]`로 구별 |
+| N7 | 해결 | panel `(3,10)`, unit `(6,1)` → panel 값 `None`, `unavailable`, `panel_has_no_units`; unit 값 2.0은 유지 |
+| N8 | 해결 | `pair_lineage_case_keys`와 `contributing_source_case_keys` 분리. 129 pair 무작위 사례에서 모든 bucket의 기여자가 비어 있지 않고 계보의 부분집합 |
+| N10 | 해결 | 2행 mask membership 시험 추가 (기대값을 손으로 다시 계산해 일치 확인); legacy 차단 시험 두 곳이 `linepixel`·`density`를 불러옴 |
+| N5, N6, N9 | **변경 없음, 열린 항목** | diff에 해당 코드 변경 없음. N5·N9는 게이트 G2, N6은 R2 batch에서 확인 |
+
+## 시험 점검
+
+- 삭제된 시험 함수는 `test_source_conditions_products_and_units_do_not_mix` 하나다 (B1이 지목한 step별 분리 기대). 제품·unit·설계 분리는 새 시험 `test_product_design_and_unit_stay_separate_in_summary`가 이어받는다.
+- 나머지 삭제 줄 12개는 모두 N3·N4의 표기 변경이다 (`value==1` → `value is None and partial_value==1`, `[[0,0]]` → `None`). 숫자 기대값은 그대로 남아 약화가 아니다.
+- 새 시험의 기대값은 모두 리터럴이다.
+- 실행: 수치 시험 8개 파일 238건, `test_numeric_report.py`+`test_numeric_cli.py` 19건 모두 통과 (두 실행 모두 pytest 종료 코드 0, 실패·오류 표시 없음; 건수는 진행 표시로 셌다). 전체 suite는 실행하지 않았다.
+
+## 새로 생긴 지적 (막지 않음)
+
+**R1. 같은 layer·다른 step의 layer 지도 분리를 고정하는 시험이 없어졌다.** 삭제된 시험은 같은 layer에 step이 다르면 layer 지도가 따로 나오는 것도 함께 확인했다. 동작은 유지된다 (직접 실행: layer 2개 각 `[[2,0]]`, 요약 `[[2,0]]`). 이때 요약은 전극을 합쳐 3을 내지 않고 최댓값 2를 낸다. 같은 layer가 여러 원천·노출 조건으로 들어올 때 이것이 맞는지는 G2에서 정할 항목이다.
+
+**R2. bucket 기여자 계산이 chunk 처리를 우회한다.** `linepixel.py:338-343`은 bucket마다 전체 frame 배열을 pair 수만큼 다시 계산한다. 측정: 129 pair, bucket 약 1,160개, 지름 32개 기준 500² 셀 2.9 s, 1000² 셀 10.7 s. 같은 1000² 입력을 수정 전(`ad3b664`)과 나란히 다시 재면 6.8 s → 10.1 s로 약 1.5배다. 실자료 크기에서 다시 확인해야 한다.
+
+**R3. 형식이 틀린 원 record가 `KeyError`로 끝난다.** `electrode_map.py:243-244`. N/A case의 `metadata['records']`에 지름 키가 둘 다 없으면 `KeyError: 'diameter'`가 난다 (실행 확인). loader를 거친 입력에서는 생기지 않는다. `linepixel._raw_record`도 같은 형태다.
+
+## 확인하지 못한 것
+
+- 실자료 입력과 게이트 의존 동작. 
+- `report.py`·`pipeline.py`의 바뀌지 않은 부분, `roi_export.py`, `cli.py` (R2).
