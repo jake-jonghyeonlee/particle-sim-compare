@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-08T14:38:39.993327+09:00",
+  "updated_at": "2026-10-08T21:38:34.058026+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -465,11 +465,14 @@
     "two_by_two_display": "Showing the 2x2 result as it is, is fine.",
     "G1_partial": "Defect density is one value per diameter (1 um, 2 um, ...), not a continuous per-um density. The unit and the inspected-area conversion were not stated.",
     "G2_partial": "um/pixel is the same across models and the pixel count differs per model; within one model all layers have the same size. A 2x2 domain is roughly 100 um and 2000 px (about 0.05 um/pixel). How one unit's value is taken from the 2x2 result is still open.",
-    "G7a": "Undecided: the user did not know what the defect-type pieces meant and asked for an explanation.",
+    "G7a": "Answered 2026-10-08: the defect-type pieces metric must be implemented (lateral-only / vertical-only / simultaneous). open stays excluded, so there is no open-only piece.",
     "unchanged": [
       "validation against existing values is done by the user",
       "yield conversion on hold",
       "per-location attribution on hold"
-    ]
+    ],
+    "confirmed_by_user_in_orca_session": "2026-10-08: the user confirmed these answers may be applied (\"대화한 내용은 반영해도돼\").",
+    "map_and_dl2_roles": "User, 2026-10-08: the electrode-count map finds vulnerable locations; DL2 finds structures similar to change points or vulnerable locations. One does not replace the other. The map is shown as a heat map for the user to judge; positions the user picks go to DL2 as review ROIs.",
+    "G7a_placement": "Coordinator recommendation given to the user: compute the pieces where the union is computed (linepixel area step, same layer and diameter groups), weight and compare them in the density / panel step, and show them in the report; it is a separate axis from line / pixel and is never mixed into those two values."
   }
 }
