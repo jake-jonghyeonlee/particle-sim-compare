@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-08T21:38:34.058026+09:00",
+  "updated_at": "2026-10-09T08:21:11.398045+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -474,5 +474,16 @@
     "confirmed_by_user_in_orca_session": "2026-10-08: the user confirmed these answers may be applied (\"대화한 내용은 반영해도돼\").",
     "map_and_dl2_roles": "User, 2026-10-08: the electrode-count map finds vulnerable locations; DL2 finds structures similar to change points or vulnerable locations. One does not replace the other. The map is shown as a heat map for the user to judge; positions the user picks go to DL2 as review ROIs.",
     "G7a_placement": "Coordinator recommendation given to the user: compute the pieces where the union is computed (linepixel area step, same layer and diameter groups), weight and compare them in the density / panel step, and show them in the report; it is a separate axis from line / pixel and is never mixed into those two values."
+  },
+  "gate_G5_answer_2026_10_09": {
+    "authority": "User, 2026-10-09, in the Orca coordinator session.",
+    "question": "Normalising each unit to the same grid changes the apparent line width between products with different unit sizes. Should DL1 preserve absolute width and spacing?",
+    "answer": "Go with the recommendation (\"일단 권장으로가 형상과 연결도 매칭이 우선일것같아\"): whole-unit normalise + pad with the unit size available as an optional condition. Matching of shape and connectivity has priority over absolute line width.",
+    "consequences": [
+      "G5 is answered for the input approach: whole-unit isotropic resize + pad and the electrode x layer set aggregation are the approved DL1 input",
+      "the unit-size condition stays a switch; the user compares on and off in the closed network",
+      "the two-view variant (normalised whole unit plus original-um crops) is not implemented now; it remains the fallback if absolute width turns out to matter",
+      "still open inside G5: the real minimum line width / grid size and the CNT / VIA endpoint metadata format"
+    ]
   }
 }
