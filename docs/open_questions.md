@@ -1,22 +1,51 @@
-# 확정 필요 사항과 현재 임시 처리
+# 질문 상태와 보류 범위
+
+## numeric_v2 (PLAN_v2 §3 / T1)
+
+`answered`는 기록으로 확인한 결정, `pending`은 사용자 답변이 없는 항목이다. pending의 답변은 `null`이며 합성 예제는 답변의 대체물이 아니다. 실제 코드 지원 여부와 질문 답변 여부는 구별한다.
+
+| ID | 상태 | 답변 / 필요한 근거 | 답변 전 가능한 일 | 차단되는 범위 |
+|---|---|---|---|---|
+| N1 | answered | 원 CA는 um^2, hotspot은 이물 중심 궤적, 제품 내 공통 좌표·축척 | full-mask 면적·frame 검증 | 임의 팽창/resize/warp 허용 없음 |
+| N2 | answered | line/pixel 수치는 shorts-only·line 우선; shared를 나누지 않음 | 기존 line/pixel·pair membership 검산 | yield·종류별 simultaneous로 대체 불가 |
+| N3 | answered | vertical은 실제 상부 layer의 불량/density, 높이 미만은 N/A; 5 um 이상 높이 없음 | 명시 height·stack에 따른 합성 판정 | 실제 개별 height를 추측할 수 없음 |
+| N4 | answered | 지름 1..30, 40, 50 um의 32개 조건 | case별 expected coverage·0/누락/N/A 구별 | 누락 0 채움/40·50 폭 추측 금지 |
+| N5 | answered | case ID·failure_type·전극/role/actual_layer 결합 보존, pair class는 두 전극 unordered 기준 | orientation 반례·유형 추적 | raw fab_pair_key 분해/정렬 금지 |
+| N6 | answered | ROI 생산 C/T6, 소비 DL2/T10, 왕복 T12; 출처는 지도 영역·manual | review_roi_v1 문서·위치 export 계약 | 제품 간 구간 대응/검색 결과로 ROI 자동 선택 금지 |
+| G1 | pending | null — Fab 실제 열/단위, layer·지름 key, per-bin/per-um, 평균 count/조사면적 변환, 40/50 폭, 공정·기간/분포 근거 필요 | typed density·명시 합성 per-bin 검산·면적 | 실자료 parser 최종 승인·가중값/단위 확정 (T1/T2/T4/T6/T12) |
+| G2 | pending | null — case·지름별 mask 형식, 전극/실제 layer/process ID, pitch/origin/valid, 기대 case/height, layer↔step, 2×2 여부와 현재 unit 환산 근거 필요 | 원본 binary·full-mask union·명시 합성 domain 검산 | 자동 /4·crop, 실자료 unit/panel 완료, reader/migration 최종 승인·지도 격자/coverage 수락 (T1~T6/T12) |
+| G7a | pending | null — lateral-only/vertical-only/simultaneous 지표를 첫 구현에서 제외하고 case 종류만 보존하는 안에 동의하는가? | 유형 보존·기존 line/pixel·pair 몫 | 종류별 지표 구현·제외 확정·기존 합의 철회 선언 (T1/T3/T6/T12); 포함 요청이면 범위 재채택 |
+| G7b | pending | null — 지도도 shorts-only인가, open 한 전극을 포함하는가? | short-only 부분 합성 지도·blocked 지도 ROI·조건 충족 manual ROI | open 의미/fixture 최종 삭제, 전체 지도·지도 유래 ready ROI 수락 (T1/T2/T5/T6/T10/T12); 포함 요청이면 지도 재계획 |
+| G3 | pending | null — DL1/DL2 별도 repo 이름·경로 확인 | 교환 계약 초안 | DL2 생성/rename/remote/push; 이름 답변은 push 허가 아님 |
+| G4 | pending | null — near/wide 물리 크기 및 비인접 pair 중간 layer 정책 | 매개변수 crop 시험·원본 layer·ROI 위치 계약 | 실자료 기본 crop/channel/학습 recipe 확정; 위치 export 자체는 가능 |
+| G5 | pending | null — whole-unit isotropic resize+pad / electrode×layer set 제안, 최소 선폭·격자, CNT/VIA endpoint 형식 | 독립 overlap/validator 수정·합성 비교 | 권고를 확정 설계로 표시·실자료 grid/augmentation 확정 |
+| G6 | pending | null — lineage/split, 선택 labels·unknown/negative, Recall@k/누락·자원/시간 목표, 수치 검산/오차 | harness·빈 수락 양식·baseline | 실자료 성능/기존 수치 일치 PASS |
+
+G7a와 G7b는 독립 질문이다. 무응답은 동의가 아니며 수치 shorts-only가 지도 open 제외의 근거가 되지 않는다. `/4` 관행의 확인은 새 경계 보정을 요구하는 질문이 아니다. 미답변 상태로 문서/합성 범위를 인도할 수 있지만 실자료 수락으로 기록하지 않는다.
+
+## 기존 1.x / CAA / AE 질문 기록 (legacy)
+
+아래 표는 기존 경로의 확인 기록이다. answered도 numeric_v2로 승계되지 않으며 특히 기존 count/glass 설명만으로 G1이 answered가 되지 않는다. 1.2 source-step assignment는 legacy의 answered 결정으로 유지하고 numeric_v2 상부 귀속과 충돌하면 명시 migration 확인이 필요하다.
+
 
 "실제 경로"는 `mode: real` 설정, "demo 경로"는 `mode: demo` 설정을 뜻한다. 물리적 의미를 바꾸는 미확정 값은 실제 경로에서 오류를 내고, demo 경로에서만 명시적 demo 규칙으로 진행한다.
 
-| 항목 | 현재 임시 처리 | 실제 경로 동작 | 확정 후 수정 위치 |
-|---|---|---|---|
-| 실제 파일 형식·디렉터리 구조 | CSV/JSON + PNG/NPY 예시 어댑터 | 어댑터 교체 전제 | `src/simcompare/adapters/` 새 어댑터 |
-| Hotspot 색상·투명도·축척 | grayscale 강도를 "가공 강도"로만 사용 | 범례(`data.hotspot_legend`) 없으면 확률 변환 금지 | `preprocess.legend_to_values`, 어댑터 |
-| CA 의미·범위 | legacy **확정**: 0~1 무차원 확률 기반 누적 위험값, 보통 최대 0.02~0.03, 면적 정규화 전 값. particle-sim 면적 규칙은 provisional; 환산 근거 확정 전 교차 계열 비교 금지 | 원 CA와 `CA / unit-pixel 면적`을 함께 사용; 혼합 계열 real 오류/demo 경고 | `schema.AnalysisBundle.ca_per_area`; 계산 담당자 환산 기준 확인 |
-| Fab 자료 | **확정**: 특정 기간의 glass 1장당 평균 검출 개수와 glass 한 장의 실제 조사 면적을 가공자료로 입력 | `fab_measurements.csv`, 총량은 조사 면적으로 정규화 | `adapters.example`, `caa.fab_shape_and_total` |
-| CAA 실제 계산식 | `demo_probability_per_bin`: 동일 크기 격자의 확률 가중치 × CA 합 | demo 규칙 사용 시 설정 오류, 확정 규칙 미구현 시 `CAAError` | `caa.interpret_fab`에 확정 규칙 추가, `caa.confirmed: true` |
-| 크기 격자 | 확정: 1–30 um 1 um 간격 + 40, 50 um (32개), CA·hotspot·Fab 전체 제공 | `exact`, 보간하지 않음 | `data.ca_alignment` |
-| Vertical short 적용 공정 layer | **2026-09-27 계약 1.2**: source-step Fab layer; **legacy(미표시/1.1)**: 적층표 상부 Fab layer | `layer_stack.csv`가 없거나 순서를 판정할 수 없으면 오류 | 입력 데이터/어댑터 |
-| 제품 간 layer 대응·비교 가능 조건 | layer 이름 문자열 일치(`layer_policy: exact`) 또는 무시(`ignore`) | 대응표 없음 | `retrieval.candidate_mask`에 대응표 추가 |
-| Lateral open 전극 치수 정의 | 형상 수치(`shape_metrics`)의 이름만 전달, 의미 해석 없음 | 해석하지 않음 | `geometry.json` 정의 확정 |
-| 국부 이미지 범위·이물 영향 영역 | 전체 이미지만 사용 | 국부 조각 미지원 | 확장 지점: 같은 `sample_id` 아래 추가 이미지 목록 (독립 제품으로 취급 금지) |
-| 전문가 검토 기준·개선 후보 제약 | 간격·폭·평행 길이·겹침·우회 후보를 넓게 제시하고 사람이 검토 | 외부 저항·Cap·coupling·신호·DRC·다른 short/open 결과 상태만 연결 | `cards.build_review_cards` |
-| 전문가 정답 라벨 | 현재 없음 | 정확도·precision·recall을 주장하지 않고 held-out 반복성만 보고 | `pipeline.run_evaluate` |
-| 학습/평가 분리 단위 | 제품 ID와 설계 계열 ID의 연결 성분 | 그룹 2개 미만이면 오류 | `split.group_split` |
-| CNO(`contact_not_open`, contact·via hole 막힘) 불량 유형 | **보류**(2026-09-27): `FAILURE_TYPES`에 없음. particle-sim exporter는 CNO unit을 제외하고 `export_warnings.json`에 남기며, `particle_sim_run` 검사기는 미지원 경고를 낸다 | 기본은 경고, `--strict`면 실패 | 재개 시 결정: hole 형상 표현(3번째 layout 또는 형상 수치), 아래·위 전극 식별, 가림 기준(잠정: hole 면적 절반 이상, hole 하나라도 막히면 CNO), Fab layer(hole layer 이물 불량 Fab 자료는 있음), CAA에서 자동 open과의 중복 방지. 수정 위치: `schema.FAILURE_TYPES`, 어댑터, `dataset`/`model`(layout 2 slot 고정), `caa`, 분석·카드 |
-| open 불량 회피안(선폭 보강) | **보류**(2026-09-29): 금속을 추가하는 편집이 없어 `edit_candidates`는 open 질의를 사유와 함께 건너뛴다(`edit_candidates.csv`의 `status=skipped`). 비교군 비교와 선폭 차이(`pair:a_min_width`)는 계속 계산한다 | 편집 후보 없음 | 재개 시 결정: particle-sim `make-variant`에 국소 추가(보강) 편집을 넣을지, 설계자 YAML로만 처리할지. 수정 위치: particle-sim `variant/edits.py`, simcompare `variants.edit_candidates` |
-| 설계 규칙(최소 선폭·간격) 입력 | **보류**(2026-09-29): 입력 가능 여부 미확인 | 규칙 위반 편집 후보도 걸러지지 않고 제시된다. 다른 불량 증가 허용 여부와 함께 설계자가 판단 | 재개 시 `analysis` 설정 또는 별도 규칙 파일, `variants.edit_candidates`에서 후보 제외 |
+| 항목 | 상태 | 현재 임시 처리 | 실제 경로 동작 | 확정 후 수정 위치 |
+|---|---|---|---|---|
+| 실제 파일 형식·디렉터리 구조 | pending | CSV/JSON + PNG/NPY 예시 어댑터 | 어댑터 교체 전제 | `src/simcompare/adapters/` 새 어댑터 |
+| Hotspot 색상·투명도·축척 | pending | grayscale 강도를 "가공 강도"로만 사용 | 범례(`data.hotspot_legend`) 없으면 확률 변환 금지 | `preprocess.legend_to_values`, 어댑터 |
+| CA 의미·범위 (legacy) | answered | legacy **확정**: 0~1 무차원 확률 기반 누적 위험값, 보통 최대 0.02~0.03, 면적 정규화 전 값. particle-sim 면적 규칙은 provisional; 환산 근거 확정 전 교차 계열 비교 금지 | 원 CA와 `CA / unit-pixel 면적`을 함께 사용; 혼합 계열 real 오류/demo 경고 | `schema.AnalysisBundle.ca_per_area`; 계산 담당자 환산 기준 확인 |
+| particle-sim CA 환산 근거 | pending | null — 기존 면적 환산 규칙은 provisional이며 최종 근거 미확인 | 교차 계열 비교 금지 | 계산 담당자 환산 기준 확인 |
+| Fab 자료 | answered | **확정**: 특정 기간의 glass 1장당 평균 검출 개수와 glass 한 장의 실제 조사 면적을 가공자료로 입력 | `fab_measurements.csv`, 총량은 조사 면적으로 정규화 | `adapters.example`, `caa.fab_shape_and_total` |
+| CAA 실제 계산식 | pending | `demo_probability_per_bin`: 동일 크기 격자의 확률 가중치 × CA 합 | demo 규칙 사용 시 설정 오류, 확정 규칙 미구현 시 `CAAError` | `caa.interpret_fab`에 확정 규칙 추가, `caa.confirmed: true` |
+| 크기 격자 | answered | 확정: 1–30 um 1 um 간격 + 40, 50 um (32개), CA·hotspot·Fab 전체 제공 | `exact`, 보간하지 않음 | `data.ca_alignment` |
+| Vertical short 적용 공정 layer | answered | **2026-09-27 계약 1.2**: source-step Fab layer; **legacy(미표시/1.1)**: 적층표 상부 Fab layer | `layer_stack.csv`가 없거나 순서를 판정할 수 없으면 오류 | 입력 데이터/어댑터 |
+| 제품 간 layer 대응·비교 가능 조건 | pending | layer 이름 문자열 일치(`layer_policy: exact`) 또는 무시(`ignore`) | 대응표 없음 | `retrieval.candidate_mask`에 대응표 추가 |
+| Lateral open 전극 치수 정의 | pending | 형상 수치(`shape_metrics`)의 이름만 전달, 의미 해석 없음 | 해석하지 않음 | `geometry.json` 정의 확정 |
+| 국부 이미지 범위·이물 영향 영역 | pending | 전체 이미지만 사용 | 국부 조각 미지원 | 확장 지점: 같은 `sample_id` 아래 추가 이미지 목록 (독립 제품으로 취급 금지) |
+| 전문가 검토 기준·개선 후보 제약 | pending | 간격·폭·평행 길이·겹침·우회 후보를 넓게 제시하고 사람이 검토 | 외부 저항·Cap·coupling·신호·DRC·다른 short/open 결과 상태만 연결 | `cards.build_review_cards` |
+| 전문가 정답 라벨 | pending | 현재 없음 | 정확도·precision·recall을 주장하지 않고 held-out 반복성만 보고 | `pipeline.run_evaluate` |
+| 학습/평가 분리 단위 | answered | 제품 ID와 설계 계열 ID의 연결 성분 | 그룹 2개 미만이면 오류 | `split.group_split` |
+| CNO(`contact_not_open`, contact·via hole 막힘) 불량 유형 | pending | **보류**(2026-09-27): `FAILURE_TYPES`에 없음. particle-sim exporter는 CNO unit을 제외하고 `export_warnings.json`에 남기며, `particle_sim_run` 검사기는 미지원 경고를 낸다 | 기본은 경고, `--strict`면 실패 | 재개 시 결정: hole 형상 표현(3번째 layout 또는 형상 수치), 아래·위 전극 식별, 가림 기준(잠정: hole 면적 절반 이상, hole 하나라도 막히면 CNO), Fab layer(hole layer 이물 불량 Fab 자료는 있음), CAA에서 자동 open과의 중복 방지. 수정 위치: `schema.FAILURE_TYPES`, 어댑터, `dataset`/`model`(layout 2 slot 고정), `caa`, 분석·카드 |
+| open 불량 회피안(선폭 보강) | pending | **보류**(2026-09-29): 금속을 추가하는 편집이 없어 `edit_candidates`는 open 질의를 사유와 함께 건너뛴다(`edit_candidates.csv`의 `status=skipped`). 비교군 비교와 선폭 차이(`pair:a_min_width`)는 계속 계산한다 | 편집 후보 없음 | 재개 시 결정: particle-sim `make-variant`에 국소 추가(보강) 편집을 넣을지, 설계자 YAML로만 처리할지. 수정 위치: particle-sim `variant/edits.py`, simcompare `variants.edit_candidates` |
+| 설계 규칙(최소 선폭·간격) 입력 | pending | **보류**(2026-09-29): 입력 가능 여부 미확인 | 규칙 위반 편집 후보도 걸러지지 않고 제시된다. 다른 불량 증가 허용 여부와 함께 설계자가 판단 | 재개 시 `analysis` 설정 또는 별도 규칙 파일, `variants.edit_candidates`에서 후보 제외 |

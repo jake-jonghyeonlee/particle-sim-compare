@@ -1,5 +1,14 @@
 # 도메인 입력 확인 패키지
 
+## numeric_v2와 legacy 예제의 경계
+
+새 수치 경로 문서 예제는 [numeric_v2/README.md](numeric_v2/README.md)의 `manifest.json`, `pairs.csv`, `density.csv`다. 내부 canonical 계약 초안 및 합성 검산 자료이며 실제 원천 파일 형식/G1/G2/G7 답변이나 현재 어댑터가 읽는 입력으로 승인한 것이 아니다. 원본 ID·source-step assignment·실제 layer 결합과 32 지름 상태를 보존하며 pending panel과 blocked 지도 ROI를 보여 준다. G1/G2/G7a/G7b의 답변 값은 null이다.
+
+아래 기존 파일은 **1.x / CAA / AE legacy 확인 패키지**다. 기존 count/glass·정규화·source-step 의미를 numeric_v2 density나 unit 환산으로 자동 적용하지 않는다. 실제 새 입력은 명시 어댑터/변환 근거로 전환하거나 unsupported로 남긴다. 모든 예제 값은 합성이다.
+
+## 기존 패키지 (legacy)
+
+
 이 디렉터리는 실제 데이터 연결 전에 공정·시뮬레이션 담당자와 확인할 입력 형식을 한곳에 모은 예시다.
 `fab_measurements.csv`, `layer_stack.csv`, `design_review_status.csv`는 예시 어댑터가 같은 이름으로 직접 읽는다.
 나머지 파일은 현재 규칙과 향후 선택 입력 형식을 보존하는 확인용 템플릿이다.
@@ -80,8 +89,8 @@
 
 ## 아직 답이 필요한 핵심 항목
 
-1. CAA의 공식 계산식 최종 확인
-2. 제품 간 layer·전극 역할 대응표
+1. **pending** — CAA의 공식 계산식 최종 확인
+2. **pending** — 제품 간 layer·전극 역할 대응표
 
 전문가 라벨은 현재 필수 질문이 아니라 향후 선택 입력이다.
 
