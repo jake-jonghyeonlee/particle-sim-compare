@@ -5,15 +5,15 @@
   "source_format": "EXAMPLE_inline_binary_document_fixture",
   "source_contract_version": "EXAMPLE_SYNTHETIC_V2",
   "adapter_version": "EXAMPLE_document_only_v1",
-  "source_manifest_hash": "057e1d493231e20c24a78752c6618862049de758d6c42c5a3b934558c4b56478",
-  "input_hash": "057e1d493231e20c24a78752c6618862049de758d6c42c5a3b934558c4b56478",
+  "source_manifest_hash": "953178ee77861aeddd3dd8d87ce06b1f580dccd1bf5b56ba9e6db57dee23663d",
+  "input_hash": "953178ee77861aeddd3dd8d87ce06b1f580dccd1bf5b56ba9e6db57dee23663d",
   "hash_recipe": "sha256(canonical source_payload UTF-8 JSON sort_keys=True,separators=(comma,colon),ensure_ascii=False); source_payload keys documented in README; file hashes are exact bytes",
   "files": {
     "pairs.csv": {
       "sha256": "b77726ca5a34763485ded52dbe89f9826db8fcf1530eb583f7a18e2379301614"
     },
     "density.csv": {
-      "sha256": "6ff469d7b6fb644ce815581bcd000a59b066aa7c0cefdedccb04a4ed3960b28c"
+      "sha256": "65a1e2311f92b34ea14f8ebd853464329834754c73de21f4fbe54735a5e4fa09"
     }
   },
   "pair_table_version": "EXAMPLE_pairs_v2_1",
@@ -595,17 +595,18 @@
       }
     },
     "electrode_map_policy": {
-      "value": null,
-      "status": "pending",
-      "reasons": [
-        "map_scope_unconfirmed"
-      ]
+      "value": "short_only",
+      "status": "answered",
+      "decided_on": "2026-10-08",
+      "regions_threshold": null,
+      "regions": [],
+      "reasons": []
     },
     "failure_fragment_policy": {
       "value": null,
       "status": "pending",
       "reasons": [
-        "failure_fragment_scope_unconfirmed"
+        "failure_fragment_implementation_pending"
       ]
     }
   },
@@ -613,38 +614,47 @@
     "G1": {
       "status": "pending",
       "answer": null,
-      "reason": "실측 자료가 아니며 단위·조사면적·bin 의미/폭 사용자 답변 없음",
+      "reason": "지름마다 한 값은 answered; 단위·조사면적 변환은 pending",
       "blocks": [
         "real_density_parser_acceptance",
         "density_weighted_values"
-      ]
+      ],
+      "answered_parts": {
+        "bin_semantics": "per_bin",
+        "bin_width_required": false,
+        "decided_on": "2026-10-08"
+      }
     },
     "G2": {
       "status": "pending",
       "answer": null,
-      "reason": "실제 mask/frame·unit-domain·layer↔step·migration 근거 답변 없음",
+      "reason": "격자 크기 사실은 answered; 한 unit 환산·원천/migration 세부는 pending",
       "blocks": [
         "real_source_format_acceptance",
         "unit_panel_values",
         "migration_acceptance"
-      ]
+      ],
+      "answered_parts": {
+        "same_pitch_across_products": true,
+        "same_layer_size_within_product": true,
+        "different_pixel_counts_across_products": true,
+        "approximate_2x2_um": 100,
+        "approximate_2x2_px": 2000,
+        "decided_on": "2026-10-08"
+      }
     },
     "G7a": {
-      "status": "pending",
-      "answer": null,
-      "reason": "종류별 조각 지표 제외 제안에 대한 사용자 답변 없음",
-      "blocks": [
-        "failure_fragment_scope_decision"
-      ]
+      "status": "answered",
+      "answer": "implement_lateral_only_vertical_only_simultaneous",
+      "decided_on": "2026-10-08",
+      "implementation_status": "pending_separate_task"
     },
     "G7b": {
-      "status": "pending",
-      "answer": null,
-      "reason": "지도 open 포함/shorts-only 사용자 답변 없음",
-      "blocks": [
-        "complete_map_acceptance",
-        "map_roi_ready"
-      ]
+      "status": "answered",
+      "answer": "short_only",
+      "authority": "user",
+      "decided_on": "2026-10-08",
+      "blocks": []
     }
   }
 }

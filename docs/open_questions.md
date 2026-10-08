@@ -12,16 +12,16 @@
 | N4 | answered | 지름 1..30, 40, 50 um의 32개 조건 | case별 expected coverage·0/누락/N/A 구별 | 누락 0 채움/40·50 폭 추측 금지 |
 | N5 | answered | case ID·failure_type·전극/role/actual_layer 결합 보존, pair class는 두 전극 unordered 기준 | orientation 반례·유형 추적 | raw fab_pair_key 분해/정렬 금지 |
 | N6 | answered | ROI 생산 C/T6, 소비 DL2/T10, 왕복 T12; 출처는 지도 영역·manual | review_roi_v1 문서·위치 export 계약 | 제품 간 구간 대응/검색 결과로 ROI 자동 선택 금지 |
-| G1 | pending | null — Fab 실제 열/단위, layer·지름 key, per-bin/per-um, 평균 count/조사면적 변환, 40/50 폭, 공정·기간/분포 근거 필요 | typed density·명시 합성 per-bin 검산·면적 | 실자료 parser 최종 승인·가중값/단위 확정 (T1/T2/T4/T6/T12) |
-| G2 | pending | null — case·지름별 mask 형식, 전극/실제 layer/process ID, pitch/origin/valid, 기대 case/height, layer↔step, 2×2 여부와 현재 unit 환산 근거 필요 | 원본 binary·full-mask union·명시 합성 domain 검산 | 자동 /4·crop, 실자료 unit/panel 완료, reader/migration 최종 승인·지도 격자/coverage 수락 (T1~T6/T12) |
-| G7a | pending | null — lateral-only/vertical-only/simultaneous 지표를 첫 구현에서 제외하고 case 종류만 보존하는 안에 동의하는가? | 유형 보존·기존 line/pixel·pair 몫 | 종류별 지표 구현·제외 확정·기존 합의 철회 선언 (T1/T3/T6/T12); 포함 요청이면 범위 재채택 |
-| G7b | pending | null — 지도도 shorts-only인가, open 한 전극을 포함하는가? | short-only 부분 합성 지도·blocked 지도 ROI·조건 충족 manual ROI | open 의미/fixture 최종 삭제, 전체 지도·지도 유래 ready ROI 수락 (T1/T2/T5/T6/T10/T12); 포함 요청이면 지도 재계획 |
+| G1 | pending (일부 answered) | 지름마다 한 값(per_bin, 2026-10-08), 연속 per-um 아님; bin 폭 질문은 종료. null — 실제 단위·조사면적 변환·공정/기간 근거 미답변 | 지름별 raw 값·명시 합성 per-bin 검산·면적 | 실자료 가중값 및 parser 최종 승인 |
+| G2 | pending (일부 answered) | 제품 간 동일 um/pixel·제품별 pixel 수·제품 내 같은 layer 크기, 2×2 약 100 um/2000 px(2026-10-08). null — 한 unit 환산 및 원천/migration 세부 미답변 | 원본 2×2 지도 표시·full-mask 면적 | 자동 /4·unit/panel 완료 및 reader 최종 승인 |
+| G7a | answered | lateral-only/vertical-only/simultaneous 지표 구현, open 제외(2026-10-08) | case 유형·기존 line/pixel 보존 | 구현은 별도 후속 Task, 현재 shared/transfer를 simultaneous로 이름 변경 금지 |
+| G7b | answered | 지도는 현재 short-only, 사용자 결정 2026-10-08 | count 배열·heat-map, 수동 ROI 기본, 명시 threshold 영역 ROI | 누락 source/valid/frame/shape의 차단 사유 유지; legacy open helper는 보존 |
 | G3 | pending | null — DL1/DL2 별도 repo 이름·경로 확인 | 교환 계약 초안 | DL2 생성/rename/remote/push; 이름 답변은 push 허가 아님 |
 | G4 | pending | null — near/wide 물리 크기 및 비인접 pair 중간 layer 정책 | 매개변수 crop 시험·원본 layer·ROI 위치 계약 | 실자료 기본 crop/channel/학습 recipe 확정; 위치 export 자체는 가능 |
 | G5 | pending | null — whole-unit isotropic resize+pad / electrode×layer set 제안, 최소 선폭·격자, CNT/VIA endpoint 형식 | 독립 overlap/validator 수정·합성 비교 | 권고를 확정 설계로 표시·실자료 grid/augmentation 확정 |
 | G6 | pending | null — lineage/split, 선택 labels·unknown/negative, Recall@k/누락·자원/시간 목표, 수치 검산/오차 | harness·빈 수락 양식·baseline | 실자료 성능/기존 수치 일치 PASS |
 
-G7a와 G7b는 독립 질문이다. 무응답은 동의가 아니며 수치 shorts-only가 지도 open 제외의 근거가 되지 않는다. `/4` 관행의 확인은 새 경계 보정을 요구하는 질문이 아니다. 미답변 상태로 문서/합성 범위를 인도할 수 있지만 실자료 수락으로 기록하지 않는다.
+G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지도는 자동 threshold/영역 순위를 기본 생성하지 않고 사용자가 판단한다. G1 bin 폭은 닫혔지만 단위/조사면적은 pending이며, G2의 한 unit 환산도 pending이다. 실자료 수락과 사용자 검산은 별도다.
 
 ## 기존 1.x / CAA / AE 질문 기록 (legacy)
 

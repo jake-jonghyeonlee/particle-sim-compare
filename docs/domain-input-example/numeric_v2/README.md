@@ -10,7 +10,7 @@
 
 ## 읽는 규칙과 식별자
 
-JSON null과 CSV 빈 셀은 미확정/미관측이며 0이 아니다. CSV의 boolean은 `true/false`, 지름은 um, `raw_value`는 비음수 유한 숫자 또는 빈 셀이다. `reasons`는 세미콜론으로 구분한 사유 코드다. `status`와 이유는 같이 읽는다. `observed=true, raw_value=0`과 `observed=false, raw_value=`는 구별한다. 빈 `bin_semantics`, 경계, 조사면적, canonical density/unit은 모두 null로 해석한다.
+JSON null과 CSV 빈 셀은 미확정/미관측이며 0이 아니다. CSV의 boolean은 `true/false`, 지름은 um, `raw_value`는 비음수 유한 숫자 또는 빈 셀이다. `reasons`는 세미콜론으로 구분한 사유 코드다. `status`와 이유는 같이 읽는다. `observed=true, raw_value=0`과 `observed=false, raw_value=`는 구별한다. `bin_semantics=per_bin`은 지름마다 한 값이라는 사용자 답변을 반영한다. 경계는 이 계산에 필요하지 않아 null이며 조사면적·canonical density/unit은 pending/null이다.
 
 pair 표의 `EXAMPLE_pairs_v2_1`은 manifest와 각 행에 동일하게 남는다. pair ID와 전극 ID는 이 합성 제품 안에서만 유효하다. 실제 source의 `fab_pair_key`는 raw ordered 문자열이다. 예제 `EXAMPLE_UNIT:M1-M2`를 delimiter로 분해해 전극 A/B를 만들지 않는다. raw 문자열과 `ordered_endpoints`는 변경 없이 보존한다. 원천 case ID는 product/design/source/process/exposure/frame/version과 결합해야 유일하다.
 
@@ -46,7 +46,7 @@ d5의 lateral mask는 첫 행 첫 두 셀, 각 vertical mask는 첫 셀만 덮�
 
 ## density와 panel이 pending인 이유
 
-`density.csv`는 별도의 32개 행을 갖는다. d1 raw count=0은 관측 zero, d40 raw 값은 누락, 나머지는 합성 10 count/glass다. **10 count/glass를 10 per um^2로 읽을 수 없다.** 단위·glass 실제 조사면적·평균 기준·지름 bin의 의미와 범위를 확인해야 하며 count/glass 표기만으로 단위 환산이 끝나지 않는다. 조사면적, per-bin/per-um 의미, 모든 bin 경계는 비어 있고 40/50의 폭은 1 또는 10으로 가정하지 않는다. canonical density는 전 행 null/unavailable이다. raw 0도 미확정 계약을 해결하지 않는다.
+`density.csv`는 별도의 32개 행을 갖는다. d1 raw count=0은 관측 zero, d40 raw 값은 누락, 나머지는 합성 10 count/glass다. **10 count/glass를 10 per um^2로 읽을 수 없다.** 단위·glass 실제 조사면적·평균 기준·지름별 값이라는 확정 의미를 보존해야 하며 count/glass 표기만으로 단위 환산이 끝나지 않는다. 2026-10-08 답변으로 per_bin(지름마다 한 값)이 확정돼 폭 질문은 닫혔다. 조사면적은 pending, bin 경계는 계산에 필요하지 않아 null이며 40/50에도 폭을 곱하지 않는다. canonical density는 전 행 null/unavailable이다. raw 0도 미확정 계약을 해결하지 않는다.
 
 unit 치수는 합성 2×1 um이고 측정 domain은 4×2 um(2×2 배열)이다. `unit_area_basis`, `conversion_policy`, `divisor`는 null/pending이다. **2×2라는 이유로 CA/4를 기본 계산하지 않는다.** full-mask d5 면적만 검산 가능하다. panel 치수 20×10 um과 floor 제안은 합성 메타데이터로만 남기고 unit_count 및 unit/panel line·pixel, target−reference delta는 null이다. reference 자체도 제공되지 않았다.
 
@@ -54,10 +54,10 @@ unit 치수는 합성 2×1 um이고 측정 domain은 4×2 um(2×2 배열)이다.
 
 | 게이트 | 상태·답변 | null인 이유 / 차단 |
 |---|---|---|
-| G1 | pending / null | density 단위·조사면적·bin 의미/폭·공정/기간 답변 없음 → 실자료 parser 최종 승인·가중값 불가 |
+| G1 | pending / null | 지름별 한 값 answered, 단위·조사면적·공정/기간 pending → 실자료 parser 최종 승인·가중값 불가 |
 | G2 | pending / null | 실제 mask/frame/case/height·layer↔step·unit 환산 근거 없음 → 실자료 reader/migration 승인·unit/panel 완료 불가 |
-| G7a | pending / null | 종류별 지표 제외 제안 미답변 → 구현/제외 확정 불가; case 유형·기존 line/pixel은 보존 |
-| G7b | pending / null | 지도 open/shorts-only 미답변 → 전체 지도·지도 유래 ready ROI 수락 불가 |
+| G7a | answered | 종류별 지표 구현 요청; 별도 Task에서 구현, 기존 line/pixel 보존 |
+| G7b | answered / short_only | 사용자 결정 2026-10-08; 자동 threshold·영역 없음, 수동 위치 기본 |
 
 합성 stack M1<M2와 STEP_M2 대응은 synthetic_only이며 G2 실자료 답변이 아니다. 1.2 원천 source-step assignment를 상부 layer로 자동 바꾸지 않는다. 실제 변환에서 두 의미가 충돌하면 `migration_assignment_conflict`와 raw 값·상부 판정·대응 근거를 보고하고 명시 확인 전 실패/pending으로 둔다. 변환 없는 기존 1.x/CAA/AE 입력은 unsupported다.
 
@@ -103,10 +103,10 @@ unit 치수는 합성 2×1 um이고 측정 domain은 4×2 um(2×2 배열)이다.
       "selection_provenance": {
         "diameter_um": 5, "threshold": 2, "connectivity": 4,
         "coverage": {"expected_cases": 3, "observed_cases": 3},
-        "map_scope": null, "G7b_status": "pending"
+        "map_scope": "short_only", "G7b_status": "answered", "decided_on": "2026-10-08"
       },
       "status": "blocked",
-      "reasons": ["map_scope_unconfirmed", "source_shape_required"]
+      "reasons": ["source_shape_required"]
     }
   ],
   "excluded_records": []
@@ -115,7 +115,7 @@ unit 치수는 합성 2×1 um이고 측정 domain은 4×2 um(2×2 배열)이다.
 
 위 snippet의 producer/hash 문자열은 설명용으로 실행 artifact의 commit/hash를 대신하지 않는다. 실제 T6은 정확한 producer commit과 이 manifest의 실제 hash를 기록해야 한다. 같은 지도 영역에 `EXAMPLE_VERT_BA`가 관여하면 별도 ROI 행과 roi_id를 만들고 같은 source_region_id/center 관계를 유지한다. source case를 하나로 축약하거나 두 행을 독립 제품/무조건 negative로 취급하지 않는다. 영역 bbox는 near/wide crop 크기가 아니다.
 
-manual 행은 `source_kind=manual`, `source_region_id=null`, `region_bbox_um=null`과 제품/설계/원본 frame/물리 center·case 또는 명시 전극/layer 문맥을 갖는다. 위치만 있으면 `blocked: case_context_required`, 원본 shape 연결이 없으면 `blocked: source_shape_required`다. 이 패키지에는 원본 shape/CNT asset이 없어 manual도 실행 예제가 아니다. 실제 독립 case/frame/shape 조건 및 asset hash가 충족되면 manual은 G7b 미답변과 무관하게 ready일 수 있다. G4 pending은 위치 export를 막지 않지만 실제 near/wide crop recipe 확정을 막는다.
+manual 행은 `source_kind=manual`, `source_region_id=null`, `region_bbox_um=null`과 제품/설계/원본 frame/물리 center·case 또는 명시 전극/layer 문맥을 갖는다. 위치만 있으면 `blocked: case_context_required`, 원본 shape 연결이 없으면 `blocked: source_shape_required`다. 이 패키지에는 원본 shape/CNT asset이 없어 manual도 실행 예제가 아니다. 실제 독립 case/frame/shape 조건 및 asset hash가 충족되면 manual은 ready일 수 있다. 지도 유래 ROI는 사용자가 명시 threshold로 영역을 요청하고 선택한 경우에만 가능하다. G4 pending은 위치 export를 막지 않지만 실제 near/wide crop recipe 확정을 막는다.
 
 C/T6이 두 출처를 내보내고 DL2/T10은 ready 행만 같은 물리 중심에서 crop하며 crop/valid/source version을 보존한다. T12는 C→DL2→C의 roi_id·복합 source identity·원본 frame·asset hash를 대조한다. DL2 검색 결과나 제품 간 등록으로 새로운 ROI를 자동 선정하지 않는다. 선택 provenance와 수치 지표는 tensor에 넣지 않는다.
 
@@ -127,4 +127,6 @@ C/T6이 두 출처를 내보내고 DL2/T10은 ready 행만 같은 물리 중심�
 python3 -m json.tool docs/domain-input-example/numeric_v2/manifest.json
 ```
 
-질문 상태는 [open_questions.md](../../open_questions.md)의 answered/pending 표로 추적한다. G1/G2/G7a/G7b가 pending인 상태에서 문서·합성 부분만 검토 가능하다.
+질문 상태는 [open_questions.md](../../open_questions.md)의 answered/pending 표로 추적한다. G1/G2의 미답변 부분과 G4는 pending이다. G7b는 answered이며 G7a 구현은 별도 Task다. 문서·합성 검산이 실자료 수락을 대신하지 않는다.
+
+2026-10-08 G2 사실: 제품 간 um/pixel은 같고 pixel 수는 다르며 한 제품의 layer 크기는 같다. 실제 2×2는 대략 100 um/2000 px다. 이 문서의 작은 합성 frame에는 이 근사치를 대입하지 않는다. 2×2→한 unit 환산은 pending이며 /4를 하지 않는다. 지도는 원본 2×2를 그대로 표시하고 사용자가 위치를 판단하며 DL2는 그 위치와 유사한 구조를 찾는다.

@@ -1,4 +1,4 @@
-"""Explicit synthetic per-bin density adapter; G1 real interpretation stays pending."""
+"""지름별 한 값(per_bin): G1 bin 의미는 2026-10-08 확정, 실제 단위/조사면적은 pending."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -70,6 +70,8 @@ class DensityDistribution:
         return {'distribution_id': self.distribution_id, 'process_layer': self.process_layer,
                 'contract': None if self.contract is None else asdict(self.contract),
                 'canonical_unit': 'um^-2' if not self.reasons else None,
+                'diameter_bin_policy': {'meaning':'one_value_per_diameter', 'decided_on':'2026-10-08',
+                                        'bin_width_required':False, 'continuous_density':False},
                 'reasons': self.reasons, 'coverage': self.coverage,
                 'bins': [asdict(self.bins[d]) for d in sorted(self.bins)],
                 'raw_records':self.raw_records}

@@ -56,6 +56,10 @@ def test_every_weighted_value_preserves_units_basis_distribution_and_rounding(tm
     assert payload['reference']['areas']['groups'][0]['frame']['origin_xy_um']==[100,200]
     assert payload['reference']['areas']['pair_table_version']=='synthetic_pairs_v1'
     assert payload['failure_fragment_policy']['value'] is None
+    assert payload['failure_fragment_policy']['reasons']==['failure_fragment_implementation_pending']
+    assert payload['applied_gate_decisions']['G7b']['answer']=='short_only'
+    assert payload['applied_gate_decisions']['G1']['answer'] is None
+    assert payload['applied_gate_decisions']['G1']['answered_parts']['bin_semantics']=='per_bin'
     assert payload['reference']['areas']['groups'][4]['source_cases'][4]['failure_type']=='vertical_short'
 
 
@@ -140,3 +144,20 @@ def test_bucket_links_keep_partial_value_separate():
           {'bucket_id':'B','value':None,'partial_value':1,'status':'partial'},
           {'bucket_id':'C','value':None,'partial_value':2,'status':'partial'}]
     assert unique_bucket_total(rows)=={'value':None,'partial_value':3,'status':'partial','reasons':['bucket_coverage_incomplete']}
+
+
+def test_available_map_report_csv_has_counts_and_no_pending_scope(tmp_path):
+    from simcompare.pipeline import run_numeric_map
+    generate_numeric_demo(tmp_path/'demo')
+    result=run_numeric_map(load_numeric_config(tmp_path/'demo/config.yaml'))
+    assert result['status']=='available' and result['exit_code']==0
+    out=tmp_path/'demo/numeric_outputs'
+    document=json.loads((out/'electrode_map.json').read_text())
+    assert document['layers'][0]['counts']==document['summaries'][0]['counts']==[[2,4,3,4,3,2]]
+    assert document['layers'][0]['regions']==[]
+    assert 'map_scope_unconfirmed' not in document['reasons']
+    with (out/'electrode_map_map.csv').open() as f:
+        rows=list(csv.DictReader(f))
+    assert [int(row['value']) for row in rows]==[2,4,3,4,3,2]
+    assert all(row['partial_value']=='null' and row['status']=='available' for row in rows)
+    assert document['provenance']['G7b']['decided_on']=='2026-10-08'

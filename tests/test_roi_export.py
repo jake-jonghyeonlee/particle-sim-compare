@@ -29,7 +29,7 @@ def selections():
 
 def exported(tmp_path,root=FIXTURE,*,selection=None,dataset=None):
     dataset=load_dataset(root) if dataset is None else dataset
-    maps=compute_electrode_maps(dataset)
+    maps=compute_electrode_maps(dataset, min_count=3)
     result=export_review_rois(dataset,root,tmp_path,maps=maps,selections=selections() if selection is None else selection,
                               asset_manifest=asset_reference(root),producer_commit='hand_fixture_commit')
     return result,json.loads((tmp_path/'review_rois.json').read_text())
@@ -144,7 +144,7 @@ def test_asset_boundary_failures_block_case_instead_of_guessing(tmp_path,change,
 
 def test_missing_asset_manifest_and_case_never_become_ready(tmp_path):
     dataset=load_dataset(FIXTURE)
-    maps=compute_electrode_maps(dataset)
+    maps=compute_electrode_maps(dataset, min_count=3)
     export_review_rois(dataset,FIXTURE,tmp_path,maps=maps,selections=selections(),producer_commit='test')
     payload=json.loads((tmp_path/'review_rois.json').read_text())
     assert all(row['status']=='blocked' for row in payload['rois'])
@@ -174,7 +174,7 @@ def test_stale_map_case_and_frame_bindings_are_blocked(tmp_path):
     from dataclasses import replace
     from simcompare.numeric_schema import Frame
     dataset=load_dataset(FIXTURE)
-    maps=compute_electrode_maps(dataset)
+    maps=compute_electrode_maps(dataset, min_count=3)
     frame=dataset.frames['FRAME']
     stale=Frame('FRAME',.5,(99,200),frame.shape_yx,frame.valid)
     layer=replace(maps.layers[0],regions=tuple(replace(r,frame=stale) for r in maps.layers[0].regions))
@@ -204,3 +204,27 @@ def test_asset_frame_bool_cannot_impersonate_unit_pitch_or_one_row(tmp_path):
     assert reasons==[]
     info=checked[tuple(vars(dataset.cases[0].identity).values())]
     assert info['assets'] is None and 'source_asset_frame_mismatch' in info['reasons']
+
+
+def test_manual_default_and_map_requires_explicit_threshold(tmp_path):
+    from simcompare.synthetic import generate_numeric_demo
+    generate_numeric_demo(tmp_path/'demo')
+    root=tmp_path/'demo/reference';dataset=load_dataset(root)
+    case=dataset.cases[0]
+    manual={**vars(case.identity),'center_xy_um':[100.5,200.5]}
+    maps=compute_electrode_maps(dataset)
+    assert maps.layers[0].regions==()
+    result=export_review_rois(dataset,root,tmp_path/'manual',maps=maps,selections={'manual':[manual]},
+                             asset_manifest=asset_reference(root),producer_commit='test')
+    assert result['n_ready']==1 and result['exit_code']==0
+    payload=json.loads((tmp_path/'manual/review_rois.json').read_text())
+    assert payload['rois'][0]['source_kind']=='manual' and payload['rois'][0]['crop_recipe']['value'] is None
+    blocked=export_review_rois(dataset,root,tmp_path/'no_threshold',maps=maps,selections={'map_region_ids':'all'},
+                              asset_manifest=asset_reference(root),producer_commit='test')
+    assert blocked['n_rois']==0 and blocked['exit_code']==3
+    payload=json.loads((tmp_path/'no_threshold/review_rois.json').read_text())
+    assert payload['excluded_records'][0]['reasons']==['map_threshold_required']
+    maps=compute_electrode_maps(dataset,min_count=3)
+    ready=export_review_rois(dataset,root,tmp_path/'threshold',maps=maps,selections={'map_region_ids':'all'},
+                            asset_manifest=asset_reference(root),producer_commit='test')
+    assert ready['n_ready']==4 and ready['exit_code']==0

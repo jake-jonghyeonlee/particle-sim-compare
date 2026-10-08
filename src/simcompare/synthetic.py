@@ -358,8 +358,8 @@ def generate_numeric_demo(out_dir: str | Path) -> dict:
             'panel':{'panel_size':list(panel_size),'unit_size':[shape[1],shape[0]],'length_unit':'um','rounding':'floor'}}
     cfg = {'schema_version':'numeric_config_v1','mode':'synthetic','output_dir':'numeric_outputs',
            'reference':products['reference'],'target':products['target'],
-           'map':{'input':products['reference'],'diameter_um':5,'min_count':3},
-           'review_rois':{'map_region_ids':'all','manual':[]}}
+           'map':{'input':products['reference'],'diameter_um':5},
+           'review_rois':{'manual':[]}}
     (out/'config.yaml').write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding='utf-8')
     pending = json.loads(json.dumps(cfg))
     for section in (pending['reference'], pending['target'], pending['map']['input']):

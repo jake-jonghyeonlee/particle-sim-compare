@@ -1,6 +1,6 @@
 """Full-mask 전극 수 지도와 검토 영역. 확률·온셋·단독 원인 지도가 아니다.
 
-canonical 경로는 short-only이며 G7b pending 때문에 항상 제한된 부분 결과다.
+canonical 경로는 G7b 사용자 결정(2026-10-08)에 따라 short-only이며 기본은 영역 선택 없는 지도다.
 DefectHotspot 경로는 기존 open(전극 하나) 의미를 보존하는 호환 API다.
 """
 from __future__ import annotations
@@ -19,7 +19,8 @@ from .numeric_schema import (CaseIdentity, Frame, Measurement, NumericCase, Nume
     diameter_key, finite, require_same_frame, text)
 
 DEFAULT_DIAMETER_UM = 5.0
-SCOPE_REASON = 'map_scope_unconfirmed'
+SCOPE_DECISION = {'status': 'answered', 'value': 'short_only',
+                  'authority': 'user', 'decided_on': '2026-10-08'}
 
 
 def _threshold(value):
@@ -160,8 +161,8 @@ class ElectrodeRegion:
     cases: tuple[CaseLink, ...]
     coverage: dict
     provenance: dict
-    review_roi_status: str = 'blocked'
-    review_roi_reasons: tuple[str, ...] = (SCOPE_REASON,)
+    review_roi_status: str = 'context_required'
+    review_roi_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, eq=False)
@@ -276,21 +277,23 @@ def _region_windows(inside, frame):
 
 
 def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
-                           diameter_um=DEFAULT_DIAMETER_UM, min_count=3) -> ElectrodeMaps:
+                           diameter_um=DEFAULT_DIAMETER_UM, min_count=None) -> ElectrodeMaps:
     """T2 원본 binary/valid에서 계산. pair 표·density·unit divisor를 사용하지 않는다.
 
     counts는 관측된 short의 하한이며 coverage와 scope를 함께 읽어야 한다.
-    서로 다른 source/process/exposure/unit은 별도 제품 요약으로 보존한다.
+    source/process/exposure별 layer 지도를 보존하며 product/design/unit 요약은 최대값이다.
     """
     diameter = float(diameter_key(diameter_um))
-    threshold = _threshold(min_count)
+    threshold = None if min_count is None else _threshold(min_count)
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     cases = list(dataset.cases if dataset else inputs)
     provenance = {'domain': 'full_mask_valid', 'defect_scope': 'short_only',
-                  'scope_status': 'partial', 'count_semantics': 'observed_short_lower_bound',
-                  'G7b': {'status': 'pending', 'value': None, 'reason': SCOPE_REASON},
+                  'scope_status': 'confirmed', 'count_semantics': 'observed_short_lower_bound',
+                  'G7b': copy.deepcopy(SCOPE_DECISION),
                   'representative_diameter_um': diameter, 'threshold': threshold,
-                  'connectivity': 4, 'selection_policy_version': 'electrode_count_region_v1',
+                  'connectivity': 4 if threshold is not None else None,
+                  'regions_requested': threshold is not None,
+                  'selection_policy_version': 'electrode_count_region_v1' if threshold is not None else None,
                   'source_manifest_hash': dataset.provenance.get('input_hash') if dataset else None,
                   'real_coverage_status': 'pending', 'real_coverage_reason': 'unit_area_basis_unconfirmed'}
     grouped, seen, excluded = {}, set(), []
@@ -301,9 +304,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
             raise NumericContractError('duplicate_source_case')
         seen.add(identity)
         if case.failure_type not in ('lateral_short', 'vertical_short'):
-            excluded.append({'identity': asdict(case.identity), 'failure_type': case.failure_type,
-                             'reason': 'outside_provisional_short_scope'})
-            continue
+            raise NumericContractError('map_requires_short_only', case.failure_type)
         grouped.setdefault(_key(case), []).append(case)
     provenance['excluded_cases'] = sorted(excluded, key=lambda r: json.dumps(r, sort_keys=True))
     # Dataset manifest에 있는 case가 사라졌으면 전체 완전성도 보류한다.
@@ -330,7 +331,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                     'full_area_um2': frame.valid.size*frame.pixel_pitch_um**2,
                     'valid_fraction': float(frame.valid.mean())}
         touched, observed = {}, []
-        reasons = {SCOPE_REASON}
+        reasons = set()
         for case in sorted(entries, key=lambda c: c.identity.case_id):
             record = next((r for d, r in case.records.items() if diameter_key(d) == diameter_key(diameter)), None)
             identity = asdict(case.identity)
@@ -364,7 +365,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                   else np.zeros(frame.shape_yx, np.int64))
         counts.setflags(write=False)
         regions = []
-        for inside, bbox in _components((counts >= threshold) & frame.valid):
+        for inside, bbox in (() if threshold is None else _components((counts >= threshold) & frame.valid)):
             r0, c0, r1, c1 = bbox
             x, y = frame.origin_xy_um
             p = frame.pixel_pitch_um
@@ -388,7 +389,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                            ((physical[0]+physical[2])/2, (physical[1]+physical[3])/2),
                            frame, inside, names, links, region_coverage, copy.deepcopy(provenance)))
         regions.sort(key=lambda r: (-r.max_count, -r.area_um2, r.region_id))
-        status = 'partial' if observed or coverage['not_applicable'] else 'unavailable'
+        status = coverage['source_coverage_status'] if observed or coverage['not_applicable'] else 'unavailable'
         layers.append(LayerMap(key, frame, counts if status!='unavailable' else None, status, tuple(sorted(reasons)), coverage, tuple(regions)))
     summaries = []
     summary_groups = {}
@@ -414,6 +415,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
         counts = np.max(np.stack(available_counts),axis=0) if available_counts else None
         if counts is not None:counts.setflags(write=False)
         summaries.append(ProductMap(key, frame, counts,
-                                    'partial' if any(m.status == 'partial' for m in maps) else 'unavailable',
+                                    ('unavailable' if counts is None else
+                                     'available' if all(m.status == 'available' for m in maps) else 'partial'),
                                     tuple(sorted(reasons)), coverage, summary_provenance))
     return ElectrodeMaps(tuple(layers), tuple(summaries), diameter, provenance)

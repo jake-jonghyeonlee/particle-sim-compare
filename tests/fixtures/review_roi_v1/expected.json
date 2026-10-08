@@ -3,7 +3,7 @@
   "center_xy_um": [103,202],
   "map_cases": ["A","B"],
   "map_status": "blocked",
-  "map_reasons": ["map_coverage_incomplete","map_scope_unconfirmed"],
+  "map_reasons": ["map_coverage_incomplete"],
   "manual_case": "A",
   "manual_center_xy_um": [102.5,201.5],
   "manual_status": "ready",

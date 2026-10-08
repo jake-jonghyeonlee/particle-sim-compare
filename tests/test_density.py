@@ -87,3 +87,15 @@ def test_optional_density_metadata_validated_without_inventing_bins(update):
 def test_missing_density_fields_are_typed_error():
     with pytest.raises(NumericContractError,match='missing_density_fields'):
         adapt_density([{'diameter_um':5}])
+
+
+def test_real_count_per_glass_keeps_per_diameter_meaning_without_area_conversion():
+    rows=[{'distribution_id':'REAL','process_layer':'L1','period':'period','bin_semantics':'per_bin',
+           'diameter_um':5,'raw_value':10,'raw_value_unit':'count/glass','observed':True}]
+    result=adapt_density(rows)
+    assert result.bins[5].raw_value==10
+    assert result.bins[5].value_per_um2 is None
+    assert 'density_contract_unconfirmed' in result.bins[5].reasons
+    assert result.to_dict()['diameter_bin_policy']=={
+        'meaning':'one_value_per_diameter','decided_on':'2026-10-08',
+        'bin_width_required':False,'continuous_density':False}

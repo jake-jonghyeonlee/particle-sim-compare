@@ -1,7 +1,7 @@
 """C → DL2 review_roi_v1 위치 내보내기. 원본 asset은 읽기 검증만 한다.
 
 hotspot/CA/density/rate는 asset 또는 tensor 입력으로 내보내지 않는다.
-G4 pending에는 crop 크기를 만들지 않고 G7b 지도 선택은 blocked로 남긴다.
+G4 pending에는 crop 크기를 만들지 않는다. 기본 위치 출처는 사용자 지정이다.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import subprocess
 import numpy as np
 
 from .numeric_images import check_hash, read_binary, resolve_path
-from .numeric_schema import CaseIdentity, Frame, NumericContractError, finite, text, require_same_frame
+from .numeric_schema import CaseIdentity, Frame, NumericContractError, finite, text, require_same_frame, current_gate_decisions
 
 IDENTITY_FIELDS = tuple(CaseIdentity.__dataclass_fields__)
 
@@ -177,7 +177,11 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
         asset_info = assets.get(_identity(identity),{'assets':None,'reasons':['source_shape_required'],'source_version':None})
         reasons.update(asset_info['reasons'])
         if kind == 'electrode_count_region':
-            reasons.add('map_scope_unconfirmed')
+            if (region.provenance.get('threshold') is None
+                    or region.provenance.get('regions_requested') is not True):
+                reasons.add('map_threshold_required')
+            if region.provenance.get('G7b', {}).get('value') != 'short_only':
+                reasons.add('map_scope_unconfirmed')
             if frame is not None:
                 try:
                     require_same_frame(region.frame,frame)
@@ -246,6 +250,8 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
                 reasons.append('region_source_case_binding_mismatch')
             add('electrode_count_region',case,region.center_xy_um,region,
                 request=link.identity if case is None else None,reasons=reasons)
+    if selected == 'all' and (maps is None or maps.provenance.get('threshold') is None):
+        excluded.append({'source_kind':'electrode_count_region','reasons':['map_threshold_required']})
     if selected != 'all':
         for missing in sorted(set(selected)-found):
             excluded.append({'source_kind':'electrode_count_region','source_region_id':missing,
@@ -269,7 +275,7 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
     payload = {'schema_version':'review_roi_v1','producer_commit':producer_commit,
                'source_manifest_hash':dataset.provenance['input_hash'],'assets_root':str(root.resolve()),
                'rois':rows,'excluded_records':excluded,
-               'gates':{g:{'status':'pending','answer':None} for g in ('G1','G2','G4','G7a','G7b')},
+               'gates':current_gate_decisions(),
                'tensor_input_policy':'original_layout_CNT_VIA_valid_only',
                'status':'partial' if excluded else 'available'}
     folder = Path(out)

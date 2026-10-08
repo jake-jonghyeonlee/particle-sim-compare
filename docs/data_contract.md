@@ -45,7 +45,7 @@ Coverage는 `expected/observed/missing/not_applicable/unmapped`와 valid 관측 
 
 Union key는 `(product,design,source/process 조건,exposure,analysis_layer,diameter,frame)`다. 같은 layer라는 이유로 다른 노출·원천 조건을 합치지 않는다. layer와 step의 일대일 대응 여부는 G2 pending이다. `L`=line pair union, `P`=pixel pair union, `P_effective=P\L`, `transfer=P∩L`, `U=L∪P`다. 면적은 valid 내 셀 수 × pitch²이며 `area(U)=area(L)+area(P_effective)`. transfer는 별도 진단으로 총합에 더하지 않는다. 원 case CA와 union CA를 둘 다 보존한다.
 
-Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket이다. bucket에는 안정 ID, 구성 pair ID, 지름·layer·면적·상태가 있다. pair_lineage_case_keys는 해당 pair의 원천 계보 전체이며 missing/관측 0 case도 포함할 수 있다. contributing_source_case_keys는 해당 지름에서 원본 관측 mask가 실제 그 bucket과 겹치는 case만 나열한다. 리포트는 계보를 면적 기여자로 표시하지 않는다. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산한다. `exclusive+shared=class_total`을 지름/layer/panel에서 검사한다. shared 또는 transfer를 종류별 simultaneous라고 부르지 않는다. G7a pending 동안 case 유형 보존 및 기존 line/pixel만 진행하고 종류별 분해 지표의 구현/제외 결정을 선언하지 않는다.
+Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket이다. bucket에는 안정 ID, 구성 pair ID, 지름·layer·면적·상태가 있다. pair_lineage_case_keys는 해당 pair의 원천 계보 전체이며 missing/관측 0 case도 포함할 수 있다. contributing_source_case_keys는 해당 지름에서 원본 관측 mask가 실제 그 bucket과 겹치는 case만 나열한다. 리포트는 계보를 면적 기여자로 표시하지 않는다. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산한다. `exclusive+shared=class_total`을 지름/layer/panel에서 검사한다. shared 또는 transfer를 종류별 simultaneous라고 부르지 않는다. G7a 사용자 답변(2026-10-08)은 lateral-only/vertical-only/simultaneous 지표 구현이다. 이 Task에서는 유형 보존 및 기존 line/pixel만 유지하며 종류별 지표는 후속 Task에서 구현한다.
 
 | density 필드 | 의미 |
 |---|---|
@@ -53,9 +53,9 @@ Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 share
 | 원 값 | `diameter_um`, `raw_value`, `raw_value_unit`, `observed`, `surveyed_area_um2`, `averaging_basis`, `bin_semantics`, `bin_lower_um`, `bin_upper_um` |
 | canonical | `density_per_um2`, `canonical_unit`, `status`, `reasons`, 명시 변환 근거. null은 0이 아님 |
 
-G1 pending: 실제 단위, 조사면적/count 변환, per-bin/per-um 의미, 40/50 bin 폭, 적용 공정/기간을 확인해야 한다. **10 count/glass는 단위·실제 조사면적·bin 의미 없이 10 per um^2로 사용할 수 없다.** per-bin 역면적 density가 확인된 때만 `V=Σ area_um2 × density_per_um2`를 쓴다. per-um 연속 density는 구간 적분/폭이 필요하다. 40/50 폭을 1 또는 10으로 만들지 않는다. 총 density를 확률 1로 정규화하지 않으며 line/pixel에 같은 계약을 적용한다. observed raw zero도 단위 계약 미확정이면 canonical 가중값은 pending이고, missing density는 별도 기록한다.
+G1 일부 answered(2026-10-08): 지름마다 한 값이며 `bin_semantics=per_bin`이다. 연속 per-um density가 아니므로 bin 폭 질문은 닫혔고 40/50에서도 폭을 곱하거나 적분하지 않는다. 실제 단위, 조사면적/count 변환, 적용 공정/기간은 pending이다. **10 count/glass는 단위·실제 조사면적·bin 의미 없이 10 per um^2로 사용할 수 없다.** per-bin 역면적 density가 확인된 때만 `V=Σ area_um2 × density_per_um2`를 쓴다. per-um 연속 density는 이 계약에서 승인되지 않는다. bin_lower_um/bin_upper_um은 지름별 값 계산에 필요하지 않으며 null로 남길 수 있다. 총 density를 확률 1로 정규화하지 않으며 line/pixel에 같은 계약을 적용한다. observed raw zero도 단위 계약 미확정이면 canonical 가중값은 pending이고, missing density는 별도 기록한다.
 
-`unit_domain`은 측정 domain/frame, unit 치수, domain 배열 형태, `unit_area_basis`, `conversion_policy`, `divisor`, 승인 근거/상태를 남긴다. G2 pending이면 basis/policy/divisor는 `null`과 `unit_area_basis_unconfirmed`다. **2×2 mask를 기본 `/4`하지 않는다.** full-mask union/면적은 가능하나 unit/panel 가중값·delta는 null이다. 현재 `/4` 관행을 사용자가 확인한 경우에만 명시 정책·한계와 함께 적용하고 새로운 경계 보정/수율 환산은 하지 않는다.
+`unit_domain`은 측정 domain/frame, unit 치수, domain 배열 형태, `unit_area_basis`, `conversion_policy`, `divisor`, 승인 근거/상태를 남긴다. G2 일부 answered(2026-10-08): 제품 간 um/pixel은 같고 pixel 수는 제품마다 다르며 한 제품의 모든 layer 크기는 같다. 실제 2×2 domain은 대략 100 um, 2000 px(약 0.05 um/pixel)이며 이 근사치를 입력 frame의 기본값으로 만들지 않는다. 한 unit을 얻는 환산 방식은 pending이므로 basis/policy/divisor는 `null`과 `unit_area_basis_unconfirmed`다. **2×2 mask를 기본 `/4`하지 않는다.** full-mask union/면적은 가능하나 unit/panel 가중값·delta는 null이다. 현재 `/4` 관행을 사용자가 확인한 경우에만 명시 정책·한계와 함께 적용하고 새로운 경계 보정/수율 환산은 하지 않는다.
 
 panel은 unit/panel 양의 유한 치수와 단위, `rounding_policy=floor|half_up_round`, 제품별 `unit_count`를 남긴다. 각 축에 함수를 적용해 곱하며 epsilon으로 floor를 올리지 않는다. `V_panel=N×V_unit`, `delta=target−reference`. 두 제품의 N은 별도로 산정한다. 비율은 선언 단위의 원값끼리 Decimal로 구한 뒤 각 축 floor/half-up을 적용한다. N=0이면 panel 값은 unavailable/null과 panel_has_no_units 사유이며 사용 가능한 0이 아니다. pair 표/공정/layer/density/면적 기준 호환성을 검증하고 실제 pixel overlay는 요구하지 않는다. 서로 다른 Fab 기준이면 구조 변화만의 효과라고 부르지 않는다. `delta_transfer`는 panel transfer의 순변화이며 공간 이동 추적이 아니다.
 
@@ -77,11 +77,11 @@ PLAN_v2 §2.4의 생산자는 C/T6, 소비자는 DL2/T10, C→DL2→C 왕복 검
 
 ROI 출처는 위 두 종류뿐이며 제품 간 구간 대응/등록이나 DL2 검색 결과로 자동 선택하지 않는다. 지도 multi-case 영역은 `(region_id,case_id,문맥)`별 행과 같은 위치 관계를 보존한다. 같은 위치 case/증강본은 독립 제품이나 무조건 negative가 아니다. manual에는 제품/설계/frame/물리 좌표와 case 또는 명시 전극/layer 문맥이 필요하고 위치만 있으면 `blocked: case_context_required`다. shape 연결 누락은 `blocked: source_shape_required`다.
 
-G7b pending인 short-only 지도 유래 행은 `blocked: map_scope_unconfirmed`이며 확정 추천으로 DL2를 실행하지 않는다. 수동 행은 독립 조건을 만족하면 G7b와 무관하게 ready일 수 있다. G4 near/wide 미답변은 위치 내보내기와 별개로 실제 crop recipe 확정을 막는다. T10은 ready 행의 동일 물리 중심에서 near/wide를 추출하고 crop/valid/source version을 index/query에 남긴다. T12는 `roi_id`와 product/design/case/source/frame/version·asset hash를 왕복 대조하며 다른 제품의 같은 case ID로 원본 CA를 join하지 않는다.
+G7b answered(사용자, 2026-10-08): 지도는 현재 short-only이며 canonical open 입력은 map_requires_short_only 오류로 거부한다. 별도 legacy DefectHotspot의 open 의미는 유지한다. 기본 지도는 원본 2×2 domain의 layer별 count와 product/design/unit별 최대값 배열 및 Pillow heat-map PNG이고 자동 threshold·영역·순위는 없다. 사용자가 config의 min_count 또는 CLI --min-count를 명시할 때만 영역을 계산하고 선택한 영역을 ROI로 내보낸다. 이 행에는 map_scope_unconfirmed 차단 사유가 없으나 누락 coverage 및 원본 case/frame/shape 검증은 계속 적용한다. 수동 위치가 기본 ROI 출처이고 독립 조건을 만족하면 ready다. 지도는 취약 위치를 보여 주고 DL2는 사용자가 고른 위치와 유사한 구조를 찾는 상호 보완 도구다. G4 near/wide 미답변은 위치 내보내기와 별개로 실제 crop recipe 확정을 막는다. T10은 ready 행의 동일 물리 중심에서 near/wide를 추출하고 crop/valid/source version을 index/query에 남긴다. T12는 `roi_id`와 product/design/case/source/frame/version·asset hash를 왕복 대조하며 다른 제품의 같은 case ID로 원본 CA를 join하지 않는다.
 
 ### 질문 상태와 범위
 
-[open_questions.md](open_questions.md)의 numeric_v2 표가 질문 상태를 추적한다. G1/G2/G7a/G7b는 모두 **pending**, 예제 답변 값은 null이다. G1은 실자료 density/가중값, G2는 실자료 reader/domain/unit/panel 및 migration 승인, G7a는 종류별 분해 구현/제외 확정, G7b는 전체 지도·지도 유래 ready ROI 수락을 각각 막는다. 합성 문서 검산은 가능하며 게이트 승인이나 실자료 성능 검증이 아니다.
+[open_questions.md](open_questions.md)의 numeric_v2 표가 질문 상태를 추적한다. G1/G2는 일부 answered이며 미답변 부분은 pending/null, G4는 pending이다. G7b는 short-only로 answered다. G7a도 종류별 지표 구현으로 answered지만 구현은 별도 Task에 맡기며 현재 line/pixel·shared의 의미를 바꾸지 않는다. G1 단위/조사면적은 실자료 가중값을, G2 한 unit 환산·원천 승인은 unit/panel 및 migration을 차단한다. 합성 문서 검산은 가능하며 게이트 승인이나 실자료 성능 검증이 아니다.
 
 ---
 
@@ -248,4 +248,6 @@ with ties resolved in that priority order and missing values preserved.
 
 ### R1 전극 지도 요약 규칙
 
-개별 layer 지도는 원천 조건별로 보존한다. 제품 요약은 product_id/design_version/unit_id별 모든 layer의 pixelwise max이며 combined_steps/combined_sources/combined_exposures 및 layer_inputs를 provenance에 남긴다. 서로 다른 frame은 조용히 분리하지 않고 summary unavailable/counts=null 및 incompatible_layer_frames로 표시한다. unavailable layer도 counts=null이며 관측 0 배열과 구별한다. G7b pending인 관측 지도는 제한된 count 하한을 제공하며 완전 지도 승인이 아니다.
+개별 layer 지도는 원천 조건별로 보존한다. 제품 요약은 product_id/design_version/unit_id별 모든 layer의 pixelwise max이며 combined_steps/combined_sources/combined_exposures 및 layer_inputs를 provenance에 남긴다. 서로 다른 frame은 조용히 분리하지 않고 summary unavailable/counts=null 및 incompatible_layer_frames로 표시한다. unavailable layer도 counts=null이며 관측 0 배열과 구별한다. G7b short-only 사용자 결정으로 인한 partial 사유는 없다. source 누락·valid hole은 여전히 partial이며 incompatible summary는 unavailable이다. PNG는 count마다 discrete colour와 legend를 가지며 물리 extent(um)·원본 shape/pitch/origin·status·scope는 sidecar JSON에 남긴다. 미관측/invalid 회색과 관측 0 색을 구별한다.
+
+원천 manifest의 gates는 작성 당시 선언을 그대로 보존할 수 있다. 최신 사용자 결정은 comparison의 applied_gate_decisions, 지도 scope provenance, validation/ROI의 gates에 별도로 표시한다. 원천 pending 선언이나 최신 bin 의미 답변 어느 쪽도 실제 밀도 단위 또는 한 unit 환산 승인으로 사용하지 않는다.

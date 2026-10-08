@@ -638,7 +638,7 @@ def _numeric_map(cfg):
     if not isinstance(spec,dict) or set(spec)-{'input','diameter_um','min_count'}:
         raise NumericContractError('numeric_map_config_required')
     root,dataset = _numeric_input(cfg,spec.get('input'))
-    maps = compute_electrode_maps(dataset,diameter_um=spec.get('diameter_um',5),min_count=spec.get('min_count',3))
+    maps = compute_electrode_maps(dataset,diameter_um=spec.get('diameter_um',5),min_count=spec.get('min_count'))
     return root,dataset,maps
 
 
@@ -647,13 +647,18 @@ def run_numeric_map(cfg, out=None):
     _,_,maps = _numeric_map(cfg)
     payload,tables = map_report(maps)
     output = Path(out) if out is not None else _numeric_path(cfg,cfg['output_dir'])
+    from simcompare.heatmap import write_heatmaps
+    heatmaps = write_heatmaps(output, maps)
+    payload['heatmaps'] = heatmaps
     paths = write_numeric_report(output,'electrode_map',payload,tables)
+    paths += [str(output/ref[k]) for ref in heatmaps for k in ('png','sidecar') if ref[k] is not None]
     usable = any(m.coverage['source_coverage_status'] in ('available','partial') for m in maps.layers)
-    return {'status':payload['status'],'reasons':payload['reasons'],'outputs':paths,'exit_code':3 if usable else 2}
+    return {'status':payload['status'],'reasons':payload['reasons'],'outputs':paths,'exit_code':0 if payload['status']=='available' else 3 if usable else 2}
 
 
 def run_numeric_validate(cfg, out=None):
     from simcompare.measurement import measure_full_mask
+    from simcompare.numeric_schema import current_gate_decisions
     from simcompare.report import write_numeric_report
     sections = [cfg[name] for name in ('reference','target') if name in cfg]
     if 'map' in cfg:
@@ -678,7 +683,7 @@ def run_numeric_validate(cfg, out=None):
                                 'reasons':record_reasons,'measurement':measured})
         reasons.update(dataset.reasons)
     payload = {'schema_version':'numeric_validation_v1','status':'partial','reasons':sorted(reasons),'records':records,
-               'gates':{g:{'status':'pending','answer':None} for g in ('G1','G2','G4','G7a','G7b')}}
+               'gates':current_gate_decisions()}
     output = Path(out) if out is not None else _numeric_path(cfg,cfg['output_dir'])
     paths = write_numeric_report(output,'validation',payload,{'records':records})
     return {'status':'partial','reasons':sorted(reasons),'outputs':paths,'exit_code':3}

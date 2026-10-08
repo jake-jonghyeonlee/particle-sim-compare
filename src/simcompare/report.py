@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .numeric_schema import NumericContractError
+from .numeric_schema import NumericContractError, current_gate_decisions
 
 
 def json_value(value):
@@ -56,9 +56,10 @@ def comparison_report(reference, target, deltas):
     payload = {'schema_version':'numeric_comparison_report_v1','is_synthetic':True,
                'metric_semantics':'weighted_short_index','direction':'target_minus_reference',
                'coordinate_policy':'independent_product_frames',
+               'applied_gate_decisions':current_gate_decisions(),
                'reference':reference.to_dict(),'target':target.to_dict(),
                'deltas':[v.to_dict() for _,v in sorted(deltas.items())],
-               'failure_fragment_policy':{'status':'pending','value':None,'reasons':['failure_fragment_scope_unconfirmed']}}
+               'failure_fragment_policy':{'status':'pending','value':None,'reasons':['failure_fragment_implementation_pending']}}
     summary, areas, buckets, cases = [], [], [], []
     weighted_buckets, delta_buckets = [], []
     bucket_checks = []
@@ -136,9 +137,11 @@ def comparison_report(reference, target, deltas):
 
 def map_report(result):
     payload = result.to_dict()
-    usable = any(layer.status == 'partial' for layer in result.layers)
-    payload.update(schema_version='numeric_electrode_map_report_v1',status='partial' if usable else 'unavailable',
-                   reasons=sorted({'map_scope_unconfirmed',*(reason for layer in result.layers for reason in layer.reasons)}))
+    statuses = [m.status for m in (*result.layers, *result.summaries)]
+    status = ('available' if statuses and all(s=='available' for s in statuses) else
+              'partial' if any(s in ('available','partial') for s in statuses) else 'unavailable')
+    payload.update(schema_version='numeric_electrode_map_report_v1',status=status,
+                   reasons=sorted({r for m in (*result.layers,*result.summaries) for r in m.reasons}))
     for layer, encoded in zip(result.layers,payload['layers']):
         encoded['observed_lower_bound_counts'] = encoded['counts']
         encoded['counts'] = None if layer.counts is None else [
@@ -157,8 +160,9 @@ def map_report(result):
             valid = bool(layer.frame.valid[r,c])
             rows.append({'product_id':layer.key.product_id,'layer':layer.key.layer,'frame_id':layer.frame.frame_id,
                          'row':r,'col':c,'x0_um':x+c*p,'y0_um':y+r*p,
-                         'value':None,'unit':'distinct_electrodes',
-                         'partial_value':int(layer.counts[r,c]) if valid and layer.counts is not None else None,
+                         'value':int(layer.counts[r,c]) if valid and layer.status=='available' else None,
+                         'unit':'distinct_electrodes',
+                         'partial_value':int(layer.counts[r,c]) if valid and layer.counts is not None and layer.status=='partial' else None,
                          'observed_lower_bound':int(layer.counts[r,c]) if layer.counts is not None else None,
                          'status':layer.status if valid else 'unavailable',
                          'reasons':layer.reasons if valid else ('outside_valid_domain',),'valid':valid,

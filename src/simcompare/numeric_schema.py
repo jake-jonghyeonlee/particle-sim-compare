@@ -299,3 +299,26 @@ class PhysicalWindow:
         if bounds[0] >= bounds[2] or bounds[1] >= bounds[3]:
             raise NumericContractError('invalid_window_bounds')
         return bounds
+
+
+def current_gate_decisions():
+    """2026-10-08 사용자 답변: 원천 manifest gate 선언과 적용 결정을 구별한다.
+
+    G1/G2의 미답변 단위 및 unit 환산은 여전히 pending이다. G7a 답변은
+    기록만 하며 조각 지표 구현은 별도 Task다. 근사 grid를 frame 기본값으로 쓰지 않는다.
+    """
+    return {
+        'G1': {'status':'pending','answer':None,'reason':'density_contract_unconfirmed',
+               'answered_parts':{'bin_semantics':'per_bin','meaning':'one_value_per_diameter',
+                                 'bin_width_required':False,'decided_on':'2026-10-08'}},
+        'G2': {'status':'pending','answer':None,'reason':'unit_area_basis_unconfirmed',
+               'answered_parts':{'same_pitch_across_products':True,
+                                 'same_layer_size_within_product':True,
+                                 'different_pixel_counts_across_products':True,
+                                 'approximate_2x2_um':100,'approximate_2x2_px':2000,
+                                 'decided_on':'2026-10-08'}},
+        'G4': {'status':'pending','answer':None,'reason':'crop_recipe_unconfirmed'},
+        'G7a': {'status':'answered','answer':'implement_lateral_only_vertical_only_simultaneous',
+                'decided_on':'2026-10-08','implementation_status':'pending_separate_task'},
+        'G7b': {'status':'answered','answer':'short_only','authority':'user','decided_on':'2026-10-08'},
+    }

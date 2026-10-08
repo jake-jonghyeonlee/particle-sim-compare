@@ -44,6 +44,8 @@ def _parser() -> argparse.ArgumentParser:
         command = _korean_help(sub.add_parser(name, add_help=False, help="numeric_v2 수치/검토 위치 명령(학습 호출 없음)"))
         command.add_argument("--config", required=True, help="numeric_config_v1 YAML")
         command.add_argument("--out", required=name == "export-review-rois", help="출력 디렉터리")
+        if name in ("electrode-map", "export-review-rois"):
+            command.add_argument("--min-count", type=int, help="명시할 때만 4-neighbour 영역 계산")
     merge = _korean_help(sub.add_parser(
         "merge-exports", add_help=False,
         help="particle-sim export-simcompare 결과 여러 개(원안·변경본·다른 제품)를 data_dir 하나로 합침"))
@@ -101,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
             numeric = isinstance(raw, dict) and raw.get("schema_version") == "numeric_config_v1"
         if numeric:
             cfg = pipeline.load_numeric_config(args.config)
+            if getattr(args, "min_count", None) is not None:
+                cfg.setdefault("map", {})["min_count"] = args.min_count
             runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
                        "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}
             result = runners[args.command](cfg,args.out)

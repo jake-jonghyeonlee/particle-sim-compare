@@ -95,32 +95,32 @@ def test_canonical_duplicate_pairs_distinct_electrodes_and_layer_maximum():
     cases = [numeric_case('AB'), numeric_case('AC', ('A', 'C')),
              numeric_case('BA', ('B', 'A')), numeric_case('BA2', ('B', 'A')),
              numeric_case('CD', ('C', 'D'), layer='L2')]
-    result = compute_electrode_maps(cases)
+    result = compute_electrode_maps(cases, min_count=3)
     assert result.layers[0].counts.tolist() == [[3, 0]]
     assert result.layers[1].counts.tolist() == [[2, 0]]
     assert result.summaries[0].counts.tolist() == [[3, 0]]  # max, 합 5도 전체 union 4도 아님
-    assert all(layer.status == 'partial' for layer in result.layers)
+    assert all(layer.status == 'available' for layer in result.layers)
     assert result.layers[0].coverage['source_coverage_status'] == 'available'
-    assert result.provenance['G7b']['value'] is None
+    assert result.provenance['G7b'] == {'status':'answered','value':'short_only','authority':'user','decided_on':'2026-10-08'}
     assert result.provenance['defect_scope'] == 'short_only'
     assert result.provenance['domain'] == 'full_mask_valid'
     region = result.layers[0].regions[0]
     assert region.electrodes == ('A', 'B', 'C')
     assert len(region.cases) == 4
-    assert region.review_roi_status == 'blocked'
-    assert region.review_roi_reasons == ('map_scope_unconfirmed',)
+    assert region.review_roi_status == 'context_required'
+    assert region.review_roi_reasons == ()
 
 
 def test_canonical_diagonal_cells_are_separate_and_ids_are_stable():
     cases = [numeric_case('AB', cells=((0, 0), (1, 1)), shape=(2, 2)),
              numeric_case('AC', ('A', 'C'), cells=((0, 0), (1, 1)), shape=(2, 2))]
-    result = compute_electrode_maps(cases)
+    result = compute_electrode_maps(cases, min_count=3)
     regions = result.layers[0].regions
     assert len(regions) == 2
     assert [r.area_um2 for r in regions] == [1, 1]
     assert {r.bbox_yx for r in regions} == {(0, 0, 1, 1), (1, 1, 2, 2)}
     assert [r.region_id for r in regions] == sorted(r.region_id for r in regions)
-    reversed_regions = compute_electrode_maps(reversed(cases)).layers[0].regions
+    reversed_regions = compute_electrode_maps(reversed(cases), min_count=3).layers[0].regions
     assert [r.region_id for r in regions] == [r.region_id for r in reversed_regions]
     assert result.provenance['connectivity'] == 4
 
@@ -163,7 +163,7 @@ def test_physical_coordinates_valid_hole_and_original_vs_region_ca():
 def test_region_ca_measures_component_not_its_bounding_rectangle():
     ab = numeric_case('AB', cells=((0, 0), (0, 1), (1, 0), (1, 1)), shape=(2, 2))
     ac = numeric_case('AC', ('A', 'C'), cells=((0, 0), (0, 1), (1, 0)), shape=(2, 2))
-    region = compute_electrode_maps([ab, ac]).layers[0].regions[0]
+    region = compute_electrode_maps([ab, ac], min_count=3).layers[0].regions[0]
     assert region.region_bbox_um == (0, 0, 2, 2)
     assert region.area_um2 == 3
     assert region.cases[0].original_case_ca.ca_um2 == 4
@@ -193,7 +193,7 @@ def test_representative_diameter_change_absence_and_observed_zero():
     assert zero.counts.tolist() == [[0, 0]]
     assert missing.counts is None
     assert zero.coverage['source_coverage_status'] == 'available'
-    assert zero.status == 'partial'  # 관측 0도 G7b는 pending
+    assert zero.status == 'available'  # short-only scope가 확정된 관측 0
 
 
 def test_missing_case_count_is_a_lower_bound_and_type_is_preserved():
@@ -206,7 +206,7 @@ def test_missing_case_count_is_a_lower_bound_and_type_is_preserved():
     assert layer.coverage['missing'][0]['identity']['case_id'] == 'vert'
     assert layer.coverage['not_applicable'] == []
     vert.records[5] = numeric_case('vert', ('A', 'C'), failure_type='vertical_short').records[5]
-    region = compute_electrode_maps([lat, vert]).layers[0].regions[0]
+    region = compute_electrode_maps([lat, vert], min_count=3).layers[0].regions[0]
     assert {c.failure_type for c in region.cases} == {'lateral_short', 'vertical_short'}
 
 
@@ -247,10 +247,9 @@ def test_source_ca_conservation_failure_is_reported_not_rescaled():
     assert layer.coverage['measurement_errors'][0]['identity']['case_id'] == 'AB'
 
 
-def test_canonical_open_is_excluded_provisionally_without_changing_legacy_open():
-    result = compute_electrode_maps([numeric_case('AB'), numeric_case('open', ('A',), failure_type='open')], min_count=2)
-    assert result.layers[0].counts.tolist() == [[2, 0]]
-    assert result.provenance['excluded_cases'][0]['failure_type'] == 'open'
+def test_canonical_open_is_rejected_by_user_short_only_decision_legacy_unchanged():
+    with pytest.raises(NumericContractError, match='map_requires_short_only'):
+        compute_electrode_maps([numeric_case('AB'), numeric_case('open', ('A',), failure_type='open')])
     assert electrode_count_maps([spot(['gate'], [10])])['L1'][0, 10] == 1
 
 
@@ -374,3 +373,14 @@ def test_summary_preserves_known_layer_lower_bound_when_other_layer_missing():
     assert result.summaries[0].status=='partial'
     assert 'source_case_missing' in result.summaries[0].reasons
     assert len(result.summaries[0].coverage['layer_maps'])==2
+
+
+def test_default_map_has_no_regions_or_ranking_and_is_scope_complete():
+    result=compute_electrode_maps([numeric_case('AB'),numeric_case('AC',('A','C'))])
+    assert result.layers[0].counts.tolist()==[[3,0]]
+    assert result.layers[0].regions==()
+    assert result.provenance['threshold'] is None
+    assert result.provenance['connectivity'] is None
+    assert result.provenance['regions_requested'] is False
+    assert result.layers[0].status==result.summaries[0].status=='available'
+    assert 'map_scope_unconfirmed' not in result.layers[0].reasons

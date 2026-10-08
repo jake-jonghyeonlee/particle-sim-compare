@@ -64,10 +64,10 @@ def test_single_product_map_validation_roi_and_gate_pending(tmp_path):
     generate_numeric_demo(tmp_path/'demo')
     data = tmp_path/'demo'
     mapped = run_cli('electrode-map','--config',data/'config.yaml')
-    assert mapped.returncode == 3, mapped.stderr
+    assert mapped.returncode == 0, mapped.stderr
     map_payload = json.loads((data/'numeric_outputs/electrode_map.json').read_text())
     assert {r['key']['product_id'] for r in map_payload['layers']} == {'reference'}
-    assert map_payload['status'] == 'partial'
+    assert map_payload['status'] == 'available'
     assert map_payload['layers'][0]['counts'] == [[2,4,3,4,3,2]]
     assert run_cli('validate-data','--config',data/'pending.yaml').returncode == 3
     pending = run_cli('compare','--config',data/'pending.yaml')
@@ -81,9 +81,14 @@ def test_single_product_map_validation_roi_and_gate_pending(tmp_path):
     with (data/'numeric_outputs/comparison_summary.csv').open() as handle:
         assert all(r['value']=='null' and r['status']=='unavailable' and r['reasons']!='[]' for r in csv.DictReader(handle))
     exported = run_cli('export-review-rois','--config',data/'config.yaml','--out',data/'roi')
-    assert exported.returncode == 3, exported.stderr
+    assert exported.returncode == 0, exported.stderr
     rois = json.loads((data/'roi/review_rois.json').read_text())
-    assert len(rois['rois']) == 4 and all('map_scope_unconfirmed' in r['reasons'] for r in rois['rois'])
+    assert rois['rois'] == []  # 사용자가 위치/threshold를 지정하기 전 자동 ROI 없음
+    assert map_payload['layers'][0]['regions'] == []
+    assert len(map_payload['heatmaps']) == 2
+    for image in map_payload['heatmaps']:
+        assert (data/'numeric_outputs'/image['png']).exists()
+        assert (data/'numeric_outputs'/image['sidecar']).exists()
 
 
 def test_unmapped_target_final_delta_is_unavailable_not_partial_difference(tmp_path):
@@ -139,9 +144,9 @@ def test_new_commands_never_call_old_training_or_prepare(tmp_path,monkeypatch):
         monkeypatch.setattr(pipeline,name,forbidden)
     cfg = tmp_path/'demo/config.yaml'
     assert main(['compare','--config',str(cfg)]) == 0
-    assert main(['electrode-map','--config',str(cfg)]) == 3
+    assert main(['electrode-map','--config',str(cfg)]) == 0
     assert main(['validate-data','--config',str(cfg)]) == 3
-    assert main(['export-review-rois','--config',str(cfg),'--out',str(tmp_path/'roi')]) == 3
+    assert main(['export-review-rois','--config',str(cfg),'--out',str(tmp_path/'roi')]) == 0
 
 
 def test_absent_representative_diameter_is_unavailable_null_not_zero(tmp_path):
@@ -180,3 +185,23 @@ def test_execution_marker_identifies_failed_rerun_and_recovery(tmp_path):
     assert state['status']=='unavailable' and state['outputs']==[]
     assert main(['compare','--config',str(config),'--out',str(out)])==0
     assert json.loads((out/'execution.json').read_text())['status']=='available'
+
+
+def test_explicit_cli_and_config_threshold_create_regions(tmp_path):
+    generate_numeric_demo(tmp_path/'demo')
+    path=tmp_path/'demo/config.yaml'
+    result=run_cli('electrode-map','--config',path,'--min-count','3')
+    assert result.returncode==0,result.stderr
+    out=tmp_path/'demo/numeric_outputs'
+    payload=json.loads((out/'electrode_map.json').read_text())
+    assert payload['provenance']['threshold']==3
+    assert len(payload['layers'][0]['regions'])==1
+    assert payload['layers'][0]['regions'][0]['bbox_yx']==[0,1,1,5]
+    cfg=yaml.safe_load(path.read_text());cfg['map']['min_count']=3
+    cfg['review_rois']={'map_region_ids':'all'}
+    path.write_text(yaml.safe_dump(cfg))
+    result=run_cli('export-review-rois','--config',path,'--out',tmp_path/'roi')
+    assert result.returncode==0,result.stderr
+    rois=json.loads((tmp_path/'roi/review_rois.json').read_text())
+    assert len(rois['rois'])==4
+    assert all(r['status']=='ready' and 'map_scope_unconfirmed' not in r['reasons'] for r in rois['rois'])

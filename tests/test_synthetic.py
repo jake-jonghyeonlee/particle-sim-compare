@@ -51,6 +51,9 @@ def test_numeric_demo_is_deterministic_and_has_explicit_synthetic_contracts(tmp_
         assert all(g['status']=='pending' and g['answer'] is None for g in dataset.gates.values())
     cfg=yaml.safe_load((tmp_path/'a/config.yaml').read_text())
     assert cfg['reference']['density_contracts'][0]['is_synthetic'] is True
+    assert 'min_count' not in cfg['map']
+    assert 'map_region_ids' not in cfg['review_rois']
+    assert cfg['review_rois']['manual']==[]
     assert cfg['reference']['unit_bases'][0]['basis']=='one_unit'
     pending=yaml.safe_load((tmp_path/'a/pending.yaml').read_text())
     assert 'unit_bases' not in pending['reference'] and 'density_contracts' not in pending['target']
