@@ -1,0 +1,11 @@
+{
+  "status": "available",
+  "direction": "target_minus_reference",
+  "reference_d5": {"line":4,"pixel":2,"transfer":2,"union":6,"line_exclusive":{"AB":2,"AC":1},"line_shared":{"AB|AC":1},"pixel_exclusive":{"EF":1},"pixel_shared":{"DE|EF":1}},
+  "target_d5": {"line":3,"pixel":3,"transfer":1,"union":6,"line_exclusive":{"AB":1,"AC":1},"line_shared":{"AB|AC":1},"pixel_exclusive":{"DE":1,"EF":1},"pixel_shared":{"DE|EF":1}},
+  "reference_panel": {"line":400,"pixel":200,"transfer":200,"N":100},
+  "target_panel": {"line":150,"pixel":150,"transfer":50,"N":50},
+  "delta_panel": {"line":-250,"pixel":-50,"transfer":-150},
+  "reference_case_ca_d5":{"AB":3,"AC":2,"DE":3,"EF":2,"vertical_AB":1},
+  "target_case_ca_d5":{"AB":2,"AC":2,"DE":3,"EF":2,"vertical_AB":1}
+}

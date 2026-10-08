@@ -1,3 +1,6 @@
+# T6: 이 legacy 설정은 기존 명령/시험 호환을 위해 유지한다.
+# 새 수치 예제: simcompare demo-data --out demo_data 후 demo_data/config.yaml 사용.
+# scripts/2_demo.sh는 numeric-only 경로이며 학습을 호출하지 않는다.
 # DEMO configuration for synthetic data only. Synthetic CA/hotspot values are not
 # physical simulation results and the CAA rule below is an illustrative demo rule.
 mode: demo
