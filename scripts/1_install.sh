@@ -14,4 +14,4 @@ uv run simcompare --help >/dev/null
 
 echo
 echo "설치 완료."
-echo "다음: bash scripts/2_demo.sh   (더미 데이터로 전체 흐름 실행)"
+echo "다음: bash scripts/2_demo.sh   (합성 numeric 비교·지도 실행)"

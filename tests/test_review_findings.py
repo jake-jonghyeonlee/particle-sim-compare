@@ -1,37 +1,16 @@
-"""Regression tests for the independent Codex review of the integration branch."""
-import copy
-from pathlib import Path
-
+"""유지된 legacy export loader의 입력 회귀; 학습 설정 검사는 폐기."""
 import numpy as np
 import pytest
-import yaml
 from PIL import Image
-
 from simcompare.adapters.example import load_dataset, read_image
-from simcompare.cli import main
-from simcompare.config import ConfigError, config_from_dict
 from simcompare.schema import DataContractError
 
-DEMO = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs" / "demo.yaml").read_text())
 
-
-@pytest.mark.parametrize("section, key, value", [
-    ("analysis", "size_tolerance", -0.5),
-    ("model", "conv_channels", []),
-    ("model", "conv_channels", [4, 4, 4, 4, 4, 4, 4]),  # 64 not divisible by 2**7
-])
-def test_config_rejects_values_that_crash_later(section, key, value):
-    raw = copy.deepcopy(DEMO)
-    raw[section][key] = value
-    with pytest.raises(ConfigError):
-        config_from_dict(raw)
-
-
-def test_ca_records_requires_ca_value_column(tmp_path, demo_dir):
+def test_ca_records_requires_ca_value_column(tmp_path, legacy_export_dir):
     import shutil
 
     root = tmp_path / "d"
-    shutil.copytree(demo_dir, root)
+    shutil.copytree(legacy_export_dir, root)
     lines = (root / "ca_records.csv").read_text().splitlines()
     header = lines[0].split(",")
     remove = header.index("ca_value")
@@ -49,49 +28,11 @@ def test_unmapped_legend_color_is_contract_error(tmp_path):
         read_image(path, kind="hotspot", legend=legend)
 
 
-def test_all_with_demo_out_analyses_generated_data(tmp_path):
-    raw = copy.deepcopy(DEMO)
-    raw["data"]["data_dir"] = str(tmp_path / "does_not_exist")
-    raw["output_dir"] = str(tmp_path / "out")
-    raw["data"]["image_size"] = [32, 32]
-    raw["train"]["epochs"] = 1
-    config = tmp_path / "c.yaml"
-    config.write_text(yaml.safe_dump(raw))
-    assert main(["all", "--config", str(config), "--demo-out", str(tmp_path / "gen")]) == 0
-    assert (tmp_path / "out" / "review_cards.json").exists()
-
-
-@pytest.mark.parametrize("legend", [
-    {"legend_id": "L", "entries": [{"rgb": [255, 0, 0]}]},
-    {"legend_id": "L", "entries": [{"rgb": [255, 0], "value": 1.0}]},
-    {"legend_id": "", "entries": [{"rgb": [1, 2, 3], "value": 1.0}]},
-    {"legend_id": "L", "entries": [{"rgb": [1, 2, 3], "value": float("nan")}]},
-    {"legend_id": "L", "entries": [{"rgb": [1, 2, 3], "value": 1.0}], "tolerance": -1},
-])
-def test_malformed_legend_rejected_by_config(legend):
-    raw = copy.deepcopy(DEMO)
-    raw["data"]["hotspot_legend"] = legend
-    with pytest.raises(ConfigError):
-        config_from_dict(raw)
-
-
 def test_legend_conversion_errors_are_contract_errors(tmp_path):
     path = tmp_path / "h.png"
     Image.fromarray(np.full((2, 2, 3), 7, np.uint8), mode="RGB").save(path)
     with pytest.raises(DataContractError):
         read_image(path, kind="hotspot", legend={"legend_id": "L", "entries": [{"rgb": [7, 7, 7]}]})
     ok = {"legend_id": "L", "entries": [{"rgb": [7, 7, 7], "value": 0.5}], "tolerance": 0}
-    raw = copy.deepcopy(DEMO)
-    raw["data"]["hotspot_legend"] = ok
-    config_from_dict(raw)
     arr, semantics, legend_id = read_image(path, kind="hotspot", legend=ok)
     assert semantics == "probability" and legend_id == "L" and np.allclose(arr, 0.5)
-
-
-def test_legend_mixed_type_unknown_keys_are_config_errors():
-    raw = copy.deepcopy(DEMO)
-    raw["data"]["hotspot_legend"] = {
-        "legend_id": "L", "entries": [{"rgb": [255, 0, 0], "value": 1.0}], "x": 1, 7: 2,
-    }
-    with pytest.raises(ConfigError):
-        config_from_dict(raw)

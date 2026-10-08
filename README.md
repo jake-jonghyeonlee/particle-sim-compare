@@ -1,127 +1,55 @@
-# simcompare — 디스플레이 이물 시뮬레이션 결과 제품 간 비교·해석
+# simcompare — 이물 시뮬레이션 결과의 수치 비교
 
-이미 수행한 이물 시뮬레이션 결과(layout, hotspot, CA)와 Fab 가공 요약자료를 입력으로 받아 다음을 지원하는 Python CLI다.
+이미 계산된 binary short masks로 line / pixel 면적, pair exclusive / shared, transfer와 불량 유형 조각을 계산한다. 전극 수 지도는 한 제품에서 별도로 만들며 제품 요약은 layer별 count의 pixelwise maximum이다. 좌표가 다른 제품은 겹쳐 그리지 않는다.
 
-- 여러 제품에서 반복되는 위험 유형 탐색(군집·대표/반대 사례)
-- 전극 역할·layer·불량 종류 조건을 지키는 유사 사례 검색
-- 같은 전극 역할·layer 비교 그룹 안에서 원 CA, 면적 보정 CA, Fab 분포 순위 비교
-- 설계자가 개선 가설을 검토할 수 있는 근거 카드(review card)
+현재 검증 범위는 합성 numeric_v2 데이터다. G1의 실제 밀도 단위·조사면적 변환과 G2의 원천 어댑터·한 unit 환산은 pending이다. 전체 2×2 domain을 임의로 4로 나누지 않는다. 가중값과 panel delta는 명시 합성 계약에서만 계산하고 실제 미확정 값은 null과 사유로 표시한다.
 
-**하지 않는 것**: CA·hotspot 예측, layout 자동 수정, 전기적 성능 예측, 인과관계 확정, 수율 계산. CAA는 파생 지표이며 실제 불량률·수율이 아니다.
+## 설치와 합성 실행
 
-> 현재 저장소에서 확인한 것은 **합성 데이터 기반 코드 동작**뿐이다. 실제 데이터 분석이나 연구 성능 검증은 수행하지 않았다.
-
-> 설치부터 결과 해석, 실제 자료 연결, 오류 해결까지의 자세한 절차는 [docs/usage.md](docs/usage.md)(실행 가이드)에 있다.
->
-> 처음이라면 [docs/walkthrough.pdf](docs/walkthrough.pdf)(따라하기)부터 보면 된다. 더미 데이터 생성부터 평가까지 실제로 실행한 결과를 그림과 쉬운 설명으로 정리했다.
-
-## 시작하기: 이 순서대로 따라 하기
-
-새 PC에서 처음 쓰는 경우의 전체 흐름이다. 단계마다 **읽을 문서 → 실행할 파일 → 열어 볼 결과 파일** 순서로 진행한다.
-실행 파일은 저장소 루트에서 `bash scripts/<파일>`로 실행하며 macOS·Linux 기준이다.
-
-**준비물**: Python 3.11+, [uv](https://docs.astral.sh/uv/), 저장소 접근 권한(비공개 저장소라 `gh auth login` 등으로 GitHub 로그인 필요). 설치할 때만 인터넷이 필요하고 이후에는 CPU만으로 동작한다.
+Python 3.11+와 uv가 필요하다. numpy, Pillow, PyYAML을 직접 사용하며 pandas는 유지된 particle-sim legacy export 검사에 필요하다. torch, scikit-learn, matplotlib, scipy는 필요하지 않다.
 
 ```bash
-git clone https://github.com/jake-jonghyeonlee/particle-sim-compare.git
-cd particle-sim-compare
+bash scripts/1_install.sh
+bash scripts/2_demo.sh
+uv run simcompare --help
 ```
 
-| 단계 | 먼저 읽을 문서 | 실행할 파일 | 열어 볼 결과 파일 |
-|---|---|---|---|
-| 0. 이해하기 (10분) | [docs/walkthrough.pdf](docs/walkthrough.pdf) 1~2장: 도구가 하는 일·안 하는 일, 용어, 전체 흐름 | 없음 | 없음 |
-| 1. 설치 (처음 한 번) | 이 표 | [`scripts/1_install.sh`](scripts/1_install.sh) | 없음 (`설치 완료` 문구 확인) |
-| 2. 더미 데이터로 전체 실행 (약 10초) | [docs/walkthrough.pdf](docs/walkthrough.pdf) 3~8장 | [`scripts/2_demo.sh`](scripts/2_demo.sh) | ① `outputs/demo/figures/rank_shift.svg` ② `outputs/demo/figures/ca_curves.svg` ③ `outputs/demo/figures/loo_stability.svg` (브라우저로 열기) ④ `outputs/demo/review_cards.json` ⑤ `outputs/demo/validation.json` |
-| 3. 결과 파일 자세히 읽기 | [docs/usage.md](docs/usage.md) 4장(파일별 의미), [docs/walkthrough.pdf](docs/walkthrough.pdf) 9장(읽는 순서) | 없음 | 2단계 결과 전체 |
-| 4. 내 자료 준비 | [docs/domain-input-example/README.md](docs/domain-input-example/README.md)(Fab 측정값·적층 순서 양식), [docs/data_contract.md](docs/data_contract.md)(파일·열·단위 규칙), [docs/open_questions.md](docs/open_questions.md)(미확정 항목) | 없음. [`configs/real.example.yaml`](configs/real.example.yaml)을 `configs/real.yaml`로 복사해 `data_dir` 등을 수정 | 없음 |
-| 5. 내 자료 점검 | [docs/usage.md](docs/usage.md) 4.1절 | [`scripts/3_check_my_data.sh`](scripts/3_check_my_data.sh) | `outputs/real/validation.json`의 `warnings`, `confounding`, `caa_applicability` → 문제가 있으면 자료를 보완하고 5단계 반복 |
-| 6. 내 자료 분석 | [docs/usage.md](docs/usage.md) 4.4~4.5절 | [`scripts/4_analyze_my_data.sh`](scripts/4_analyze_my_data.sh) | ① `outputs/real/figures/rank_shift.svg` ② `outputs/real/figures/ca_curves.svg` ③ `outputs/real/review_cards.json` ④ `outputs/real/neighbors.csv` ⑤ `outputs/real/figures/loo_stability.svg` ⑥ `outputs/real/evaluation.json` |
-| 오류가 날 때 | [docs/usage.md](docs/usage.md) 7장(메시지별 해결) | 해결 후 해당 단계 파일 다시 실행 | 없음 |
-
-- 3·4번 실행 파일은 기본으로 `configs/real.yaml`을 읽는다. 다른 설정 파일은 `bash scripts/3_check_my_data.sh configs/다른설정.yaml`처럼 넘긴다. 결과 폴더는 설정의 `output_dir`(예시 설정은 `outputs/real`)이며, 실행이 끝나면 열어 볼 파일 경로를 화면에 출력한다.
-- 자료나 설정을 바꾸면 `scripts/4_analyze_my_data.sh`를 다시 실행한다(학습부터 다시 한다).
-- 실제 모드에서는 CAA 계산 규칙이 확정되기 전까지 CAA 값이 이유와 함께 비어 있는 것이 정상이다.
-
-아래 절은 명령을 직접 실행하거나 설정을 바꾸려는 사람을 위한 상세 설명이다.
-
-## 설치
-
-Python 3.11+와 [uv](https://docs.astral.sh/uv/)가 필요하다. 외부 API·모델 다운로드·웹 서비스 없이 CPU에서 동작한다.
+직접 실행하려면:
 
 ```bash
-uv sync                 # numpy, pandas, scikit-learn, torch, pillow, pyyaml + pytest(dev)
-uv run pytest           # 단위·계약·CPU 소규모 E2E 테스트
+uv run simcompare demo-data --out demo_data
+uv run simcompare validate-data --config demo_data/config.yaml
+uv run simcompare compare --config demo_data/config.yaml
+uv run simcompare electrode-map --config demo_data/config.yaml
+uv run simcompare export-review-rois --config demo_data/config.yaml --out demo_data/review_rois
 ```
 
-## 빠른 실행 (합성 데이터)
+`validate-data`는 gate pending을 포함하면 exit 3이다. 완료는 0, 부분/blocked는 3, 입력 불가는 2다. 기본 지도는 count 배열과 PNG이며 자동 영역/순위를 만들지 않는다. 영역은 `electrode-map --min-count 3`처럼 사용자가 threshold를 지정할 때만 계산한다. 기본 demo ROI는 빈 목록이며 사용자 위치를 명시한 뒤 내보낸다.
+
+## 출력과 문서
+
+`demo_data/numeric_outputs/`에서 `comparison.json`, CSV들과 `comparison.html`, `electrode_map.json`과 PNG/sidecar를 확인한다. line / pixel, pair shared, transfer와 failure pieces는 서로 다른 지표이며 합쳐 단일 숫자로 만들지 않는다. 누락은 관측 0과 다르다.
+
+- [실행 가이드](docs/usage.md)
+- [수치 명세](SPEC.md)
+- [데이터 계약](docs/data_contract.md)
+- [numeric_v2 합성 예제](docs/domain-input-example/numeric_v2/README.md)
+- [review ROI 계약](docs/review_roi_contract.md)
+- [답변과 pending 항목](docs/open_questions.md)
+
+## 유지된 legacy export 호환 경로
+
+`merge-exports`는 particle-sim의 기존 1.x export를 병합하며 source ID, raw tuple, source-step assignment와 배열을 보존한다. numeric_v2 변환이나 비교를 수행하지 않는다.
 
 ```bash
-uv run simcompare demo-data --out demo_data          # 합성 데이터 생성 (물리 시뮬레이션 결과 아님)
-uv run simcompare validate-data --config configs/demo.yaml
-uv run simcompare train    --config configs/demo.yaml
-uv run simcompare embed    --config configs/demo.yaml
-uv run simcompare analyze  --config configs/demo.yaml
-uv run simcompare evaluate --config configs/demo.yaml
-# 또는 한 번에 (--demo-out에 생성한 데이터로 설정의 data_dir을 대체)
-uv run simcompare all --config configs/demo.yaml --demo-out demo_data
+uv run simcompare merge-exports --out merged export_reference export_target
+bash scripts/5_check_particle_sim_run.sh /path/to/particle-sim/run
 ```
 
-`configs/demo.yaml`은 `mode: demo`와 demo CAA 규칙을 사용한다. 경로는 YAML 파일 위치 기준 상대경로다(`../demo_data`, `../outputs/demo`). demo 모드의 모든 명령은 `DEMO 모드: 합성/예시 설정이며 결과는 연구 근거가 아닙니다` 안내를 stderr에 출력한다.
+`schema.py`, `adapters/example.py`, `preprocess.py`는 legacy export를 검산하는 loader로만 유지한다. `adapters/particle_sim_run.py`와 `merge.py`도 이 형식에 속한다. 숫자 비교 CLI는 이 loader를 사용하지 않는다. 실제 numeric adapter는 G2 확인 전 pending이다.
 
-## 출력 언어
+## 폐기된 경로와 기록
 
-오류·경고·안내 문구, 검토 카드와 평가 결과의 설명, CLI 도움말은 한국어로 출력한다. 다른 프로그램이 읽을 수 있도록 JSON 키, CSV 열 이름, `lateral_open` 같은 열거값과 ID는 영문을 유지한다. `cluster_map.png`의 그림 안 글자는 Pillow 기본 글꼴이 한글을 지원하지 않아 `PC1/PC2`만 표시하고, 설명은 `clusters.json`에 있다. `figures/*.svg`는 여는 쪽 글꼴로 그려져 한글이 표시된다. argparse가 자체 생성하는 `usage:` 줄과 인자 누락 문구(`the following arguments are required`)는 영문으로 남는다.
+`train`, `embed`, `analyze`, `evaluate`, `all`은 폐기되어 명시 오류를 낸다. `analyze`는 `compare` 또는 `electrode-map`으로 이동한다. 학습·검색·평가는 별도 DL1/DL2 저장소의 역할이다. legacy demo generator와 CAA placeholder도 제거했다.
 
-## 산출물 (`output_dir`)
-
-| 명령 | 파일 | 내용 |
-|---|---|---|
-| validate-data | `validation.json` | 입력 누락 수, 실제 크기 부재 샘플, hotspot–layout 중복 의심, Fab·제품군 교락, CAA 적용 불가 사유, 크기 격자 관측률 |
-| train | `model.pt`, `train_history.csv`, `split.json`, `run_record.json` | checkpoint(입력·학습 계약 fingerprint, 설정·seed·학습/평가 ID·버전), 입력별 손실 로그, 그룹 분리 결과 |
-| embed | `embeddings.npz`, `embedding_meta.csv` | `shape_only`, `with_risk_baseline`(PCA), `with_risk_ae`, `ae_struct`, `ae_fab` |
-| analyze | `neighbors.csv` | 공간별 유사 사례. `reuses_risk_inputs=True`인 공간은 독립 발견이 아님 |
-| | `risk_table.csv`, `ranking.csv`, `rank_agreement.json` | 원 CA, CA/면적, demo CAA(실제 Fab / 기준 분포), 순위 변화 |
-| | `clusters.json`, `cluster_map.png` | 학습 행으로 적합한 군집, 대표·반대 사례(군집 번호는 의미 없음) |
-| | `figures/rank_shift.svg`, `figures/ca_curves.svg`, `figures/loo_stability.svg` | 비교 그룹별 순위 변화(원 CA→면적당 CA, 기준 분포→실제 Fab), 이물 크기별 CA 곡선, 제품 제외 유지율 그림. 브라우저로 열며 한글 설명 포함 |
-| | `loo_stability.csv` | 제품 하나씩 제외 시 상위 항목·이웃 유지율 |
-| | `shape_features.csv`, `review_cards.json` | 명시적 형상 특징과 전극 쌍 치수(`pair:*`: 최소 간격, 좁은 간격 길이, 겹침 면적, 최소 선폭), 검토 카드 |
-| | `edit_candidates.json`, `edit_candidates.csv` | 회피안 국소 편집 후보(particle-sim `make-variant` 편집 지정서 형식)와 후보·건너뜀 요약 |
-| | `variant_comparison.csv` | `parent_design_id`가 있는 변경본(재시뮬 결과)을 원안의 같은 불량·전극·layer 사례와 비교한 면적 보정 CA 변화 |
-| | `neighborhood_comparison.csv`, `neighborhood_geometry.csv` | 유사 제품 비교군 안의 면적 보정 CA 순위와 저위험 참고 사례, 참고 사례와의 전극 쌍 치수 차이(회피안 검토 후보, 판정은 설계자) |
-| evaluate | `evaluation.json` | held-out 제품→학습 제품 형상 검색·면적 보정 CA 경향, 입력별 복원 손실, 입력 구성 비교, Fab·제품군 그룹 제외 검증과 교락 판정 |
-
-## 실제 데이터 연결
-
-1. **어댑터 작성**: `src/simcompare/adapters/example.py`를 참고해 원본 형식을 `AnalysisBundle`/`FabDistribution`(`src/simcompare/schema.py`)으로 바꾸는 `load_dataset`을 만든다. 형식이 같다면 예시 어댑터를 그대로 쓴다. 파일 형식과 규칙은 [docs/data_contract.md](docs/data_contract.md)에 있다.
-2. **설정 작성**: `configs/real.example.yaml`을 복사해 `data.data_dir`, `ca_grid`, `hotspot_sizes`, `fab_grid`를 실제 격자로 맞춘다.
-3. **도메인 입력 작성**: [docs/domain-input-example](docs/domain-input-example/README.md)을 참고해 `fab_measurements.csv`와 `layer_stack.csv`를 작성한다. CAA 규칙을 확정해 `caa.interpret_fab`에 추가하고 `caa.confirmed: true`로 명시하기 전까지 CAA 값은 사유와 함께 비어 있다.
-4. **범례가 있는 색상 hotspot**: `data.hotspot_legend`를 설정한 경우에만 색을 확률로 변환한다.
-5. `validate-data` 결과의 경고(실제 크기 부재, 교락, 중복 의심)를 먼저 검토한 뒤 학습·분석을 실행한다.
-
-## 설정 요약
-
-- `model.enabled_inputs`: `layout`, `hotspot`, `ca`, `fab`, `geometry` 중 선택
-- `model.conv_channels`, `modality_dim`, `latent_dim`, `loss_weights`
-- `train.device`: `cpu`(기본) \| `auto`(CUDA→MPS→CPU) \| `cuda` \| `mps`; `train.seed`; `train.balance_products`
-- `split.test_fraction` 또는 `split.test_groups`(제품/설계 계열 ID)
-- `analysis.layer_policy`(`exact`\|`ignore`), `other_products_only`, `filters`(예: `{fab_id: [FAB_A]}`), `size_tolerance`(실제 크기 허용 비율), `k_neighbors`, `n_clusters`, `loo_top_k`
-- `analysis.neighborhood_space`(유사 제품 비교군을 만들 공간, 기본 `with_risk_ae`), `pair_near_margin`(좁은 간격 구간을 셀 여유 폭, canonical 길이 단위, 기본 1.0)
-- `data.canonical_length_unit`: `um` 권장. 입력 `nm`/`um`/`mm`는 명시적으로 환산된다.
-
-알 수 없는 설정 키, NaN, 잘못된 타입은 오류다.
-
-## 문서
-
-- [docs/walkthrough.pdf](docs/walkthrough.pdf): 따라하기(더미 데이터로 전체 흐름 실행, 결과 그림과 읽는 법). `uv run --with matplotlib python docs/walkthrough/build.py`로 다시 생성
-- [docs/usage.md](docs/usage.md): 실행 가이드(단계별 실행, 결과 읽는 법, 설정 변경, 실제 자료 실행, 오류 해결)
-- [docs/data_contract.md](docs/data_contract.md): 공통 형식, 예시, 단위·매칭 규칙
-- [docs/model_design.md](docs/model_design.md): 모델 구조, 분석 목적, 한계
-- [docs/open_questions.md](docs/open_questions.md): 확정 필요 사항과 현재 임시 처리
-- [docs/references.md](docs/references.md): 참고 방법과 본 구현의 차이
-- `docs/arch/*.md`: 모듈별 인터페이스 계약(구현 작업 단위 명세)
-
-## 구현 방식 기록
-
-이 저장소는 로컬 Mac mini 오케스트레이터(mmo)로 구현했다. 계약 문서와 공통 schema는 계획 단계에서 작성했고, 기본 모듈은 로컬 Qwen(OpenCode) 작업으로 생성한 뒤 Codex/Claude 독립 검토의 blocking finding을 반영했다. 통합 계층(dataset/train/baseline/synthetic/analysis/checks/cards/pipeline/cli)과 테스트 일부는 직접 작성했다. 자세한 작업 기록은 오케스트레이터 상태 DB에 보존되어 있다.
-
-CA 단위 계약: particle-sim 입력은 원 CA(`ca_nominal_um2`, 확률 mean은 `ca_mean_um2`)를 `um^2`로 전달합니다. ROI 크기는 유지하고 simcompare에서 한 번만 면적으로 나눠 `ca_area_unit="1"`로 기록합니다. legacy 무차원 입력은 기존 `1/um^2` 경로를 유지합니다. 도메인 해석은 담당자 확인 필요입니다. 면적 CA는 적재/분석 전에 canonical 길이 제곱으로 통일하며 CAA 단위는 `relative_index*um^2`(legacy: `relative_index`)다. 두 단위 계열 혼합은 real 오류/demo 경고이며, 수정 전 particle-sim 무차원 export는 재-export해야 한다.
+남아 있는 docs/arch 및 walkthrough PDF/HTML/생성기는 **legacy / archived 기록**이다. 현재 CLI나 결과의 사용 설명·검증 근거로 쓰지 않는다. archive branch는 보존되어 있으며 현재 경로에서 연결하지 않는다.

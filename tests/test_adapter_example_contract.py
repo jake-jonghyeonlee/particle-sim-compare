@@ -211,7 +211,7 @@ def test_contract_gate():
                 pass
 
 
-def test_review_findings_adapter(tmp_path):
+def test_review_findings_adapter(tmp_path, legacy_export_dir):
     """ADAPTER-001..003: header-only CSV, blank sample_id, non-numeric values."""
     import json
     import shutil
@@ -220,10 +220,8 @@ def test_review_findings_adapter(tmp_path):
 
     from simcompare.adapters.example import load_dataset
     from simcompare.schema import DataContractError
-    from simcompare.synthetic import generate_demo_data
 
-    base = tmp_path / "base"
-    generate_demo_data(base)
+    base = legacy_export_dir
 
     def variant(name, edit):
         root = tmp_path / name
@@ -240,7 +238,7 @@ def test_review_findings_adapter(tmp_path):
     bad_size = variant(
         "bad",
         lambda r: (r / "hotspots.csv").write_text(
-            (r / "hotspots.csv").read_text().replace(",2.0,", ",bad,", 1)
+            "sample_id,particle_size,particle_size_unit,path\nS1,bad,um,unused.npy\n"
         ),
     )
 
@@ -418,7 +416,6 @@ def test_f4_csv_pair_consistency(tmp_path, pair):
 @pytest.mark.parametrize("version", [None, "1.1"])
 @pytest.mark.parametrize("assignment", [" UPPER ", "   "])
 def test_legacy_bundle_whitespace_normalization(tmp_path, version, assignment):
-    from simcompare.caa import select_distribution
 
     row, provenance, fab = f4_data(tmp_path)
     if version is None:
@@ -441,4 +438,3 @@ def test_legacy_bundle_whitespace_normalization(tmp_path, version, assignment):
     bundle = loaded.bundles[0]
     assert bundle.assigned_process_layer == "UPPER"
     assert bundle.fab_pair_key is None
-    assert select_distribution(bundle, loaded.distributions).fab_distribution_id == "D"

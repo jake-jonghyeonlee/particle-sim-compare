@@ -40,7 +40,8 @@ def projection(payload):
 def test_subprocess_demo_then_compare_matches_hand_authored_json_and_csv(tmp_path):
     data = tmp_path/'demo'
     assert run_cli('demo-data','--out',data).returncode == 0
-    assert (data/'bundles.csv').exists()  # 기존 demo 명령의 산출물 보존
+    assert (data/'reference/manifest.json').exists()
+    assert not (data/'bundles.csv').exists()  # demo는 numeric_v2만 생성
     compared = run_cli('compare','--config',data/'config.yaml')
     assert compared.returncode == 0, compared.stderr
     out = data/'numeric_outputs'
@@ -141,7 +142,8 @@ def test_new_commands_never_call_old_training_or_prepare(tmp_path,monkeypatch):
     def forbidden(*args,**kwargs):
         raise AssertionError('old training path called')
     for name in ('prepare','run_train','train_model','run_embed','run_analyze','run_evaluate'):
-        monkeypatch.setattr(pipeline,name,forbidden)
+        assert not hasattr(pipeline,name)
+        monkeypatch.setattr(pipeline,name,forbidden,raising=False)
     cfg = tmp_path/'demo/config.yaml'
     assert main(['compare','--config',str(cfg)]) == 0
     assert main(['electrode-map','--config',str(cfg)]) == 0

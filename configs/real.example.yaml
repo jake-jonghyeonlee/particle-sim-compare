@@ -15,7 +15,6 @@ map:
     data_dir: ../data/reference
     product_id: REFERENCE_PRODUCT
   diameter_um: 5
-  min_count: 3
 review_rois:
   map_region_ids: []
   manual: []  # 명시 product/design/frame/case/center_xy_um와 원본 asset 연결 필요

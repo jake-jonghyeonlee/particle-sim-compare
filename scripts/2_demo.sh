@@ -11,7 +11,7 @@ run_partial() {
     return "$rc"
   fi
 }
-uv run simcompare demo-data --numeric-only --out demo_data
+uv run simcompare demo-data --out demo_data
 run_partial compare --config demo_data/config.yaml
 run_partial electrode-map --config demo_data/config.yaml
 run_partial export-review-rois --config demo_data/config.yaml --out demo_data/review_rois
