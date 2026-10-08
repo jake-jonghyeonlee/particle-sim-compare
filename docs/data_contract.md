@@ -37,13 +37,15 @@ Hotspot은 입자 중심 궤적의 binary mask다. 확률/강도/NaN/음수 배�
 - 누락 input: 기대 record는 유지하되 `missing`, mask/면적 `null`, `missing_input`; 파일 부재로 N/A를 추론하지 않음.
 - 높이 미만 vertical: `not_applicable`, mask/면적 `null`, `below_height_vertical_short`, 명시 높이·판정 근거. 기대 목록에서 적용 제외된 수로 따로 집계.
 
+valid 밖 활성 셀은 기존 clipping/coverage 정책을 유지하며 active_cells_outside_valid:<개수> 사유로 원천의 셀 수를 기록한다.
+
 Coverage는 `expected/observed/missing/not_applicable/unmapped`와 valid 관측 셀/면적 범위를 기록한다. N/A는 해당 case만 제외하며 같은 지름의 다른 적용 가능한 short는 계산한다.
 
 ### 면적·density·unit-domain·panel 출력
 
 Union key는 `(product,design,source/process 조건,exposure,analysis_layer,diameter,frame)`다. 같은 layer라는 이유로 다른 노출·원천 조건을 합치지 않는다. layer와 step의 일대일 대응 여부는 G2 pending이다. `L`=line pair union, `P`=pixel pair union, `P_effective=P\L`, `transfer=P∩L`, `U=L∪P`다. 면적은 valid 내 셀 수 × pitch²이며 `area(U)=area(L)+area(P_effective)`. transfer는 별도 진단으로 총합에 더하지 않는다. 원 case CA와 union CA를 둘 다 보존한다.
 
-Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket이다. bucket에는 안정 ID, 구성 pair ID, source case 참조, 지름·layer·면적·상태가 있다. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산한다. `exclusive+shared=class_total`을 지름/layer/panel에서 검사한다. shared 또는 transfer를 종류별 simultaneous라고 부르지 않는다. G7a pending 동안 case 유형 보존 및 기존 line/pixel만 진행하고 종류별 분해 지표의 구현/제외 결정을 선언하지 않는다.
+Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket이다. bucket에는 안정 ID, 구성 pair ID, 지름·layer·면적·상태가 있다. pair_lineage_case_keys는 해당 pair의 원천 계보 전체이며 missing/관측 0 case도 포함할 수 있다. contributing_source_case_keys는 해당 지름에서 원본 관측 mask가 실제 그 bucket과 겹치는 case만 나열한다. 리포트는 계보를 면적 기여자로 표시하지 않는다. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산한다. `exclusive+shared=class_total`을 지름/layer/panel에서 검사한다. shared 또는 transfer를 종류별 simultaneous라고 부르지 않는다. G7a pending 동안 case 유형 보존 및 기존 line/pixel만 진행하고 종류별 분해 지표의 구현/제외 결정을 선언하지 않는다.
 
 | density 필드 | 의미 |
 |---|---|
@@ -55,9 +57,9 @@ G1 pending: 실제 단위, 조사면적/count 변환, per-bin/per-um 의미, 40/
 
 `unit_domain`은 측정 domain/frame, unit 치수, domain 배열 형태, `unit_area_basis`, `conversion_policy`, `divisor`, 승인 근거/상태를 남긴다. G2 pending이면 basis/policy/divisor는 `null`과 `unit_area_basis_unconfirmed`다. **2×2 mask를 기본 `/4`하지 않는다.** full-mask union/면적은 가능하나 unit/panel 가중값·delta는 null이다. 현재 `/4` 관행을 사용자가 확인한 경우에만 명시 정책·한계와 함께 적용하고 새로운 경계 보정/수율 환산은 하지 않는다.
 
-panel은 unit/panel 양의 유한 치수와 단위, `rounding_policy=floor|half_up_round`, 제품별 `unit_count`를 남긴다. 각 축에 함수를 적용해 곱하며 epsilon으로 floor를 올리지 않는다. `V_panel=N×V_unit`, `delta=target−reference`. 두 제품의 N은 별도로 산정한다. pair 표/공정/layer/density/면적 기준 호환성을 검증하고 실제 pixel overlay는 요구하지 않는다. 서로 다른 Fab 기준이면 구조 변화만의 효과라고 부르지 않는다. `delta_transfer`는 panel transfer의 순변화이며 공간 이동 추적이 아니다.
+panel은 unit/panel 양의 유한 치수와 단위, `rounding_policy=floor|half_up_round`, 제품별 `unit_count`를 남긴다. 각 축에 함수를 적용해 곱하며 epsilon으로 floor를 올리지 않는다. `V_panel=N×V_unit`, `delta=target−reference`. 두 제품의 N은 별도로 산정한다. 비율은 선언 단위의 원값끼리 Decimal로 구한 뒤 각 축 floor/half-up을 적용한다. N=0이면 panel 값은 unavailable/null과 panel_has_no_units 사유이며 사용 가능한 0이 아니다. pair 표/공정/layer/density/면적 기준 호환성을 검증하고 실제 pixel overlay는 요구하지 않는다. 서로 다른 Fab 기준이면 구조 변화만의 효과라고 부르지 않는다. `delta_transfer`는 panel transfer의 순변화이며 공간 이동 추적이 아니다.
 
-모든 출력 metric은 `{value, unit, status, reasons, coverage, basis}`를 갖는다. `status=available|partial|unavailable|not_applicable`; pending은 게이트/정책 상태이며 metric status enum과 혼합하지 않는다. available은 완전 관측/적용 가능한 값, partial은 알려진 부분합, unavailable은 산출 차단, not_applicable은 근거 있는 적용 제외다. partial을 완전 panel/delta로 승격하지 않는다. observed absence가 확인된 경우만 비교에서 0을 쓰며 누락 layer/pair/density를 0으로 만들지 않는다. 예제의 `decision_status=pending` panel metric은 `value=null,status=unavailable`이다.
+모든 출력 metric은 `{value, partial_value, unit, status, reasons, coverage, basis}`를 갖는다. **status가 partial 또는 unavailable이면 value는 null이며 알려진 부분합은 partial_value에만 둔다.** 완전값/부분합을 같은 value 필드로 표시하지 않는다. 관측 가능한 부분이 없으면 partial_value도 null이고, 관측한 부분합 0은 partial_value=0으로 구별한다. T2 원 case 측정의 ca_um2도 이 규칙을 따르며 부분 CA는 partial_value, 부분 CA/valid 비율은 partial_ca_per_valid_area다. observed_area_um2/observed_ca_um2는 내부 검산용 관측 부분합이며 완전값으로 표시하지 않는다. `status=available|partial|unavailable|not_applicable`; pending은 게이트/정책 상태이며 metric status enum과 혼합하지 않는다. available은 완전 관측/적용 가능한 값, partial은 알려진 부분합, unavailable은 산출 차단, not_applicable은 근거 있는 적용 제외다. partial을 완전 panel/delta로 승격하지 않는다. observed absence가 확인된 경우만 비교에서 0을 쓰며 누락 layer/pair/density를 0으로 만들지 않는다. 예제의 `decision_status=pending` panel metric은 `value=null,status=unavailable`이다.
 
 ### review-ROI 교환 계약 (`review_roi_v1`)
 
@@ -243,3 +245,7 @@ Pre-fix `particle-sim-*` exports with dimensionless CA must be re-exported with 
 (real: error; demo: warning). Cards use the first metric complete for every group row in priority
 `caa_actual`, `ca_area_max`, `ca_max`; otherwise they use the most observed metric,
 with ties resolved in that priority order and missing values preserved.
+
+### R1 전극 지도 요약 규칙
+
+개별 layer 지도는 원천 조건별로 보존한다. 제품 요약은 product_id/design_version/unit_id별 모든 layer의 pixelwise max이며 combined_steps/combined_sources/combined_exposures 및 layer_inputs를 provenance에 남긴다. 서로 다른 frame은 조용히 분리하지 않고 summary unavailable/counts=null 및 incompatible_layer_frames로 표시한다. unavailable layer도 counts=null이며 관측 0 배열과 구별한다. G7b pending인 관측 지도는 제한된 count 하한을 제공하며 완전 지도 승인이 아니다.

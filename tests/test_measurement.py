@@ -53,12 +53,12 @@ def test_unobserved_outside_and_observed_zero_both_have_zero_geometric_sum():
 def test_partial_outside_window_and_valid_hole_do_not_become_complete_zero():
     source=record([[1,1]],valid=[[1,0]])
     full=measure_full_mask(source)
-    assert full.ca_um2==1 and full.valid_area_um2==1
+    assert full.ca_um2 is None and full.partial_value==1 and full.valid_area_um2==1
     assert full.requested_area_um2==2 and full.status=='partial'
     hole=measure_window(source,PhysicalWindow(1,0,2,1))
     assert hole.status=='unavailable' and hole.ca_um2 is None
     partial=measure_window(source,PhysicalWindow(-1,0,1,1))
-    assert partial.ca_um2==1 and partial.status=='partial'
+    assert partial.ca_um2 is None and partial.partial_value==1 and partial.status=='partial'
 
 
 def test_missing_and_not_applicable_are_not_zero():
@@ -135,5 +135,14 @@ def test_tiny_partial_window_is_not_promoted_by_absolute_area_tolerance():
     source=record([[1]])
     result=measure_window(source,PhysicalWindow(-1e-7,0,1e-7,1e-7))
     assert result.status=='partial'
-    assert result.ca_um2==pytest.approx(1e-14,rel=1e-12,abs=0)
+    assert result.ca_um2 is None
+    assert result.partial_value==pytest.approx(1e-14,rel=1e-12,abs=0)
     assert result.requested_area_um2==pytest.approx(2e-14,rel=1e-12,abs=0)
+
+
+def test_partial_ca_and_outside_valid_cell_count_preserve_known_sum():
+    result=measure_full_mask(record([[1,1,1],[0,1,0]],valid=[[1,0,1],[1,0,1]]))
+    assert result.status=='partial' and result.ca_um2 is None
+    assert result.partial_value==result.observed_ca_um2==2
+    assert result.ca_per_valid_area is None and result.partial_ca_per_valid_area==.5
+    assert 'active_cells_outside_valid:2' in result.reasons

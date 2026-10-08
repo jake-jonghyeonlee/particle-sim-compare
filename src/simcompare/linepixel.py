@@ -77,6 +77,7 @@ class AreaMetric:
     status: Status
     reasons: tuple[str, ...]
     coverage: Coverage
+    partial_value: float | None = None
     unit: str = 'um^2'
     basis: str = 'full_mask_valid_observed_sources_line_priority'
 
@@ -103,7 +104,13 @@ class Bucket:
     kind: str  # exclusive or shared, never a per-failure-type metric
     pair_ids: tuple[str, ...]
     area: AreaMetric
-    source_case_keys: tuple[str, ...]  # pair lineage, not causal apportionment
+    pair_lineage_case_keys: tuple[str, ...]
+    contributing_source_case_keys: tuple[str, ...]
+
+    @property
+    def source_case_keys(self):
+        """호환 alias: pair lineage이며 실제 면적 기여자 목록이 아니다."""
+        return self.pair_lineage_case_keys
 
 
 @dataclass(frozen=True)
@@ -146,7 +153,8 @@ class GroupArea:
             'line': asdict(self.line), 'pixel': asdict(self.pixel),
             'transfer': asdict(self.transfer), 'union': asdict(self.union),
             'source_cases': [asdict(source) for source in self.source_cases],
-            'bucket_source_relationship': 'pair_lineage',
+            'bucket_source_relationship': {'pair_lineage_case_keys':'pair_lineage',
+                                           'contributing_source_case_keys':'observed_mask_intersects_bucket_at_diameter'},
             'failure_fragment_policy': {'status': 'pending', 'value': None,
                                         'reasons': ['failure_fragment_scope_unconfirmed']},
         }
@@ -254,6 +262,7 @@ def _group(key, entries, chunk_cells, table_version):
     for _, record in entries:
         require_same_frame(frame, record.frame)
     sources, usable, lineage, electrodes = [], {LINE: {}, PIXEL: {}}, {}, {}
+    contributor_records = {}
     observed = missing = na = unmapped = rejected = computable = 0
     reasons = set()
     for case, record in entries:
@@ -280,12 +289,14 @@ def _group(key, entries, chunk_cells, table_version):
             electrodes[pid] = pair
             lineage.setdefault(pid, []).append(source_key)
         if record.input_status == 'observed':
+            reasons.update(measured.reasons)
             if measured.status == 'unavailable':
                 rejected += 1
                 reasons.update(measured.reasons)
             elif case.classification is not None:
                 computable += 1
                 usable[case.classification].setdefault(case.pair_id, []).append(record)
+                contributor_records[source_key] = record
     coverage = Coverage(len(entries), observed, missing, na, unmapped, rejected, computable,
                         frame.valid.size, int(frame.valid.sum()))
     if not frame.valid.all():
@@ -305,8 +316,9 @@ def _group(key, entries, chunk_cells, table_version):
     pixel_area = frame.pixel_pitch_um ** 2
 
     def metric(area):
-        return AreaMetric(area if status in ('available', 'partial') else None,
-                          area, status, reason_tuple, coverage)
+        return AreaMetric(area if status == 'available' else None,
+                          area, status, reason_tuple, coverage,
+                          partial_value=area if status == 'partial' else None)
 
     masks = {kind: {pid: union_masks(records) & frame.valid for pid, records in by_pair.items()}
              for kind, by_pair in usable.items()}
@@ -323,9 +335,15 @@ def _group(key, entries, chunk_cells, table_version):
         counts = _membership_counts(masks[kind], keep, chunk_cells)
         exclusive, shared = [], []
         for members, count in sorted(counts.items()):
+            inside = keep.copy()
+            for pid, mask in masks[kind].items():
+                inside &= mask if pid in members else ~mask
+            pair_lineage = tuple(sorted(source for pid in members for source in lineage[pid]))
+            contributors = tuple(source for source in pair_lineage if source in contributor_records
+                                 and np.any(contributor_records[source].mask & inside))
             bucket = Bucket(bucket_key(key, kind, members, pair_table_version=table_version),
                             'exclusive' if len(members) == 1 else 'shared', members, metric(count * pixel_area),
-                            tuple(sorted(source for pid in members for source in lineage[pid])))
+                            pair_lineage, contributors)
             (exclusive if len(members) == 1 else shared).append(bucket)
         return ClassShare(metric(sum(counts.values()) * pixel_area), tuple(exclusive), tuple(shared))
 
@@ -435,13 +453,22 @@ class PanelSpec:
         return {'policy':self.rounding,'unit_count':unit_count(self.panel_size,self.unit_size,
                     length_unit=self.length_unit,rounding=self.rounding),
                 'panel_size_um':_size_um(self.panel_size,self.length_unit),
-                'unit_size_um':_size_um(self.unit_size,self.length_unit),'length_unit':'um'}
+                'unit_size_um':_size_um(self.unit_size,self.length_unit),'length_unit':'um',
+                'declared_panel_size':tuple(self.panel_size),'declared_unit_size':tuple(self.unit_size),
+                'declared_length_unit':self.length_unit}
 
 
 def unit_count(panel_size, unit_size, *, length_unit='um', rounding='floor') -> int:
     """Round each axis then multiply. Decimal preserves declared half-up semantics."""
     from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
-    panel,unit=_size_um(panel_size,length_unit),_size_um(unit_size,length_unit)
+    # 동일 선언 단위에서 비율을 먼저 구한다. um float 변환 오차를 floor에 전달하지 않는다.
+    from .numeric_schema import convert_length
+    convert_length(1,length_unit)  # 지원 단위 확인; 입력 치수는 변환하지 않는다.
+    for values in (panel_size,unit_size):
+        if not isinstance(values,(tuple,list)) or len(values)!=2:
+            raise NumericContractError('invalid_dimension_length')
+        for value in values:finite(value,'dimension',positive=True)
+    panel,unit=panel_size,unit_size
     if rounding not in ('floor','half_up_round'):
         raise NumericContractError('invalid_panel_rounding_policy')
     mode=ROUND_FLOOR if rounding=='floor' else ROUND_HALF_UP
@@ -595,8 +622,10 @@ def _weighted_layer(key, groups, distribution, basis, panel):
         state=status
         if panel_metric and panel is None:
             errors.add('panel_dimensions_missing');state='unavailable'
+        if panel_metric and panel is not None and rounding['unit_count']==0:
+            errors.add('panel_has_no_units');state='unavailable'
         number=finite(amount*scale,'weighted aggregate',nonnegative=True)
-        partial=number if known and not blockers and state!='available' and not (panel_metric and panel is None) else None
+        partial=number if known and not blockers and state!='available' and not (panel_metric and (panel is None or rounding['unit_count']==0)) else None
         return WeightedMetric(number if state=='available' else None,partial,state,tuple(sorted(errors)),
                               distribution_ids,declared_basis,rounding,coverage)
 
@@ -715,8 +744,11 @@ def compare_rates(reference: RateResult,target: RateResult,*,reference_product_i
                     cls=b.line if members[0]==LINE else b.pixel
                     if cls.panel.status=='available':bm=replace(cls.panel,value=0.0,partial_value=None)
             def absent_zero(result,product,evidence):
-                return WeightedMetric(0.0,None,'available',(),(),
-                    {'basis':'observed_absent','evidence':evidence},result.panels[product].metadata,())
+                metadata=result.panels[product].metadata
+                empty=metadata['unit_count']==0
+                return WeightedMetric(None if empty else 0.0,None,'unavailable' if empty else 'available',
+                    ('panel_has_no_units',) if empty else (),(),
+                    {'basis':'observed_absent','evidence':evidence},metadata,())
             if a is None and key in reference_absent and not reference.synthetic_contract_reasons.get(reference_product_id,('unconfirmed',)) and reference_product_id in reference.panels:
                 am=absent_zero(reference,reference_product_id,reference_absent[key])
             if b is None and key in target_absent and not target.synthetic_contract_reasons.get(target_product_id,('unconfirmed',)) and target_product_id in target.panels:

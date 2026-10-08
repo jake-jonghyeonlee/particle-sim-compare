@@ -674,7 +674,7 @@ def run_numeric_validate(cfg, out=None):
                 reasons.update(record_reasons)
                 records.append({'product_id':case.identity.product_id,'case_id':case.identity.case_id,
                                 'diameter_um':d,'failure_type':case.failure_type,'input_status':record.input_status,
-                                'value':measured.ca_um2,'unit':'um^2','status':measured.status,
+                                'value':measured.ca_um2,'partial_value':measured.partial_value,'unit':'um^2','status':measured.status,
                                 'reasons':record_reasons,'measurement':measured})
         reasons.update(dataset.reasons)
     payload = {'schema_version':'numeric_validation_v1','status':'partial','reasons':sorted(reasons),'records':records,

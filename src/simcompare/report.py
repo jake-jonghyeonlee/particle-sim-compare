@@ -31,13 +31,16 @@ def unique_bucket_total(rows):
     unique = {}
     for row in rows:
         key = row['bucket_id']
-        metric = (row['value'], row['status'], tuple(row.get('reasons', ())))
+        metric = (row['value'], row.get('partial_value'), row['status'], tuple(row.get('reasons', ())))
         if key in unique and unique[key] != metric:
             raise NumericContractError('conflicting_bucket_link', key)
         unique[key] = metric
-    if any(value is None or status != 'available' for value,status,_ in unique.values()):
-        return {'value':None,'status':'unavailable','reasons':['bucket_coverage_incomplete']}
-    return {'value':sum(value for value,_,_ in unique.values()),'status':'available','reasons':[]}
+    if any(value is None or status != 'available' for value,_,status,_ in unique.values()):
+        known = [value if status=='available' else partial for value,partial,status,_ in unique.values()
+                 if (value if status=='available' else partial) is not None]
+        return {'value':None,'partial_value':sum(known) if known else None,
+                'status':'partial' if known else 'unavailable','reasons':['bucket_coverage_incomplete']}
+    return {'value':sum(value for value,_,_,_ in unique.values()),'status':'available','reasons':[]}
 
 
 def _metric_row(side, product, layer, classification, domain, metric, *, context=None):
@@ -90,12 +93,14 @@ def comparison_report(reference, target, deltas):
                         row = {'side':side,'group_id':group_id,'product_id':key.product_id,
                                'layer':key.analysis_layer,'diameter_um':key.diameter_um,'class':classification,
                                'bucket_id':bucket.bucket_id,'kind':bucket.kind,'pair_id':pair,
-                               'pair_ids':bucket.pair_ids,'source_case_keys':bucket.source_case_keys,**asdict(bucket.area)}
+                               'pair_ids':bucket.pair_ids,'pair_lineage_case_keys':bucket.pair_lineage_case_keys,
+                               'contributing_source_case_keys':bucket.contributing_source_case_keys,**asdict(bucket.area)}
                         buckets.append(row)
                         links.append(row)
                 total = unique_bucket_total(links)
                 if share.area.status != 'available':
-                    total = {'value':None,'status':'unavailable','reasons':list(share.area.reasons)}
+                    total = {'value':None,'partial_value':share.area.partial_value,
+                             'status':share.area.status,'reasons':list(share.area.reasons)}
                 elif total['value'] != share.area.value:
                     raise NumericContractError('report_bucket_conservation_failed')
                 bucket_checks.append({'side':side,'group_id':group_id,'class':classification,**total,'unit':'um^2'})
@@ -106,7 +111,8 @@ def comparison_report(reference, target, deltas):
                               'case_id':case.identity.case_id,'failure_type':case.failure_type,
                               'pair_id':case.pair_id,'identity':asdict(case.identity), 'endpoints':[asdict(e) for e in case.endpoints],
                               'raw':case.raw,'input_status':case.input_status,'frame':group.to_dict()['frame'],
-                              'value':measured['ca_um2'],'unit':'um^2','status':measured['status'],
+                              'value':measured['ca_um2'],'partial_value':measured['partial_value'],
+                              'unit':'um^2','status':measured['status'],
                               'reasons':measured['reasons'],'measurement':measured})
     for key, delta in sorted(deltas.items()):
         for classification in ('line','pixel','transfer'):
@@ -135,8 +141,9 @@ def map_report(result):
                    reasons=sorted({'map_scope_unconfirmed',*(reason for layer in result.layers for reason in layer.reasons)}))
     for layer, encoded in zip(result.layers,payload['layers']):
         encoded['observed_lower_bound_counts'] = encoded['counts']
-        encoded['counts'] = [[int(layer.counts[r,c]) if layer.frame.valid[r,c] and layer.status!='unavailable' else None
-                              for c in range(layer.counts.shape[1])] for r in range(layer.counts.shape[0])]
+        encoded['counts'] = None if layer.counts is None else [
+            [int(layer.counts[r,c]) if layer.frame.valid[r,c] else None
+             for c in range(layer.frame.shape_yx[1])] for r in range(layer.frame.shape_yx[0])]
     for summary, encoded in zip(result.summaries,payload['summaries']):
         if summary.counts is not None:
             encoded['observed_lower_bound_counts'] = encoded['counts']
@@ -146,12 +153,13 @@ def map_report(result):
     for layer in result.layers:
         x,y = layer.frame.origin_xy_um
         p = layer.frame.pixel_pitch_um
-        for r,c in np.ndindex(layer.counts.shape):
+        for r,c in np.ndindex(layer.frame.shape_yx):
             valid = bool(layer.frame.valid[r,c])
             rows.append({'product_id':layer.key.product_id,'layer':layer.key.layer,'frame_id':layer.frame.frame_id,
                          'row':r,'col':c,'x0_um':x+c*p,'y0_um':y+r*p,
-                         'value':int(layer.counts[r,c]) if valid and layer.status!='unavailable' else None,'unit':'distinct_electrodes',
-                         'observed_lower_bound':int(layer.counts[r,c]),
+                         'value':None,'unit':'distinct_electrodes',
+                         'partial_value':int(layer.counts[r,c]) if valid and layer.counts is not None else None,
+                         'observed_lower_bound':int(layer.counts[r,c]) if layer.counts is not None else None,
                          'status':layer.status if valid else 'unavailable',
                          'reasons':layer.reasons if valid else ('outside_valid_domain',),'valid':valid,
                          'coverage':layer.coverage})

@@ -182,6 +182,7 @@ class BlockLegacy(importlib.abc.MetaPathFinder):
             raise AssertionError('legacy runtime import: '+fullname)
 sys.meta_path.insert(0,BlockLegacy())
 import simcompare.numeric_schema, simcompare.numeric_images, simcompare.measurement
+import simcompare.linepixel, simcompare.density
 from simcompare.adapters.numeric import load_dataset
 assert len(load_dataset(sys.argv[1]).cases)==3
 assert not {'simcompare.schema','simcompare.preprocess','simcompare.adapters.example'} & sys.modules.keys()
@@ -214,3 +215,22 @@ def test_blank_or_extra_csv_cells_rejected(package):
     rewrite(package,lambda m:None)
     with pytest.raises(NumericContractError,match='invalid_csv_row'):
         load_dataset(package)
+
+
+def test_converted_source_diameter_na_evidence_matches_area_and_map(package):
+    from simcompare.electrode_map import compute_electrode_maps
+    from simcompare.linepixel import compute_areas
+    def converted(manifest):
+        for case in manifest['cases']:
+            for record in case['records']:
+                if record['input_status']=='not_applicable':
+                    record['diameter']=record.pop('diameter_um')*1000
+                    record['diameter_unit']='nm'
+    rewrite(package,converted)
+    dataset=load_dataset(package)
+    maps=compute_electrode_maps(dataset,diameter_um=1,min_count=2)
+    assert len(maps.layers[0].coverage['not_applicable'])==2
+    assert maps.layers[0].counts.tolist()==[[0,0,0,0],[0,0,0,0]]
+    areas=compute_areas(dataset)
+    group=next(g for g in areas.groups.values() if g.key.diameter_um==1)
+    assert group.coverage.not_applicable==2 and group.line.area.value==0

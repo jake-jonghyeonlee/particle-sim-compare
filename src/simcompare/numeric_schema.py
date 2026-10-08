@@ -282,6 +282,8 @@ class Measurement:
     observed_ca_um2: float = 0.0
     identity: CaseIdentity | None = None
     basis: str = 'full_mask_valid'
+    partial_value: float | None = None
+    partial_ca_per_valid_area: float | None = None
 
 
 @dataclass(frozen=True)

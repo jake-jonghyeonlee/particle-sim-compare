@@ -196,7 +196,7 @@ def test_coverage_missing_vertical_stays_missing_without_height_inference():
     for d in [1,2]:b.records[d]=replace(b.records[d],input_status='missing',reasons=('missing_input',))
     g=group(compute_areas([a,b]))
     assert g.union.status==g.line.area.status==g.pixel.area.status=='partial'
-    assert g.union.value==1 and g.coverage.missing==1 and g.coverage.not_applicable==0
+    assert g.union.value is None and g.union.partial_value==1 and g.coverage.missing==1 and g.coverage.not_applicable==0
     assert g.source_cases[1].input_status=='missing'
     assert g.source_cases[1].measurement.ca_um2 is None
 
@@ -205,7 +205,7 @@ def test_coverage_unmapped_and_missing_only_are_not_available_zero():
     known=make_case('a','A','B',{0})
     unknown=make_case('b','C','D',{1,2},kind=None)
     g=group(compute_areas([known,unknown]))
-    assert g.union.status=='partial' and g.union.value==1 and g.coverage.unmapped==1
+    assert g.union.status=='partial' and g.union.value is None and g.union.partial_value==1 and g.coverage.unmapped==1
     assert g.source_cases[1].measurement.ca_um2==2
     unknown_only=group(compute_areas([unknown]))
     assert unknown_only.union.status=='unavailable' and unknown_only.union.value is None
@@ -220,7 +220,7 @@ def test_coverage_unmapped_and_missing_only_are_not_available_zero():
 
 def test_coverage_valid_holes_are_not_observed_zero():
     g=group(compute_areas([make_case('a','A','B',{0,1},valid=[[1,0,1,1,1,1]])]))
-    assert g.line.area.value==1 and g.line.area.status=='partial'
+    assert g.line.area.value is None and g.line.area.partial_value==1 and g.line.area.status=='partial'
     assert g.coverage.observed_cells==5 and g.coverage.expected_cells==6
 
 
@@ -306,3 +306,48 @@ def test_coverage_converted_raw_diameter_na_evidence_is_preserved():
     g=group(compute_areas([case]),1)
     assert g.union.status=='not_applicable'
     assert g.source_cases[0].applicability_evidence['source']=='synthetic'
+
+
+def test_membership_two_dimensional_multi_row_hand_written_oracle():
+    cases=oracle_cases()
+    for case in cases:
+        frame=Frame('frame',.5,(0,0),(2,3),[[1,1,1],[1,1,1]])
+        case.records={d:replace(r,frame=frame,mask=r.mask.reshape(2,3)) for d,r in case.records.items()}
+    g=group(compute_areas(cases,chunk_cells=2))
+    assert (g.line.area.value,g.pixel.area.value,g.transfer.value,g.union.value)==(1,.5,.5,1.5)
+    assert values(g.line)=={('A-B',):.5,('A-C',):.25,('A-B','A-C'):.25}
+    assert values(g.pixel)=={('E-F',):.25,('D-E','E-F'):.25}
+    assert g.line_mask.tolist()==[[True,True,True],[True,False,False]]
+    assert g.pixel_effective_mask.tolist()==[[False,False,False],[False,True,True]]
+    assert g.transfer_mask.tolist()==[[False,True,False],[True,False,False]]
+    assert g.union.value==g.line.area.value+g.pixel.area.value
+    for share in (g.line,g.pixel):
+        assert sum(b.area.value for b in (*share.exclusive,*share.shared))==share.area.value
+
+
+def test_bucket_contributors_are_separate_from_pair_lineage_at_diameter():
+    a=make_case('active','A','B',{0,1})
+    missing=make_case('missing','A','B',{0})
+    missing.records[5]=replace(missing.records[5],mask=None,input_status='missing',reasons=('missing_input',))
+    zero=make_case('zero','A','B',set())
+    overlap=make_case('overlap','A','C',{1})
+    g=group(compute_areas([a,missing,zero,overlap]))
+    ids={s.source_key:s.identity.case_id for s in g.source_cases}
+    exclusive=g.line.exclusive[0]
+    shared=g.line.shared[0]
+    assert {ids[k] for k in exclusive.pair_lineage_case_keys}=={'active','missing','zero'}
+    assert {ids[k] for k in exclusive.contributing_source_case_keys}=={'active'}
+    assert {ids[k] for k in shared.pair_lineage_case_keys}=={'active','missing','zero','overlap'}
+    assert {ids[k] for k in shared.contributing_source_case_keys}=={'active','overlap'}
+    assert exclusive.area.value is None and exclusive.area.partial_value==1
+    assert shared.area.value is None and shared.area.partial_value==1
+
+
+def test_partial_area_zero_and_unknown_are_distinct_null_complete_values():
+    known=make_case('known','A','B',{0})
+    unknown=make_case('unknown','C','D',{1},kind=None)
+    g=group(compute_areas([known,unknown]))
+    assert g.line.area.value is None and g.line.area.partial_value==1
+    assert g.pixel.area.value is None and g.pixel.area.partial_value==0
+    assert g.union.value is None and g.union.partial_value==1
+    assert g.source_cases[1].measurement.ca_um2==1

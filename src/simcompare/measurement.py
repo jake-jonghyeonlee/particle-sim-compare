@@ -86,7 +86,8 @@ def measure_union(record: MaskRecord, windows: Sequence[PhysicalWindow], *,
                   conservation_rtol: float = 1e-9, conservation_atol_um2: float = 1e-9) -> Measurement:
     """Measure one original source over a union of explicit windows.
 
-    ca_um2 is null outside observation; observed_ca_um2 retains the geometric
+    ca_um2 is null for partial/unavailable observation; partial_value retains the known sum.
+    observed_ca_um2 retains the geometric
     zero/known partial sum. A conservation failure reports residual, never scales.
     """
     if not isinstance(record, MaskRecord):
@@ -101,23 +102,28 @@ def measure_union(record: MaskRecord, windows: Sequence[PhysicalWindow], *,
         return Measurement(None, 0.0, requested, None,
                            'not_applicable' if record.input_status == 'not_applicable' else 'unavailable',
                            record.reasons, identity=record.identity, basis='physical_window_union')
+    outside_valid = int(np.count_nonzero(record.mask & ~record.frame.valid))
+    warnings = (f'active_cells_outside_valid:{outside_valid}',) if outside_valid else ()
     residual, source_ca, errors = _conservation(record, conservation_rtol, conservation_atol_um2)
     if errors:
-        return Measurement(None, 0.0, requested, None, 'unavailable', errors,
+        return Measurement(None, 0.0, requested, None, 'unavailable', (*errors,*warnings),
                            residual, source_ca, identity=record.identity, basis='physical_window_union')
     cell_areas = _cell_areas(record.frame, rectangles)
     areas = cell_areas * record.frame.valid
     valid_area = float(areas.sum())
     observed_ca = float(areas[record.mask].sum())
     if valid_area == 0:
-        return Measurement(None, 0.0, requested, None, 'unavailable', ('empty_valid_area',),
+        return Measurement(None, 0.0, requested, None, 'unavailable', ('empty_valid_area',*warnings),
                            residual, source_ca, 0.0, record.identity, 'physical_window_union')
     x0, y0, x1, y1 = record.frame.bbox_um
     complete = (all(a >= x0 and b >= y0 and c <= x1 and d <= y1 for a, b, c, d in rectangles)
                 and not np.any(cell_areas[~record.frame.valid] > 0))
-    return Measurement(observed_ca, valid_area, requested, observed_ca / valid_area,
-                       'available' if complete else 'partial', () if complete else ('partial_observation',),
-                       residual, source_ca, observed_ca, record.identity, 'physical_window_union')
+    return Measurement(observed_ca if complete else None, valid_area, requested,
+                       observed_ca / valid_area if complete else None,
+                       'available' if complete else 'partial', warnings if complete else ('partial_observation',*warnings),
+                       residual, source_ca, observed_ca, record.identity, 'physical_window_union',
+                       partial_value=None if complete else observed_ca,
+                       partial_ca_per_valid_area=None if complete else observed_ca / valid_area)
 
 
 def measure_window(record: MaskRecord, window: PhysicalWindow, **kwargs) -> Measurement:

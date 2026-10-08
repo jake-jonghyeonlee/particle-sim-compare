@@ -130,7 +130,7 @@ class MapKey:
 
     @property
     def summary_key(self):
-        return tuple(asdict(self).values())[:-1]
+        return self.product_id, self.design_version, self.unit_id
 
 
 @dataclass(frozen=True)
@@ -168,7 +168,7 @@ class ElectrodeRegion:
 class LayerMap:
     key: MapKey
     frame: Frame
-    counts: np.ndarray
+    counts: np.ndarray | None
     status: str
     reasons: tuple[str, ...]
     coverage: dict
@@ -183,6 +183,7 @@ class ProductMap:
     status: str
     reasons: tuple[str, ...]
     coverage: dict
+    provenance: dict
 
 
 @dataclass(frozen=True)
@@ -239,7 +240,8 @@ def _validate_case(case):
             height = case.metadata.get('height_um')
             evidence = case.metadata.get('height_evidence')
             raw = next((r for r in case.metadata.get('records', [])
-                        if r.get('diameter_um') == diameter), {})
+                        if (diameter_key(r['diameter_um']) if 'diameter_um' in r else
+                            diameter_key(r['diameter'],r['diameter_unit'])) == diameter_key(diameter)), {})
             applicability = raw.get('applicability_evidence', {})
             if (case.failure_type != 'vertical_short' or not isinstance(evidence, str)
                     or not evidence.strip() or not isinstance(applicability, dict)
@@ -340,6 +342,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
             if record.input_status == 'not_applicable':
                 continue
             measured = measure_full_mask(record)
+            reasons.update(measured.reasons)
             if measured.status == 'unavailable':
                 coverage['measurement_errors'].append({'identity': identity, 'reasons': measured.reasons, 'original_case_ca': asdict(measured)})
                 reasons.update(measured.reasons)
@@ -386,7 +389,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                            frame, inside, names, links, region_coverage, copy.deepcopy(provenance)))
         regions.sort(key=lambda r: (-r.max_count, -r.area_um2, r.region_id))
         status = 'partial' if observed or coverage['not_applicable'] else 'unavailable'
-        layers.append(LayerMap(key, frame, counts, status, tuple(sorted(reasons)), coverage, tuple(regions)))
+        layers.append(LayerMap(key, frame, counts if status!='unavailable' else None, status, tuple(sorted(reasons)), coverage, tuple(regions)))
     summaries = []
     summary_groups = {}
     for layer in layers:
@@ -394,17 +397,23 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
     for key, maps in sorted(summary_groups.items()):
         reasons = {reason for m in maps for reason in m.reasons}
         frame = maps[0].frame
-        coverage = {'layers': {m.key.layer: copy.deepcopy(m.coverage) for m in maps}}
+        coverage = {'layer_maps': [{'key':asdict(m.key),'status':m.status,'coverage':copy.deepcopy(m.coverage)} for m in maps]}
+        summary_provenance = {'combined_steps':sorted({m.key.process_step_id for m in maps}),
+                              'combined_sources':sorted({m.key.source_id for m in maps}),
+                              'combined_exposures':sorted({m.key.exposure_id for m in maps}),
+                              'layer_inputs':[asdict(m.key) for m in maps],
+                              'aggregation':'pixelwise_max_across_product_design_unit_layers'}
         try:
             for m in maps[1:]:
                 require_same_frame(frame, m.frame)
         except NumericFrameError:
             summaries.append(ProductMap(key, None, None, 'unavailable',
-                             tuple(sorted(reasons | {'incompatible_layer_frames'})), coverage))
+                             tuple(sorted(reasons | {'incompatible_layer_frames'})), coverage, summary_provenance))
             continue
-        counts = np.max(np.stack([m.counts for m in maps]), axis=0)
-        counts.setflags(write=False)
+        available_counts = [m.counts for m in maps if m.counts is not None]
+        counts = np.max(np.stack(available_counts),axis=0) if available_counts else None
+        if counts is not None:counts.setflags(write=False)
         summaries.append(ProductMap(key, frame, counts,
                                     'partial' if any(m.status == 'partial' for m in maps) else 'unavailable',
-                                    tuple(sorted(reasons)), coverage))
+                                    tuple(sorted(reasons)), coverage, summary_provenance))
     return ElectrodeMaps(tuple(layers), tuple(summaries), diameter, provenance)

@@ -248,3 +248,27 @@ def test_weighting_includes_1_30_40_50_um_bins_without_interpolation():
     assert result.line.unit.value==30  # 1*1 + 2*2 + 3*3 + 4*4
     assert result.line.panel.value==3000
     assert result.pixel.unit.value==0
+
+
+@pytest.mark.parametrize('panel,unit,expected',[
+    ((2.01,1),(0.01,1),201),
+    ((32.3,1),(0.1,1),323),
+    ((65.1,1),(0.3,1),217),
+    ((1.001,1),(0.001,1),1001),
+])
+def test_unit_count_declared_mm_decimal_ratio_before_float_conversion(panel,unit,expected):
+    assert unit_count(panel,unit,length_unit='mm',rounding='floor')==expected
+    assert PanelSpec(panel,unit,length_unit='mm').metadata['unit_count']==expected
+
+
+@pytest.mark.parametrize('panel',[(3,10),(60,.5),(3,.5)])
+def test_zero_panel_unit_count_is_unavailable_not_an_available_zero(panel):
+    result=weighted([make_case('a','A','B',{0,1})],panel=panel)
+    r=layer(result)
+    assert r.line.unit.value==2 and r.line.unit.status=='available'
+    for metric in (r.line.panel,r.pixel.panel,r.transfer_panel):
+        assert metric.value is None and metric.partial_value is None
+        assert metric.status=='unavailable' and 'panel_has_no_units' in metric.reasons
+        assert metric.rounding['unit_count']==0
+    delta=next(iter(compare_rates(result,result,reference_product_id='product',target_product_id='product').values()))
+    assert delta.line.value is None and 'panel_has_no_units' in delta.line.reasons

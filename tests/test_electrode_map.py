@@ -145,9 +145,11 @@ def test_physical_coordinates_valid_hole_and_original_vs_region_ca():
     assert region.coverage['region_valid_area_um2'] == .5
     assert region.coverage['source_coverage_status'] == 'partial'
     links = {link.identity['case_id']: link for link in region.cases}
-    assert links['AB'].original_case_ca.ca_um2 == .75
+    assert links['AB'].original_case_ca.ca_um2 is None
+    assert links['AB'].original_case_ca.partial_value == .75
     assert links['AB'].case_ca_in_region.ca_um2 == .5
-    assert links['AC'].original_case_ca.ca_um2 == .5
+    assert links['AC'].original_case_ca.ca_um2 is None
+    assert links['AC'].original_case_ca.partial_value == .5
     assert links['AC'].case_ca_in_region.ca_um2 == .5
     assert links['AB'].original_case_ca.basis == 'full_mask_valid'
     assert links['AB'].raw['case_id'] == 'AB'
@@ -188,7 +190,8 @@ def test_representative_diameter_change_absence_and_observed_zero():
     assert missing.status == 'unavailable'
     assert missing.coverage['missing'][0]['reasons'] == ['representative_diameter_missing']
     zero = compute_electrode_maps([numeric_case('zero', cells=())]).layers[0]
-    assert zero.counts.tolist() == missing.counts.tolist() == [[0, 0]]
+    assert zero.counts.tolist() == [[0, 0]]
+    assert missing.counts is None
     assert zero.coverage['source_coverage_status'] == 'available'
     assert zero.status == 'partial'  # 관측 0도 G7b는 pending
 
@@ -239,7 +242,7 @@ def test_source_ca_conservation_failure_is_reported_not_rescaled():
     case.records[5] = replace(r, source_ca=SourceCA(9, r.frame.frame_id, r.frame.valid_hash))
     layer = compute_electrode_maps([case], min_count=2).layers[0]
     assert layer.status == 'unavailable'
-    assert layer.counts.tolist() == [[0, 0]]
+    assert layer.counts is None
     assert 'conservation_failed' in layer.reasons
     assert layer.coverage['measurement_errors'][0]['identity']['case_id'] == 'AB'
 
@@ -282,6 +285,7 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())
 from simcompare.electrode_map import DefectHotspot, find_regions
+import simcompare.linepixel, simcompare.density
 assert len(find_regions([DefectHotspot('L1', ('A', 'B'), 5, [[1,0],[0,1]])], min_count=2)) == 2
 '''
     result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
@@ -296,17 +300,30 @@ def test_region_sort_order_count_then_area_then_stable_id():
     assert [(r.max_count, r.area_um2) for r in regions] == [(4, 1), (3, 1), (2, 2)]
 
 
-def test_source_conditions_products_and_units_do_not_mix():
+def test_product_summary_combines_two_layer_steps_with_hand_written_maximum():
+    cases = [numeric_case('AB',step='STEP_L1'), numeric_case('AC',('A','C'),step='STEP_L1'),
+             numeric_case('CD',('C','D'),layer='L2',step='STEP_L2')]
+    cases[2].identity = replace(cases[2].identity,source_id='other_source',exposure_id='other_exposure')
+    cases[2].records[5] = replace(cases[2].records[5],identity=cases[2].identity)
+    result = compute_electrode_maps(cases)
+    assert len(result.layers) == 2 and len(result.summaries) == 1
+    assert result.summaries[0].counts.tolist() == [[3,0]]
+    provenance = result.summaries[0].provenance
+    assert provenance['combined_steps'] == ['STEP_L1','STEP_L2']
+    assert provenance['combined_sources'] == ['other_source','source']
+    assert provenance['combined_exposures'] == ['exposure','other_exposure']
+    assert len(provenance['layer_inputs']) == 2
+
+
+def test_product_design_and_unit_stay_separate_in_summary():
     a = numeric_case('AB')
-    b = numeric_case('AB', ('A', 'C'), step='other')
-    c = numeric_case('AB', ('A', 'D'), product='other-product')
-    d = numeric_case('AB', ('A', 'E'))
-    d.identity = replace(d.identity, case_id='unit2')
-    d.records[5] = replace(d.records[5], identity=d.identity)
-    d.metadata['unit_id'] = 'unit2'
-    result = compute_electrode_maps([a, b, c, d], min_count=2)
-    assert len(result.layers) == len(result.summaries) == 4
-    assert all(m.counts.tolist() == [[2, 0]] for m in result.summaries)
+    b = numeric_case('CD',('C','D'),product='other')
+    c = numeric_case('EF',('E','F'));c.metadata['unit_id']='unit2'
+    d = numeric_case('GH',('G','H'));d.identity=replace(d.identity,design_version='other')
+    d.records[5]=replace(d.records[5],identity=d.identity)
+    result = compute_electrode_maps([a,b,c,d],min_count=2)
+    assert len(result.layers)==len(result.summaries)==4
+    assert all(m.counts.tolist()==[[2,0]] for m in result.summaries)
 
 
 @pytest.mark.parametrize('threshold', [0, -1, 1.5, True])
@@ -333,5 +350,27 @@ def test_valid_hole_is_excluded_from_region_and_bbox_coverage():
     assert not region.mask[1, 1]
     assert region.coverage['bbox_valid_area_um2'] == 8
     assert region.coverage['bbox_area_um2'] == 9
-    assert region.cases[0].original_case_ca.ca_um2 == 8
+    assert region.cases[0].original_case_ca.ca_um2 is None
+    assert region.cases[0].original_case_ca.partial_value == 8
     assert region.cases[0].case_ca_in_region.ca_um2 == 8
+
+
+def test_unavailable_layer_and_summary_have_null_counts_with_frame_and_reasons():
+    missing=numeric_case('missing',status='missing')
+    result=compute_electrode_maps([missing])
+    assert result.layers[0].status==result.summaries[0].status=='unavailable'
+    assert result.layers[0].counts is result.summaries[0].counts is None
+    assert result.layers[0].frame.origin_xy_um==(0,0)
+    assert 'source_case_missing' in result.layers[0].reasons
+    document=result.to_dict()
+    assert document['layers'][0]['counts'] is document['summaries'][0]['counts'] is None
+
+
+def test_summary_preserves_known_layer_lower_bound_when_other_layer_missing():
+    cases=[numeric_case('AB',step='L1'),numeric_case('AC',('A','C'),step='L1'),
+           numeric_case('CD',('C','D'),layer='L2',step='L2',status='missing')]
+    result=compute_electrode_maps(cases)
+    assert len(result.summaries)==1 and result.summaries[0].counts.tolist()==[[3,0]]
+    assert result.summaries[0].status=='partial'
+    assert 'source_case_missing' in result.summaries[0].reasons
+    assert len(result.summaries[0].coverage['layer_maps'])==2

@@ -154,7 +154,7 @@ def test_absent_representative_diameter_is_unavailable_null_not_zero(tmp_path):
     out=tmp_path/'demo/numeric_outputs'
     payload=json.loads((out/'electrode_map.json').read_text())
     assert payload['status']=='unavailable'
-    assert payload['layers'][0]['counts']==[[None]*6]
+    assert payload['layers'][0]['counts'] is None
     with (out/'electrode_map_map.csv').open() as f:
         assert all(r['value']=='null' and r['status']=='unavailable' for r in csv.DictReader(f))
 

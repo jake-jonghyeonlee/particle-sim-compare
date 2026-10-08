@@ -98,3 +98,45 @@ def test_weighted_and_delta_bucket_csv_preserve_shared_and_conservation(tmp_path
     assert sum(float(r['value']) for r in rows)==-250
     assert any(r['kind']=='shared' for r in rows)
     assert all('simultaneous' not in r['kind'] for r in rows)
+
+
+def test_partial_area_and_case_ca_json_csv_html_never_show_complete_values(tmp_path):
+    from html import unescape
+    generate_numeric_demo(tmp_path/'demo')
+    root=tmp_path/'demo'
+    path=root/'target/manifest.json'
+    manifest=json.loads(path.read_text())
+    record=next(r for r in manifest['cases'][0]['records'] if r['diameter_um']==5)
+    record.pop('mask');record.update(input_status='missing',reasons=['missing_input'])
+    manifest['input_hash']=manifest['source_manifest_hash']=source_payload_hash(manifest)
+    path.write_text(json.dumps(manifest))
+    run_numeric_compare(load_numeric_config(root/'config.yaml'))
+    out=root/'numeric_outputs'
+    document=json.loads((out/'comparison.json').read_text())
+    group=next(g for g in document['target']['areas']['groups'] if g['group']['diameter_um']==5)
+    assert group['line']['area']['status']=='partial'
+    assert group['line']['area']['value'] is None and group['line']['area']['partial_value']==3
+    with (out/'comparison_areas.csv').open() as f:
+        row=next(r for r in csv.DictReader(f) if r['side']=='target' and r['class']=='line' and r['diameter_um']=='5.0')
+    assert row['value']=='null' and row['partial_value']=='3.0' and row['status']=='partial'
+    escaped=(out/'comparison.html').read_text().split('<pre>',1)[1].split('</pre>',1)[0]
+    html_document=json.loads(unescape(escaped))
+    html_area=next(g for g in html_document['target']['areas']['groups'] if g['group']['diameter_um']==5)['line']['area']
+    assert html_area['value'] is None and html_area['partial_value']==3
+    with (out/'comparison_buckets.csv').open() as f:
+        buckets=[r for r in csv.DictReader(f) if r['side']=='target' and r['class']=='line' and r['diameter_um']=='5.0' and r['pair_id']=='AB']
+    assert len(buckets)==1
+    row=buckets[0]
+    lineage=json.loads(row['pair_lineage_case_keys'])
+    contributors=json.loads(row['contributing_source_case_keys'])
+    source={s['source_key']:s['identity']['case_id'] for s in group['source_cases']}
+    assert {source[k] for k in lineage}=={'AB','vertical_AB'}
+    assert {source[k] for k in contributors}=={'vertical_AB'}
+    assert 'source_case_keys' not in row  # 계보를 기여자 이름으로 표시하지 않는다.
+
+
+def test_bucket_links_keep_partial_value_separate():
+    rows=[{'bucket_id':'B','value':None,'partial_value':1,'status':'partial'},
+          {'bucket_id':'B','value':None,'partial_value':1,'status':'partial'},
+          {'bucket_id':'C','value':None,'partial_value':2,'status':'partial'}]
+    assert unique_bucket_total(rows)=={'value':None,'partial_value':3,'status':'partial','reasons':['bucket_coverage_incomplete']}
