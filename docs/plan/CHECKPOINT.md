@@ -94,3 +94,12 @@ DL1 editor terminal `term_5b81b38f-63d3-4399-b792-63b94409b1fd` (Codex GPT-6.1-S
 Gate G5 answered by the user on 2026-10-09: whole-unit resize + pad, shape and connectivity matching first.
 Open for DL1: real grid / minimum line width, CNT / VIA endpoint source format, G6 (closed-network labels and criteria).
 Phase 3 (DL2, T10-T11) is not started: gate G3 (DL2 repository name) and G4 (window sizes) are unanswered.
+
+## 3단계(DL2) 종료 — 2026-10-09
+
+- 사용자 답변(2026-10-09): G3 DL2 저장소 생성 승인, G4 창 크기는 실제 실행 전에는 알 수 없음(기본값 없는 필수 설정), hotspot 파일은 hotspot이 검정인 이진 이미지. C에 `binary_zero_is_marked` 읽기 추가(`f5e8600`).
+- DL2 저장소 `~/git/particle-sim-dl2`, branch `main`, 로컬만. commit: `886aa74` 초기, `836ee0f` T10, `c19a33d` T11(+실행 smoke), `9849300` R4 보고서, `e03cb5c` R4 수정, `20a2ca8` R4b 보고서, `b0b1167` v3 수정, `e46a44e` R4c 보고서.
+- 독립 검토: R4 FAIL(`c19a33d`, B1 crop 표본·B2 view 수락) → R4b FAIL(`e03cb5c`, B3 채널 간 bridge, P1 성능) → 계획 보완 `docs/plan/PLAN_v2_ADDENDUM_DL2_VIEWS.md`(Astra 작성, Opus 채택, `31c7c26`) → R4c **PASS-WITH-NOTES**(`b0b1167`, 차단 사항 없음).
+- 검증: `b0b1167`에서 기본 184 passed·1 skipped, `--run-training` 185 passed (coordinator 재실행).
+- Orca task: T10 `task_122776c45eec`, T11 `task_835d3bf9c2c6`, 실행 smoke `task_0c715c672503`, R4 `task_e0ad22015b77`, R4 수정 `task_31aecc5462d0`, R4b, 보완 계획 `task_0e4dcc86bb3f`, v3 `task_c0753872587c`, R4c `task_d06310b54414`. 터미널: DL2 editor `term_63872933-05a6-4cf0-a3c4-9c7884df4dbc`.
+- 미결: G4 실제 창·pitch·jitter·사이 layer 정책, G6 정답·수락 기준, CNT/VIA 연결은 기하 proxy(실제 도통 미검증), 실자료·CUDA·대형 frame, R4c 메모.
