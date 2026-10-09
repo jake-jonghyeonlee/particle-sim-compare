@@ -76,3 +76,21 @@ delivery format, source-id meaning for comparison (N5) and conservation toleranc
 User decisions since the plan: G7b short-only; heat map without automatic threshold; density one value per diameter;
 G7a implement the pieces metric (done). The map and DL2 are complementary (user, 2026-10-08).
 Next: phase 2 DL1 (T8) limited to the answer-independent scope while G3 and G5 are unanswered.
+
+# Orca checkpoint — 2026-10-09 (phase 2 closed)
+
+DL1 repository `~/git/particle-sim-dl1` was registered as an Orca project; branch `rewrite/shape-connectivity-v1`.
+DL1 editor terminal `term_5b81b38f-63d3-4399-b792-63b94409b1fd` (Codex GPT-6.1-Sol medium, verified on screen).
+
+| Task | Orca task / dispatch | Result | DL1 commit |
+|---|---|---|---|
+| T8 input contract | task_5218f159683c / ctx_9f154753ccf4 (first start ctx_c2886fb13f99 failed on the folder-trust prompt) | accepted by coordinator | 81d1f57 |
+| T9 training / search / evaluation | task_96c7c691a96f / ctx_83bd2094753f | accepted by coordinator | 7e52d67 |
+| R3 independent review | task_cb97c19d8ead / ctx_6a44fa42e814 | FAIL for 7e52d67: B1 guessed grid default, 9 notes | 63a3636 |
+| R3 fixes | task_718734cd33d1 / ctx_99e886daf49e | accepted by coordinator | dba0fb5 |
+| R3 re-review | task_181f8e12b826 / ctx_4f78a02abb87 | PASS-WITH-NOTES at dba0fb5, 6 notes | b45bd77 |
+| R3 re-review notes | task_7329e9090ca9 / ctx_29195d50fb51 | accepted by coordinator, not re-reviewed | DL1 HEAD |
+
+Gate G5 answered by the user on 2026-10-09: whole-unit resize + pad, shape and connectivity matching first.
+Open for DL1: real grid / minimum line width, CNT / VIA endpoint source format, G6 (closed-network labels and criteria).
+Phase 3 (DL2, T10-T11) is not started: gate G3 (DL2 repository name) and G4 (window sizes) are unanswered.
