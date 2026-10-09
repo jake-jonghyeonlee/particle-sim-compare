@@ -57,6 +57,16 @@ def test_probability_semantics_not_promoted_even_if_values_happen_to_be_binary()
         read_binary(FIXTURE,'mask.png',value_semantics='probability')
 
 
+def test_black_hotspot_png_is_read_as_marked_and_gives_the_hand_calculated_area(tmp_path):
+    # 2x3 image, hotspot drawn black (0) on white (255): 2 black cells.
+    Image.fromarray(np.array([[0,255,255],[255,0,255]],dtype=np.uint8)).save(tmp_path/'black.png')
+    marked=read_binary(tmp_path,'black.png',value_semantics='binary_zero_is_marked')
+    assert marked.tolist()==[[True,False,False],[False,True,False]]
+    assert not marked.flags.writeable
+    # Without the declaration the same file is read the other way round: 4 cells, not 2.
+    assert int(read_binary(tmp_path,'black.png').sum())==4
+
+
 def test_color_and_fractional_png_not_converted(tmp_path):
     Image.fromarray(np.zeros((1,1,3),dtype='uint8')).save(tmp_path/'rgb.png')
     Image.fromarray(np.array([[128]],dtype='uint8')).save(tmp_path/'gray.png')

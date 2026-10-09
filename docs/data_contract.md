@@ -174,3 +174,8 @@ one_unit config는 manifest의 unit_domain frame·unit_width_um/unit_height_um·
 numeric_electrode_map_report_v2의 counts/valid는 compressed NPZ 참조다. 기본 JSON/HTML은 frame·histogram·상태·provenance만 포함하고 셀별 CSV는 없다. --per-cell-text는 최대 4096 cells다. PNG는 순서형 discrete palette와 physical sidecar를 유지한다. default regions는 없고 명시 threshold를 요구한다.
 
 직렬화 출력의 gate는 current_gate_decisions를 하나의 기준으로 사용한다. 원 source manifest의 gate 기록은 loader 내부에 보존하며 현행 적용 결정과 혼합해 출력하지 않는다. is_synthetic은 실제 입력 provenance에서 유도하고 고정 true로 쓰지 않는다. producer_commit의 checkout 부재는 이유를 붙여 null로 기록한다. CLI 오류는 관리 리포트를 제거하고 실패 marker만 남기며 성공은 stale error.json을 지운다.
+
+### 이진 이미지의 극성 (2026-10-09)
+
+asset 참조의 `value_semantics`는 두 값만 허용한다. `binary`는 0이 아닌 값이 표시 영역이고 기본값이다. `binary_zero_is_marked`는 0(검정)이 표시 영역이다. 사용자 자료의 hotspot 이미지는 hotspot이 검정이므로 실제 hotspot asset에는 `binary_zero_is_marked`를 적는다. 극성은 자동으로 판별하지 않는다. 검정 hotspot 파일을 `binary`로 읽으면 여집합 면적이 나오므로 폐쇄망 manifest에서 반드시 지정한다. record 수준의 `value_semantics`는 `binary`만 허용하며 극성은 asset 참조에만 적는다. 값은 정확히 두 수준(0/1 또는 0/255)이어야 하고 threshold는 적용하지 않는다.
+

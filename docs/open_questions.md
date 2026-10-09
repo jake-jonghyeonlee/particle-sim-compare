@@ -34,3 +34,12 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 실제 numeric adapter/migration | pending | G2 원천 형식·귀속 대응 확인 전 legacy export를 자동 변환하지 않음 |
 
 기존 count/glass 설명은 G1의 실제 단위/조사면적 변환 승인이 아니다. legacy 1.2 source-step 결정은 그대로 유지하고 numeric_v2와 충돌하면 명시 migration 확인을 요구한다.
+
+## 2026-10-09 답변 (DL2 저장소·창 크기·hotspot 파일)
+
+| 항목 | 상태 | 내용 | 남은 것 |
+|---|---|---|---|
+| G3 | answered | DL2 저장소 생성 승인. `~/git/particle-sim-dl2`, package `psdl2`, 로컬만 | remote/push는 별도 요청 |
+| G4 | pending (방침 answered) | 창 크기는 실제 실행 전에는 알 수 없음. near/wide um 값은 기본값 없는 필수 설정 | 실제 크기, 비인접 vertical pair의 사이 layer 포함 여부 |
+| hotspot 파일 | 일부 answered | 이진 이미지이고 hotspot이 검정. asset 참조에 `value_semantics: binary_zero_is_marked`를 적어야 함(자동 판별 없음) | 파일 형식(PNG/BMP/TIFF, bit depth), layout 이미지의 극성, 2×2에서 한 unit 값 환산 |
+

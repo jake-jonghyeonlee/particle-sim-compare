@@ -32,9 +32,14 @@ def check_hash(path: Path, expected: str) -> None:
         raise NumericContractError('input_hash_mismatch', path.name)
 
 
+# 'binary': nonzero is the marked region. 'binary_zero_is_marked': the source draws the
+# marked region black (user, 2026-10-09: hotspot images are binary with the hotspot black).
+MASK_SEMANTICS = ('binary', 'binary_zero_is_marked')
+
+
 def read_binary(root: Path, relative_path: str, *, sha256: str | None = None,
                 value_semantics: str = 'binary') -> np.ndarray:
-    if value_semantics != 'binary':
+    if value_semantics not in MASK_SEMANTICS:
         raise NumericContractError('unsupported_mask_semantics', value_semantics)
     path = resolve_path(root, relative_path)
     if sha256 is not None:
@@ -54,4 +59,8 @@ def read_binary(root: Path, relative_path: str, *, sha256: str | None = None,
         if isinstance(exc, NumericContractError):
             raise
         raise NumericContractError('image_read_failed', relative_path) from exc
-    return binary_mask(value)
+    mask = binary_mask(value)
+    if value_semantics == 'binary_zero_is_marked':
+        mask = ~mask
+        mask.setflags(write=False)
+    return mask

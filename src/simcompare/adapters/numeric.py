@@ -81,7 +81,7 @@ def _asset(root, entry, *, synthetic):
                            value_semantics=entry.get('value_semantics', 'binary'))
     if not synthetic:
         raise NumericContractError('inline_real_mask_unsupported')
-    return binary_mask(entry)
+    return binary_mask(entry)  # inline synthetic masks are always nonzero-is-marked
 
 
 def _frames(root, entries, synthetic):
@@ -247,6 +247,7 @@ def _cases(root, manifest, frames, pairs, synthetic):
             if key not in DIAMETERS_UM:
                 raise NumericContractError('unsupported_diameter_grid')
             status = entry['input_status']
+            # Polarity is declared on the asset reference; the record itself stays 'binary'.
             if entry.get('value_semantics', 'binary') != 'binary':
                 raise NumericContractError('unsupported_mask_semantics')
             reasons = tuple(entry.get('reasons', ()))

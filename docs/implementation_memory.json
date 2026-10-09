@@ -485,5 +485,19 @@
       "the two-view variant (normalised whole unit plus original-um crops) is not implemented now; it remains the fallback if absolute width turns out to matter",
       "still open inside G5: the real minimum line width / grid size and the CNT / VIA endpoint metadata format"
     ]
+  },
+  "gate_answers_2026_10_09_dl2_and_hotspot_format": {
+    "authority": "User, 2026-10-09, in the Orca coordinator session.",
+    "answers": {
+      "G3": "Create the DL2 repository (\"dl2 저장소 만들어\"). Path ~/git/particle-sim-dl2, package psdl2, local only; no remote or push was authorised.",
+      "G4": "Window sizes are not known before the user actually runs it (\"창크기는 실시전엔 몰라\"). Near/wide sizes in um stay required configuration with no default; only synthetic example values in tests and example configs. Intermediate-layer inclusion for non-adjacent vertical pairs is still unanswered and stays a versioned, explicit policy field.",
+      "hotspot_file_format": "Hotspot files are binary images and the hotspot is black (\"hotspot파일은 바이너리 이미지야 핫스팟이 black\")."
+    },
+    "consequences": [
+      "numeric reader: asset reference value_semantics 'binary_zero_is_marked' reads zero (black) as the marked region; 'binary' (nonzero is marked) stays the default and the two are never auto-detected",
+      "a real hotspot asset must declare the polarity on its asset reference; reading a black-hotspot file as 'binary' silently gives the complement area, so the closed-network manifest must set it",
+      "still open: container format of the image (PNG / BMP / TIFF, bit depth), whether layout images use the same polarity, and how one unit's value is taken from the 2x2 result",
+      "T10/T11 proceed with parameterised windows; DL2 real crop recipe remains pending until the user fixes the sizes in the closed network"
+    ]
   }
 }
