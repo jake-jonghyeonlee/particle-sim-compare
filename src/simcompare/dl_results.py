@@ -18,7 +18,9 @@ import tempfile
 import shutil
 import uuid
 
-SCORE_TOLERANCE = 1e-9
+# One step of DL2's 6-decimal rounding plus slack: psdl2.search recomputes the query embedding,
+# so a last-bit float32 difference from the indexed one may move the rounded score by 1e-6.
+SCORE_TOLERANCE = 1.5e-6
 
 from .numeric_schema import CaseIdentity, NumericContractError
 
@@ -411,11 +413,17 @@ def main(argv=None):
                             dl2_expected=read(args.dl2_expected) if args.dl2_expected else None, dl2_cohort=args.dl2_cohort,force=args.force,
                             pending_gates=read(args.pending_gates) if args.pending_gates else None)
         else:
-            write(args.out, read_results(args.exchange),force=args.force)
+            try:
+                joined = read_results(args.exchange)
+            except (NumericContractError, OSError, ValueError, TypeError, KeyError):
+                # The exchange itself is unusable: a joined file from an earlier run must not
+                # be mistaken for its result.
+                Path(args.out).unlink(missing_ok=True)
+                raise
+            # A refused overwrite (no --force) leaves the existing file untouched.
+            write(args.out, joined, force=args.force)
         return 0
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
-        if args.command=='read':
-            Path(args.out).unlink(missing_ok=True)
         print(json.dumps({'status':'unavailable','reason':str(exc)}))
         return 2
 

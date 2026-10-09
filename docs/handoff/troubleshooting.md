@@ -23,6 +23,12 @@
 | C `dl_native_file_hash_mismatch`, fingerprint/schema mismatch | 승인 native JSON, checkpoint/config, index와 sidecar를 대조한다. 원본 JSON을 hand edit하거나 hash만 재작성해서 우회하지 않는다. 변경된 승인 run이면 모든 증거와 context를 다시 생성한다. |
 | C `numeric_composite_identity_mismatch`, frame/source/version/binding mismatch | product/design/source/step/exposure/case/frame/version, 원본 origin/pitch/shape/centre와 asset hash를 확인한다. 다른 제품의 같은 case_id 또는 같은 shape를 대신 연결하지 않는다. |
 | C `dl1_product_source_context_required` | DL1 제품 결과에는 case가 없다. 원본과 일치함이 확인된 explicit binding을 사용자가 제공하거나 수치 연결 unavailable을 유지한다. |
+| C `output_exists_use_force` | 출력 파일이 이미 있다. 기존 파일은 지워지지 않는다. 교체하려면 `--force`를 붙이고, 보존하려면 다른 `--out`을 쓴다. |
+| C `dl2_scores_do_not_match_index` | search 결과와 index가 같은 checkpoint·같은 실행 환경에서 나온 것인지 확인한다. index와 search를 같은 기계에서 다시 실행한다. 허용오차는 6자리 반올림 한 단계(1.5e-6)다. |
+| C `dl2_cohort_mismatch`, `explicit_dl2_cohort_file_required` | 검색에 실제로 쓴 cohort 파일을 `--dl2-cohort`로 준다. 다른 cohort 파일로 바꿔 봉인하지 않는다. |
+| C `explicit_value_semantics_required` | 실제 asset 참조에 `value_semantics`를 적는다. hotspot이 검정인 이미지는 `binary_zero_is_marked`다. |
+| `manifest_sha256_mismatch`, `archive directory inventory mismatch` | 전달받은 bundle이 승인된 것과 다르다. bundle 안에서 설치·실행해 생긴 파일(.venv, demo 출력)이 있으면 bundle을 다시 풀고 bundle 밖에서 실행한다. 승인 hash는 실제 전달한 bundle의 값을 쓴다. |
+| `offline output directory must be empty` | 이전 검증 결과를 덮지 않는다. 새 `--out` 디렉터리를 지정한다. |
 | DL1 / DL2 evaluation unavailable, labels missing | G6 label format과 사용자 acceptance target를 결정한 뒤 해당 별도 평가 절차를 실행한다. 빈 인수 record에는 숫자나 성공을 미리 채우지 않는다. |
 
-직전 partial/error output을 complete로 재사용하지 않는다. `dl_results read` 실패 시 joined output을 지우고 numeric report는 별개로 유지한다. `validate_offline.sh`의 validation record는 실행 증거이며 사용자 실제 성능 인수 record와 별도다. `weights=[]`는 공개 ConvNeXt V2를 검증했다는 뜻이 아니다. 가중치 licence와 공급 hash는 사용자 확인 후 별도 승인 패키지에만 넣는다.
+직전 partial/error output을 complete로 재사용하지 않는다. `dl_results read`는 exchange 자체를 읽지 못했을 때(검증 실패) 이전 joined output을 지운다. exchange는 정상인데 `--force` 없이 기존 출력 때문에 거부된 경우에는 기존 파일을 그대로 둔다. numeric report는 별개로 유지한다. `validate_offline.sh`의 validation record는 실행 증거이며 사용자 실제 성능 인수 record와 별도다. `weights=[]`는 공개 ConvNeXt V2를 검증했다는 뜻이 아니다. 가중치 licence와 공급 hash는 사용자 확인 후 별도 승인 패키지에만 넣는다.

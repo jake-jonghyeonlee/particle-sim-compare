@@ -61,4 +61,4 @@ G7a의 failure pieces와 G7b short-only map은 2026-10-08 사용자 결정이 �
 
 기존 scripts/1_install.sh 등 이전 스크립트는 bundle 안에서 실행하지 않는다. .venv/demo_data 생성은 inventory를 바꾸며 uv sync가 network를 사용할 수 있다. validate_offline은 기존 non-empty 출력 디렉터리를 거부하고 각 환경 interpreter 버전을 기록한다. 실행 증거는 배포 설명서가 아닌 별도 review/검증 기록에 둔다.
 
-DL2 score는 승인 index query/candidate embedding의 float64 cosine을 6자리 반올림하여 다시 계산하고 absolute tolerance 1e-9 이내 일치를 요구한다. 이는 supplied index와의 수치 일치를 증명할 뿐, native search에 producer fingerprint가 없어 원래 생성 checkpoint 신원을 암호학적으로 증명하지 못한다. 서로 다른 checkpoint가 동일한 rounded scores를 내면 구별할 수 없다. primary/supplementary는 별도 목록이고 cohort 파일 SHA256, expanded, coverage를 보존한다. seal/context는 --force 없이 기존 output을 교체하지 않으며 실패 시 기존 파일을 지우지 않는다.
+DL2 score는 승인 index query/candidate embedding의 float64 cosine을 6자리 반올림하여 다시 계산하고 absolute tolerance 1.5e-6(반올림 한 단계와 여유) 이내 일치를 요구한다. 이는 supplied index와의 수치 일치를 증명할 뿐, native search에 producer fingerprint가 없어 원래 생성 checkpoint 신원을 암호학적으로 증명하지 못한다. 서로 다른 checkpoint가 동일한 rounded scores를 내면 구별할 수 없다. primary/supplementary는 별도 목록이고 cohort 파일 SHA256, expanded, coverage를 보존한다. seal/context는 --force 없이 기존 output을 교체하지 않으며 실패 시 기존 파일을 지우지 않는다.

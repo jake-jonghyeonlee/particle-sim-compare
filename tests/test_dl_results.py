@@ -212,6 +212,16 @@ def test_failed_creation_preserves_preexisting_output_and_assets(command,tmp_pat
         assert not (tmp_path/'numeric_map').exists()
 
 
+def test_read_refusal_without_force_keeps_the_existing_output(tmp_path):
+    out=tmp_path/'joined.json';out.write_text('preserve exactly')
+    r=subprocess.run([sys.executable,'-m','simcompare.dl_results','read',str(FIXTURE/'exchange.json'),'--out',str(out)],capture_output=True,text=True)
+    assert r.returncode==2 and 'output_exists_use_force' in r.stdout
+    assert out.read_text()=='preserve exactly'
+    # With --force the same valid exchange replaces it.
+    r=subprocess.run([sys.executable,'-m','simcompare.dl_results','read',str(FIXTURE/'exchange.json'),'--out',str(out),'--force'],capture_output=True,text=True)
+    assert r.returncode==0 and out.read_text()!='preserve exactly'
+
+
 def test_unknown_map_diameter_is_explicit_unavailable(tmp_path):
     from simcompare.dl_results import create_context
     root=copied(tmp_path);roi=read(root/'review_rois.json')
