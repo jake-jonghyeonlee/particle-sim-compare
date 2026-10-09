@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "simcompare_handoff_v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id_versions", "python_version", "weights", "pending_gates", "repositories", "metadata_files"],
+  "properties": {
+    "schema_version": {"const": "simcompare_handoff_v1"},
+    "python_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "id_versions": {"const": {"numeric": "numeric_v2", "roi": "review_roi_v1", "exchange": "dl_file_exchange_v1", "dl1": "dl1_shape_v1_draft", "dl2": "original_roi_bundle_v1"}},
+    "weights": {"type": "array", "maxItems": 0},
+    "pending_gates": {"type": "array", "minItems": 7, "maxItems": 7, "uniqueItems": true, "items": {"type": "string"}},
+    "metadata_files": {"$ref": "#/$defs/files"},
+    "repositories": {
+      "type": "object", "additionalProperties": false,
+      "required": ["particle-sim-compare", "particle-sim-dl1", "particle-sim-dl2"],
+      "properties": {
+        "particle-sim-compare": {"$ref": "#/$defs/repo"},
+        "particle-sim-dl1": {"$ref": "#/$defs/repo"},
+        "particle-sim-dl2": {"$ref": "#/$defs/repo"}
+      }
+    }
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "files": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/sha"}},
+    "repo": {
+      "type": "object", "additionalProperties": false,
+      "required": ["commit", "dirty", "dependency_lock", "files", "required_python"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "dirty": {"type": "boolean"},
+        "required_python": {"type": "string", "minLength": 1},
+        "files": {"$ref": "#/$defs/files"},
+        "dependency_lock": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "sha256", "kind"],
+          "properties": {"path": {"enum": ["uv.lock", "requirements.lock"]}, "kind": {"enum": ["uv.lock", "requirements.lock"]}, "sha256": {"$ref": "#/$defs/sha"}}
+        }
+      }
+    }
+  }
+}

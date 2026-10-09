@@ -1,0 +1,3 @@
+pair_id,electrode_a_id,electrode_b_id,class,pair_table_version
+AB,A,B,line,fixture_pairs_v1
+AC,A,C,line,fixture_pairs_v1

@@ -1,0 +1,57 @@
+{
+  "schema_version": "psdl2_run_v1",
+  "model": {
+    "roles": [
+      "gate",
+      "data"
+    ],
+    "layers": [
+      "M2"
+    ],
+    "width": 4,
+    "feature_dim": 8,
+    "projection_dim": 4
+  },
+  "views": {
+    "crop": {
+      "near_size_xy_um": [
+        3,
+        3
+      ],
+      "wide_size_xy_um": [
+        4,
+        4
+      ],
+      "intermediate_layer_policy": "preserve_exported_layers_v1"
+    },
+    "near_pitch_um": 0.5,
+    "wide_pitch_um": 0.5,
+    "near_resampling_mode": "nearest",
+    "wide_resampling_mode": "nearest",
+    "jitter_xy_um": [
+      0.3,
+      0.3
+    ],
+    "core_size_xy_um": [
+      2,
+      2
+    ],
+    "topology_policy": "common_core_connectivity_v3",
+    "connection_semantics": "global_contact_proxy_unverified",
+    "comparison_basis": "between_views_only",
+    "max_pair_attempts": 3
+  },
+  "loss": {
+    "alignment_weight": 1,
+    "variance_weight": 1,
+    "covariance_weight": 1,
+    "variance_floor": 2,
+    "variance_epsilon": 0.25,
+    "supervised_weight": 1,
+    "supervised_temperature": 1
+  },
+  "epochs": 1,
+  "batch_size": 2,
+  "learning_rate": 0.001,
+  "seed": 7
+}

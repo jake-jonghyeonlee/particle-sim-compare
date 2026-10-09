@@ -1,0 +1,41 @@
+{
+  "schema_version": "dl_file_exchange_v1",
+  "numeric_context": {
+    "path": "numeric_context.json",
+    "sha256": "3b0486cace1b09c3ce004bd9417971fa8d105115a0ca9baba3e65748ec972159"
+  },
+  "dl1": {
+    "result": {
+      "path": "dl1_search.json",
+      "sha256": "4911ba38ee76f19110a016ed28d8ffee165b1dcf4842d12f672adb3f5f2ca72f"
+    },
+    "config_fingerprint": "e72565ef26e1581cd905881d2a7f52f9d741be0cd035c7d72847c10ea86e84d3",
+    "bindings": {
+      "path": "dl1_bindings.json",
+      "sha256": "e632e6889d5f75055084daaa2d456b25c3c83e2c5571813c87013a97bb7fb637"
+    },
+    "native_profile": "dl1_search_7f9d659"
+  },
+  "dl2": {
+    "result": {
+      "path": "dl2_search.json",
+      "sha256": "6c583b236baee33d572a50f0c46afdb2ea7022f1bba171dac1ac26d202c73d01"
+    },
+    "index": {
+      "path": "dl2_index.json",
+      "sha256": "99e30ef71366bc223e6abf61d42c58915906b69359c4f397d9766feb3adc85c6"
+    },
+    "expected": {
+      "schema_version": "psdl2_index_v2",
+      "checkpoint_fingerprint": "720225f00794e93a3ea5ccb02b155a9cf721a5d4174c43baa10dc9eb204dfc7a",
+      "view_fingerprint": "4441aadc17011724e9a520dc7bdf16c820ade85ddd67dd0b05dcb9b5870f8724"
+    },
+    "native_profile": "dl2_search_e46a44e"
+  },
+  "pending_gates": [
+    "G1",
+    "G2",
+    "G4"
+  ],
+  "interpretation": "similarity_only_never_numeric_risk"
+}

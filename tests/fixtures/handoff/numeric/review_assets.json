@@ -1,0 +1,258 @@
+{
+  "schema_version": "review_assets_v1",
+  "source_manifest_hash": "a198e42cb06de5017d59084b6ca47eade9d0cbdb53ab7ed35711a0323647d11a",
+  "cases": [
+    {
+      "identity": {
+        "product_id": "PRODUCT",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "A",
+        "frame_id": "FRAME",
+        "source_contract_version": "synthetic_v2"
+      },
+      "endpoints": [
+        {
+          "electrode_id": "A",
+          "role": "gate",
+          "actual_layer": "M2"
+        },
+        {
+          "electrode_id": "B",
+          "role": "data",
+          "actual_layer": "M2"
+        }
+      ],
+      "failure_type": "lateral_short",
+      "source_version": "fixture_original_v1",
+      "frame": {
+        "frame_id": "FRAME",
+        "length_unit": "um",
+        "pixel_pitch_um": 0.5,
+        "origin_xy_um": [
+          100,
+          200
+        ],
+        "shape_yx": [
+          8,
+          10
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_a.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "observed": true,
+              "value_semantics": "binary"
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_b.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "observed": true,
+              "value_semantics": "binary"
+            }
+          }
+        ],
+        "cnt": {
+          "path": "assets/cnt.npy",
+          "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+          "observed": true,
+          "value_semantics": "binary"
+        },
+        "valid": {
+          "path": "assets/valid.npy",
+          "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+          "observed": true,
+          "value_semantics": "binary"
+        },
+        "via": []
+      }
+    },
+    {
+      "identity": {
+        "product_id": "PRODUCT",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "B",
+        "frame_id": "FRAME",
+        "source_contract_version": "synthetic_v2"
+      },
+      "endpoints": [
+        {
+          "electrode_id": "A",
+          "role": "gate",
+          "actual_layer": "M2"
+        },
+        {
+          "electrode_id": "C",
+          "role": "data",
+          "actual_layer": "M2"
+        }
+      ],
+      "failure_type": "lateral_short",
+      "source_version": "fixture_original_v1",
+      "frame": {
+        "frame_id": "FRAME",
+        "length_unit": "um",
+        "pixel_pitch_um": 0.5,
+        "origin_xy_um": [
+          100,
+          200
+        ],
+        "shape_yx": [
+          8,
+          10
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_a.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "observed": true,
+              "value_semantics": "binary"
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "C",
+              "role": "data",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_c.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "observed": true,
+              "value_semantics": "binary"
+            }
+          }
+        ],
+        "cnt": {
+          "path": "assets/cnt.npy",
+          "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+          "observed": true,
+          "value_semantics": "binary"
+        },
+        "valid": {
+          "path": "assets/valid.npy",
+          "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+          "observed": true,
+          "value_semantics": "binary"
+        },
+        "via": []
+      }
+    },
+    {
+      "identity": {
+        "product_id": "OTHER",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "A",
+        "frame_id": "FRAME",
+        "source_contract_version": "synthetic_v2"
+      },
+      "endpoints": [
+        {
+          "electrode_id": "A",
+          "role": "gate",
+          "actual_layer": "M2"
+        },
+        {
+          "electrode_id": "B",
+          "role": "data",
+          "actual_layer": "M2"
+        }
+      ],
+      "failure_type": "lateral_short",
+      "source_version": "fixture_original_v1",
+      "frame": {
+        "frame_id": "FRAME",
+        "length_unit": "um",
+        "pixel_pitch_um": 0.5,
+        "origin_xy_um": [
+          100,
+          200
+        ],
+        "shape_yx": [
+          8,
+          10
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_a.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "observed": true,
+              "value_semantics": "binary"
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_b.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "observed": true,
+              "value_semantics": "binary"
+            }
+          }
+        ],
+        "cnt": {
+          "path": "assets/cnt.npy",
+          "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+          "observed": true,
+          "value_semantics": "binary"
+        },
+        "valid": {
+          "path": "assets/valid.npy",
+          "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+          "observed": true,
+          "value_semantics": "binary"
+        },
+        "via": []
+      }
+    }
+  ]
+}

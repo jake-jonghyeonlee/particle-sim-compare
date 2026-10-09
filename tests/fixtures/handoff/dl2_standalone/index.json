@@ -1,0 +1,1847 @@
+{
+  "schema_version": "psdl2_index_v2",
+  "checkpoint_fingerprint": "47f6dccf63bf647ea6dc8e9fc719cc48b912ddb11a3d496a74c371cb37cb51d6",
+  "view_fingerprint": "4441aadc17011724e9a520dc7bdf16c820ade85ddd67dd0b05dcb9b5870f8724",
+  "topology_policy": "common_core_connectivity_v3",
+  "connection_semantics": "global_contact_proxy_unverified",
+  "comparison_basis": "between_views_only",
+  "records": [
+    {
+      "roi_id": "roi_0_0",
+      "product_id": "SYNTHETIC_0",
+      "source_identity": {
+        "product_id": "SYNTHETIC_0",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "SYNTHETIC_CASE",
+        "frame_id": "frame_roi_0_0",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "frame_roi_0_0",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          8
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "SYNTHETIC_CASE",
+      "center_xy_um": [
+        102,
+        202
+      ],
+      "source_version": "synthetic_e2e_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "0000000000000000000000000000000000000000",
+        "source_manifest_hash": "ace4e0acef226f99d8146732af94ef5f77d605f6afb2233a8b1af6be5297f6ba",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M1"
+            },
+            "asset": {
+              "path": "assets/roi_0_0_0.npy",
+              "sha256": "328d7050c6d107d86884e53f5580b6e1a928cd95e81a7da108d7e6d65f9d1051",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M3"
+            },
+            "asset": {
+              "path": "assets/roi_0_0_1.npy",
+              "sha256": "70fbfb60ec753478ae9ddb9902272177efd8a8e6d3c140ef22c296ec07daf1f8",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/roi_0_0_3.npy",
+          "sha256": "97b3ed0e16d2d808a5c7c7e59789e0aaed8705de5f312c044f0fdad9ecd8dc89",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/roi_0_0_2.npy",
+          "sha256": "aaf7196c50d80c6a5c65f39a62f161d779c8579b334cb87f433317dd9b445b45",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "vertical_short",
+        "analysis_layer": "M3",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            200.5,
+            103.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.0,
+            200.0,
+            104.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                100,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "embedding": [
+        0.5700857043266296,
+        0.38666871190071106,
+        0.3021666705608368,
+        0.39355340600013733,
+        0.48007532954216003,
+        -0.179534912109375,
+        0.07362721860408783,
+        0.10571007430553436
+      ]
+    },
+    {
+      "roi_id": "roi_0_1",
+      "product_id": "SYNTHETIC_0",
+      "source_identity": {
+        "product_id": "SYNTHETIC_0",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "SYNTHETIC_CASE",
+        "frame_id": "frame_roi_0_1",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "frame_roi_0_1",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          8
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "SYNTHETIC_CASE",
+      "center_xy_um": [
+        102,
+        202
+      ],
+      "source_version": "synthetic_e2e_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "0000000000000000000000000000000000000000",
+        "source_manifest_hash": "ace4e0acef226f99d8146732af94ef5f77d605f6afb2233a8b1af6be5297f6ba",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M1"
+            },
+            "asset": {
+              "path": "assets/roi_0_1_0.npy",
+              "sha256": "d6eed9e607586a52af22904756c218ec404e99497c9d0f9a8fdf4a483f884b3e",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M3"
+            },
+            "asset": {
+              "path": "assets/roi_0_1_1.npy",
+              "sha256": "ff181e508bdc555887362b274756ea8c255b48adef8c8e30ca9cd950336d28ea",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/roi_0_1_3.npy",
+          "sha256": "97b3ed0e16d2d808a5c7c7e59789e0aaed8705de5f312c044f0fdad9ecd8dc89",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/roi_0_1_2.npy",
+          "sha256": "4e38b64ce88530bc6acb4e6f8d8fd9eb7fdfd6ee37ffb44122c616aa1ca6fe72",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "vertical_short",
+        "analysis_layer": "M3",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            200.5,
+            103.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.0,
+            200.0,
+            104.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                100,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "embedding": [
+        0.5699959397315979,
+        0.386382520198822,
+        0.30327117443084717,
+        0.3913465440273285,
+        0.4810449481010437,
+        -0.1791372448205948,
+        0.07537224143743515,
+        0.1072956919670105
+      ]
+    },
+    {
+      "roi_id": "roi_1_0",
+      "product_id": "SYNTHETIC_1",
+      "source_identity": {
+        "product_id": "SYNTHETIC_1",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "SYNTHETIC_CASE",
+        "frame_id": "frame_roi_1_0",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "frame_roi_1_0",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          8
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "SYNTHETIC_CASE",
+      "center_xy_um": [
+        102,
+        202
+      ],
+      "source_version": "synthetic_e2e_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "0000000000000000000000000000000000000000",
+        "source_manifest_hash": "ace4e0acef226f99d8146732af94ef5f77d605f6afb2233a8b1af6be5297f6ba",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M1"
+            },
+            "asset": {
+              "path": "assets/roi_1_0_0.npy",
+              "sha256": "328d7050c6d107d86884e53f5580b6e1a928cd95e81a7da108d7e6d65f9d1051",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M3"
+            },
+            "asset": {
+              "path": "assets/roi_1_0_1.npy",
+              "sha256": "70fbfb60ec753478ae9ddb9902272177efd8a8e6d3c140ef22c296ec07daf1f8",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/roi_1_0_3.npy",
+          "sha256": "97b3ed0e16d2d808a5c7c7e59789e0aaed8705de5f312c044f0fdad9ecd8dc89",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/roi_1_0_2.npy",
+          "sha256": "aaf7196c50d80c6a5c65f39a62f161d779c8579b334cb87f433317dd9b445b45",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "vertical_short",
+        "analysis_layer": "M3",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            200.5,
+            103.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.0,
+            200.0,
+            104.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                100,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "embedding": [
+        0.5700857043266296,
+        0.38666871190071106,
+        0.3021666705608368,
+        0.39355340600013733,
+        0.48007532954216003,
+        -0.179534912109375,
+        0.07362721860408783,
+        0.10571007430553436
+      ]
+    },
+    {
+      "roi_id": "roi_1_1",
+      "product_id": "SYNTHETIC_1",
+      "source_identity": {
+        "product_id": "SYNTHETIC_1",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "SYNTHETIC_CASE",
+        "frame_id": "frame_roi_1_1",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "frame_roi_1_1",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          8
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "SYNTHETIC_CASE",
+      "center_xy_um": [
+        102,
+        202
+      ],
+      "source_version": "synthetic_e2e_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "0000000000000000000000000000000000000000",
+        "source_manifest_hash": "ace4e0acef226f99d8146732af94ef5f77d605f6afb2233a8b1af6be5297f6ba",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M1"
+            },
+            "asset": {
+              "path": "assets/roi_1_1_0.npy",
+              "sha256": "d6eed9e607586a52af22904756c218ec404e99497c9d0f9a8fdf4a483f884b3e",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M3"
+            },
+            "asset": {
+              "path": "assets/roi_1_1_1.npy",
+              "sha256": "ff181e508bdc555887362b274756ea8c255b48adef8c8e30ca9cd950336d28ea",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/roi_1_1_3.npy",
+          "sha256": "97b3ed0e16d2d808a5c7c7e59789e0aaed8705de5f312c044f0fdad9ecd8dc89",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/roi_1_1_2.npy",
+          "sha256": "4e38b64ce88530bc6acb4e6f8d8fd9eb7fdfd6ee37ffb44122c616aa1ca6fe72",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "vertical_short",
+        "analysis_layer": "M3",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            200.5,
+            103.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.0,
+            200.0,
+            104.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                100,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "embedding": [
+        0.5699959397315979,
+        0.386382520198822,
+        0.30327117443084717,
+        0.3913465440273285,
+        0.4810449481010437,
+        -0.1791372448205948,
+        0.07537224143743515,
+        0.1072956919670105
+      ]
+    },
+    {
+      "roi_id": "roi_2_0",
+      "product_id": "SYNTHETIC_2",
+      "source_identity": {
+        "product_id": "SYNTHETIC_2",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "SYNTHETIC_CASE",
+        "frame_id": "frame_roi_2_0",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "frame_roi_2_0",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          8
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "SYNTHETIC_CASE",
+      "center_xy_um": [
+        102,
+        202
+      ],
+      "source_version": "synthetic_e2e_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "0000000000000000000000000000000000000000",
+        "source_manifest_hash": "ace4e0acef226f99d8146732af94ef5f77d605f6afb2233a8b1af6be5297f6ba",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M1"
+            },
+            "asset": {
+              "path": "assets/roi_2_0_0.npy",
+              "sha256": "328d7050c6d107d86884e53f5580b6e1a928cd95e81a7da108d7e6d65f9d1051",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M3"
+            },
+            "asset": {
+              "path": "assets/roi_2_0_1.npy",
+              "sha256": "70fbfb60ec753478ae9ddb9902272177efd8a8e6d3c140ef22c296ec07daf1f8",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/roi_2_0_3.npy",
+          "sha256": "97b3ed0e16d2d808a5c7c7e59789e0aaed8705de5f312c044f0fdad9ecd8dc89",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/roi_2_0_2.npy",
+          "sha256": "aaf7196c50d80c6a5c65f39a62f161d779c8579b334cb87f433317dd9b445b45",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "vertical_short",
+        "analysis_layer": "M3",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            200.5,
+            103.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.0,
+            200.0,
+            104.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                100,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "embedding": [
+        0.5700857043266296,
+        0.38666871190071106,
+        0.3021666705608368,
+        0.39355340600013733,
+        0.48007532954216003,
+        -0.179534912109375,
+        0.07362721860408783,
+        0.10571007430553436
+      ]
+    },
+    {
+      "roi_id": "roi_2_1",
+      "product_id": "SYNTHETIC_2",
+      "source_identity": {
+        "product_id": "SYNTHETIC_2",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "SYNTHETIC_CASE",
+        "frame_id": "frame_roi_2_1",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "frame_roi_2_1",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          8
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "SYNTHETIC_CASE",
+      "center_xy_um": [
+        102,
+        202
+      ],
+      "source_version": "synthetic_e2e_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "0000000000000000000000000000000000000000",
+        "source_manifest_hash": "ace4e0acef226f99d8146732af94ef5f77d605f6afb2233a8b1af6be5297f6ba",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M1"
+            },
+            "asset": {
+              "path": "assets/roi_2_1_0.npy",
+              "sha256": "d6eed9e607586a52af22904756c218ec404e99497c9d0f9a8fdf4a483f884b3e",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M3"
+            },
+            "asset": {
+              "path": "assets/roi_2_1_1.npy",
+              "sha256": "ff181e508bdc555887362b274756ea8c255b48adef8c8e30ca9cd950336d28ea",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/roi_2_1_3.npy",
+          "sha256": "97b3ed0e16d2d808a5c7c7e59789e0aaed8705de5f312c044f0fdad9ecd8dc89",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/roi_2_1_2.npy",
+          "sha256": "4e38b64ce88530bc6acb4e6f8d8fd9eb7fdfd6ee37ffb44122c616aa1ca6fe72",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "vertical_short",
+        "analysis_layer": "M3",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M1"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M3"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            200.5,
+            103.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102,
+            202
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.0,
+            200.0,
+            104.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                100,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "embedding": [
+        0.5699959397315979,
+        0.386382520198822,
+        0.30327117443084717,
+        0.3913465440273285,
+        0.4810449481010437,
+        -0.1791372448205948,
+        0.07537224143743515,
+        0.1072956919670105
+      ]
+    }
+  ],
+  "rejected": []
+}

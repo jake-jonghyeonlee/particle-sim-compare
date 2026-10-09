@@ -1,0 +1,12 @@
+{
+  "environment": null,
+  "input_facts": null,
+  "commands": [],
+  "output_hashes": [],
+  "labels": null,
+  "acceptance_targets": null,
+  "measurements": [],
+  "pending_decisions": [],
+  "decision": null,
+  "notes": null
+}

@@ -1,0 +1,214 @@
+{
+  "grid": 32,
+  "grid_selection": {
+    "selected_grid": 32,
+    "manifest_candidate_grids": [],
+    "source": "checkpoint",
+    "override": false,
+    "override_requested": false
+  },
+  "grid_gate": {
+    "policy": "strict_default",
+    "bypass_requested": false,
+    "products": [
+      {
+        "product_id": "SYNTHETIC_QUERY",
+        "grid": 32,
+        "source_shape_yx": [
+          32,
+          32
+        ],
+        "scale": 1.0,
+        "policy": "whole_unit_isotropic_area_pad_candidate",
+        "approval": {
+          "input_method": "user_approved_2026_10_09",
+          "real_grid_linewidth": "pending",
+          "endpoint_source_format": "pending",
+          "G6": "pending"
+        },
+        "connectivity_status": "unavailable",
+        "connectivity_preserving": false,
+        "status": "candidate_only",
+        "reasons": [],
+        "elements": [
+          {
+            "id": "gate@layer1",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 128,
+            "target_active_pixels": 128,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "data@layer2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 128,
+            "target_active_pixels": 128,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "pixel@layer2",
+            "observation": "observed",
+            "axis_run_px": 10,
+            "estimated_run_at_grid_px": 10.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 100,
+            "target_active_pixels": 100,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "global_CNT",
+            "observation": "observed",
+            "axis_run_px": 2,
+            "estimated_run_at_grid_px": 2.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 4,
+            "target_active_pixels": 4,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          }
+        ],
+        "gate_status": "passed"
+      },
+      {
+        "product_id": "SYNTHETIC_CANDIDATE",
+        "grid": 32,
+        "source_shape_yx": [
+          32,
+          32
+        ],
+        "scale": 1.0,
+        "policy": "whole_unit_isotropic_area_pad_candidate",
+        "approval": {
+          "input_method": "user_approved_2026_10_09",
+          "real_grid_linewidth": "pending",
+          "endpoint_source_format": "pending",
+          "G6": "pending"
+        },
+        "connectivity_status": "unavailable",
+        "connectivity_preserving": false,
+        "status": "candidate_only",
+        "reasons": [],
+        "elements": [
+          {
+            "id": "gate@layer1",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 128,
+            "target_active_pixels": 128,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "data@layer2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 128,
+            "target_active_pixels": 128,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "pixel@layer2",
+            "observation": "observed",
+            "axis_run_px": 10,
+            "estimated_run_at_grid_px": 10.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 100,
+            "target_active_pixels": 100,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "global_CNT",
+            "observation": "observed",
+            "axis_run_px": 2,
+            "estimated_run_at_grid_px": 2.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 4,
+            "target_active_pixels": 4,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          }
+        ],
+        "gate_status": "passed"
+      }
+    ]
+  },
+  "inference_policy": "one_forward_per_product_cached_within_evaluation; batch_size_is_chunk_bound",
+  "query_id": "SYNTHETIC_QUERY",
+  "approval": {
+    "input_method": "user_approved_2026_10_09",
+    "real_grid_linewidth": "pending",
+    "endpoint_source_format": "pending",
+    "G6": "pending"
+  },
+  "status": "available",
+  "reason": null,
+  "rankings": [
+    {
+      "product_id": "SYNTHETIC_CANDIDATE",
+      "score": 1.0,
+      "connectivity_status": "unavailable",
+      "input_identity": "e3cfb16c13270ce3d5b8ca7a3825b3745668054138dff71fb9abb5ac75393e67"
+    }
+  ],
+  "excluded": [],
+  "candidate_count": 1,
+  "eligible_count": 1,
+  "score_policy": "canonical_single_product_float64_cosine_round6_then_id",
+  "fingerprint": "c9832c5c02f15be183012982512163973db44f0d29c7181e7a8cd2dbc6551d87",
+  "query_connectivity": "unavailable"
+}

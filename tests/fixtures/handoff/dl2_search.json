@@ -1,0 +1,1218 @@
+{
+  "query": {
+    "roi_id": "roi_618251b89d56435529c1eee270321b53260ed4e455bd77cbd68ae674ca497abf",
+    "product_id": "PRODUCT",
+    "source_identity": {
+      "product_id": "PRODUCT",
+      "design_version": "DESIGN",
+      "source_id": "SOURCE",
+      "process_step_id": "STEP",
+      "exposure_id": "EXPOSURE",
+      "case_id": "A",
+      "frame_id": "FRAME",
+      "source_contract_version": "synthetic_v2"
+    },
+    "frame": {
+      "frame_id": "FRAME",
+      "length_unit": "um",
+      "origin_xy_um": [
+        100.0,
+        200.0
+      ],
+      "pixel_pitch_um": 0.5,
+      "shape_yx": [
+        8,
+        10
+      ],
+      "axis_order": "yx",
+      "origin_convention": "top_left_cell_edge"
+    },
+    "case_id": "A",
+    "center_xy_um": [
+      103.0,
+      202.0
+    ],
+    "source_version": "fixture_original_v1",
+    "source_versions": {
+      "schema_version": "review_roi_v1",
+      "producer_commit": "f9d7a31d85eadc14d4b8467f452e3610ea6378cb",
+      "source_manifest_hash": "a198e42cb06de5017d59084b6ca47eade9d0cbdb53ab7ed35711a0323647d11a",
+      "unversioned_producer_accepted": false,
+      "producer_commit_reason": null
+    },
+    "source_assets": {
+      "layouts": [
+        {
+          "endpoint": {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          "asset": {
+            "path": "assets/layout_a.npy",
+            "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+            "value_semantics": "binary",
+            "observed": true
+          }
+        },
+        {
+          "endpoint": {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M2"
+          },
+          "asset": {
+            "path": "assets/layout_b.npy",
+            "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+            "value_semantics": "binary",
+            "observed": true
+          }
+        }
+      ],
+      "valid": {
+        "path": "assets/valid.npy",
+        "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+        "value_semantics": "binary",
+        "observed": true
+      },
+      "cnt": {
+        "path": "assets/cnt.npy",
+        "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+        "value_semantics": "binary",
+        "observed": true
+      },
+      "via": []
+    },
+    "case_signature": {
+      "failure_type": "lateral_short",
+      "analysis_layer": "M2",
+      "endpoints": [
+        {
+          "electrode_id": "A",
+          "role": "gate",
+          "actual_layer": "M2"
+        },
+        {
+          "electrode_id": "B",
+          "role": "data",
+          "actual_layer": "M2"
+        }
+      ],
+      "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+      "cnt_binding": [
+        {
+          "electrode_id": "A",
+          "role": "gate",
+          "actual_layer": "M2"
+        },
+        {
+          "electrode_id": "B",
+          "role": "data",
+          "actual_layer": "M2"
+        }
+      ],
+      "via_count": 0
+    },
+    "topology_policy": "common_core_connectivity_v3",
+    "connection_semantics": "global_contact_proxy_unverified",
+    "comparison_basis": "between_views_only",
+    "valid_coverage": {
+      "near": {
+        "valid_cells": 36,
+        "total_cells": 36,
+        "valid_fraction": 1.0,
+        "outside_frame_cells": 0,
+        "observed_invalid_cells": 0
+      },
+      "wide": {
+        "valid_cells": 64,
+        "total_cells": 64,
+        "valid_fraction": 1.0,
+        "outside_frame_cells": 0,
+        "observed_invalid_cells": 0
+      }
+    },
+    "crop_geometry": {
+      "near": {
+        "center_xy_um": [
+          103.0,
+          202.0
+        ],
+        "size_xy_um": [
+          3.0,
+          3.0
+        ],
+        "bbox_xyxy_um": [
+          101.5,
+          200.5,
+          104.5,
+          203.5
+        ],
+        "shape_yx": [
+          6,
+          6
+        ],
+        "output_pitch_um": 0.5,
+        "source_pitch_um": 0.5,
+        "native_size_xy_px": [
+          6.0,
+          6.0
+        ],
+        "transform_version": "physical_cell_centres_nearest_exact_v2",
+        "boundary_tie_rule": "higher_source_index_half_open",
+        "source_indices_xy": [
+          [
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        ],
+        "transform": {
+          "origin_xy_um": [
+            101.5,
+            200.5
+          ],
+          "origin_xy_um_rational": [
+            [
+              203,
+              2
+            ],
+            [
+              401,
+              2
+            ]
+          ],
+          "pixel_pitch_um": 0.5,
+          "axis_order": "yx",
+          "origin_convention": "top_left_cell_edge",
+          "source_origin_xy_um": [
+            100.0,
+            200.0
+          ]
+        },
+        "resampled": false,
+        "valid_coverage": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "quantitative_CA_permitted": false
+      },
+      "wide": {
+        "center_xy_um": [
+          103.0,
+          202.0
+        ],
+        "size_xy_um": [
+          4.0,
+          4.0
+        ],
+        "bbox_xyxy_um": [
+          101.0,
+          200.0,
+          105.0,
+          204.0
+        ],
+        "shape_yx": [
+          8,
+          8
+        ],
+        "output_pitch_um": 0.5,
+        "source_pitch_um": 0.5,
+        "native_size_xy_px": [
+          8.0,
+          8.0
+        ],
+        "transform_version": "physical_cell_centres_nearest_exact_v2",
+        "boundary_tie_rule": "higher_source_index_half_open",
+        "source_indices_xy": [
+          [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        ],
+        "transform": {
+          "origin_xy_um": [
+            101.0,
+            200.0
+          ],
+          "origin_xy_um_rational": [
+            [
+              101,
+              1
+            ],
+            [
+              200,
+              1
+            ]
+          ],
+          "pixel_pitch_um": 0.5,
+          "axis_order": "yx",
+          "origin_convention": "top_left_cell_edge",
+          "source_origin_xy_um": [
+            100.0,
+            200.0
+          ]
+        },
+        "resampled": false,
+        "valid_coverage": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "quantitative_CA_permitted": false
+      }
+    }
+  },
+  "status": "available",
+  "no_match_reasons": [],
+  "primary": [
+    {
+      "roi_id": "roi_cf88122b2808dbabeb9a7015e372494f698f47437989ae6c2af0390a6a8fde18",
+      "product_id": "PRODUCT",
+      "source_identity": {
+        "product_id": "PRODUCT",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "B",
+        "frame_id": "FRAME",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "FRAME",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          10
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "B",
+      "center_xy_um": [
+        103.0,
+        202.0
+      ],
+      "source_version": "fixture_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "f9d7a31d85eadc14d4b8467f452e3610ea6378cb",
+        "source_manifest_hash": "a198e42cb06de5017d59084b6ca47eade9d0cbdb53ab7ed35711a0323647d11a",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_a.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "C",
+              "role": "data",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_c.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/valid.npy",
+          "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/cnt.npy",
+          "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "lateral_short",
+        "analysis_layer": "M2",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          {
+            "electrode_id": "C",
+            "role": "data",
+            "actual_layer": "M2"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          {
+            "electrode_id": "C",
+            "role": "data",
+            "actual_layer": "M2"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 64,
+          "total_cells": 64,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            103.0,
+            202.0
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            101.5,
+            200.5,
+            104.5,
+            203.5
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              101.5,
+              200.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                203,
+                2
+              ],
+              [
+                401,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            103.0,
+            202.0
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            101.0,
+            200.0,
+            105.0,
+            204.0
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              101.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                101,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 64,
+            "total_cells": 64,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "score": 1.0,
+      "search_scope": "primary",
+      "same_physical_case": false
+    },
+    {
+      "roi_id": "roi_8392d9e645a0c8a66621a7e35078f5cb51eca56399e98aad2cdbc911eeeb4e8d",
+      "product_id": "PRODUCT",
+      "source_identity": {
+        "product_id": "PRODUCT",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "A",
+        "frame_id": "FRAME",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "FRAME",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          10
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "A",
+      "center_xy_um": [
+        102.5,
+        201.5
+      ],
+      "source_version": "fixture_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "f9d7a31d85eadc14d4b8467f452e3610ea6378cb",
+        "source_manifest_hash": "a198e42cb06de5017d59084b6ca47eade9d0cbdb53ab7ed35711a0323647d11a",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_a.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_b.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/valid.npy",
+          "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/cnt.npy",
+          "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "lateral_short",
+        "analysis_layer": "M2",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M2"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M2"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 56,
+          "total_cells": 64,
+          "valid_fraction": 0.875,
+          "outside_frame_cells": 8,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102.5,
+            201.5
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            101.0,
+            200.0,
+            104.0,
+            203.0
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              101.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                101,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102.5,
+            201.5
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            199.5,
+            104.5,
+            203.5
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            [
+              -1,
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              199.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                399,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 56,
+            "total_cells": 64,
+            "valid_fraction": 0.875,
+            "outside_frame_cells": 8,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "score": 0.999952,
+      "search_scope": "primary",
+      "same_physical_case": false
+    }
+  ],
+  "supplementary": [
+    {
+      "roi_id": "roi_5c44650574f75d31376180e1c5d47fb47b137e122feef7b26748c6c5f2783cdd",
+      "product_id": "OTHER",
+      "source_identity": {
+        "product_id": "OTHER",
+        "design_version": "DESIGN",
+        "source_id": "SOURCE",
+        "process_step_id": "STEP",
+        "exposure_id": "EXPOSURE",
+        "case_id": "A",
+        "frame_id": "FRAME",
+        "source_contract_version": "synthetic_v2"
+      },
+      "frame": {
+        "frame_id": "FRAME",
+        "length_unit": "um",
+        "origin_xy_um": [
+          100.0,
+          200.0
+        ],
+        "pixel_pitch_um": 0.5,
+        "shape_yx": [
+          8,
+          10
+        ],
+        "axis_order": "yx",
+        "origin_convention": "top_left_cell_edge"
+      },
+      "case_id": "A",
+      "center_xy_um": [
+        102.5,
+        201.5
+      ],
+      "source_version": "fixture_original_v1",
+      "source_versions": {
+        "schema_version": "review_roi_v1",
+        "producer_commit": "f9d7a31d85eadc14d4b8467f452e3610ea6378cb",
+        "source_manifest_hash": "a198e42cb06de5017d59084b6ca47eade9d0cbdb53ab7ed35711a0323647d11a",
+        "unversioned_producer_accepted": false,
+        "producer_commit_reason": null
+      },
+      "source_assets": {
+        "layouts": [
+          {
+            "endpoint": {
+              "electrode_id": "A",
+              "role": "gate",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_a.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          },
+          {
+            "endpoint": {
+              "electrode_id": "B",
+              "role": "data",
+              "actual_layer": "M2"
+            },
+            "asset": {
+              "path": "assets/layout_b.npy",
+              "sha256": "62197ba74a0a07821b25a6a5470c31752e790963cf4dd0008a10cdaa98be1e60",
+              "value_semantics": "binary",
+              "observed": true
+            }
+          }
+        ],
+        "valid": {
+          "path": "assets/valid.npy",
+          "sha256": "66c260bb9883496dc9bb51d944af7d8d2bc23b9b99580ca9c24e72f49de544e1",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "cnt": {
+          "path": "assets/cnt.npy",
+          "sha256": "4952318edf0359ca023b6781ccb7ff262c2611d822604724ff665413f78a7dee",
+          "value_semantics": "binary",
+          "observed": true
+        },
+        "via": []
+      },
+      "case_signature": {
+        "failure_type": "lateral_short",
+        "analysis_layer": "M2",
+        "endpoints": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M2"
+          }
+        ],
+        "connection_observation": "exported_masks_only_no_inferred_via_endpoints",
+        "cnt_binding": [
+          {
+            "electrode_id": "A",
+            "role": "gate",
+            "actual_layer": "M2"
+          },
+          {
+            "electrode_id": "B",
+            "role": "data",
+            "actual_layer": "M2"
+          }
+        ],
+        "via_count": 0
+      },
+      "topology_policy": "common_core_connectivity_v3",
+      "connection_semantics": "global_contact_proxy_unverified",
+      "comparison_basis": "between_views_only",
+      "valid_coverage": {
+        "near": {
+          "valid_cells": 36,
+          "total_cells": 36,
+          "valid_fraction": 1.0,
+          "outside_frame_cells": 0,
+          "observed_invalid_cells": 0
+        },
+        "wide": {
+          "valid_cells": 56,
+          "total_cells": 64,
+          "valid_fraction": 0.875,
+          "outside_frame_cells": 8,
+          "observed_invalid_cells": 0
+        }
+      },
+      "crop_geometry": {
+        "near": {
+          "center_xy_um": [
+            102.5,
+            201.5
+          ],
+          "size_xy_um": [
+            3.0,
+            3.0
+          ],
+          "bbox_xyxy_um": [
+            101.0,
+            200.0,
+            104.0,
+            203.0
+          ],
+          "shape_yx": [
+            6,
+            6
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            6.0,
+            6.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              101.0,
+              200.0
+            ],
+            "origin_xy_um_rational": [
+              [
+                101,
+                1
+              ],
+              [
+                200,
+                1
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 36,
+            "total_cells": 36,
+            "valid_fraction": 1.0,
+            "outside_frame_cells": 0,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        },
+        "wide": {
+          "center_xy_um": [
+            102.5,
+            201.5
+          ],
+          "size_xy_um": [
+            4.0,
+            4.0
+          ],
+          "bbox_xyxy_um": [
+            100.5,
+            199.5,
+            104.5,
+            203.5
+          ],
+          "shape_yx": [
+            8,
+            8
+          ],
+          "output_pitch_um": 0.5,
+          "source_pitch_um": 0.5,
+          "native_size_xy_px": [
+            8.0,
+            8.0
+          ],
+          "transform_version": "physical_cell_centres_nearest_exact_v2",
+          "boundary_tie_rule": "higher_source_index_half_open",
+          "source_indices_xy": [
+            [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            [
+              -1,
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          ],
+          "transform": {
+            "origin_xy_um": [
+              100.5,
+              199.5
+            ],
+            "origin_xy_um_rational": [
+              [
+                201,
+                2
+              ],
+              [
+                399,
+                2
+              ]
+            ],
+            "pixel_pitch_um": 0.5,
+            "axis_order": "yx",
+            "origin_convention": "top_left_cell_edge",
+            "source_origin_xy_um": [
+              100.0,
+              200.0
+            ]
+          },
+          "resampled": false,
+          "valid_coverage": {
+            "valid_cells": 56,
+            "total_cells": 64,
+            "valid_fraction": 0.875,
+            "outside_frame_cells": 8,
+            "observed_invalid_cells": 0
+          },
+          "quantitative_CA_permitted": false
+        }
+      },
+      "score": 0.999952,
+      "search_scope": "supplementary",
+      "same_physical_case": false
+    }
+  ],
+  "rejected": [
+    {
+      "roi_id": "roi_618251b89d56435529c1eee270321b53260ed4e455bd77cbd68ae674ca497abf",
+      "reason": "query_itself_excluded"
+    }
+  ],
+  "primary_cohort": [
+    "PRODUCT"
+  ],
+  "expanded": true,
+  "index_roi_ids": [
+    "roi_5c44650574f75d31376180e1c5d47fb47b137e122feef7b26748c6c5f2783cdd",
+    "roi_618251b89d56435529c1eee270321b53260ed4e455bd77cbd68ae674ca497abf",
+    "roi_8392d9e645a0c8a66621a7e35078f5cb51eca56399e98aad2cdbc911eeeb4e8d",
+    "roi_cf88122b2808dbabeb9a7015e372494f698f47437989ae6c2af0390a6a8fde18"
+  ],
+  "interpretation": "similarity_only_not_registration_cause_or_risk"
+}

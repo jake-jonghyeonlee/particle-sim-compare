@@ -1,0 +1,261 @@
+{
+  "grid": 10,
+  "grid_selection": {
+    "selected_grid": 10,
+    "manifest_candidate_grids": [
+      10
+    ],
+    "source": "checkpoint",
+    "override": false,
+    "override_requested": false
+  },
+  "grid_gate": {
+    "policy": "strict_default",
+    "bypass_requested": false,
+    "products": [
+      {
+        "product_id": "QUERY",
+        "grid": 10,
+        "source_shape_yx": [
+          8,
+          10
+        ],
+        "scale": 1.0,
+        "policy": "whole_unit_isotropic_area_pad_candidate",
+        "approval": {
+          "input_method": "user_approved_2026_10_09",
+          "real_grid_linewidth": "pending",
+          "endpoint_source_format": "pending",
+          "G6": "pending"
+        },
+        "connectivity_status": "unavailable",
+        "connectivity_preserving": false,
+        "status": "candidate_only",
+        "reasons": [],
+        "elements": [
+          {
+            "id": "A@M2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 16,
+            "target_active_pixels": 16,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "B@M2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 16,
+            "target_active_pixels": 16,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "global_CNT",
+            "observation": "observed",
+            "axis_run_px": 0,
+            "estimated_run_at_grid_px": 0.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 0,
+            "target_components": 0,
+            "source_active_pixels": 0,
+            "target_active_pixels": 0,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          }
+        ],
+        "gate_status": "passed"
+      },
+      {
+        "product_id": "OTHER",
+        "grid": 10,
+        "source_shape_yx": [
+          8,
+          10
+        ],
+        "scale": 1.0,
+        "policy": "whole_unit_isotropic_area_pad_candidate",
+        "approval": {
+          "input_method": "user_approved_2026_10_09",
+          "real_grid_linewidth": "pending",
+          "endpoint_source_format": "pending",
+          "G6": "pending"
+        },
+        "connectivity_status": "unavailable",
+        "connectivity_preserving": false,
+        "status": "candidate_only",
+        "reasons": [],
+        "elements": [
+          {
+            "id": "A@M2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 16,
+            "target_active_pixels": 16,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "B@M2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 16,
+            "target_active_pixels": 16,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "global_CNT",
+            "observation": "observed",
+            "axis_run_px": 0,
+            "estimated_run_at_grid_px": 0.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 0,
+            "target_components": 0,
+            "source_active_pixels": 0,
+            "target_active_pixels": 0,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          }
+        ],
+        "gate_status": "passed"
+      },
+      {
+        "product_id": "PRODUCT",
+        "grid": 10,
+        "source_shape_yx": [
+          8,
+          10
+        ],
+        "scale": 1.0,
+        "policy": "whole_unit_isotropic_area_pad_candidate",
+        "approval": {
+          "input_method": "user_approved_2026_10_09",
+          "real_grid_linewidth": "pending",
+          "endpoint_source_format": "pending",
+          "G6": "pending"
+        },
+        "connectivity_status": "unavailable",
+        "connectivity_preserving": false,
+        "status": "candidate_only",
+        "reasons": [],
+        "elements": [
+          {
+            "id": "A@M2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 16,
+            "target_active_pixels": 16,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "B@M2",
+            "observation": "observed",
+            "axis_run_px": 4,
+            "estimated_run_at_grid_px": 4.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 1,
+            "target_components": 1,
+            "source_active_pixels": 16,
+            "target_active_pixels": 16,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          },
+          {
+            "id": "global_CNT",
+            "observation": "observed",
+            "axis_run_px": 0,
+            "estimated_run_at_grid_px": 0.0,
+            "thin_line_warning": false,
+            "threshold": 0.5,
+            "neighbours": 4,
+            "source_components": 0,
+            "target_components": 0,
+            "source_active_pixels": 0,
+            "target_active_pixels": 0,
+            "bridge_or_component_loss": false,
+            "connectivity_preserving": false,
+            "certification": "not_certified: component equality and area similarity do not prove connectivity"
+          }
+        ],
+        "gate_status": "passed"
+      }
+    ]
+  },
+  "inference_policy": "one_forward_per_product_cached_within_evaluation; batch_size_is_chunk_bound",
+  "query_id": "QUERY",
+  "approval": {
+    "input_method": "user_approved_2026_10_09",
+    "real_grid_linewidth": "pending",
+    "endpoint_source_format": "pending",
+    "G6": "pending"
+  },
+  "status": "available",
+  "reason": null,
+  "rankings": [
+    {
+      "product_id": "OTHER",
+      "score": 1.0,
+      "connectivity_status": "unavailable",
+      "input_identity": "dc65a09d31ed61aa4cfeeee7eb1193375a2a03e1ea7c09002beb93984540caa5"
+    },
+    {
+      "product_id": "PRODUCT",
+      "score": 1.0,
+      "connectivity_status": "unavailable",
+      "input_identity": "dc65a09d31ed61aa4cfeeee7eb1193375a2a03e1ea7c09002beb93984540caa5"
+    }
+  ],
+  "excluded": [],
+  "candidate_count": 2,
+  "eligible_count": 2,
+  "score_policy": "canonical_single_product_float64_cosine_round6_then_id",
+  "fingerprint": "e72565ef26e1581cd905881d2a7f52f9d741be0cd035c7d72847c10ea86e84d3",
+  "query_connectivity": "unavailable"
+}
