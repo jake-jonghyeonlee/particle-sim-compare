@@ -103,3 +103,12 @@ Phase 3 (DL2, T10-T11) is not started: gate G3 (DL2 repository name) and G4 (win
 - 검증: `b0b1167`에서 기본 184 passed·1 skipped, `--run-training` 185 passed (coordinator 재실행).
 - Orca task: T10 `task_122776c45eec`, T11 `task_835d3bf9c2c6`, 실행 smoke `task_0c715c672503`, R4 `task_e0ad22015b77`, R4 수정 `task_31aecc5462d0`, R4b, 보완 계획 `task_0e4dcc86bb3f`, v3 `task_c0753872587c`, R4c `task_d06310b54414`. 터미널: DL2 editor `term_63872933-05a6-4cf0-a3c4-9c7884df4dbc`.
 - 미결: G4 실제 창·pitch·jitter·사이 layer 정책, G6 정답·수락 기준, CNT/VIA 연결은 기하 proxy(실제 도통 미검증), 실자료·CUDA·대형 frame, R4c 메모.
+
+## 4단계(인수) 종료 — 2026-10-09
+
+- C commit: `15aa90a` T12, `a756b6c` R5 보고서, `325a33d` R5 수정, `4ce8016` R5b 보고서 + 메모 R1·R2·R6 수정(coordinator 검증만, 독립 재검토 없음).
+- 독립 검토: R5 FAIL(`15aa90a`, B1 커밋 상태에서 수락 테스트 실패·B2 DL2 score와 index 미결합) → R5b **PASS-WITH-NOTES**(`325a33d`, 차단 사항 없음).
+- 인수 묶음 대상 commit: C `4ce8016` 이후 HEAD, DL1 `7f9d659`, DL2 `e46a44e`. `scripts/build_handoff.sh`가 manifest SHA-256을 출력한다.
+- DL1·DL2 저장소에는 별도 인수 파일을 추가하지 않았다(절차는 C의 `docs/handoff/`에 있음). 검토된 commit을 그대로 유지하기 위한 coordinator 결정이다.
+- Orca task: T12-C `task_2d84068803e6`, R5, R5 수정 `task_7c24b94b2ce8`, R5b.
+- 남은 메모: R5b R3~R5, R7~R12. 미결 게이트: G1 단위, G2 unit 환산·파일 형식·layout 극성, G4, G5 실제 격자·CNT 형식, G6.
