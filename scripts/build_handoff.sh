@@ -2,6 +2,9 @@
 set -euo pipefail
 SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 python3 - "$SCRIPT_ROOT" "$@" <<'PY'
+import sys
+if sys.version_info < (3,11,4):
+    print("build_handoff requires Python >= 3.11.4",file=sys.stderr);sys.exit(2)
 import argparse, hashlib, io, json, pathlib, platform, shutil, subprocess, tarfile
 p=argparse.ArgumentParser(description='Exact-commit archives, no weights or dependency downloads')
 p.add_argument('tool_root',type=pathlib.Path);p.add_argument('out',type=pathlib.Path)
@@ -46,7 +49,7 @@ try:
         src=a.tool_root/'docs/handoff'/filename
         shutil.copyfile(src,a.out/filename);manifest['metadata_files'][filename]=sha(a.out/filename)
     (a.out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
-    print(json.dumps({'status':'available','bundle':str(a.out),'commits':{n:r['commit'] for n,r in manifest['repositories'].items()},'dirty_test_only':any(r['dirty'] for r in manifest['repositories'].values()),'weights':[]}))
+    print(json.dumps({'status':'available','bundle':str(a.out),'commits':{n:r['commit'] for n,r in manifest['repositories'].items()},'dirty_test_only':any(r['dirty'] for r in manifest['repositories'].values()),'weights':[],'manifest_sha256':sha(a.out/'manifest.json')}))
 except (ValueError,OSError,subprocess.CalledProcessError) as exc:
     p.exit(2,str(exc)+'\n')
 PY

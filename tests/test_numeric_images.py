@@ -80,3 +80,13 @@ def test_asset_hash_checked():
         read_binary(FIXTURE,'mask.png',sha256='0'*64)
     digest=hashlib.sha256((FIXTURE/'mask.png').read_bytes()).hexdigest()
     assert read_binary(FIXTURE,'mask.png',sha256=digest).sum()==2
+def test_real_asset_requires_explicit_polarity(tmp_path):
+    import numpy as np
+    import pytest
+    from simcompare.numeric_images import read_binary
+    from simcompare.numeric_schema import NumericContractError
+    np.save(tmp_path/'black.npy',np.array([[0,255]],dtype=np.uint8))
+    with pytest.raises(NumericContractError,match='explicit_value_semantics_required'):
+        read_binary(tmp_path,'black.npy',synthetic=False)
+    assert read_binary(tmp_path,'black.npy',synthetic=False,value_semantics='binary_zero_is_marked').tolist()==[[True,False]]
+    assert read_binary(tmp_path,'black.npy',synthetic=True).tolist()==[[False,True]]

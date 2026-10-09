@@ -51,7 +51,7 @@ def prepare(root, repo):
         asset_manifest={'path':'review_assets.json','sha256':digest(source/'review_assets.json')},
         producer_commit='f9d7a31d85eadc14d4b8467f452e3610ea6378cb')
     create_context(source,root/'review_rois.json',root/'numeric_context.json',
-                   asset_manifest={'path':'review_assets.json','sha256':digest(source/'review_assets.json')})
+                   asset_manifest={'path':'review_assets.json','sha256':digest(source/'review_assets.json')},force=True)
 
 
 def dl1(root):
@@ -135,6 +135,7 @@ def dl2(root, repo):
     query = next(r for r in index['records'] if r['product_id']=='PRODUCT' and r['case_id']=='A')
     result = search(query,index,{'PRODUCT'},topk=10,expand=True)
     write(root/'dl2_search.json',result)
+    write(root/'cohort.json',['PRODUCT'])
     write(root/'dl2_expected.json',{k:index[k] for k in ('schema_version','checkpoint_fingerprint','view_fingerprint')})
     write(root/'dl2_fixture_config.json',config)
 

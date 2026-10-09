@@ -30,6 +30,10 @@
       "checkpoint_fingerprint": "720225f00794e93a3ea5ccb02b155a9cf721a5d4174c43baa10dc9eb204dfc7a",
       "view_fingerprint": "4441aadc17011724e9a520dc7bdf16c820ade85ddd67dd0b05dcb9b5870f8724"
     },
+    "cohort": {
+      "path": "cohort.json",
+      "sha256": "03ec78b2253af0fc9648e35d11d6aabf54f721a9230770149c957bfd94420d30"
+    },
     "native_profile": "dl2_search_e46a44e"
   },
   "pending_gates": [

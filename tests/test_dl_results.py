@@ -22,7 +22,7 @@ def copied(tmp_path):
 def reseal(root):
     return create_exchange(root/'exchange.json',context=root/'numeric_context.json',dl1=root/'dl1_search.json',
         dl1_fingerprint=read(root/'dl1_search.json')['fingerprint'],dl1_bindings=root/'dl1_bindings.json',
-        dl2=root/'dl2_search.json',dl2_index=root/'dl2_index.json',dl2_expected=read(root/'dl2_expected.json'))
+        dl2=root/'dl2_search.json',dl2_index=root/'dl2_index.json',dl2_expected=read(root/'dl2_expected.json'),dl2_cohort=root/'cohort.json',force=True)
 
 
 def test_native_results_scores_are_adjacent_and_never_numeric_inputs():
@@ -31,10 +31,10 @@ def test_native_results_scores_are_adjacent_and_never_numeric_inputs():
     assert result['numeric']==context
     assert result['dl1']['status']=='available' and result['dl2']['status']=='available'
     assert result['status']=='pending' and {'G1','G2','G4'} <= set(result['pending_gates'])
-    assert {r['search_scope'] for r in result['dl2']['matches']}=={'primary','supplementary'}
+    assert {r['search_scope'] for r in [*result['dl2']['primary'],*result['dl2']['supplementary']]}=={'primary','supplementary'}
     assert result['interpretation']=='similarity_only_never_numeric_risk'
     by_id={r['roi_id']:r for r in context['records']}
-    for row in result['dl2']['matches']:
+    for row in [*result['dl2']['primary'],*result['dl2']['supplementary']]:
         assert row['original_values']==by_id[row['roi_id']]['original_values']
         assert row['source_identity']['product_id']==row['product_id']
         if row['source_identity']['product_id']=='PRODUCT' and len(row['original_values'])==1:
@@ -125,7 +125,7 @@ def test_native_origin_changed_after_export_rejected_even_with_new_file_seal(tmp
     write(root/'negative_dl2_search_origin.json',native)
     create_exchange(root/'negative_exchange.json',context=root/'numeric_context.json',
                     dl2=root/'negative_dl2_search_origin.json',dl2_index=root/'negative_dl2_index_origin.json',
-                    dl2_expected=read(root/'dl2_expected.json'))
+                    dl2_expected=read(root/'dl2_expected.json'),dl2_cohort=root/'cohort.json',force=True)
     with pytest.raises(NumericContractError,match='numeric_frame_mismatch'):
         read_results(root/'negative_exchange.json')
 
@@ -175,3 +175,66 @@ def test_cli_failure_does_not_leave_join_result(tmp_path):
     p=read(root/'exchange.json');p['schema_version']='wrong';write(root/'exchange.json',p)
     result=subprocess.run([sys.executable,'-m','simcompare.dl_results','read',str(root/'exchange.json'),'--out',str(out)],capture_output=True,text=True)
     assert result.returncode==2 and 'schema_mismatch' in result.stdout and not out.exists()
+
+
+def test_score_not_from_approved_index_rejected_in_seal_and_read(tmp_path):
+    root=copied(tmp_path);native=read(root/'dl2_search.json')
+    native['primary'][0]['score']=0.25
+    write(root/'dl2_search.json',native)
+    with pytest.raises(NumericContractError,match='dl2_scores_do_not_match_index'):reseal(root)
+    profile=read(root/'exchange.json');profile['dl2']['result']['sha256']=sha(root/'dl2_search.json')
+    write(root/'exchange.json',profile)
+    with pytest.raises(NumericContractError,match='dl2_scores_do_not_match_index'):read_results(root/'exchange.json')
+
+
+def test_cohort_and_joined_scope_coverage_are_preserved(tmp_path):
+    root=copied(tmp_path);r=read_results(root/'exchange.json')['dl2']
+    assert r['primary_cohort']==['PRODUCT'] and r['expanded'] is True
+    assert len(r['primary'])==2 and len(r['supplementary'])==1 and 'matches' not in r
+    assert r['coverage']['query']['near']['valid_fraction']==1
+    write(root/'cohort.json',['OTHER'])
+    with pytest.raises(NumericContractError,match='hash_mismatch'):read_results(root/'exchange.json')
+    with pytest.raises(NumericContractError,match='cohort_mismatch'):reseal(root)
+
+
+def test_missing_rejected_has_named_error(tmp_path):
+    root=copied(tmp_path);native=read(root/'dl2_search.json');native.pop('rejected');write(root/'dl2_search.json',native)
+    with pytest.raises(NumericContractError,match='dl2_rejected_field_required'):reseal(root)
+
+
+@pytest.mark.parametrize('command',['seal','context'])
+def test_failed_creation_preserves_preexisting_output_and_assets(command,tmp_path):
+    out=tmp_path/'valuable.json';out.write_text('preserve exactly')
+    args=['--context',str(tmp_path/'missing')] if command=='seal' else [str(tmp_path/'missing'),str(tmp_path/'missing'),'--asset-manifest','missing.json']
+    for extra in ([],['--force']):
+        r=subprocess.run([sys.executable,'-m','simcompare.dl_results',command,*args,'--out',str(out),*extra],capture_output=True,text=True)
+        assert r.returncode==2 and out.read_text()=='preserve exactly'
+        assert not (tmp_path/'numeric_map').exists()
+
+
+def test_unknown_map_diameter_is_explicit_unavailable(tmp_path):
+    from simcompare.dl_results import create_context
+    root=copied(tmp_path);roi=read(root/'review_rois.json')
+    for row in roi['rois']:
+        if row['source_kind']=='electrode_count_region':row['provenance']['representative_diameter_um']=999
+    write(root/'negative_roi_diameter.json',roi)
+    context=create_context(root/'numeric',root/'negative_roi_diameter.json',root/'new_context.json',
+                           asset_manifest={'path':'review_assets.json','sha256':sha(root/'numeric/review_assets.json')})
+    rows=[r for r in context['records'] if not r['original_values']]
+    assert len(rows)==2
+    assert all(r['numeric_status']=='unavailable' and r['numeric_reasons']==['representative_diameter_group_unavailable'] for r in rows)
+
+
+def test_dl1_same_product_binding_is_user_statement_documented_limitation(tmp_path):
+    root=copied(tmp_path);context=read(root/'numeric_context.json')
+    b=next(r for r in context['records'] if r['source_identity']['product_id']=='PRODUCT' and r['source_identity']['case_id']=='B')
+    bindings=read(root/'dl1_bindings.json')
+    for binding in bindings:
+        if binding['product_id']=='PRODUCT':
+            for field in ('roi_id','source_identity','frame','source_assets','source_version'):binding[field]=deepcopy(b[field])
+    write(root/'dl1_bindings.json',bindings);reseal(root)
+    result=read_results(root/'exchange.json')
+    # N7 is documentation only: C cannot prove the DL1 hash-to-asset correspondence.
+    assert result['dl1']['status']=='available'
+    product=next(r for r in result['dl1']['matches'] if r['product_id']=='PRODUCT')
+    assert all(r['source_identity']['case_id']=='B' for r in product['original_values'])

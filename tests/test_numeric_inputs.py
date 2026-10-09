@@ -276,3 +276,14 @@ def test_r2_kept_parquet_and_zarr_reader_dependencies_declared():
     deps=tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())['project']['dependencies']
     assert any(d.startswith('pyarrow') for d in deps)
     assert any(d.startswith('zarr') for d in deps)
+def test_non_synthetic_reference_missing_semantics_is_error(tmp_path):
+    import hashlib
+    import numpy as np
+    import pytest
+    from simcompare.adapters.numeric import _asset
+    from simcompare.numeric_schema import NumericContractError
+    path=tmp_path/'black.npy';np.save(path,np.array([[0,1]],dtype=np.uint8))
+    ref={'path':'black.npy','sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+    with pytest.raises(NumericContractError,match='explicit_value_semantics_required'):
+        _asset(tmp_path,ref,synthetic=False)
+    assert _asset(tmp_path,ref,synthetic=True).tolist()==[[False,True]]

@@ -37,6 +37,7 @@ FP=$(.venv/bin/python -c 'import json; print(json.load(open("/tmp/simcompare-t12
   --dl1 /tmp/simcompare-t12-native/dl1_search.json --dl1-fingerprint "$FP" \
   --dl1-bindings /tmp/simcompare-t12-native/dl1_bindings.json \
   --dl2 /tmp/simcompare-t12-native/dl2_search.json \
+  --dl2-cohort /tmp/simcompare-t12-native/cohort.json \
   --dl2-index /tmp/simcompare-t12-native/dl2_index.json \
   --dl2-expected /tmp/simcompare-t12-native/dl2_expected.json \
   --out /tmp/simcompare-t12-native/exchange.json

@@ -13,6 +13,12 @@ import json
 import math
 from pathlib import Path
 import re
+import os
+import tempfile
+import shutil
+import uuid
+
+SCORE_TOLERANCE = 1e-9
 
 from .numeric_schema import CaseIdentity, NumericContractError
 
@@ -40,9 +46,21 @@ def read(path):
     return json.loads(Path(path).read_text(), object_pairs_hook=unique, parse_constant=invalid)
 
 
-def write(path, value):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False)+'\n')
+def write(path, value, *, force=True):
+    path = Path(path)
+    if path.exists() and not force:
+        raise NumericContractError('output_exists_use_force', str(path))
+    encoded = json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False)+'\n'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False,encoding='utf-8') as handle:
+            temporary = Path(handle.name)
+            handle.write(encoded)
+        os.replace(temporary,path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def identity(row):
@@ -104,12 +122,16 @@ def _dl2(raw, index, expected):
     for key in ('checkpoint_fingerprint', 'view_fingerprint'):
         if not isinstance(expected[key],str) or not re.fullmatch('[0-9a-f]{64}',expected[key]) or index.get(key) != expected[key]:
             raise NumericContractError('dl2_'+key+'_mismatch')
+    if 'rejected' not in raw:
+        raise NumericContractError('dl2_rejected_field_required')
     required = {'query', 'primary', 'supplementary', 'status', 'no_match_reasons', 'primary_cohort', 'expanded', 'index_roi_ids'}
     if not required <= raw.keys() or raw.get('schema_version') is not None:
         raise NumericContractError('unsupported_dl2_native_result_profile')
     if raw['status'] not in ('available', 'unavailable'):
         raise NumericContractError('invalid_dl2_status')
     indexed = {}
+    embeddings = {}
+    import numpy as np
     for row in index['records']:
         if row.get('source_versions', {}).get('schema_version') != 'review_roi_v1':
             raise NumericContractError('dl2_source_schema_mismatch')
@@ -117,6 +139,10 @@ def _dl2(raw, index, expected):
         if key in indexed:
             raise NumericContractError('duplicate_dl2_index_identity')
         indexed[key] = {k:v for k,v in row.items() if k != 'embedding'}
+        vector = np.asarray(row.get('embedding'),dtype=np.float64)
+        if vector.ndim!=1 or not vector.size or not np.isfinite(vector).all() or not np.isfinite(np.linalg.norm(vector)) or np.linalg.norm(vector)==0:
+            raise NumericContractError('invalid_dl2_index_embedding')
+        embeddings[key] = vector
     if raw['index_roi_ids'] != [r['roi_id'] for r in index['records']]:
         raise NumericContractError('dl2_index_membership_mismatch')
     query = raw['query']
@@ -130,13 +156,29 @@ def _dl2(raw, index, expected):
             original = {k:v for k,v in row.items() if k not in ('score', 'search_scope', 'same_physical_case')}
             if indexed.get((row['roi_id'], identity(row['source_identity']))) != original:
                 raise NumericContractError('dl2_match_index_mismatch')
+            a = embeddings[(query['roi_id'],identity(query['source_identity']))]
+            b = embeddings[(row['roi_id'],identity(row['source_identity']))]
+            if a.shape != b.shape:
+                raise NumericContractError('invalid_dl2_index_embedding')
+            cosine = round(float(np.clip(np.dot(a,b)/(np.linalg.norm(a)*np.linalg.norm(b)),-1,1)),6)
+            if abs(cosine-row['score']) > SCORE_TOLERANCE:
+                raise NumericContractError('dl2_scores_do_not_match_index')
+
+
+def _cohort(cohort,raw):
+    if not isinstance(cohort,list) or not cohort or any(not isinstance(v,str) or not v for v in cohort) or len(set(cohort))!=len(cohort):
+        raise NumericContractError('explicit_nonempty_unique_product_cohort_required')
+    if sorted(cohort)!=raw['primary_cohort']:
+        raise NumericContractError('dl2_cohort_mismatch')
 
 
 def create_exchange(out, *, context, dl1=None, dl1_fingerprint=None, dl1_bindings=None,
-                    dl2=None, dl2_index=None, dl2_expected=None, pending_gates=None):
+                    dl2=None, dl2_index=None, dl2_expected=None, dl2_cohort=None, pending_gates=None, force=False):
     """Generate, never manually author, the envelope. Expected fingerprints are explicit."""
     out = Path(out)
     root = out.parent
+    if out.exists() and not force:
+        raise NumericContractError('output_exists_use_force',str(out))
     context_doc = read(context)
     if context_doc.get('schema_version') != CONTEXT_SCHEMA:
         raise NumericContractError('numeric_context_schema_mismatch')
@@ -156,14 +198,18 @@ def create_exchange(out, *, context, dl1=None, dl1_fingerprint=None, dl1_binding
     if dl2:
         if dl2_index is None or dl2_expected is None:
             raise NumericContractError('explicit_dl2_index_fingerprints_required')
-        _dl2(read(dl2), read(dl2_index), dl2_expected)
+        raw = read(dl2)
+        _dl2(raw, read(dl2_index), dl2_expected)
+        if dl2_cohort is None:
+            raise NumericContractError('explicit_dl2_cohort_file_required')
+        _cohort(read(dl2_cohort),raw)
         payload['dl2'] = {'result':_reference(root, dl2), 'index':_reference(root, dl2_index),
-                          'expected':dl2_expected, 'native_profile':'dl2_search_e46a44e'}
+                          'expected':dl2_expected, 'cohort':_reference(root,dl2_cohort), 'native_profile':'dl2_search_e46a44e'}
     write(out, payload)
     return payload
 
 
-def create_context(dataset_root, export, out, *, asset_manifest):
+def create_context(dataset_root, export, out, *, asset_manifest, force=False):
     """Compute original numeric values independently, then bind ready original ROIs."""
     from .adapters.numeric import load_dataset
     from .linepixel import compute_areas
@@ -171,6 +217,8 @@ def create_context(dataset_root, export, out, *, asset_manifest):
     from .roi_export import check_asset_manifest, _frame_payload
     from .report import map_report
     import numpy as np
+    if Path(out).exists() and not force:
+        raise NumericContractError('output_exists_use_force',str(out))
     dataset = load_dataset(Path(dataset_root))
     original = read(export)
     if original.get('schema_version') != 'review_roi_v1' or original['source_manifest_hash'] != dataset.provenance['input_hash']:
@@ -182,19 +230,18 @@ def create_context(dataset_root, export, out, *, asset_manifest):
     maps = compute_electrode_maps(dataset)
     original_map = map_report(maps)[0]
     map_files = {}
+    pending_arrays = []
+    prefix = 'numeric_map/'+Path(out).stem+'_'+uuid.uuid4().hex
     for kind in ('layers','summaries'):
         for entry,encoded in zip(getattr(maps,kind),original_map[kind]):
             if encoded['array_file'] is None:
                 continue
-            relative = 'numeric_map/'+encoded['array_file']
-            path = Path(out).parent/relative
-            path.parent.mkdir(parents=True,exist_ok=True)
+            relative = prefix+'/'+encoded['array_file']
             arrays = {'valid':entry.frame.valid}
             if entry.counts is not None:
                 arrays['counts'] = entry.counts
-            np.savez_compressed(path,**arrays)
             encoded['array_file'] = relative
-            map_files[relative] = sha(path)
+            pending_arrays.append((relative,arrays))
     context = {'schema_version':CONTEXT_SCHEMA, 'input_hash':dataset.provenance['input_hash'],
                'is_synthetic':areas.is_synthetic,
                'review_versions':{k:original[k] for k in ('schema_version','producer_commit','source_manifest_hash')},
@@ -228,8 +275,20 @@ def create_context(dataset_root, export, out, *, asset_manifest):
         context['records'].append({'roi_id':row['roi_id'], 'source_identity':row['source_identity'],
             'frame':row['frame'], 'source_assets':row['source_assets'], 'source_version':row['source_version'],
             'endpoints':row['endpoints'],'failure_type':row['failure_type'],'analysis_layer':row['analysis_layer'],
-            'center_xy_um':row['center_xy_um'], 'original_values':linked})
-    write(out, context)
+            'center_xy_um':row['center_xy_um'], 'original_values':linked,
+            'numeric_status':'available' if linked else 'unavailable',
+            'numeric_reasons':[] if linked else ['representative_diameter_group_unavailable' if diameter is not None else 'numeric_group_unavailable']})
+    destination = Path(out).parent/prefix
+    try:
+        for relative,arrays in pending_arrays:
+            path = Path(out).parent/relative
+            path.parent.mkdir(parents=True,exist_ok=True)
+            np.savez_compressed(path,**arrays)
+            map_files[relative] = sha(path)
+        write(out, context)
+    except Exception:
+        shutil.rmtree(destination,ignore_errors=True)
+        raise
     return context
 
 
@@ -256,7 +315,8 @@ def read_results(exchange):
               'interpretation':'similarity_only_never_numeric_risk'}
     unavailable = {'status':'unavailable', 'value':None, 'reasons':['dl_result_missing'], 'matches':[]}
     result['dl1'] = deepcopy(unavailable)
-    result['dl2'] = deepcopy(unavailable)
+    result['dl2'] = {k:v for k,v in deepcopy(unavailable).items() if k!='matches'}
+    result['dl2'].update(primary=[],supplementary=[],primary_cohort=[],expanded=False,coverage=None)
     def join(row):
         if row.get('case_id') != row['source_identity']['case_id'] or row.get('product_id') != row['source_identity']['product_id']:
             raise NumericContractError('dl2_redundant_identity_mismatch')
@@ -274,20 +334,30 @@ def read_results(exchange):
                 a, b = frame(a), frame(b)
             if a != b:
                 raise NumericContractError('dl2_numeric_'+key+'_mismatch', row['roi_id'])
-        return deepcopy(original['original_values'])
+        return {'original_values':deepcopy(original['original_values']),
+                'numeric_status':original.get('numeric_status','available' if original['original_values'] else 'unavailable'),
+                'numeric_reasons':original.get('numeric_reasons',[])}
     if profile['dl2']:
         p = profile['dl2']
         if p['native_profile'] != 'dl2_search_e46a44e':
             raise NumericContractError('unsupported_dl2_native_profile')
         raw, index = _file(root, p['result']), _file(root, p['index'])
         _dl2(raw, index, p['expected'])
+        if 'cohort' not in p:
+            raise NumericContractError('explicit_dl2_cohort_file_required')
+        _cohort(_file(root,p['cohort']),raw)
         join(raw['query'])
         matches = []
         for scope in ('primary', 'supplementary'):
             for row in raw[scope]:
-                matches.append({**deepcopy(row), 'original_values':join(row), 'search_scope':scope})
+                matches.append({**deepcopy(row), **join(row), 'search_scope':scope})
         result['dl2'] = {'status':raw['status'], 'reasons':raw['no_match_reasons'],
-                         'matches':matches, 'query':deepcopy(raw['query']), 'rejected':raw['rejected']}
+                         'primary':[r for r in matches if r['search_scope']=='primary'],
+                         'supplementary':[r for r in matches if r['search_scope']=='supplementary'],
+                         'primary_cohort':raw['primary_cohort'],'expanded':raw['expanded'],
+                         'coverage':{'query':raw['query']['valid_coverage'],
+                                     'matches':{r['roi_id']:r['valid_coverage'] for r in matches}},
+                         'query':deepcopy(raw['query']), 'rejected':raw['rejected']}
     if profile['dl1']:
         p = profile['dl1']
         if p['native_profile'] != 'dl1_search_7f9d659':
@@ -326,23 +396,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='파일 교환: DL similarity를 원본 수치 옆에 표시 (수치 변경 없음)')
     commands = parser.add_subparsers(dest='command', required=True)
     c = commands.add_parser('context'); c.add_argument('dataset'); c.add_argument('export'); c.add_argument('--asset-manifest', required=True); c.add_argument('--out', required=True)
-    c = commands.add_parser('seal'); c.add_argument('--context', required=True); c.add_argument('--dl1'); c.add_argument('--dl1-fingerprint'); c.add_argument('--dl1-bindings'); c.add_argument('--dl2'); c.add_argument('--dl2-index'); c.add_argument('--dl2-expected'); c.add_argument('--pending-gates'); c.add_argument('--out', required=True)
+    c = commands.add_parser('seal'); c.add_argument('--context', required=True); c.add_argument('--dl1'); c.add_argument('--dl1-fingerprint'); c.add_argument('--dl1-bindings'); c.add_argument('--dl2'); c.add_argument('--dl2-index'); c.add_argument('--dl2-cohort'); c.add_argument('--dl2-expected'); c.add_argument('--pending-gates'); c.add_argument('--out', required=True)
     c = commands.add_parser('read'); c.add_argument('exchange'); c.add_argument('--out', required=True)
+    for command in commands.choices.values():
+        command.add_argument('--force',action='store_true',help='기존 출력 교체를 명시적으로 허용')
     args = parser.parse_args(argv)
     try:
         if args.command == 'context':
             path = Path(args.dataset)/args.asset_manifest
-            create_context(args.dataset, args.export, args.out, asset_manifest={'path':args.asset_manifest,'sha256':sha(path)})
+            create_context(args.dataset, args.export, args.out, asset_manifest={'path':args.asset_manifest,'sha256':sha(path)},force=args.force)
         elif args.command == 'seal':
             create_exchange(args.out, context=args.context, dl1=args.dl1, dl1_fingerprint=args.dl1_fingerprint,
                             dl1_bindings=args.dl1_bindings, dl2=args.dl2, dl2_index=args.dl2_index,
-                            dl2_expected=read(args.dl2_expected) if args.dl2_expected else None,
+                            dl2_expected=read(args.dl2_expected) if args.dl2_expected else None, dl2_cohort=args.dl2_cohort,force=args.force,
                             pending_gates=read(args.pending_gates) if args.pending_gates else None)
         else:
-            write(args.out, read_results(args.exchange))
+            write(args.out, read_results(args.exchange),force=args.force)
         return 0
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
-        Path(args.out).unlink(missing_ok=True)
+        if args.command=='read':
+            Path(args.out).unlink(missing_ok=True)
         print(json.dumps({'status':'unavailable','reason':str(exc)}))
         return 2
 

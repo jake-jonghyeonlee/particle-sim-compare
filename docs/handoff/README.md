@@ -6,17 +6,19 @@
 
 ## 패키지 만들기와 검증
 
-Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행한다. 이 Task의 worker는 커밋하지 않는다.
+build script의 python3는 >=3.11.4가 필요하다. 미지원 버전은 출력 생성 전에 오류로 중단한다.
+
+Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행한다. 승인된 정확한 ref를 사용한다.
 
 ```bash
 bash scripts/build_handoff.sh /approved-output/bundle \
   --compare-ref APPROVED_COMPARE_COMMIT \
   --dl1-ref 7f9d659a014d7f5e3aaf4b63118d0ca51774b75f \
   --dl2-ref e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b
-bash scripts/check_handoff.sh /approved-output/bundle
+bash scripts/check_handoff.sh /approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
 
-`APPROVED_COMPARE_COMMIT`은 coordinator가 승인한 실제 commit으로 바꾼다. 기본 ref는 각 저장소의 `HEAD`다. `git archive <commit>`으로 tracked 파일을 복사하며 원본을 이동하거나 remote를 사용하지 않는다. `.venv`, 미추적 데이터와 가중치는 포함하지 않는다. tracked `.pt` / `.pth` / `.ckpt` / `.safetensors`가 있으면 묵시적으로 포함하지 않고 build를 거부한다. `manifest.json`은 commit, lock hash, 각 파일 SHA256, schema/id 버전, build Python 버전, 저장소별 Python 요구사항, 빈 `weights`, pending 항목을 담는다. C는 uv.lock, DL1/DL2는 requirements.lock을 기록하며 path·sha256·kind를 명시한다. DL lock은 macOS 개발 환경의 설치 버전 snapshot으로 portable wheel lock이 아니므로 목표 플랫폼용 dependency를 승인 mirror 또는 wheel directory에서 준비한다. 파일 inventory/hash가 다르거나 dirty archive이면 check가 실패한다. SHA256은 전달 무결성 검사이며 서명 인증을 대체하지 않는다. 사용자에게 승인받은 manifest hash를 별도 전달한다.
+`APPROVED_COMPARE_COMMIT`은 coordinator가 승인한 실제 commit으로 바꾼다. 기본 ref는 각 저장소의 `HEAD`다. `git archive <commit>`으로 tracked 파일을 복사하며 원본을 이동하거나 remote를 사용하지 않는다. `.venv`, 미추적 데이터와 가중치는 포함하지 않는다. tracked `.pt` / `.pth` / `.ckpt` / `.safetensors`가 있으면 묵시적으로 포함하지 않고 build를 거부한다. `manifest.json`은 commit, lock hash, 각 파일 SHA256, schema/id 버전, build 호스트 Python 버전 (runtime env 버전이 아님), 저장소별 Python 요구사항, 빈 `weights`, pending 항목을 담는다. C는 uv.lock, DL1/DL2는 requirements.lock을 기록하며 path·sha256·kind를 명시한다. DL lock은 macOS 개발 환경의 설치 버전 snapshot으로 portable wheel lock이 아니므로 목표 플랫폼용 dependency를 승인 mirror 또는 wheel directory에서 준비한다. 파일 inventory/hash가 다르거나 dirty archive이면 check가 실패한다. SHA256은 전달 무결성 검사이며 서명 인증을 대체하지 않는다. build/check가 manifest SHA256을 출력한다. 승인 채널로 따로 받은 값을 --expect-manifest-sha256에 넣어 대조한다. 검사 대상 manifest에서 기대 hash를 다시 계산하지 않는다.
 
 `--allow-dirty-for-test`는 로컬 시험에만 쓰며 여전히 committed ref만 archive한다. manifest의 `dirty=true`를 숨기지 않고 check에도 같은 flag가 필요하다. 미커밋 T12 도구는 이 archive에 들어가지 않으므로 실제 인수용 bundle로 사용하지 않는다. 테스트는 임시 git 저장소에서 clean archive와 tamper를 별도로 검증한다.
 
@@ -29,7 +31,7 @@ DL2_PYTHON=/approved-envs/dl2/bin/python \
 bash scripts/validate_offline.sh /approved-output/bundle --out /approved-output/offline-validation
 ```
 
-이 script는 먼저 hash를 검사하고, 각 자식 Python에 socket connect / DNS를 거부하는 `sitecustomize`를 적용한다. import / help / C demo·validate·compare·map / synthetic DL1 search / DL2 import·index·search / C read를 실행한다. dependency 설치나 download는 하지 않는다. 단계별 command/stdout/stderr/exit가 `validation.json`에 기록되며 실패는 `unavailable`, exit 2다. Python 자식 실행의 네트워크를 차단하며 운영체제 전체 방화벽 설정을 바꾸지는 않는다. 실제 폐쇄망에서는 조직의 네트워크 차단도 유지한다. 합성 DL 모델은 고정 seed의 로컬 초기화 tensor를 쓰며 공개 pretrained weights나 학습 품질 판정을 포함하지 않는다.
+이 script는 먼저 hash를 검사하고, 각 자식 Python에 socket connect / DNS를 거부하는 `sitecustomize`를 적용한다. import / help / C demo·validate·compare·map / synthetic DL1 search / DL2 import·index·search / C read를 실행한다. dependency 설치나 download는 하지 않는다. 단계별 command/stdout/stderr/exit가 `validation.json`에 기록되며 실패는 `unavailable`, exit 2다. 차단은 환경을 상속한 non-isolated Python 자식의 socket.connect/connect_ex/create_connection/getaddrinfo에 한정된다. UDP sendto, gethostbyname, _socket 직접 호출, python -I, 비-Python 프로세스는 차단하지 않는다. 운영체제 방화벽 설정을 바꾸지 않는다. 실제 폐쇄망에서는 조직의 네트워크 차단도 유지한다. 합성 DL 모델은 고정 seed의 로컬 초기화 tensor를 쓰며 공개 pretrained weights나 학습 품질 판정을 포함하지 않는다.
 
 ## 교환 검증 계약
 
@@ -56,31 +58,7 @@ DL1은 제품 score이므로 단일 case context가 없다. 사용자가 해당 
 
 G7a의 failure pieces와 G7b short-only map은 2026-10-08 사용자 결정이 적용됐다. map은 위치 취약성을 표시하고 DL2는 사용자가 선택한 위치와 비슷한 구조를 검색한다. open piece나 자동 영역 순위를 추가하지 않는다.
 
-## T12 구현 검증 기록 (2026-10-09, 인수 합격 기록 아님)
 
-worker는 C baseline `f9d7a31`의 working tree에만 새 파일을 작성했고 기존 numeric 파일과 DL1/DL2 저장소는 수정하지 않았다. 기존 test expectation 변경/삭제는 없다. `tests/fixtures/handoff/README.md`에 실제 producer 함수/commit/명령을 기록했다. 새 임시 negative case는 product 충돌, design/source/step/exposure/frame/source-contract version, origin 변경, schema/model/view fingerprint, native hash 변조를 검사한다. 합성 native 결과는 expected 성능 oracle가 아니다.
+기존 scripts/1_install.sh 등 이전 스크립트는 bundle 안에서 실행하지 않는다. .venv/demo_data 생성은 inventory를 바꾸며 uv sync가 network를 사용할 수 있다. validate_offline은 기존 non-empty 출력 디렉터리를 거부하고 각 환경 interpreter 버전을 기록한다. 실행 증거는 배포 설명서가 아닌 별도 review/검증 기록에 둔다.
 
-```bash
-.venv/bin/python -m pytest -p no:warnings tests/test_dl_results.py tests/test_handoff.py
-.venv/bin/python -m pytest -p no:warnings
-bash scripts/build_handoff.sh /tmp/simcompare-t12-bundle-20261009d --allow-dirty-for-test
-bash scripts/check_handoff.sh /tmp/simcompare-t12-bundle-20261009d --allow-dirty-for-test
-bash scripts/check_handoff.sh /tmp/simcompare-t12-bundle-tampered --allow-dirty-for-test
-COMPARE_PYTHON=/Users/jonghyeonlee/git/particle-sim-compare/.venv/bin/python \
-DL1_PYTHON=/Users/jonghyeonlee/git/particle-sim-dl1/.venv/bin/python \
-DL2_PYTHON=/Users/jonghyeonlee/git/particle-sim-dl2/.venv/bin/python \
-  bash scripts/validate_offline.sh /tmp/simcompare-t12-bundle-20261009d \
-  --allow-dirty-for-test --out /tmp/simcompare-t12-offline-final
-.venv/bin/python -m simcompare.dl_results read tests/fixtures/handoff/exchange.json \
-  --out /tmp/simcompare-t12-joined-final.json
-```
-
-- Full suite: **507 passed, 2 skipped**. 기존 numeric test는 유지됐으며 sibling `.venv` 실행과 임시 candidate offline 검증도 포함됐다.
-- Target tests: **30 passed**. Cross-repo tests는 실제 sibling `.venv`에서 실행됐다.
-- build/check: exit 0, 정확히 C `f9d7a31d85eadc14d4b8467f452e3610ea6378cb`, DL1 `7f9d659a014d7f5e3aaf4b63118d0ca51774b75f`, DL2 `e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b` archive; weights 빈 배열. 이 bundle은 `dirty_test_only=true`로 기록된다.
-- Tamper: 별도로 복사한 `/tmp/simcompare-t12-bundle-tampered/particle-sim-dl2/README.md`를 변조하자 check exit 2, `file hash mismatch: particle-sim-dl2/README.md`. 원래 bundle은 이후 재검사 exit 0.
-- HEAD archive offline: exit 2, `fixture_runner_missing_in_committed_compare_archive; commit T12 before a production build`. 그 전 integrity, 세 package import/network-denial probe, 모든 기존 help, numeric demo/compare/map은 exit 0이었다. numeric validate는 원래 pending 계약대로 **partial, exit 3**이며 기록에 남겼다. T12를 커밋하지 않으므로 HEAD archive에 새 fixture runner/read module이 없는 것이 정확한 중단 원인이다. 기록: `/tmp/simcompare-t12-offline-final/validation.json`.
-- 별도의 `test_offline_full_candidate_in_temporary_git_archive`는 repo 밖의 임시 git에 현재 후보 파일을 snapshot하여 clean archive를 만들었다. 작업 저장소 HEAD는 건드리지 않았다. 이 **시험용** bundle에서 같은 offline script의 imports/help, numeric E2E, native DL1 fixture search, DL2 import/index/search, seal/read까지 모두 통과하고 bundle hash 재검사도 통과했다. 이 임시 commit은 승인된 release commit이 아니다.
-- Read CLI: exit 0, 원래 numeric 값은 그대로이며 synthetic DL scores는 primary/supplementary를 유지한다. context의 G1/G2/G4 pending을 자동 보존하므로 전체 join은 pending이다. 개별 synthetic retrieval availability를 실제 gate 완료로 해석하지 않는다.
-
-실제 인수 bundle은 coordinator의 T12 승인 커밋 후 clean build/check/offline을 다시 수행해야 한다. 실제 입력, real G1/G2/G4/G5/G6, 도통 검증, 공개 weights/licence 및 사용자 label/인수 목표는 위 pending 목록대로 남는다. `validation-template.json`은 여전히 비어 있다.
+DL2 score는 승인 index query/candidate embedding의 float64 cosine을 6자리 반올림하여 다시 계산하고 absolute tolerance 1e-9 이내 일치를 요구한다. 이는 supplied index와의 수치 일치를 증명할 뿐, native search에 producer fingerprint가 없어 원래 생성 checkpoint 신원을 암호학적으로 증명하지 못한다. 서로 다른 checkpoint가 동일한 rounded scores를 내면 구별할 수 없다. primary/supplementary는 별도 목록이고 cohort 파일 SHA256, expanded, coverage를 보존한다. seal/context는 --force 없이 기존 output을 교체하지 않으며 실패 시 기존 파일을 지우지 않는다.

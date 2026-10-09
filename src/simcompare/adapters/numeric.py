@@ -78,7 +78,7 @@ def _boolean(value):
 def _asset(root, entry, *, synthetic):
     if isinstance(entry, dict):
         return read_binary(root, entry['path'], sha256=entry['sha256'],
-                           value_semantics=entry.get('value_semantics', 'binary'))
+                           value_semantics=entry.get('value_semantics'), synthetic=synthetic)
     if not synthetic:
         raise NumericContractError('inline_real_mask_unsupported')
     return binary_mask(entry)  # inline synthetic masks are always nonzero-is-marked

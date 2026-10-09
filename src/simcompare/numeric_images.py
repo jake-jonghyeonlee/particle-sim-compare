@@ -38,7 +38,11 @@ MASK_SEMANTICS = ('binary', 'binary_zero_is_marked')
 
 
 def read_binary(root: Path, relative_path: str, *, sha256: str | None = None,
-                value_semantics: str = 'binary') -> np.ndarray:
+                value_semantics: str | None = None, synthetic: bool = True) -> np.ndarray:
+    if value_semantics is None:
+        if not synthetic:
+            raise NumericContractError('explicit_value_semantics_required')
+        value_semantics = 'binary'
     if value_semantics not in MASK_SEMANTICS:
         raise NumericContractError('unsupported_mask_semantics', value_semantics)
     path = resolve_path(root, relative_path)

@@ -3,7 +3,7 @@ set -euo pipefail
 python3 - "$@" <<'PY'
 import argparse,hashlib,json,pathlib,re,sys
 p=argparse.ArgumentParser(description='Verify exact archive inventories and sha256; reject dirty test packages by default')
-p.add_argument('bundle',type=pathlib.Path);p.add_argument('--allow-dirty-for-test',action='store_true');a=p.parse_args()
+p.add_argument('--expect-manifest-sha256');p.add_argument('bundle',type=pathlib.Path);p.add_argument('--allow-dirty-for-test',action='store_true');a=p.parse_args()
 def fail(reason):raise ValueError(reason)
 def unique(items):
     result={}
@@ -19,6 +19,8 @@ def safe(root,name):
     return target
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 try:
+    manifest_hash=digest(a.bundle/'manifest.json')
+    if a.expect_manifest_sha256 is not None and (not re.fullmatch('[0-9a-f]{64}',a.expect_manifest_sha256) or manifest_hash!=a.expect_manifest_sha256):fail('manifest_sha256_mismatch')
     m=json.loads((a.bundle/'manifest.json').read_text(),object_pairs_hook=unique)
     if set(m)!={'schema_version','id_versions','python_version','weights','pending_gates','repositories','metadata_files'}:fail('manifest fields mismatch')
     if not isinstance(m['python_version'],str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',m['python_version']):fail('invalid Python version')
@@ -33,6 +35,9 @@ try:
         if not re.fullmatch('[0-9a-f]{40}',r['commit']) or type(r['dirty']) is not bool:fail('invalid commit/dirty field')
         if r['dirty'] and not a.allow_dirty_for_test:fail('dirty test archive refused: '+name)
         root=a.bundle/name
+        expected_dirs={str(parent) for file in r['files'] for parent in pathlib.Path(file).parents if str(parent)!='.'}
+        actual_dirs={str(f.relative_to(root)) for f in root.rglob('*') if f.is_dir()}
+        if actual_dirs!=expected_dirs:fail('archive directory inventory mismatch: '+name)
         actual={str(f.relative_to(root)) for f in root.rglob('*') if f.is_file() or f.is_symlink()}
         if actual!=set(r['files']):fail('archive inventory mismatch: '+name)
         for path,expected in r['files'].items():
@@ -44,6 +49,6 @@ try:
         if digest(safe(a.bundle,path))!=expected:fail('metadata hash mismatch: '+path)
     root_files={f.name for f in a.bundle.iterdir()}
     if root_files!=set(m['repositories'])|set(m['metadata_files'])|{'manifest.json'}:fail('unexpected bundle root entries')
-    print(json.dumps({'status':'available','verified_repositories':3,'weights':[],'dirty_test_only':a.allow_dirty_for_test}))
+    print(json.dumps({'status':'available','verified_repositories':3,'weights':[],'dirty_test_only':a.allow_dirty_for_test,'manifest_sha256':manifest_hash}))
 except (ValueError,KeyError,TypeError,OSError) as exc:p.exit(2,str(exc)+'\n')
 PY
