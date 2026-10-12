@@ -313,3 +313,12 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   Still open: skipped-layer rule, same-layer multi-electrode rule. Code and docs at 1f9d005 still label
   4-neighbour as an implementation interpretation; update wording with the next change.
 - Decision: no fixes now; try in the closed network first.
+
+## After completion — 2026-10-13
+
+- particle-sim-dl1 feat/png-input pushed to origin at 1f9d005 (user request), then docs-only commit
+  e67a8b2a3719d7141472a32503d00f52bbdf625c pushed: docs/USAGE.md rewritten by the coordinator as a
+  step-by-step guide (user request). No code change; full default suite on e67a8b2: 484 passed,
+  1 skipped. The independent PASS covers 1f9d005; e67a8b2 differs from it only in docs/USAGE.md.
+- particle-sim-compare: docs committed locally as fb02d40 on rewrite/line-pixel-rate; NOT pushed
+  (branch is not on the remote; pushing would publish 34 earlier commits — awaiting the user).
