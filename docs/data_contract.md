@@ -177,9 +177,9 @@ numeric_electrode_map_report_v2의 counts/valid는 compressed NPZ 참조다. 기
 
 ### 이진 이미지의 극성 (2026-10-09)
 
-asset 참조의 `value_semantics`는 두 값만 허용한다. `binary`는 0이 아닌 값이 표시 영역이고 기본값이다. `binary_zero_is_marked`는 0(검정)이 표시 영역이다. 사용자 자료의 hotspot 이미지는 hotspot이 검정이므로 실제 hotspot asset에는 `binary_zero_is_marked`를 적는다. 극성은 자동으로 판별하지 않는다. 검정 hotspot 파일을 `binary`로 읽으면 여집합 면적이 나오므로 폐쇄망 manifest에서 반드시 지정한다. record 수준의 `value_semantics`는 `binary`만 허용하며 극성은 asset 참조에만 적는다. 값은 정확히 두 수준(0/1 또는 0/255)이어야 하고 threshold는 적용하지 않는다.
+asset 참조의 `value_semantics`는 두 값만 허용한다. `binary`는 0이 아닌 값이 표시 영역이고 기본값이다. `binary_zero_is_marked`는 0(검정)이 표시 영역이다. 사용자 자료의 hotspot 이미지는 PNG이고 검정 배경 / 흰 패턴(hotspot이 흰색)이므로 실제 hotspot asset에는 `binary`를 적는다(사용자 확인 2026-10-13; 2026-10-09의 "hotspot이 검정" 기록을 대체한다). 극성은 자동으로 판별하지 않는다. 극성을 반대로 적으면 여집합 면적이 나오므로 폐쇄망 manifest에서 반드시 지정한다. record 수준의 `value_semantics`는 `binary`만 허용하며 극성은 asset 참조에만 적는다. 값은 정확히 두 수준(0/1 또는 0/255)이어야 하고 threshold는 적용하지 않는다.
 
 
 ### R5: asset polarity 명시
 
-non-synthetic asset reference는 value_semantics를 반드시 명시한다. 누락은 explicit_value_semantics_required이며 검정 hotspot은 binary_zero_is_marked다. synthetic inline fixture는 기존 nonzero-is-marked 기본을 유지한다. 실제 adapter 승인은 여전히 G2 pending이다. C reader의 NPY/PNG와 DL2의 BMP/TIF 차이는 G2 container/bit-depth 결정 때 정렬할 사항이다. DL1 reader에는 polarity 옵션이 없으므로 layout polarity 사용자 결정도 pending이며 이번 수정은 이를 추측하지 않는다.
+non-synthetic asset reference는 value_semantics를 반드시 명시한다. 누락은 explicit_value_semantics_required이며 실제 hotspot(흰 패턴)은 binary다(2026-10-13 확인). binary_zero_is_marked는 검정이 표시인 자료를 위해 남아 있다. synthetic inline fixture는 기존 nonzero-is-marked 기본을 유지한다. 실제 adapter 승인은 여전히 G2 pending이다. C reader의 NPY/PNG와 DL2의 BMP/TIF 차이는 G2 container/bit-depth 결정 때 정렬할 사항이다. DL1 reader에는 polarity 옵션이 없으므로 layout polarity 사용자 결정도 pending이며 이번 수정은 이를 추측하지 않는다.

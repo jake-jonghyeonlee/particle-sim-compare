@@ -49,7 +49,7 @@ DL1은 제품 score이므로 단일 case context가 없다. 사용자가 해당 
 
 - G1: diameter별 bin이라는 뜻은 확정됐지만 density 단위와 inspected-area 환산은 pending이다. count/glass를 per um²로 간주하지 않는다.
 - G2: 2x2 결과에서 한 unit 값을 취하는 방법, 이미지 container/bit depth, layout 이미지 polarity는 pending이다. 4로 나누지 않는다. 제품 간 um/pixel은 같고 pixel 수가 다르며 제품 내부 layer 크기는 같다.
-- 실제 hotspot은 binary이고 검정이 hotspot이다. **실제 hotspot asset은 `value_semantics: binary_zero_is_marked`를 명시**한다. 자동 검출하지 않는다. layout polarity는 별도 pending이다.
+- 실제 hotspot은 PNG이고 검정 배경 / 흰 패턴이다(사용자 확인 2026-10-13, 이전의 "검정이 hotspot" 기록을 대체). **실제 hotspot asset은 `value_semantics: binary`를 명시**한다. 자동 검출하지 않는다. layout polarity는 별도 pending이다.
 - G4: DL2 near/wide window, pitch, jitter, core size, intermediate-layer policy, max_pair_attempts를 사용자가 실제 run 전에 모두 고른다. 실측용 default는 없다. synthetic config 수치를 실측에 복사하지 않는다.
 - G5: DL1 real candidate_grid/minimum line width, CNT/VIA endpoint source format은 pending이다. DL1 grid는 manifest의 `candidate_grid`에서 온다.
 - G6: label format과 acceptance targets는 pending이다. 합성 fixture 출력은 구조 검증이며 retrieval 품질 평가 숫자가 아니다.

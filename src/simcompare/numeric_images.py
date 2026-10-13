@@ -33,7 +33,8 @@ def check_hash(path: Path, expected: str) -> None:
 
 
 # 'binary': nonzero is the marked region. 'binary_zero_is_marked': the source draws the
-# marked region black (user, 2026-10-09: hotspot images are binary with the hotspot black).
+# marked region black. Real hotspot PNGs are black background / white pattern, so they use
+# 'binary' (user, 2026-10-13; supersedes the 2026-10-09 note that the hotspot is black).
 MASK_SEMANTICS = ('binary', 'binary_zero_is_marked')
 
 

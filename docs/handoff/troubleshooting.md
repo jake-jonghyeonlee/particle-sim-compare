@@ -8,7 +8,7 @@
 | `fixture_runner_missing_in_committed_compare_archive` | T12가 아직 미커밋이거나 과거 ref를 archive한 시험 bundle이다. coordinator가 T12를 승인/커밋한 뒤 정확한 ref로 다시 만든다. |
 | `offline_network_blocked` | download나 외부 연결 요청은 의도적으로 막혔다. 누락 wheel/가중치를 자동 다운로드하지 말고 승인된 오프라인 준비를 한다. 기본 fixture는 pretrained weights가 필요 없다. |
 | C `real_source_format_unconfirmed`, density / unit-area pending | G2 실제 adapter나 G1/G2 값이 미확정이다. null+reason을 유지한다. count/glass→per um² 환산, 2x2÷4를 추측하지 않는다. synthetic 성공을 실측 성공으로 표시하지 않는다. |
-| C missing mask / invalid unit / duplicate diameter / frame mismatch | manifest·원본 파일·단위·coverage를 수정하고 validate-data부터 다시 실행한다. missing을 zero/N/A로 채우지 않는다. 실제 hotspot 검정은 `binary_zero_is_marked`를 선언한다. layout polarity는 별도 확인한다. |
+| C missing mask / invalid unit / duplicate diameter / frame mismatch | manifest·원본 파일·단위·coverage를 수정하고 validate-data부터 다시 실행한다. missing을 zero/N/A로 채우지 않는다. 실제 hotspot(검정 배경 / 흰 패턴)은 `binary`를 선언한다. layout polarity는 별도 확인한다. |
 | ROI `source_shape_required`, `source_frame_required`, case missing | 사용자 점의 전체 product/design/source/case/frame 문맥과 원본 asset/hash/valid를 채운다. case A로 자동 배정하지 않는다. blocked는 실행하지 않는다. |
 | ROI `map_threshold_required`, incomplete map coverage | 원한다면 사용자 threshold를 명시하고 관측 범위를 해결한다. 지도 위치와 manual 위치를 혼동하지 않는다. 실측 crop 크기는 G4의 별도 사용자 결정이다. |
 | DL1 manifest `candidate_grid` conflict / inconsistent grid / override | query/candidate/training manifest가 승인된 동일 grid를 선언하는지 확인한다. 실제 grid/minimum line width G5는 사용자 답변이 필요하다. 단순 override로 conflict를 숨기지 않는다. |
@@ -26,7 +26,7 @@
 | C `output_exists_use_force` | 출력 파일이 이미 있다. 기존 파일은 지워지지 않는다. 교체하려면 `--force`를 붙이고, 보존하려면 다른 `--out`을 쓴다. |
 | C `dl2_scores_do_not_match_index` | search 결과와 index가 같은 checkpoint·같은 실행 환경에서 나온 것인지 확인한다. index와 search를 같은 기계에서 다시 실행한다. 허용오차는 6자리 반올림 한 단계(1.5e-6)다. |
 | C `dl2_cohort_mismatch`, `explicit_dl2_cohort_file_required` | 검색에 실제로 쓴 cohort 파일을 `--dl2-cohort`로 준다. 다른 cohort 파일로 바꿔 봉인하지 않는다. |
-| C `explicit_value_semantics_required` | 실제 asset 참조에 `value_semantics`를 적는다. hotspot이 검정인 이미지는 `binary_zero_is_marked`다. |
+| C `explicit_value_semantics_required` | 실제 asset 참조에 `value_semantics`를 적는다. 실제 hotspot은 검정 배경 / 흰 패턴이므로 `binary`다(2026-10-13 확인). 검정이 표시인 이미지에만 `binary_zero_is_marked`를 쓴다. |
 | `manifest_sha256_mismatch`, `archive directory inventory mismatch` | 전달받은 bundle이 승인된 것과 다르다. bundle 안에서 설치·실행해 생긴 파일(.venv, demo 출력)이 있으면 bundle을 다시 풀고 bundle 밖에서 실행한다. 승인 hash는 실제 전달한 bundle의 값을 쓴다. |
 | `offline output directory must be empty` | 이전 검증 결과를 덮지 않는다. 새 `--out` 디렉터리를 지정한다. |
 | DL1 / DL2 evaluation unavailable, labels missing | G6 label format과 사용자 acceptance target를 결정한 뒤 해당 별도 평가 절차를 실행한다. 빈 인수 record에는 숫자나 성공을 미리 채우지 않는다. |
