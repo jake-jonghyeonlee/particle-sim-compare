@@ -410,3 +410,9 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   path read; configs/stack-order.json holds the user's 13 names in order.
 - Independent review: task_a256d95569ef / ctx_6302bed5e9be (structured, claude-opus-5-5 / high), started
   07:53Z, candidate 60de205, full diff from e67a8b2. Report: docs/review/DL1_CNO_RO_REVIEW.md.
+- Independent review R-O: task_a256d95569ef / ctx_6302bed5e9be, **PASS-WITH-NOTES for 60de205**, 0 blocking,
+  10 notes (08:06:51Z, ~13 min). Report docs/review/DL1_CNO_RO_REVIEW.md (7214284). Both branches pushed at
+  the user's request before the verdict (DL1 60de205, compare f0cb3fc).
+- Addendum A3 from notes N1–N3 (image_only accepts identical same-name CNT files, case variants warn
+  instead of error without an order file, `.PNG` extension accepted). O3 task_2a03e56e9e11 /
+  ctx_719233ba8847 dispatched 08:08Z. Then a narrow refresh review.
