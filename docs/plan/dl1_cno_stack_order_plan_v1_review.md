@@ -101,3 +101,22 @@ models without an order file.
 - A2.6 Identities: a model exported in `image_only` and in `relations` mode has different Product input
   identities (connections differ); state this and that a checkpoint/search must use one mode consistently.
 Versions stay report v3 / bundle v3 / algorithm "2" (nothing published yet).
+
+## Addendum A3 — 2026-10-13: image_only must not reject real-style input for relations-only reasons
+
+From independent review R-O (PASS-WITH-NOTES for `60de205`, notes N1–N3). Coordinator decisions; they
+only relax rejections that protect nothing on the image_only path, and keep relations mode as reviewed.
+
+- A3.1 (N1) In `image_only`, two or more cno files with the same CNT name AND identical decoded masks are
+  accepted: the union is unaffected. Report them as a warning (`duplicate_cnt_mask_same_name`, naming all
+  files). In `relations` mode the error `ambiguous_cnt_asset_identity` stays (condition C6).
+- A3.2 (N2) Without an order file, layer names that differ only by letter case never produce an error and
+  never an order-named code. Report a warning `layer_name_case_variants` per model and, at inventory
+  level, for case twins across models (they become separate layer vocabulary entries; source spelling is
+  kept). With an order file the collision error of A1.4 stays.
+- A3.3 (N3) The `.png` extension is matched case-insensitively (`.PNG`, `.Png`). Everything else about
+  filename syntax is unchanged. The original filename stays in provenance.
+- A3.4 (N4, N8, N9) Pin the `to_product` CNT union with a test; correct the stale suite count in USAGE;
+  in image_only name the summary field so it does not read as failed contacts (keep a compatible meaning
+  documented, or add `geometry_only_component_count` and set the unresolved count to 0 — choose one and
+  keep report v3 readers consistent).
