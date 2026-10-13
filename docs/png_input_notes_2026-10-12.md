@@ -230,3 +230,10 @@ PXL - SD2 - SD1 - OCNT - PCNT - GAT3 - GCNT - OACT - GAT2 - GATC - GAT1 - ACT - 
   (coordinator 해석: CNT는 한 전극의 layer 조각끼리 잇는다. 사용자에게 이 해석을 알렸고 명시적 확인은 아직 없다.)
 
 확인 필요: 실제 파일명의 대소문자(앞의 예는 `1-pxl.png`, 이 목록은 `PXL`).
+
+## 2026-10-13 추가 — CNT가 잇는 대상 (사용자 확인)
+
+- 사용자: "cnt 중 하나의 cnt segment는 layer의 같은 전극을 잇는다." 즉 CNT 덩어리 하나는 **같은 전극의
+  서로 다른 layer 조각**을 잇는다. (coordinator가 물은 same-electrode 해석에 대한 확인.)
+- 사용자 의문: 입력에서 이미 연결된 조각끼리 한 전극 폴더로 묶여 있으므로 CNT로 무엇을 할지 모르겠다.
+  → CNT 연결 관계 추출을 유지할지, CNT를 이미지로만 쓸지는 **미결정**(coordinator가 선택지를 제시함).
