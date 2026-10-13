@@ -322,3 +322,23 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   1 skipped. The independent PASS covers 1f9d005; e67a8b2 differs from it only in docs/USAGE.md.
 - particle-sim-compare: docs committed locally as fb02d40 on rewrite/line-pixel-rate; NOT pushed
   (branch is not on the remote; pushing would publish 34 earlier commits — awaiting the user).
+
+## New Run for remaining compare work — 2026-10-13T03:17Z
+
+- User request: proceed in order with the remaining compare work that needs no further answers.
+- Run run_246049c6ee70 (coordinator term_5b40a375-…; run_3b14694cfbbe left complete and untouched).
+  Baseline particle-sim-compare rewrite/line-pixel-rate@b5227bd2cf5931ad337424416649257fc490d076, clean,
+  2 local commits ahead of origin (498201a, b5227bd: 2026-10-13 answers), suite 524 passed, 2 skipped.
+- Astra planning skipped by coordinator decision: bounded work whose contracts are the R5b review
+  notes and the already-reviewed DL1 strict PNG decoder. Independent Opus high review still required
+  for CB (input parsing on the numeric path).
+- CA task_b401834d4cef (R5b notes R3–R5, R7, R8, R10–R12; hand-off docs for the DL1 PNG workflow,
+  both polarities stated, Windows host) → CB task_799bfa5892d2 (strict PNG reading for numeric masks).
+  Out of scope: R9 and the real-data adapter (G2), everything the user put on hold.
+- Editor: term_8bdee4a2-c2b1-4354-92b9-d48d93271800 in particle-sim-compare, status bar GPT-6.1-Sol
+  medium, Pro 100, weekly 66% left. Previous Sol terminal (DL1) closed. CA Dispatch ctx_27faab09ebd5, 03:17Z.
+- CA settled: task_b401834d4cef / ctx_27faab09ebd5 succeeded (msg_270c7540e141, 03:28:19Z, ~11 min; 1 question
+  on exchange fixture hashes approved, 1 escalation correcting the coordinator's R10 acceptance — R10 is
+  coverage, not a defect; acceptance changed to mutant-kill). Commit 27f462ca95bd0b9229062ad980d9e8c62bd5f307
+  (11 files, +512/-21). Coordinator re-run: 547 passed, 2 skipped; no diff in linepixel/electrode_map/
+  density/measurement; dl_results diff read; hand-off README states both polarities, Windows host, DL1 pin.
