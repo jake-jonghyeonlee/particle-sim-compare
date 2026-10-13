@@ -385,3 +385,14 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
 - Open with the user: whether a CNT always joins two layers of the same electrode folder
   (same_electrode_required, kept off); whether connection relations are wanted at all versus CNT as an
   image channel only (coordinator proceeding with relations, as originally requested).
+- O1 settled: task_77a52b6a11cf / ctx_3404ad2135bc succeeded (05:07:19Z, ~19 min). Commit
+  6f9a167e50d00ea51204236bee04bcba28ffd063 (13 files, +923/-148); coordinator re-run 532 passed, 1 skipped,
+  and own real-style check (cno 1-OCNT, 2-GCNT, 3-OCNT; four order-file cases).
+- User, 05:08Z: full order PXL, SD2, SD1, OCNT, PCNT, GAT3, GCNT, OACT, GAT2, GATC, GAT1, ACT, BML;
+  take the order from this list, not from filename numbers. Addendum A1 (460536a).
+  O1b task_07347a565d82 / ctx_95d4f8f71651 succeeded (05:25:14Z, ~15 min). Commit
+  f90774951869cc0c04eaf85ad97aff6db072667c; coordinator re-run 538 passed, 1 skipped.
+- User: one CNT segment joins layers of the same electrode; then "일단 a부터 가보자" — CNT as image
+  only first. Addendum A2 (02ef8b3). O1c task_ff242a3aecd2 / ctx_089c2ec0fc6e dispatched 06:53Z
+  (image_only mode when no order file; relations mode optional; same-electrode rule not yet applied).
+- Coordinator idle 05:26Z–06:51Z waiting for the user's choice between A and B.
