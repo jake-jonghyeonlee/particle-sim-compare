@@ -356,3 +356,16 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
 - User answer 2026-10-13: image resolution is 0.1 um/pixel, hotspot images included; the 2026-10-08 figure of
   about 0.05 um/pixel is superseded. Recorded in docs/open_questions.md and docs/data_contract.md by the
   coordinator (docs only; no code hard-codes a pitch).
+- R6b refresh review: task_e517417f9916 / ctx_1bde1cf0e069 (structured, claude-opus-5-5 / high),
+  **PASS-WITH-NOTES for 3624a4ab24cf7d879483e58ab9b4c80a121c6554**, 0 blocking, 6 notes
+  (msg_0ac519737bfa, 04:27:58Z, ~17 min; one coordinator wait re-armed). N1, N2, N3, N5, N6, N8 fixed
+  (N3 by code reasoning; Windows not executed). Report docs/review/R6B_REVIEW.md.
+- After the PASS, coordinator docs-only fixes for R6b notes B1 (data_contract.md still called the
+  0.1 vs 0.05 um/pixel relation open) and B5 (troubleshooting reason list). No code change after
+  3624a4a. Open notes left as they are: B2 (untested fallback branch), B3 (reason name), B4 (broad
+  except maps unrelated failures to png_decode_failed), B6 (Windows separator test simulates notation only).
+- Run run_246049c6ee70 complete: CA, CB, CC and reviews R6, R6b all settled. Not pushed.
+- New user fact 2026-10-13: cno files are numbered from 1 on their own (not the model-wide stack
+  number). DL1 at e67a8b2 would reject such input with `conflicting stack`. Approach proposed to the
+  user (separate cno numbering, CNT position inferred from overlaps, optional order file); awaiting
+  the user's decisions before any DL1 change.
