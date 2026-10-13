@@ -403,3 +403,10 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   the three cno files, CNT channel non-zero after prepare_product.
 - O2 Dispatch ctx_379614e6d0da (task_1af0915ad0e7), 07:11Z; amendments A1/A2 sent as binding
   instructions (main documented path = image_only without an order file; relations mode optional).
+- O2 settled: task_1af0915ad0e7 / ctx_379614e6d0da succeeded (07:50:57Z, ~39 min wall including a Codex
+  capacity stop at ~07:44Z after context compaction; resumed on the first automatic retry, same Dispatch).
+  Commit 60de205a1b971274a34964baa938067c9629703f (8 files, +615/-154; docs, tests, configs/stack-order.json;
+  no production change). Coordinator re-run 565 passed, 1 skipped; USAGE structure and main image_only
+  path read; configs/stack-order.json holds the user's 13 names in order.
+- Independent review: task_a256d95569ef / ctx_6302bed5e9be (structured, claude-opus-5-5 / high), started
+  07:53Z, candidate 60de205, full diff from e67a8b2. Report: docs/review/DL1_CNO_RO_REVIEW.md.
