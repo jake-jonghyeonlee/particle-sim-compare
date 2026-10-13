@@ -213,3 +213,20 @@ lineage_id/design_version은 사용자 metadata 또는 명시적 mapping으로 �
 
 현재 DL1 `feat/png-input`(`e67a8b2`)은 cno 번호를 모델 공통 순번으로 가정하므로 이 자료에서
 `conflicting stack` 오류가 난다. 수정 전이다.
+
+## 2026-10-13 추가 — 전체 layer 순서와 파일 번호 (사용자)
+
+사용자가 준 전체 순서(위 → 아래):
+
+```text
+PXL - SD2 - SD1 - OCNT - PCNT - GAT3 - GCNT - OACT - GAT2 - GATC - GAT1 - ACT - BML
+```
+
+- "이제 파일명의 넘버말고 이걸로 순서를 파악해" — **전극 파일의 번호도 순서로 쓰지 않는다.**
+  순서는 이 목록에서만 얻는다. 파일명 번호는 전극·cno 모두 기록용이다.
+- 이 순서는 모든 모델에 공통이고, 모델에 따라 일부 layer와 CNT가 없을 수 있다.
+- CNT는 `OCNT`, `PCNT`, `GCNT` 세 가지이며 어느 것이 CNT인지는 폴더(`cno`)로 구분한다.
+- 사용자: 모든 segment는 어떤 CNT로든 연결되어 있고 segment마다 CNT 종류가 다를 수 있다.
+  (coordinator 해석: CNT는 한 전극의 layer 조각끼리 잇는다. 사용자에게 이 해석을 알렸고 명시적 확인은 아직 없다.)
+
+확인 필요: 실제 파일명의 대소문자(앞의 예는 `1-pxl.png`, 이 목록은 `PXL`).

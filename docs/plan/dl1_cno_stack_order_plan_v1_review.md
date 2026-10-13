@@ -38,3 +38,35 @@ Conditions carried into the Task contracts:
 - C6 Remaining plan decisions are accepted at their conservative defaults: any CNT name listed in the
   order file is accepted (no whitelist); two same-name files with identical masks are an error naming
   both files.
+
+## Addendum A1 — 2026-10-13: electrode numbers are provenance only (user decision)
+
+After O1 was accepted (`6f9a167`), the user supplied the full top-to-bottom order
+`PXL, SD2, SD1, OCNT, PCNT, GAT3, GCNT, OACT, GAT2, GATC, GAT1, ACT, BML` and said the order must be
+taken from this list and no longer from filename numbers. Plan v1 kept electrode numbers as stack
+positions and cross-checked the list against them; that part is superseded. The coordinator issues this
+bounded amendment directly (a user decision with direct consequences; no new design choice):
+
+- A1.1 Electrode filename numbers are provenance only, exactly like cno numbers: positive integer and
+  filename syntax are the only requirements. They are never a stack position.
+- A1.2 The vertical order comes only from the order file. `stack_order_electrode_order_conflict`,
+  the electrode `conflicting stack` check and `stack_order_ambiguous_electrode_name` are removed: the same
+  number may carry different layer names and one layer name may appear under different numbers in
+  different electrode folders. A duplicate electrode × layer inside ONE electrode folder stays an error.
+- A1.3 Electrode numbers leave every identity: electrode asset/element binding becomes
+  `[model, "electrode", electrode, layer]`. Renumbering any file changes no asset, element, component,
+  connection or model identity. Report keeps `filename_number` as provenance; `electrode_stack` and
+  `electrode_stack_table` are removed or replaced by an explicit provenance table.
+- A1.4 Order-file names are matched to source layer names case-insensitively (casefold), because the
+  user wrote `PXL` while an earlier filename example is `1-pxl.png`. Two present names that differ only
+  by case, or two order entries that differ only by case, are an error naming both. Everywhere else
+  (element IDs, manifest role/layer, vocabulary) the source spelling is kept exactly; the report records
+  the matched pairs.
+- A1.5 Models without cno need no order file. Where no order is resolved, nothing may be ordered by
+  filename numbers: use layer name and label the listing as unordered. When an order file is supplied it
+  is validated for every model (all present names must be listed).
+- A1.6 The user's order is committed as `configs/stack-order.json` (O2) and described as the user-supplied
+  reference of 2026-10-13. Tests keep using their own synthetic lists; no test hard-codes this order as
+  truth and no code hard-codes it.
+- A1.7 `same_electrode_required` stays false and inactive.
+Versions stay report v3 / bundle v3 / algorithm "2" because nothing built at `6f9a167` has been published.
