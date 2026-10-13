@@ -369,3 +369,19 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   number). DL1 at e67a8b2 would reject such input with `conflicting stack`. Approach proposed to the
   user (separate cno numbering, CNT position inferred from overlaps, optional order file); awaiting
   the user's decisions before any DL1 change.
+
+## DL1 cno stack order — Run run_84882a6a9a35 — 2026-10-13T04:49Z
+
+- User facts 2026-10-13: cno numbers are meaningless, CNT identified by name (OCNT, GCNT, PCNT), several
+  files per CNT name are possible and not merged, one layer order for all models with absent layers
+  allowed, order supplied as a separate input file. Recorded in docs/png_input_notes_2026-10-12.md (0002584).
+- Plan: task_719a63b53eae / ctx_397ecfdf57dd (Astra high, term_be7c8ea5-…, ~16 min, one 15-min wait
+  re-armed; user answers forwarded mid-plan as msg to the planner). docs/plan/dl1_cno_stack_order_plan_v1.md,
+  2 Tasks, 18 named tests. Coordinator review at high: ADOPTED with conditions C1–C6
+  (docs/plan/dl1_cno_stack_order_plan_v1_review.md, commit 4bb433b). Astra terminal closed.
+- Implementation: O1 task_77a52b6a11cf → O2 task_1af0915ad0e7, then one independent Opus high review of
+  the full diff from e67a8b2. Editor term_706f8ea0-c29b-4172-8ee0-b7b2f6291c51 (status bar GPT-6.1-Sol
+  medium, DL1). O1 Dispatch ctx_3404ad2135bc, 04:48Z. Baseline DL1 feat/png-input@e67a8b2 clean.
+- Open with the user: whether a CNT always joins two layers of the same electrode folder
+  (same_electrode_required, kept off); whether connection relations are wanted at all versus CNT as an
+  image channel only (coordinator proceeding with relations, as originally requested).
