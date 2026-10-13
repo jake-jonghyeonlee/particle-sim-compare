@@ -13,7 +13,7 @@
 | N5 | answered | case ID·failure_type·전극/role/actual_layer 결합 보존, pair class는 두 전극 unordered 기준 | orientation 반례·유형 추적 | raw fab_pair_key 분해/정렬 금지 |
 | N6 | answered | ROI 생산 C/T6, 소비 DL2/T10, 왕복 T12; 출처는 지도 영역·manual | review_roi_v1 문서·위치 export 계약 | 제품 간 구간 대응/검색 결과로 ROI 자동 선택 금지 |
 | G1 | pending (일부 answered) | 지름마다 한 값(per_bin, 2026-10-08), 연속 per-um 아님; bin 폭 질문은 종료. null — 실제 단위·조사면적 변환·공정/기간 근거 미답변 | 지름별 raw 값·명시 합성 per-bin 검산·면적 | 실자료 가중값 및 parser 최종 승인 |
-| G2 | pending (일부 answered) | 제품 간 동일 um/pixel·제품별 pixel 수·제품 내 같은 layer 크기, 2×2 약 100 um/2000 px(2026-10-08). null — 한 unit 환산 및 원천/migration 세부 미답변 | 원본 2×2 지도 표시·full-mask 면적 | 자동 /4·unit/panel 완료 및 reader 최종 승인 |
+| G2 | pending (일부 answered) | 제품 간 동일 um/pixel·제품별 pixel 수·제품 내 같은 layer 크기, 이미지 해상도 0.1 um/pixel(hotspot 포함, 사용자 확인 2026-10-13; 2026-10-08의 2×2 약 100 um/2000 px ≈ 0.05 um/pixel 수치를 대체). null — 한 unit 환산 및 원천/migration 세부 미답변 | 원본 2×2 지도 표시·full-mask 면적 | 자동 /4·unit/panel 완료 및 reader 최종 승인 |
 | G7a | answered | lateral-only/vertical-only/simultaneous 지표 구현, open 제외(2026-10-08) | case 유형·기존 line/pixel 보존 | 면적·가중·panel·delta 구현; G1/G2 미답변 real 값은 null, shared/transfer를 simultaneous로 이름 변경 금지 |
 | G7b | answered | 지도는 현재 short-only, 사용자 결정 2026-10-08 | count 배열·heat-map, 수동 ROI 기본, 명시 threshold 영역 ROI | 누락 source/valid/frame/shape의 차단 사유 유지; legacy open helper는 보존 |
 | G3 | pending | null — DL1/DL2 별도 repo 이름·경로 확인 | 교환 계약 초안 | DL2 생성/rename/remote/push; 이름 답변은 push 허가 아님 |
@@ -55,5 +55,6 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 수율 환산 | 보류 | 기존 보류 유지 | 사용자가 다시 꺼낼 때 |
 | 같은 net 쌍 제외 | answered (기능 불필요) | 사용자(2026-10-13): 다른 layer에 있어도 같은 전극이면 같은 이름을 가지며 입력 이전에 이미 처리된다. 이름이 다른 같은 net 쌍 같은 예외는 없다. compare에 제외 기능을 만들지 않는다 | 없음 |
 | hotspot 파일 | answered | 사용자가 2026-10-13에 두 번 확인: PNG이고 검정 배경 / 흰 패턴. 실제 hotspot asset은 `value_semantics: binary`. 2026-10-09의 "hotspot이 검정" 기록은 대체됨. 코드 동작은 그대로(두 값 모두 지원, 자동 판별 없음, asset마다 명시) | PNG mode/bit depth 실물 확인, 2×2에서 한 unit 값 환산. DL2 저장소의 hotspot 극성 안내는 별도 확인 필요 |
+| 이미지 해상도 | answered | 사용자(2026-10-13): hotspot을 포함해 0.1 um/pixel. 2026-10-08의 약 0.05 um/pixel 수치는 쓰지 않음. 코드에 고정값은 없고 manifest의 frame pitch로 받음 | 없음 |
 
 참고: reader는 구조 검증 뒤 mode `1`, `L`, `RGB`, `LA`, `RGBA`, `P`의 불투명 exact black/white PNG를 받는다. 기존 8-bit L의 0/1 mask도 유지한다. 16-bit (`I`/`I;16`) PNG는 `png_unsupported_bit_depth`로 거부하며 threshold나 luminance 변환을 하지 않는다.

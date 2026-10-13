@@ -342,3 +342,17 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   coverage, not a defect; acceptance changed to mutant-kill). Commit 27f462ca95bd0b9229062ad980d9e8c62bd5f307
   (11 files, +512/-21). Coordinator re-run: 547 passed, 2 skipped; no diff in linepixel/electrode_map/
   density/measurement; dl_results diff read; hand-off README states both polarities, Windows host, DL1 pin.
+- CB settled: task_799bfa5892d2 / ctx_6aad803c8664 succeeded (msg_7c0d0d45124f, 03:43:11Z, ~14 min; questions:
+  baseline confirmation, removal of I/I;16 PNG support approved, Pillow cannot write interlaced PNG so the
+  coordinator's acceptance was corrected to hand-built Adam7). Commit 91c6da2e117c5b7607ee7c5d45713afd60b327d5
+  (6 files, +716/-13). Coordinator re-run: 761 passed, 2 skipped; own check of white-on-black hotspots in
+  modes L, 1, RGB, RGBA, P under both value_semantics; grey rejected.
+- R6 independent review: task_ef3d3cd5fe3e / ctx_0820a9774911 (structured, claude-opus-5-5 / high),
+  **PASS-WITH-NOTES for 91c6da2**, 0 blocking, 11 notes (msg_c81b60c981a4, 03:58:19Z, ~14 min).
+  Report docs/review/R6_REVIEW.md.
+- CC (R6 notes N1–N3, N5, N6, N8; limits documented): task_fc15898b0812 / ctx_c73e23e43555 succeeded
+  (msg_d9d89479d89d, 04:08:35Z, ~9 min). Commit 3624a4ab24cf7d879483e58ab9b4c80a121c6554 (9 files, +342/-34).
+  Coordinator re-run: 796 passed, 2 skipped.
+- User answer 2026-10-13: image resolution is 0.1 um/pixel, hotspot images included; the 2026-10-08 figure of
+  about 0.05 um/pixel is superseded. Recorded in docs/open_questions.md and docs/data_contract.md by the
+  coordinator (docs only; no code hard-codes a pitch).
