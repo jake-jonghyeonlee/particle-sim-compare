@@ -43,3 +43,17 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | G4 | pending (방침 answered) | 창 크기는 실제 실행 전에는 알 수 없음. near/wide um 값은 기본값 없는 필수 설정 | 실제 크기, 비인접 vertical pair의 사이 layer 포함 여부 |
 | hotspot 파일 | 일부 answered | 이진 이미지이고 hotspot이 검정. asset 참조에 `value_semantics: binary_zero_is_marked`를 적어야 함(자동 판별 없음) | 파일 형식(PNG/BMP/TIFF, bit depth), layout 이미지의 극성, 2×2에서 한 unit 값 환산 |
 
+
+## 2026-10-13 답변 (보류 항목·hotspot 파일)
+
+| 항목 | 상태 | 내용 | 남은 것 |
+|---|---|---|---|
+| 전극 쌍 조각별 기여 | answered | "픽셀별 기여도"는 전극 쌍 사이에 공유되는 hotspot을 처리하고 쌍별 기여를 판단하는 것을 뜻함. 단독/공동 조각(`Bucket`)과 `contributing_source_case_keys`로 구현된 범위가 맞음 | 없음 |
+| layer별 윤곽을 한 평면에 겹쳐 보는 화면 | 보류 | 더 고민이 필요하다는 사용자 판단. 구현하지 않음 | 사용자가 다시 꺼낼 때 |
+| 눌러서 따라가는 뷰어 | 보류 | 구현하지 않음. 추적은 JSON/CSV의 ID로 함 | 사용자가 다시 꺼낼 때 |
+| 밀도 단위·조사면적 환산 (G1 나머지) | 보류 | 사용자가 보류로 지정 | 사용자가 다시 꺼낼 때 |
+| 수율 환산 | 보류 | 기존 보류 유지 | 사용자가 다시 꺼낼 때 |
+| 같은 net 쌍 제외 | 논의 중 | 현재 자동 판정 없음. 입력에 같은 net 쌍이 있으면 그대로 계산됨 | 실제 시뮬레이터가 같은 net 쌍의 hotspot을 내는지, 제외 목록의 출처 |
+| hotspot 파일 | **확인 필요** | 사용자(2026-10-13): PNG이고 검정 배경 / 흰 패턴. 이 말대로면 `value_semantics: binary`. 2026-10-09 기록은 "hotspot이 검정"(`binary_zero_is_marked`)이라 서로 반대임 | 어느 쪽이 맞는지 사용자 확인. 확인 전에는 코드·기본값을 바꾸지 않음(자동 판별 없음, asset마다 명시) |
+
+참고: reader는 PNG mode `1`, `L`, `I`, `I;16`만 받는다. RGB나 팔레트 PNG는 `unsupported_png_mode`로 거부된다.
