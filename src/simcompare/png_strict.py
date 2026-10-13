@@ -246,25 +246,32 @@ def read_png(path, relative_path, *, sha256=None):
             raise NumericContractError('input_hash_mismatch', relative_path)
         with decoder_session() as pixel_limit:
             _validate_png_structure(data, pixel_limit=pixel_limit)
-            with Image.open(BytesIO(data)) as image:
-                if image.format != 'PNG' or image.mode not in {'1', 'L', 'RGB', 'LA', 'RGBA', 'P'}:
-                    raise _PNGError('unsupported_png_mode', str(image.mode))
-                if image.getexif().get(274, 1) != 1:
-                    raise _PNGError('png_nonidentity_orientation', 'nonidentity orientation metadata')
-                image.load()
-                if image.mode in {'1', 'L'}:
-                    return binary_mask(np.asarray(image))
-                # Exact palette/alpha expansion only; no luminance conversion.
-                rgba = np.asarray(image.convert('RGBA'))
-                if not np.all(rgba[..., 3] == 255):
-                    raise _PNGError('png_nonopaque_pixels', 'nonopaque pixels')
-                rgb = rgba[..., :3]
-                black = np.all(rgb == 0, axis=2)
-                white = np.all(rgb == 255, axis=2)
-                if not np.all(black | white):
-                    raise _PNGError('nonbinary_nominal_mask', 'pixels must be exactly black or white')
-                white.setflags(write=False)
-                return white
+            try:
+                with Image.open(BytesIO(data)) as image:
+                    if image.format != 'PNG' or image.mode not in {'1', 'L', 'RGB', 'LA', 'RGBA', 'P'}:
+                        raise _PNGError('unsupported_png_mode', str(image.mode))
+                    if image.getexif().get(274, 1) != 1:
+                        raise _PNGError('png_nonidentity_orientation', 'nonidentity orientation metadata')
+                    image.load()
+                    if image.mode in {'1', 'L'}:
+                        return binary_mask(np.asarray(image))
+                    # Exact palette/alpha expansion only; no luminance conversion.
+                    rgba = np.asarray(image.convert('RGBA'))
+                    if not np.all(rgba[..., 3] == 255):
+                        raise _PNGError('png_nonopaque_pixels', 'nonopaque pixels')
+                    rgb = rgba[..., :3]
+                    black = np.all(rgb == 0, axis=2)
+                    white = np.all(rgb == 255, axis=2)
+                    if not np.all(black | white):
+                        raise _PNGError('nonbinary_nominal_mask', 'pixels must be exactly black or white')
+                    white.setflags(write=False)
+                    return white
+            except (_PNGError, NumericContractError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+                raise
+            except Exception as exc:
+                # Third-party decode failures (including malformed ancillary metadata)
+                # are input errors; process-control BaseExceptions must propagate.
+                raise _PNGError('png_decode_failed', str(exc)) from exc
     except _PNGError as exc:
         raise NumericContractError(exc.code, relative_path+': '+str(exc)) from exc
     except NumericContractError as exc:

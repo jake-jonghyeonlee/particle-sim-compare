@@ -410,3 +410,131 @@ def test_context_force_can_replace_corrupt_output_without_deleting_assets(tmp_pa
     context_at(root, out, force=True)
     assert before <= set((root/'numeric_map').iterdir())
     assert read(out)['schema_version'] == 'numeric_dl_context_v1'
+
+
+@pytest.mark.parametrize('producer,field', [('dl1', 'rankings'), ('dl2', 'primary'), ('dl2', 'supplementary')])
+@pytest.mark.parametrize('kind,reason', [
+    ('not_list', 'candidate_list_required'), ('not_dict', 'candidate_row_required'),
+    ('missing_product', 'candidate_identifier_required'), ('mixed_product', 'candidate_identifier_required'),
+    ('missing_score', 'invalid_similarity_score'), ('absurd_score', 'invalid_similarity_score'),
+])
+def test_malformed_native_candidates_have_named_errors_in_seal_and_read(tmp_path, producer, field, kind, reason):
+    root = copied(tmp_path)
+    path = root/(producer+'_search.json'); native = read(path)
+    if kind == 'not_list': native[field] = {'not': 'a list'}
+    elif kind == 'not_dict': native[field] = [None]
+    elif kind == 'missing_product': native[field][0].pop('product_id')
+    elif kind == 'mixed_product':
+        native[field][0]['product_id'] = 7
+        for row in native[field]: row['score'] = 1.0
+    elif kind == 'missing_score': native[field][0].pop('score')
+    else: native[field][0]['score'] = 10**400
+    write(path, native)
+    expected = reason if reason == 'invalid_similarity_score' else producer+'_'+reason
+    with pytest.raises(NumericContractError, match=expected): reseal(root)
+    profile = read(root/'exchange.json'); profile[producer]['result']['sha256'] = sha(path)
+    write(root/'exchange.json', profile)
+    with pytest.raises(NumericContractError, match=expected): read_results(root/'exchange.json')
+
+
+@pytest.mark.parametrize('field', ['primary', 'supplementary', 'query'])
+def test_missing_roi_identifier_has_named_contract_error(tmp_path, field):
+    root = copied(tmp_path); path = root/'dl2_search.json'; native = read(path)
+    (native[field] if field == 'query' else native[field][0]).pop('roi_id')
+    write(path, native)
+    reason = 'dl2_query_candidate_identifier_required' if field == 'query' else 'dl2_candidate_identifier_required'
+    with pytest.raises(NumericContractError, match=reason): reseal(root)
+    profile = read(root/'exchange.json'); profile['dl2']['result']['sha256'] = sha(path); write(root/'exchange.json', profile)
+    with pytest.raises(NumericContractError, match=reason): read_results(root/'exchange.json')
+
+
+@pytest.mark.parametrize('number', [10**400, float('inf'), float('nan'), 1e308])
+def test_absurd_or_nonfinite_embeddings_have_named_errors(tmp_path, number):
+    root = copied(tmp_path); path = root/'dl2_index.json'; index = read(path)
+    index['records'][0]['embedding'] = [number, 1]
+    # JSON's NaN/Infinity spellings are deliberately hand-written invalid fixtures.
+    path.write_text(json.dumps(index))
+    reason = 'nonfinite_dl_number' if isinstance(number, float) and not __import__('math').isfinite(number) else 'invalid_dl2_index_embedding'
+    with pytest.raises(NumericContractError, match=reason): reseal(root)
+    profile = read(root/'exchange.json'); profile['dl2']['index']['sha256'] = sha(path); write(root/'exchange.json', profile)
+    with pytest.raises(NumericContractError, match=reason): read_results(root/'exchange.json')
+
+
+def test_supplementary_self_match_is_rejected_without_primary_cohort(tmp_path):
+    root = copied(tmp_path); native = read(root/'dl2_search.json')
+    native.update(primary=[], primary_cohort=['OTHER'], status='unavailable',
+                  supplementary=[{**deepcopy(native['query']), 'score': 1.0,
+                                  'search_scope': 'supplementary', 'same_physical_case': True}])
+    write(root/'dl2_search.json', native); write(root/'cohort.json', ['OTHER'])
+    with pytest.raises(NumericContractError, match='dl2_query_self_match'): reseal(root)
+    profile = read(root/'exchange.json')
+    profile['dl2']['result']['sha256'] = sha(root/'dl2_search.json')
+    profile['dl2']['cohort']['sha256'] = sha(root/'cohort.json')
+    write(root/'exchange.json', profile)
+    with pytest.raises(NumericContractError, match='dl2_query_self_match'): read_results(root/'exchange.json')
+
+
+def old_context(out, references, schema='numeric_dl_context_v1'):
+    write(out, {'schema_version': schema, 'original_map_files': {path: '0'*64 for path in references}})
+
+
+def test_cleanup_stem_is_literal_even_with_regex_characters(tmp_path):
+    from simcompare.dl_results import _replaced_map_directory
+    out = tmp_path/'a.+.json'
+    owned = 'numeric_map/a.+_'+'a'*32
+    other = 'numeric_map/aXYZ_'+'b'*32
+    (tmp_path/owned).mkdir(parents=True); (tmp_path/other).mkdir()
+    old_context(out, [other+'/map.npz'])
+    assert _replaced_map_directory(out) is None
+    old_context(out, [owned+'/map.npz'])
+    assert _replaced_map_directory(out) == tmp_path/owned
+
+
+def test_cleanup_requires_one_directory_and_previous_context_schema(tmp_path):
+    from simcompare.dl_results import _replaced_map_directory
+    out = tmp_path/'c.json'
+    first = 'numeric_map/c_'+'a'*32; second = 'numeric_map/c_'+'b'*32
+    (tmp_path/first).mkdir(parents=True); (tmp_path/second).mkdir()
+    old_context(out, [first+'/map.npz', second+'/map.npz'])
+    assert _replaced_map_directory(out) is None
+    old_context(out, [first+'/map.npz'], schema='other_schema')
+    assert _replaced_map_directory(out) is None
+    old_context(out, [first+'/map.npz', first+'/another.npz'])
+    assert _replaced_map_directory(out) == tmp_path/first
+
+
+def test_cleanup_never_follows_numeric_map_symlink_outside_root(tmp_path, monkeypatch):
+    from simcompare.dl_results import _replaced_map_directory
+    root = tmp_path/'output'; root.mkdir()
+    outside = tmp_path/'outside'; outside.mkdir()
+    victim = outside/('c_'+'a'*32); victim.mkdir(); (victim/'keep').write_text('keep')
+    link = root/'numeric_map'; link.symlink_to(outside, target_is_directory=True)
+    out = root/'c.json'; reference = 'numeric_map/'+victim.name+'/keep'
+    old_context(out, [reference])
+    resolve = Path.resolve
+    def no_follow(path, *args, **kwargs):
+        if path.parent == link:
+            pytest.fail('cleanup followed an outside numeric_map symlink')
+        return resolve(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'resolve', no_follow)
+    assert _replaced_map_directory(out) is None
+    assert (victim/'keep').read_text() == 'keep' and link.is_symlink()
+
+
+def test_cleanup_reference_comparison_is_independent_of_windows_separator(tmp_path, monkeypatch):
+    import simcompare.dl_results as module
+    from pathlib import PureWindowsPath
+    out = tmp_path/'c.json'; directory = 'numeric_map/c_'+'a'*32
+    (tmp_path/directory).mkdir(parents=True)
+    old_context(out, [directory+'/map.npz'])
+    # Real filesystem operations stay on the host. Only Path's string spelling
+    # is simulated as Windows; stored references still use portable '/' strings.
+    class WindowsSpelling:
+        def __init__(self, path): self.path = Path(path)
+        def __fspath__(self): return str(self.path)
+        def __str__(self): return str(PureWindowsPath(self.path))
+        @property
+        def parent(self): return WindowsSpelling(self.path.parent)
+        def __getattr__(self, name): return getattr(self.path, name)
+    monkeypatch.setattr(module, 'Path', WindowsSpelling)
+    assert module._replaced_map_directory(out) == tmp_path/directory

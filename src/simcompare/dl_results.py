@@ -11,7 +11,7 @@ from dataclasses import asdict
 import hashlib
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import os
 import tempfile
@@ -97,9 +97,40 @@ def _file(root, reference):
 
 
 def _score(row):
+    if not isinstance(row, dict):
+        raise NumericContractError('invalid_dl_candidate_row')
     score = row.get('score')
-    if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score) or not -1.000001 <= score <= 1.000001:
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not -1.000001 <= score <= 1.000001 or not math.isfinite(score):
         raise NumericContractError('invalid_similarity_score')
+
+
+def _candidate_rows(rows, producer, identifiers):
+    if not isinstance(rows, list):
+        raise NumericContractError(producer+'_candidate_list_required')
+    for row in rows:
+        if not isinstance(row, dict):
+            raise NumericContractError(producer+'_candidate_row_required')
+        if any(not isinstance(row.get(key), str) or not row[key] for key in identifiers):
+            raise NumericContractError(producer+'_candidate_identifier_required')
+    return rows
+
+
+def _native_contract(producer, validate, *args):
+    """Contain malformed nested native structures without concealing named errors."""
+    try:
+        return validate(*args)
+    except NumericContractError:
+        raise
+    except (TypeError, AttributeError, KeyError, OverflowError) as exc:
+        raise NumericContractError(producer+'_native_structure_invalid') from exc
+
+
+def _dl1(raw, expected):
+    return _native_contract('dl1', _validate_dl1, raw, expected)
+
+
+def _dl2(raw, index, expected):
+    return _native_contract('dl2', _validate_dl2, raw, index, expected)
 
 
 def _matches(rows, query, status, producer, candidate_key, order_key, *, check_order=True):
@@ -108,6 +139,7 @@ def _matches(rows, query, status, producer, candidate_key, order_key, *, check_o
     DL2 availability refers to primary only: supplementary hits may coexist with
     unavailable. Neither producer guarantees a complete, untruncated candidate list.
     """
+    _candidate_rows(rows, producer, ('product_id',) if producer == 'dl1' else ('product_id', 'roi_id'))
     seen = set()
     for row in rows:
         _score(row)
@@ -123,14 +155,16 @@ def _matches(rows, query, status, producer, candidate_key, order_key, *, check_o
         raise NumericContractError(producer+'_status_matches_mismatch')
 
 
-def _dl1(raw, expected):
+def _validate_dl1(raw, expected):
     required = {'fingerprint', 'grid', 'grid_selection', 'grid_gate', 'status', 'rankings', 'excluded', 'query_id'}
-    if not required <= raw.keys() or raw.get('schema_version') is not None:
+    if not isinstance(raw, dict) or not required <= raw.keys() or raw.get('schema_version') is not None:
         raise NumericContractError('unsupported_dl1_native_result_profile')
     if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}',expected) or raw['fingerprint'] != expected:
         raise NumericContractError('dl1_fingerprint_mismatch')
     if type(raw['grid']) is not int or raw['grid'] <= 0 or raw['status'] not in ('available', 'unavailable'):
         raise NumericContractError('invalid_dl1_grid_or_status')
+    if not isinstance(raw['query_id'], str) or not raw['query_id']:
+        raise NumericContractError('dl1_query_identifier_required')
     _matches(raw['rankings'], raw['query_id'], raw['status'], 'dl1',
              lambda row: row['product_id'], lambda row: (-row['score'], row['product_id']))
     seen = set()
@@ -141,7 +175,7 @@ def _dl1(raw, expected):
         seen.add(row['product_id'])
 
 
-def _dl2(raw, index, expected):
+def _validate_dl2(raw, index, expected):
     if index.get('schema_version') != 'psdl2_index_v2' or index.get('schema_version') != expected['schema_version']:
         raise NumericContractError('dl2_index_schema_mismatch')
     for key in ('checkpoint_fingerprint', 'view_fingerprint'):
@@ -150,14 +184,16 @@ def _dl2(raw, index, expected):
     if 'rejected' not in raw:
         raise NumericContractError('dl2_rejected_field_required')
     required = {'query', 'primary', 'supplementary', 'status', 'no_match_reasons', 'primary_cohort', 'expanded', 'index_roi_ids'}
-    if not required <= raw.keys() or raw.get('schema_version') is not None:
+    if not isinstance(raw, dict) or not required <= raw.keys() or raw.get('schema_version') is not None:
         raise NumericContractError('unsupported_dl2_native_result_profile')
     if raw['status'] not in ('available', 'unavailable'):
         raise NumericContractError('invalid_dl2_status')
     indexed = {}
     embeddings = {}
     import numpy as np
-    for row in index['records']:
+    _candidate_rows(raw['primary'], 'dl2', ('product_id', 'roi_id'))
+    _candidate_rows(raw['supplementary'], 'dl2', ('product_id', 'roi_id'))
+    for row in _candidate_rows(index.get('records'), 'dl2_index', ('product_id', 'roi_id')):
         if row.get('source_versions', {}).get('schema_version') != 'review_roi_v1':
             raise NumericContractError('dl2_source_schema_mismatch')
         key = (row['roi_id'], identity(row['source_identity']))
@@ -166,7 +202,7 @@ def _dl2(raw, index, expected):
         indexed[key] = {k:v for k,v in row.items() if k != 'embedding'}
         try:
             vector = np.asarray(row.get('embedding'),dtype=np.float64)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OverflowError) as exc:
             raise NumericContractError('invalid_dl2_index_embedding') from exc
         if vector.ndim!=1 or not vector.size or not np.isfinite(vector).all() or not np.isfinite(np.linalg.norm(vector)) or np.linalg.norm(vector)==0:
             raise NumericContractError('invalid_dl2_index_embedding')
@@ -174,6 +210,7 @@ def _dl2(raw, index, expected):
     if raw['index_roi_ids'] != [r['roi_id'] for r in index['records']]:
         raise NumericContractError('dl2_index_membership_mismatch')
     query = raw['query']
+    _candidate_rows([query], 'dl2_query', ('product_id', 'roi_id'))
     if indexed.get((query['roi_id'], identity(query['source_identity']))) != query:
         raise NumericContractError('dl2_query_index_mismatch')
     candidate_key = lambda row: (row['roi_id'], identity(row['source_identity']))
@@ -263,7 +300,7 @@ def _replaced_map_directory(out):
     references = previous.get('original_map_files')
     if not isinstance(references, dict) or not references or any(not isinstance(path, str) for path in references):
         return None
-    directories = {str(Path(path).parent) for path in references}
+    directories = {PurePosixPath(path).parent.as_posix() for path in references}
     if len(directories) != 1:
         return None
     directory = directories.pop()
@@ -416,11 +453,11 @@ def read_results(exchange):
         if 'cohort' not in p:
             raise NumericContractError('explicit_dl2_cohort_file_required')
         _cohort(_file(root,p['cohort']),raw)
-        join(raw['query'])
+        _native_contract('dl2', join, raw['query'])
         matches = []
         for scope in ('primary', 'supplementary'):
             for row in raw[scope]:
-                matches.append({**deepcopy(row), **join(row), 'search_scope':scope})
+                matches.append({**deepcopy(row), **_native_contract('dl2', join, row), 'search_scope':scope})
         result['dl2'] = {'status':raw['status'], 'reasons':raw['no_match_reasons'],
                          'primary':[r for r in matches if r['search_scope']=='primary'],
                          'supplementary':[r for r in matches if r['search_scope']=='supplementary'],

@@ -56,4 +56,4 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 같은 net 쌍 제외 | answered (기능 불필요) | 사용자(2026-10-13): 다른 layer에 있어도 같은 전극이면 같은 이름을 가지며 입력 이전에 이미 처리된다. 이름이 다른 같은 net 쌍 같은 예외는 없다. compare에 제외 기능을 만들지 않는다 | 없음 |
 | hotspot 파일 | answered | 사용자가 2026-10-13에 두 번 확인: PNG이고 검정 배경 / 흰 패턴. 실제 hotspot asset은 `value_semantics: binary`. 2026-10-09의 "hotspot이 검정" 기록은 대체됨. 코드 동작은 그대로(두 값 모두 지원, 자동 판별 없음, asset마다 명시) | PNG mode/bit depth 실물 확인, 2×2에서 한 unit 값 환산. DL2 저장소의 hotspot 극성 안내는 별도 확인 필요 |
 
-참고: reader는 PNG mode `1`, `L`, `I`, `I;16`만 받는다. RGB나 팔레트 PNG는 `unsupported_png_mode`로 거부된다.
+참고: reader는 구조 검증 뒤 mode `1`, `L`, `RGB`, `LA`, `RGBA`, `P`의 불투명 exact black/white PNG를 받는다. 기존 8-bit L의 0/1 mask도 유지한다. 16-bit (`I`/`I;16`) PNG는 `png_unsupported_bit_depth`로 거부하며 threshold나 luminance 변환을 하지 않는다.

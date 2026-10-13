@@ -29,6 +29,7 @@
 | C `output_exists_use_force` | 출력 파일이 이미 있다. 기존 파일은 지워지지 않는다. 교체하려면 `--force`를 붙이고, 보존하려면 다른 `--out`을 쓴다. |
 | C `dl1_matches_not_sorted` / `dl2_matches_not_sorted`, `*_duplicate_candidate`, `*_query_self_match`, `*_status_matches_mismatch` | native 파일이 producer 계약과 다르다. 해당 search를 다시 실행하고 정상 결과를 seal한다. 정렬은 score 내림차순, 동점에서는 DL1 product_id / DL2 roi_id 오름차순이다. DL2 unavailable은 primary 없음이며 supplementary는 남을 수 있다. |
 | C `invalid_dl2_index_embedding` | index embedding이 숫자 벡터인지 확인하고 승인 checkpoint로 index를 다시 만든다. 문자열/잘못된 차원/0·비유한 벡터를 손으로 보정하지 않는다. |
+| C `*_candidate_list_required`, `*_candidate_row_required`, `*_candidate_identifier_required`, `*_native_structure_invalid`, `invalid_similarity_score`, `invalid_dl2_index_embedding` | native list/행/ID/score/embedding이 producer 계약과 다르다. 정상 승인 producer로 파일을 다시 생성한다. 문자열 ID와 유한 숫자 벡터를 요구하며 큰 정수 overflow도 계약 오류로 보고한다. |
 | C `dl2_scores_do_not_match_index` | search 결과와 index가 같은 checkpoint·같은 실행 환경에서 나온 것인지 확인한다. index와 search를 같은 기계에서 다시 실행한다. 허용오차는 6자리 반올림 한 단계(1.5e-6)다. |
 | C `dl2_cohort_mismatch`, `explicit_dl2_cohort_file_required` | 검색에 실제로 쓴 cohort 파일을 `--dl2-cohort`로 준다. 다른 cohort 파일로 바꿔 봉인하지 않는다. |
 | C PNG `png_invalid_signature`, `png_truncated_chunk`, `png_invalid_chunk`, `png_invalid_chunk_order`, `png_crc_mismatch`, `png_invalid_header`, `png_unknown_critical_chunk` | PNG signature/IHDR/chunk 순서/CRC가 잘못됐다. 손상·잘림 원본을 복구하고 plain opaque black/white PNG로 다시 저장한다. ancillary chunk의 CRC도 검사하며 hash만 바꿔 우회하지 않는다. 상대 경로가 오류에 포함된다. |
@@ -37,7 +38,7 @@
 | C PNG `png_apng_unsupported`, `png_invalid_transparency`, `png_nonopaque_transparency`, `png_nonopaque_pixels` | APNG는 단일 frame도 거부한다. grey/RGB tRNS 및 사용하지 않은 palette alpha도 거부한다. animation/transparency를 제거한 plain opaque black/white PNG로 다시 저장한다. |
 | C PNG `png_unsupported_bit_depth`, `unsupported_png_mode`, `nonbinary_nominal_mask` | 16-bit (기존 I/I;16 포함), 회색/색 pixel은 지원하지 않는다. mode 1/L/RGB/LA/RGBA/P의 불투명 이진 PNG로 다시 저장한다. 기존 8-bit L의 0/1은 유지하며 threshold하지 않는다. |
 | C PNG `png_trailing_bytes`, `png_nonidentity_orientation` | IEND 뒤 byte나 orientation != 1 metadata가 있다. 원본 좌표/극성을 확인하고 metadata 없는 plain opaque black/white PNG로 다시 저장한다. reader는 회전하지 않는다. |
-| C PNG `png_pixel_limit_warning`, `png_pixel_limit_error`, `png_pixel_limit_disabled`, `png_decode_failed` | 설치된 Pillow pixel 한계를 유지하며 warning도 오류다. guard를 끄거나 조용히 높이지 않는다. 파일 dimensions·환경·원본을 확인한다. reader 강화는 real adapter 승인이 아니다. |
+| C PNG `png_pixel_limit_warning`, `png_pixel_limit_error`, `png_pixel_limit_disabled`, `png_decode_failed` | 설치된 Pillow pixel 한계를 유지하며 warning도 오류다. guard를 끄거나 조용히 높이지 않는다. 파일 dimensions·환경·원본을 확인한다. 검증한 Pillow는 lock의 12.3.0뿐이며 폐쇄망에서도 그 버전을 쓴다. metadata 때문에 decoder가 실패해도 상대 경로를 포함한 png_decode_failed로 나온다. reader 강화는 real adapter 승인이 아니다. |
 | C `explicit_value_semantics_required` | 실제 asset 참조에 `value_semantics`를 적는다. 실제 hotspot은 검정 배경 / 흰 패턴이므로 `binary`다(2026-10-13 확인). 검정이 표시인 이미지에만 `binary_zero_is_marked`를 쓴다. |
 | `manifest_sha256_mismatch`, `archive directory inventory mismatch` | 전달받은 bundle이 승인된 것과 다르다. bundle 안에서 설치·실행해 생긴 파일(.venv, demo 출력)이 있으면 bundle을 다시 풀고 bundle 밖에서 실행한다. 승인 hash는 실제 전달한 bundle의 값을 쓴다. |
 | `offline output directory must be empty` | 이전 검증 결과를 덮지 않는다. 새 `--out` 디렉터리를 지정한다. |

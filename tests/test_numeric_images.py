@@ -433,3 +433,46 @@ def test_valid_png_at_exact_pixel_limit_preserves_pillow_globals(tmp_path, monke
     mask = read_binary(tmp_path, 'limit.png')
     assert mask.tolist() == [[True, False, True]]*3
     assert Image.MAX_IMAGE_PIXELS == 9 and ImageFile.LOAD_TRUNCATED_IMAGES is True
+
+
+@pytest.mark.parametrize('semantics', ['binary', 'binary_zero_is_marked'])
+def test_r6_empty_post_idat_iccp_has_named_decode_error(tmp_path, semantics):
+    # Review reproduction: IHDR, IDAT, zero-byte iCCP with valid CRC, IEND.
+    data = raw_png(2, 1, 8, 0, b'\0\0\xff', after=[(b'iCCP', b'')])
+    (tmp_path/'empty-iccp.png').write_bytes(data)
+    with pytest.raises(NumericContractError) as error:
+        read_binary(tmp_path, 'empty-iccp.png', value_semantics=semantics)
+    assert error.value.code == 'png_decode_failed' and 'empty-iccp.png' in str(error.value)
+
+
+def test_r6_empty_post_idat_iccp_cli_prints_contract_error(tmp_path):
+    import json
+    import subprocess
+    import sys
+    from simcompare.synthetic import generate_numeric_demo
+    from simcompare.adapters.numeric import source_payload_hash
+    root = tmp_path/'demo'; generate_numeric_demo(root)
+    source = root/'reference'
+    relative = 'assets/empty-iccp.png'
+    (source/relative).write_bytes(raw_png(2, 1, 8, 0, b'\0\0\xff', after=[(b'iCCP', b'')]))
+    path = source/'manifest.json'; manifest = json.loads(path.read_text())
+    manifest['cases'][0]['records'][0].pop('mask', None)
+    manifest['cases'][0]['records'][0]['asset'] = {'path': relative,
+        'sha256': hashlib.sha256((source/relative).read_bytes()).hexdigest(), 'value_semantics': 'binary'}
+    manifest['input_hash'] = manifest['source_manifest_hash'] = source_payload_hash(manifest)
+    path.write_text(json.dumps(manifest))
+    out = tmp_path/'failed'
+    result = subprocess.run([sys.executable, '-m', 'simcompare', 'validate-data', '--config',
+                             str(root/'config.yaml'), '--out', str(out)], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert 'png_decode_failed' in result.stderr and relative in result.stderr
+    assert 'Traceback' not in result.stderr
+    assert json.loads((out/'error.json').read_text())['reasons'] == ['png_decode_failed']
+
+
+@pytest.mark.parametrize('exception', [KeyboardInterrupt, SystemExit])
+def test_png_decode_does_not_swallow_process_control(tmp_path, monkeypatch, exception):
+    (tmp_path/'control.png').write_bytes(raw_png(1, 1, 8, 0, b'\0\xff'))
+    def interrupt(*args, **kwargs): raise exception()
+    monkeypatch.setattr(Image, 'open', interrupt)
+    with pytest.raises(exception): read_binary(tmp_path, 'control.png')
