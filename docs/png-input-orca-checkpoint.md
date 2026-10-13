@@ -416,3 +416,8 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
 - Addendum A3 from notes N1–N3 (image_only accepts identical same-name CNT files, case variants warn
   instead of error without an order file, `.PNG` extension accepted). O3 task_2a03e56e9e11 /
   ctx_719233ba8847 dispatched 08:08Z. Then a narrow refresh review.
+- O3 settled: task_2a03e56e9e11 / ctx_719233ba8847 succeeded (08:18:19Z, ~10 min; README scope question
+  approved). Commit d4dd896d315d99c7e72e68570a95f659b24aa6ea (9 files, +217/-30). Coordinator re-run
+  573 passed, 1 skipped; own tree with `.PNG` files, PXL/pxl case variants, two all-white same-name OCNT
+  files exported in image_only (exit 0, verified, both warnings present, spellings kept, 0 connections).
+- Refresh review started (structured, claude-opus-5-5 / high). Report docs/review/DL1_CNO_RO2_REVIEW.md.
