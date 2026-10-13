@@ -396,3 +396,10 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   only first. Addendum A2 (02ef8b3). O1c task_ff242a3aecd2 / ctx_089c2ec0fc6e dispatched 06:53Z
   (image_only mode when no order file; relations mode optional; same-electrode rule not yet applied).
 - Coordinator idle 05:26Z–06:51Z waiting for the user's choice between A and B.
+- O1c settled: task_ff242a3aecd2 / ctx_089c2ec0fc6e succeeded (07:09:55Z, ~16 min). Commit
+  b9103a413c5f9f231840ee43fee93c5404d9a7fc. Coordinator re-run 551 passed, 1 skipped; own check on the
+  real-style tree: export without --stack-order exit 0 (cnt_mode image_only), verify-bundle verified,
+  psdl1.data exit 0, 0 connections, connectivity unavailable, product.cnt equals the pixel union of
+  the three cno files, CNT channel non-zero after prepare_product.
+- O2 Dispatch ctx_379614e6d0da (task_1af0915ad0e7), 07:11Z; amendments A1/A2 sent as binding
+  instructions (main documented path = image_only without an order file; relations mode optional).
