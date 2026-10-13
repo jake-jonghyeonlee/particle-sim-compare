@@ -1,9 +1,13 @@
-"""Strict binary image IO with root-contained relative paths, no image transforms."""
+"""Strict binary image IO with root-contained relative paths, no image transforms.
+
+PNG supports opaque exact 1/L/RGB/LA/RGBA/P after structural validation; 8-bit
+L keeps exact 0/1 as well as 0/255. I/I;16 (16-bit PNG) support is intentionally
+removed: png_strict rejects depth 16 before decoding. NPY reading is unchanged.
+"""
 from pathlib import Path, PureWindowsPath
 import hashlib
 
 import numpy as np
-from PIL import Image
 
 from .numeric_schema import NumericContractError, NumericPathError, binary_mask
 
@@ -40,24 +44,22 @@ MASK_SEMANTICS = ('binary', 'binary_zero_is_marked')
 
 def read_binary(root: Path, relative_path: str, *, sha256: str | None = None,
                 value_semantics: str | None = None, synthetic: bool = True) -> np.ndarray:
+    png_detail = relative_path if isinstance(relative_path, str) and Path(relative_path).suffix.lower() == '.png' else ''
     if value_semantics is None:
         if not synthetic:
-            raise NumericContractError('explicit_value_semantics_required')
+            raise NumericContractError('explicit_value_semantics_required', png_detail)
         value_semantics = 'binary'
     if value_semantics not in MASK_SEMANTICS:
-        raise NumericContractError('unsupported_mask_semantics', value_semantics)
+        raise NumericContractError('unsupported_mask_semantics', png_detail+': '+str(value_semantics) if png_detail else value_semantics)
     path = resolve_path(root, relative_path)
-    if sha256 is not None:
+    if sha256 is not None and path.suffix.lower() != '.png':
         check_hash(path, sha256)
     try:
         if path.suffix.lower() == '.npy':
             value = np.load(path, allow_pickle=False)
         elif path.suffix.lower() == '.png':
-            with Image.open(path) as image:
-                # Palette/RGB/alpha need a separate explicit contract; never convert/threshold.
-                if image.mode not in ('1', 'L', 'I', 'I;16'):
-                    raise NumericContractError('unsupported_png_mode', image.mode)
-                value = np.asarray(image)
+            from .png_strict import read_png
+            value = read_png(path, relative_path, sha256=sha256)
         else:
             raise NumericContractError('unsupported_image_format', path.suffix)
     except (OSError, ValueError, TypeError) as exc:

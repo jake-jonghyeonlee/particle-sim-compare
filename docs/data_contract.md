@@ -177,9 +177,29 @@ numeric_electrode_map_report_v2의 counts/valid는 compressed NPZ 참조다. 기
 
 ### 이진 이미지의 극성 (2026-10-09)
 
-asset 참조의 `value_semantics`는 두 값만 허용한다. `binary`는 0이 아닌 값이 표시 영역이고 기본값이다. `binary_zero_is_marked`는 0(검정)이 표시 영역이다. 사용자 자료의 hotspot 이미지는 PNG이고 검정 배경 / 흰 패턴(hotspot이 흰색)이므로 실제 hotspot asset에는 `binary`를 적는다(사용자 확인 2026-10-13; 2026-10-09의 "hotspot이 검정" 기록을 대체한다). 극성은 자동으로 판별하지 않는다. 극성을 반대로 적으면 여집합 면적이 나오므로 폐쇄망 manifest에서 반드시 지정한다. record 수준의 `value_semantics`는 `binary`만 허용하며 극성은 asset 참조에만 적는다. 값은 정확히 두 수준(0/1 또는 0/255)이어야 하고 threshold는 적용하지 않는다.
+asset 참조의 `value_semantics`는 두 값만 허용한다. `binary`는 0이 아닌 값이 표시 영역이고 기본값이다. `binary_zero_is_marked`는 0(검정)이 표시 영역이다. 사용자 자료의 hotspot 이미지는 PNG이고 검정 배경 / 흰 패턴(hotspot이 흰색)이므로 실제 hotspot asset에는 `binary`를 적는다(사용자 확인 2026-10-13; 2026-10-09의 "hotspot이 검정" 기록을 대체한다). 극성은 자동으로 판별하지 않는다. 극성을 반대로 적으면 여집합 면적이 나오므로 폐쇄망 manifest에서 반드시 지정한다. record 수준의 `value_semantics`는 `binary`만 허용하며 극성은 asset 참조에만 적는다. 값은 허용된 두 수준의 집합(0/1 또는 0/255)에 속해야 하고 threshold는 적용하지 않는다. 한 값만 있는 전체 검정/흰 mask도 허용한다.
 
 
 ### R5: asset polarity 명시
 
-non-synthetic asset reference는 value_semantics를 반드시 명시한다. 누락은 explicit_value_semantics_required이며 실제 hotspot(흰 패턴)은 binary다(2026-10-13 확인). binary_zero_is_marked는 검정이 표시인 자료를 위해 남아 있다. synthetic inline fixture는 기존 nonzero-is-marked 기본을 유지한다. 실제 adapter 승인은 여전히 G2 pending이다. C reader의 NPY/PNG와 DL2의 BMP/TIF 차이는 G2 container/bit-depth 결정 때 정렬할 사항이다. DL1 reader에는 polarity 옵션이 없으므로 layout polarity 사용자 결정도 pending이며 이번 수정은 이를 추측하지 않는다.
+non-synthetic asset reference는 value_semantics를 반드시 명시한다. 누락은 explicit_value_semantics_required이며 실제 hotspot(흰 패턴)은 binary다(2026-10-13 확인). binary_zero_is_marked는 검정이 표시인 자료를 위해 남아 있다. synthetic inline fixture는 기존 nonzero-is-marked 기본을 유지한다. 실제 adapter 승인은 여전히 G2 pending이다. C reader는 NPY 및 아래의 strict PNG 계약을 지원한다. DL1 importer의 layout/electrode·CNT PNG는 검정 패턴 / 흰 배경이고, compare의 실제 hotspot PNG는 흰 패턴 / 검정 배경 (`binary`)이다. 실제 mode/bit depth 실물 확인과 G2 adapter/unit 환산 승인은 별도다.
+
+
+### Strict numeric PNG reader (2026-10-13)
+
+reader만 강화했으며 실제 non-synthetic manifest는 여전히 `real_input_requires_approved_adapter`로 load 단계에서 차단한다. 실자료 adapter를 열거나 unit 환산을 추측하지 않는다. 원본 byte buffer를 한 번 읽고 그 buffer의 SHA256을 확인한 뒤 구조를 검증하고 같은 buffer에서 decode한다. 경로 해석·NPY·`check_hash`의 계약과 기존 수치 계산은 유지한다.
+
+| 수락 입력 | 조건 |
+| --- | --- |
+| greyscale (PNG colour type 0) | bit depth 1/2/4/8; Pillow mode 1/L. 모든 확장 pixel은 정확히 0/255이며, 기존 8-bit L의 0/1도 동일한 mask로 수락한다. 0/1과 0/255를 섞은 1/255는 거부한다. |
+| RGB, LA, RGBA | bit depth 8; 모든 pixel이 정확히 검정 또는 흰색이고 alpha는 전부 255. RGB→luminance 변환이나 threshold를 하지 않는다. |
+| palette (P, colour type 3) | bit depth 1/2/4/8; PLTE가 있고 모든 사용 index가 entry 범위 안이다. 확장 색은 정확히 검정/흰색이며 tRNS가 있다면 사용하지 않는 entry까지 전부 alpha 255여야 한다. |
+| interlace | 0 (none) 또는 1 (Adam7). 각 pass의 정확한 scanline byte 수와 filter가 검증된다. |
+
+모든 chunk의 signature/order/CRC, IHDR dimensions/depth/type/method, 단일 IDAT zlib stream과 정확한 inflated 길이, PLTE/index를 Pillow decode 전에 독립적으로 검사한다. APNG의 `acTL`/`fcTL`/`fdAT`는 단일 프레임도 거부한다. grey/RGB의 tRNS는 transparent sample이 사용되지 않아도 거부한다. non-255 palette alpha, 비불투명 alpha pixel, 회색/색 pixel, IEND 뒤 byte, 잘못된 ancillary CRC, EXIF/XMP/raw-profile의 orientation != 1은 거부한다. 기존 reader의 **I / I;16 PNG 수락은 제거**됐으며 **16-bit PNG는 `png_unsupported_bit_depth`**다 (fixture/document 의존 없음 확인 후 승인). NPY integer mask 수락은 바꾸지 않는다.
+
+Pillow의 설치된 `MAX_IMAGE_PIXELS`를 올리거나 끄지 않는다. 한계를 넘는 warning/error는 모두 `NumericContractError`이고, 비활성화된 guard도 오류다. truncation을 수락하는 전역 옵션은 decode 동안 false로 고정하고 원래 값으로 복구한다. 구조 검증은 compressed snapshot + bounded inflate block + 최대 두 packed rows를 보존하며 전체 inflated stream을 쌓지 않는다. 픽셀 decode와 반환 mask에는 원본 pixel 수에 비례하는 메모리가 필요하다.
+
+모든 PNG 실패는 안정된 reason과 요청한 상대 경로를 포함한다. 구조: `png_invalid_signature`, `png_truncated_chunk`, `png_invalid_chunk`, `png_invalid_chunk_order`, `png_crc_mismatch`, `png_invalid_header`, `png_unknown_critical_chunk`; 데이터: `png_invalid_idat_stream`, `png_idat_length_mismatch`, `png_invalid_scanline_filter`, `png_missing_palette`, `png_invalid_palette`, `png_palette_index_out_of_range`; 의도된 엄격성: `png_apng_unsupported`, `png_invalid_transparency`, `png_nonopaque_transparency`, `png_nonopaque_pixels`, `png_unsupported_bit_depth`, `png_trailing_bytes`, `png_nonidentity_orientation`, `nonbinary_nominal_mask`, `unsupported_png_mode`; decoder: `png_pixel_limit_warning`, `png_pixel_limit_error`, `png_pixel_limit_disabled`, `png_decode_failed`. hash 불일치는 `input_hash_mismatch`다.
+
+복구는 **plain opaque black/white PNG로 다시 저장**하는 것이다. 손상/잘림의 원본을 먼저 복구하고 animation/transparency/orientation metadata/16-bit를 제거한 정확한 이진 pixel을 확인한다. reader가 자동 threshold, crop, 회전, resize 또는 누락 pixel zero 채움을 하지 않는다. manifest의 SHA256과 극성을 새 원본에 맞춰 검토한다. hotspot의 `binary`는 흰 pixel, `binary_zero_is_marked`는 검정 pixel을 표시 영역으로 반환한다.
