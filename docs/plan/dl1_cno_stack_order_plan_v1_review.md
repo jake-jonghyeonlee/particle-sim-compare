@@ -70,3 +70,34 @@ bounded amendment directly (a user decision with direct consequences; no new des
   truth and no code hard-codes it.
 - A1.7 `same_electrode_required` stays false and inactive.
 Versions stay report v3 / bundle v3 / algorithm "2" because nothing built at `6f9a167` has been published.
+
+## Addendum A2 — 2026-10-13: CNT as image only is the first path (user decision "일단 a부터 가보자")
+
+The user confirmed that one CNT component joins layers of the same electrode and observed that the
+electrode folder already groups those pieces, so relation extraction adds only the contact location.
+The user chose to start with option A: use CNT as an image only. Relation extraction (option B) stays
+available as an optional mode. This supersedes plan v1's rule that export is blocked for cno-present
+models without an order file.
+
+- A2.1 Two modes, chosen only by whether `--stack-order` is given, recorded as `cnt_mode` in the report
+  (top level and per model) and shown in the CLI completion line and the preview:
+  `image_only` (no order file) and `relations` (order file supplied).
+- A2.2 `image_only`: every CNT file is decoded and validated as before; the exported product carries
+  the global CNT mask (union of all CNT foreground of the model) as the existing `cnt` asset,
+  `connections: []` and `connectivity_observation: "unavailable"`. No relation, no endpoint, no position
+  is produced or implied. Export is allowed (metadata and grid are still required). The component
+  inventory (count, bbox, per-file name) stays in the report and preview as geometry only, with reason
+  `cnt_image_only_no_relations`; `stack_order.status` is `not_used`.
+  The prerequisite `explicit_stack_order_missing` and the reason `stack_order_required` are removed.
+- A2.3 `relations`: behaviour as implemented at O1b. A supplied but invalid order file is still an
+  error (exit 2, no export) — it never falls back to `image_only`.
+- A2.4 The confirmed same-electrode fact is NOT yet applied to `relations` mode (`same_electrode_required`
+  stays false). Docs must say that `relations` mode is optional, not yet reviewed against the
+  same-electrode rule, and may emit a relation between two different electrodes; this is a known gap
+  to close before `relations` mode is relied on.
+- A2.5 Docs (O2): the main step-by-step path is `image_only` with no order file. The order file and
+  `relations` mode move to an optional section. `configs/stack-order.json` (the user's 13-name order) is
+  still added for that optional mode.
+- A2.6 Identities: a model exported in `image_only` and in `relations` mode has different Product input
+  identities (connections differ); state this and that a checkpoint/search must use one mode consistently.
+Versions stay report v3 / bundle v3 / algorithm "2" (nothing published yet).
