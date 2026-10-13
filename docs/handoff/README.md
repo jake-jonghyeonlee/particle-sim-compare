@@ -6,6 +6,10 @@
 
 ## 패키지 만들기와 검증
 
+폐쇄망 호스트는 **Windows**다. 지금까지 실행 검증은 **macOS에서만** 했다. Windows 명령은 미실행 안내이며 Windows용 Python/wheel과 Git Bash를 별도로 준비해야 한다. [commands.md](commands.md)에 POSIX와 PowerShell 명령을 나란히 둔다.
+
+DL1 pin: **`feat/png-input` @ `e67a8b2a3719d7141472a32503d00f52bbdf625c`**, 아직 `main`에 merge되지 않았다. importer 독립 리뷰는 `1f9d005`에 PASS-WITH-NOTES였고 `e67a8b2`는 `docs/USAGE.md`만 다르다. 상세 입력 계약은 bundle의 `particle-sim-dl1/docs/USAGE.md`를 따른다.
+
 build script의 python3는 >=3.11.4가 필요하다. 미지원 버전은 출력 생성 전에 오류로 중단한다.
 
 Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행한다. 승인된 정확한 ref를 사용한다.
@@ -13,9 +17,16 @@ Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행
 ```bash
 bash scripts/build_handoff.sh /approved-output/bundle \
   --compare-ref APPROVED_COMPARE_COMMIT \
-  --dl1-ref 7f9d659a014d7f5e3aaf4b63118d0ca51774b75f \
+  --dl1-ref e67a8b2a3719d7141472a32503d00f52bbdf625c \
   --dl2-ref e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b
 bash scripts/check_handoff.sh /approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
+```
+
+Windows PowerShell (미실행, Git Bash `bash` 필요):
+
+```powershell
+bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref e67a8b2a3719d7141472a32503d00f52bbdf625c --dl2-ref e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b
+bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
 
 `APPROVED_COMPARE_COMMIT`은 coordinator가 승인한 실제 commit으로 바꾼다. 기본 ref는 각 저장소의 `HEAD`다. `git archive <commit>`으로 tracked 파일을 복사하며 원본을 이동하거나 remote를 사용하지 않는다. `.venv`, 미추적 데이터와 가중치는 포함하지 않는다. tracked `.pt` / `.pth` / `.ckpt` / `.safetensors`가 있으면 묵시적으로 포함하지 않고 build를 거부한다. `manifest.json`은 commit, lock hash, 각 파일 SHA256, schema/id 버전, build 호스트 Python 버전 (runtime env 버전이 아님), 저장소별 Python 요구사항, 빈 `weights`, pending 항목을 담는다. C는 uv.lock, DL1/DL2는 requirements.lock을 기록하며 path·sha256·kind를 명시한다. DL lock은 macOS 개발 환경의 설치 버전 snapshot으로 portable wheel lock이 아니므로 목표 플랫폼용 dependency를 승인 mirror 또는 wheel directory에서 준비한다. 파일 inventory/hash가 다르거나 dirty archive이면 check가 실패한다. SHA256은 전달 무결성 검사이며 서명 인증을 대체하지 않는다. build/check가 manifest SHA256을 출력한다. 승인 채널로 따로 받은 값을 --expect-manifest-sha256에 넣어 대조한다. 검사 대상 manifest에서 기대 hash를 다시 계산하지 않는다.
@@ -28,8 +39,20 @@ bash scripts/check_handoff.sh /approved-output/bundle --expect-manifest-sha256 A
 COMPARE_PYTHON=/approved-envs/compare/bin/python \
 DL1_PYTHON=/approved-envs/dl1/bin/python \
 DL2_PYTHON=/approved-envs/dl2/bin/python \
-bash scripts/validate_offline.sh /approved-output/bundle --out /approved-output/offline-validation
+bash scripts/validate_offline.sh /approved-output/bundle --out /approved-output/offline-validation \
+  --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
+
+Windows PowerShell (미실행):
+
+```powershell
+$env:COMPARE_PYTHON = "D:/approved-envs/compare/Scripts/python.exe"
+$env:DL1_PYTHON = "D:/approved-envs/dl1/Scripts/python.exe"
+$env:DL2_PYTHON = "D:/approved-envs/dl2/Scripts/python.exe"
+bash scripts/validate_offline.sh D:/approved-output/bundle --out D:/approved-output/offline-validation --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
+```
+
+승인 hash는 **실제로 전달한 bundle**에서 build가 출력한 값을 별도 승인 채널로 전달받는다. manifest에 build 호스트 Python 버전이 들어가므로 호스트마다 hash가 다를 수 있다.
 
 이 script는 먼저 hash를 검사하고, 각 자식 Python에 socket connect / DNS를 거부하는 `sitecustomize`를 적용한다. import / help / C demo·validate·compare·map / synthetic DL1 search / DL2 import·index·search / C read를 실행한다. dependency 설치나 download는 하지 않는다. 단계별 command/stdout/stderr/exit가 `validation.json`에 기록되며 실패는 `unavailable`, exit 2다. 차단은 환경을 상속한 non-isolated Python 자식의 socket.connect/connect_ex/create_connection/getaddrinfo에 한정된다. UDP sendto, gethostbyname, _socket 직접 호출, python -I, 비-Python 프로세스는 차단하지 않는다. 운영체제 방화벽 설정을 바꾸지 않는다. 실제 폐쇄망에서는 조직의 네트워크 차단도 유지한다. 합성 DL 모델은 고정 seed의 로컬 초기화 tensor를 쓰며 공개 pretrained weights나 학습 품질 판정을 포함하지 않는다.
 
@@ -41,15 +64,26 @@ bash scripts/validate_offline.sh /approved-output/bundle --out /approved-output/
 
 `read`는 native hash와 profile/version/fingerprint를 먼저 검사한다. DL2 query/match는 embedding 제외 필드가 index와 같아야 하고, numeric context와 `(roi_id, product_id, design_version, source_id, process_step_id, exposure_id, case_id, frame_id, source_contract_version)`를 정확히 맞춘다. frame origin/pitch/shape, source_version, producer schema/commit/source hash, asset hashes, centre, endpoint/failure/layer binding도 같아야 한다. CA diameter는 context의 원본 관측 값에서 보존한다. shape만 같거나 case_id만 같다고 연결하지 않는다.
 
+seal/read는 producer의 보장에 따라 primary를 score 내림차순, 동점에서 DL1 product_id / DL2 roi_id 오름차순으로 검사하며 중복 후보, query 자기 자신, status와 primary 유무 불일치를 거부한다. DL2 unavailable은 primary 없음이라는 뜻이며 supplementary hit는 있을 수 있다. top-k 절단 뒤 목록의 완전성이나 `expanded=true`일 때 supplementary가 반드시 존재한다는 조건은 producer가 보장하지 않아 검사하지 않는다.
+
 DL1은 제품 score이므로 단일 case context가 없다. 사용자가 해당 `input_identity`의 원본 구조와 일치함을 확인한 `dl1_bindings.json`에 product, input_identity, roi_id, 전체 source_identity, frame, source_assets, source_version을 명시해야 한다. C가 제품명으로 case를 고르지 않는다. binding이 없으면 `dl1_product_source_context_required`로 unavailable이며 수치는 유지된다. synthetic fixture의 DL1 입력은 실제 C 원본 layout/CNT/valid로 만들고 case A의 source binding만 명시한다; case B를 DL1 기여자로 만들어 넣지 않는다.
 
 원본 결과와 sidecar를 같은 교환 디렉터리에 둔다. absolute/상위/symlink escape는 거부한다. 파일이나 fingerprint가 다르거나 복합 identity가 어긋나면 read는 exit 2로 거부하고 기존 joined output도 지운다. DL 파일이 없거나 gate가 pending이면 explicit unavailable/pending 상태를 반환하되 원본 numeric context는 남는다. supplementary는 primary로 재표시하지 않는다.
 
+## DL1 PNG 입력
+
+| 입력 | 극성 | 경로 |
+| --- | --- | --- |
+| layout/electrode 및 CNT PNG | **BLACK pattern on WHITE background** (검정 패턴 / 흰 배경) | `python -m psdl1.import_png` |
+| hotspot PNG | **WHITE pattern on BLACK background** (흰 패턴 / 검정 배경) | compare asset의 `value_semantics: binary` |
+
+DL1 입력은 manifest를 손으로 쓰지 않고 importer로 검사 → `--inspect-grids` → 승인 metadata와 `--candidate-grid`를 명시한 `--export` → `--verify-bundle` 순서로 만든다. hotspot/CA는 DL1 입력 shape가 아니다. importer는 전체 원본을 사용하며 unit 환산이나 crop을 추측하지 않는다. grid와 계보 metadata는 사용자가 정한다.
+
 ## 실제 입력에서 아직 결정해야 할 사항
 
 - G1: diameter별 bin이라는 뜻은 확정됐지만 density 단위와 inspected-area 환산은 pending이다. count/glass를 per um²로 간주하지 않는다.
-- G2: 2x2 결과에서 한 unit 값을 취하는 방법, 이미지 container/bit depth, layout 이미지 polarity는 pending이다. 4로 나누지 않는다. 제품 간 um/pixel은 같고 pixel 수가 다르며 제품 내부 layer 크기는 같다.
-- 실제 hotspot은 PNG이고 검정 배경 / 흰 패턴이다(사용자 확인 2026-10-13, 이전의 "검정이 hotspot" 기록을 대체). **실제 hotspot asset은 `value_semantics: binary`를 명시**한다. 자동 검출하지 않는다. layout polarity는 별도 pending이다.
+- G2: 2x2 결과에서 한 unit 값을 취하는 방법과 실제 이미지 mode/bit depth 확인은 pending이다. layout/electrode와 CNT의 PNG 극성은 위 표와 같이 확정됐다. 4로 나누지 않는다. 제품 간 um/pixel은 같고 pixel 수가 다르며 제품 내부 layer 크기는 같다.
+- 실제 hotspot은 PNG이고 검정 배경 / 흰 패턴이다(사용자 확인 2026-10-13, 이전의 "검정이 hotspot" 기록을 대체). **실제 hotspot asset은 `value_semantics: binary`를 명시**한다. 자동 검출하지 않는다. layout/electrode·CNT PNG는 **흰 배경 / 검정 패턴**이며 DL1 importer가 읽는다.
 - G4: DL2 near/wide window, pitch, jitter, core size, intermediate-layer policy, max_pair_attempts를 사용자가 실제 run 전에 모두 고른다. 실측용 default는 없다. synthetic config 수치를 실측에 복사하지 않는다.
 - G5: DL1 real candidate_grid/minimum line width, CNT/VIA endpoint source format은 pending이다. DL1 grid는 manifest의 `candidate_grid`에서 온다.
 - G6: label format과 acceptance targets는 pending이다. 합성 fixture 출력은 구조 검증이며 retrieval 품질 평가 숫자가 아니다.
@@ -61,4 +95,4 @@ G7a의 failure pieces와 G7b short-only map은 2026-10-08 사용자 결정이 �
 
 기존 scripts/1_install.sh 등 이전 스크립트는 bundle 안에서 실행하지 않는다. .venv/demo_data 생성은 inventory를 바꾸며 uv sync가 network를 사용할 수 있다. validate_offline은 기존 non-empty 출력 디렉터리를 거부하고 각 환경 interpreter 버전을 기록한다. 실행 증거는 배포 설명서가 아닌 별도 review/검증 기록에 둔다.
 
-DL2 score는 승인 index query/candidate embedding의 float64 cosine을 6자리 반올림하여 다시 계산하고 absolute tolerance 1.5e-6(반올림 한 단계와 여유) 이내 일치를 요구한다. 이는 supplied index와의 수치 일치를 증명할 뿐, native search에 producer fingerprint가 없어 원래 생성 checkpoint 신원을 암호학적으로 증명하지 못한다. 서로 다른 checkpoint가 동일한 rounded scores를 내면 구별할 수 없다. primary/supplementary는 별도 목록이고 cohort 파일 SHA256, expanded, coverage를 보존한다. seal/context는 --force 없이 기존 output을 교체하지 않으며 실패 시 기존 파일을 지우지 않는다.
+DL2 score는 승인 index query/candidate embedding의 float64 cosine을 6자리 반올림하여 다시 계산하고 absolute tolerance 1.5e-6(반올림 한 단계와 여유) 이내 일치를 요구한다. 이는 supplied index와의 수치 일치를 증명할 뿐, native search에 producer fingerprint가 없어 원래 생성 checkpoint 신원을 암호학적으로 증명하지 못한다. 서로 다른 checkpoint가 동일한 rounded scores를 내면 구별할 수 없다. primary/supplementary는 별도 목록이고 cohort 파일 SHA256, expanded, coverage를 보존한다. seal/context는 --force 없이 기존 output을 교체하지 않으며 실패 시 기존 파일을 지우지 않는다. `context --force`는 새 context를 성공적으로 쓴 뒤, 교체한 context가 참조한 output root 내부의 `numeric_map/<stem>_<uuid>/` 한 디렉터리만 정리한다.

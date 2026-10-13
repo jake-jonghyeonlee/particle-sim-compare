@@ -4227,7 +4227,9 @@
             "diameter_um": 50.0
           }
         }
-      ]
+      ],
+      "numeric_status": "available",
+      "numeric_reasons": []
     },
     {
       "roi_id": "roi_618251b89d56435529c1eee270321b53260ed4e455bd77cbd68ae674ca497abf",
@@ -4448,7 +4450,9 @@
             "diameter_um": 5.0
           }
         }
-      ]
+      ],
+      "numeric_status": "available",
+      "numeric_reasons": []
     },
     {
       "roi_id": "roi_8392d9e645a0c8a66621a7e35078f5cb51eca56399e98aad2cdbc911eeeb4e8d",
@@ -8668,7 +8672,9 @@
             "diameter_um": 50.0
           }
         }
-      ]
+      ],
+      "numeric_status": "available",
+      "numeric_reasons": []
     },
     {
       "roi_id": "roi_cf88122b2808dbabeb9a7015e372494f698f47437989ae6c2af0390a6a8fde18",
@@ -8889,7 +8895,9 @@
             "diameter_um": 5.0
           }
         }
-      ]
+      ],
+      "numeric_status": "available",
+      "numeric_reasons": []
     }
   ],
   "blocked_rois": [

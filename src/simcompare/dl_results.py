@@ -102,6 +102,27 @@ def _score(row):
         raise NumericContractError('invalid_similarity_score')
 
 
+def _matches(rows, query, status, producer, candidate_key, order_key, *, check_order=True):
+    """Producer order is rounded score descending then product_id / roi_id ascending.
+
+    DL2 availability refers to primary only: supplementary hits may coexist with
+    unavailable. Neither producer guarantees a complete, untruncated candidate list.
+    """
+    seen = set()
+    for row in rows:
+        _score(row)
+        key = candidate_key(row)
+        if key in seen:
+            raise NumericContractError(producer+'_duplicate_candidate')
+        if key == query:
+            raise NumericContractError(producer+'_query_self_match')
+        seen.add(key)
+    if check_order and rows != sorted(rows, key=order_key):
+        raise NumericContractError(producer+'_matches_not_sorted')
+    if (status == 'available') != bool(rows):
+        raise NumericContractError(producer+'_status_matches_mismatch')
+
+
 def _dl1(raw, expected):
     required = {'fingerprint', 'grid', 'grid_selection', 'grid_gate', 'status', 'rankings', 'excluded', 'query_id'}
     if not required <= raw.keys() or raw.get('schema_version') is not None:
@@ -110,6 +131,8 @@ def _dl1(raw, expected):
         raise NumericContractError('dl1_fingerprint_mismatch')
     if type(raw['grid']) is not int or raw['grid'] <= 0 or raw['status'] not in ('available', 'unavailable'):
         raise NumericContractError('invalid_dl1_grid_or_status')
+    _matches(raw['rankings'], raw['query_id'], raw['status'], 'dl1',
+             lambda row: row['product_id'], lambda row: (-row['score'], row['product_id']))
     seen = set()
     for row in raw['rankings']:
         _score(row)
@@ -141,7 +164,10 @@ def _dl2(raw, index, expected):
         if key in indexed:
             raise NumericContractError('duplicate_dl2_index_identity')
         indexed[key] = {k:v for k,v in row.items() if k != 'embedding'}
-        vector = np.asarray(row.get('embedding'),dtype=np.float64)
+        try:
+            vector = np.asarray(row.get('embedding'),dtype=np.float64)
+        except (ValueError, TypeError) as exc:
+            raise NumericContractError('invalid_dl2_index_embedding') from exc
         if vector.ndim!=1 or not vector.size or not np.isfinite(vector).all() or not np.isfinite(np.linalg.norm(vector)) or np.linalg.norm(vector)==0:
             raise NumericContractError('invalid_dl2_index_embedding')
         embeddings[key] = vector
@@ -150,8 +176,18 @@ def _dl2(raw, index, expected):
     query = raw['query']
     if indexed.get((query['roi_id'], identity(query['source_identity']))) != query:
         raise NumericContractError('dl2_query_index_mismatch')
+    candidate_key = lambda row: (row['roi_id'], identity(row['source_identity']))
+    _matches(raw['primary'], candidate_key(query), raw['status'], 'dl2',
+             candidate_key, lambda row: (-row['score'], row['roi_id']), check_order=False)
+    seen_matches = set()
     for scope in ('primary', 'supplementary'):
         for row in raw[scope]:
+            key = candidate_key(row)
+            if scope == 'supplementary' and key == candidate_key(query):
+                raise NumericContractError('dl2_query_self_match')
+            if key in seen_matches:
+                raise NumericContractError('dl2_duplicate_candidate')
+            seen_matches.add(key)
             _score(row)
             if row.get('search_scope') != scope or (scope == 'primary') != (row['product_id'] in raw['primary_cohort']):
                 raise NumericContractError('dl2_search_scope_mismatch')
@@ -165,6 +201,8 @@ def _dl2(raw, index, expected):
             cosine = round(float(np.clip(np.dot(a,b)/(np.linalg.norm(a)*np.linalg.norm(b)),-1,1)),6)
             if abs(cosine-row['score']) > SCORE_TOLERANCE:
                 raise NumericContractError('dl2_scores_do_not_match_index')
+    _matches(raw['primary'], candidate_key(query), raw['status'], 'dl2',
+             candidate_key, lambda row: (-row['score'], row['roi_id']))
 
 
 def _cohort(cohort,raw):
@@ -211,6 +249,33 @@ def create_exchange(out, *, context, dl1=None, dl1_fingerprint=None, dl1_binding
     return payload
 
 
+def _replaced_map_directory(out):
+    """Only reclaim the single generator-owned directory referenced by old context."""
+    out = Path(out)
+    if not out.exists():
+        return None
+    try:
+        previous = read(out)
+    except (NumericContractError, OSError, ValueError):
+        return None  # --force may replace a corrupt output; it authorizes no cleanup.
+    if not isinstance(previous, dict) or previous.get('schema_version') != CONTEXT_SCHEMA:
+        return None
+    references = previous.get('original_map_files')
+    if not isinstance(references, dict) or not references or any(not isinstance(path, str) for path in references):
+        return None
+    directories = {str(Path(path).parent) for path in references}
+    if len(directories) != 1:
+        return None
+    directory = directories.pop()
+    if not re.fullmatch(r'numeric_map/'+re.escape(out.stem)+r'_[0-9a-f]{32}', directory):
+        return None
+    root = out.parent.resolve()
+    candidate = root/directory
+    if candidate.is_symlink() or candidate.parent.is_symlink() or not candidate.resolve().is_relative_to(root):
+        return None
+    return candidate
+
+
 def create_context(dataset_root, export, out, *, asset_manifest, force=False):
     """Compute original numeric values independently, then bind ready original ROIs."""
     from .adapters.numeric import load_dataset
@@ -221,6 +286,7 @@ def create_context(dataset_root, export, out, *, asset_manifest, force=False):
     import numpy as np
     if Path(out).exists() and not force:
         raise NumericContractError('output_exists_use_force',str(out))
+    replaced_directory = _replaced_map_directory(out) if force else None
     dataset = load_dataset(Path(dataset_root))
     original = read(export)
     if original.get('schema_version') != 'review_roi_v1' or original['source_manifest_hash'] != dataset.provenance['input_hash']:
@@ -291,6 +357,8 @@ def create_context(dataset_root, export, out, *, asset_manifest, force=False):
     except Exception:
         shutil.rmtree(destination,ignore_errors=True)
         raise
+    if replaced_directory is not None and replaced_directory != destination:
+        shutil.rmtree(replaced_directory, ignore_errors=True)
     return context
 
 

@@ -248,3 +248,165 @@ def test_dl1_same_product_binding_is_user_statement_documented_limitation(tmp_pa
     assert result['dl1']['status']=='available'
     product=next(r for r in result['dl1']['matches'] if r['product_id']=='PRODUCT')
     assert all(r['source_identity']['case_id']=='B' for r in product['original_values'])
+
+
+@pytest.mark.parametrize('producer', ['dl1', 'dl2'])
+@pytest.mark.parametrize('edit,reason', [
+    ('reverse', 'matches_not_sorted'), ('tie', 'matches_not_sorted'),
+    ('duplicate', 'duplicate_candidate'), ('self', 'query_self_match'),
+    ('empty', 'status_matches_mismatch'), ('unavailable', 'status_matches_mismatch'),
+])
+def test_native_match_contract_seal_and_read(producer, edit, reason, tmp_path):
+    root = copied(tmp_path)
+    path = root/(producer+'_search.json')
+    native = read(path)
+    field = 'rankings' if producer == 'dl1' else 'primary'
+    rows = native[field]
+    if edit == 'reverse':
+        rows.reverse()
+    elif edit == 'tie':
+        # Keep legitimate scores; edit the IDs/index consistently to expose tie order.
+        if producer == 'dl1':
+            for row in rows:
+                row['score'] = 1.0
+            rows.sort(key=lambda row: row['product_id'], reverse=True)
+        else:
+            index = read(root/'dl2_index.json')
+            query_embedding = next(r['embedding'] for r in index['records'] if r['roi_id'] == native['query']['roi_id'])
+            for row in rows:
+                row['score'] = 1.0
+                next(r for r in index['records'] if r['roi_id'] == row['roi_id'])['embedding'] = query_embedding
+            rows.sort(key=lambda row: row['roi_id'], reverse=True)
+            write(root/'dl2_index.json', index)
+    elif edit == 'duplicate':
+        rows.insert(1, deepcopy(rows[0]))
+    elif edit == 'self':
+        if producer == 'dl1':
+            rows[0]['product_id'] = native['query_id']
+        else:
+            rows[0] = {**deepcopy(native['query']), 'score': 1.0, 'search_scope': 'primary', 'same_physical_case': True}
+    elif edit == 'empty':
+        native[field] = []
+    else:
+        native['status'] = 'unavailable'
+    write(path, native)
+    with pytest.raises(NumericContractError, match=producer+'_'+reason):
+        reseal(root)
+    # Rehash by hand so read reaches the contract check rather than byte integrity.
+    profile = read(root/'exchange.json')
+    profile[producer]['result']['sha256'] = sha(path)
+    if producer == 'dl2':
+        profile[producer]['index']['sha256'] = sha(root/'dl2_index.json')
+    write(root/'exchange.json', profile)
+    with pytest.raises(NumericContractError, match=producer+'_'+reason):
+        read_results(root/'exchange.json')
+
+
+def test_dl2_unavailable_can_have_supplementary_matches(tmp_path):
+    root = copied(tmp_path)
+    native = read(root/'dl2_search.json')
+    native['primary'] = []
+    native['status'] = 'unavailable'
+    write(root/'dl2_search.json', native)
+    reseal(root)
+    result = read_results(root/'exchange.json')['dl2']
+    assert result['status'] == 'unavailable' and result['supplementary']
+
+
+@pytest.mark.parametrize('embedding', ['invalid embedding', '0.5'])
+def test_string_embedding_has_named_contract_error(embedding, tmp_path):
+    root = copied(tmp_path)
+    index = read(root/'dl2_index.json')
+    index['records'][0]['embedding'] = embedding
+    write(root/'dl2_index.json', index)
+    with pytest.raises(NumericContractError, match='invalid_dl2_index_embedding'):
+        reseal(root)
+    profile = read(root/'exchange.json')
+    profile['dl2']['index']['sha256'] = sha(root/'dl2_index.json')
+    write(root/'exchange.json', profile)
+    with pytest.raises(NumericContractError, match='invalid_dl2_index_embedding'):
+        read_results(root/'exchange.json')
+
+
+def context_at(root, out, **kwargs):
+    from simcompare.dl_results import create_context
+    return create_context(root/'numeric', root/'review_rois.json', out,
+                          asset_manifest={'path': 'review_assets.json', 'sha256': sha(root/'numeric/review_assets.json')}, **kwargs)
+
+
+def test_context_force_removes_only_replaced_map_directory(tmp_path):
+    root = copied(tmp_path)
+    out = root/'new_context.json'
+    context_at(root, out)
+    unrelated = root/'numeric_map/unrelated'
+    unrelated.mkdir(); (unrelated/'keep').write_text('keep')
+    fixture_directories = {p for p in (root/'numeric_map').iterdir() if p.name != 'unrelated' and not p.name.startswith('new_context_')}
+    context_at(root, out, force=True)
+    assert len(list((root/'numeric_map').glob('new_context_*'))) == 1
+    assert (unrelated/'keep').read_text() == 'keep'
+    assert all(p.exists() for p in fixture_directories)
+    assert all((root/path).is_file() for path in read(out)['original_map_files'])
+
+
+def test_context_failure_after_npz_creation_cleans_only_new_assets(tmp_path, monkeypatch):
+    import simcompare.dl_results as module
+    root = copied(tmp_path)
+    out = root/'new_context.json'
+    context_at(root, out)
+    before = out.read_bytes()
+    directories = set((root/'numeric_map').iterdir())
+    def fail_write(path, value, **kwargs):
+        assert any(p not in directories and list(p.glob('*.npz')) for p in (root/'numeric_map').iterdir())
+        raise OSError('injected failure after NPZ creation')
+    monkeypatch.setattr(module, 'write', fail_write)
+    with pytest.raises(OSError, match='after NPZ'):
+        context_at(root, out, force=True)
+    assert out.read_bytes() == before
+    assert set((root/'numeric_map').iterdir()) == directories
+
+
+def test_context_failure_during_npz_write_cleans_partial_assets(tmp_path, monkeypatch):
+    import numpy as np
+    root = copied(tmp_path)
+    directories = set((root/'numeric_map').iterdir())
+    save = np.savez_compressed
+    def fail_save(path, **arrays):
+        save(path, **arrays)
+        assert Path(path).is_file()
+        raise OSError('injected failure after NPZ creation')
+    monkeypatch.setattr(np, 'savez_compressed', fail_save)
+    with pytest.raises(OSError, match='after NPZ'):
+        context_at(root, root/'failed_context.json')
+    assert not (root/'failed_context.json').exists()
+    assert set((root/'numeric_map').iterdir()) == directories
+
+
+@pytest.mark.parametrize('reference', ['outside', 'symlink', 'unrelated'])
+def test_context_force_never_reclaims_unowned_directory(reference, tmp_path):
+    root = copied(tmp_path)
+    out = root/'new_context.json'
+    context_at(root, out)
+    previous = read(out)
+    protected = tmp_path/'protected' if reference != 'unrelated' else root/'numeric_map/unrelated'
+    protected.mkdir(); (protected/'keep').write_text('preserve')
+    if reference == 'outside':
+        path = '../protected/keep'
+    elif reference == 'symlink':
+        link = root/('numeric_map/new_context_'+'a'*32)
+        link.symlink_to(protected, target_is_directory=True)
+        path = str(link.relative_to(root))+'/keep'
+    else:
+        path = 'numeric_map/unrelated/keep'
+    previous['original_map_files'] = {path: sha(protected/'keep')}
+    write(out, previous)
+    context_at(root, out, force=True)
+    assert (protected/'keep').read_text() == 'preserve'
+
+
+def test_context_force_can_replace_corrupt_output_without_deleting_assets(tmp_path):
+    root = copied(tmp_path)
+    out = root/'new_context.json'; out.write_text('broken json')
+    before = set((root/'numeric_map').iterdir())
+    context_at(root, out, force=True)
+    assert before <= set((root/'numeric_map').iterdir())
+    assert read(out)['schema_version'] == 'numeric_dl_context_v1'

@@ -1,5 +1,7 @@
 # R5 수정 및 검증 기록
 
+> 2026-10-13 상태 주석: 아래의 "커밋하지 않는다", HEAD `a756b6c`, manifest hash `71038b…`는 당시 임시 clone/검증 시점의 기록이다. T12는 `15aa90a`, 이 R5 수정은 이후 `325a33d`에 커밋됐고, 본 R5b 후속 작업의 기준은 committed `b5227bd`이다. 현재 DL1 인수 pin은 main 미병합 `feat/png-input` @ `e67a8b2a3719d7141472a32503d00f52bbdf625c`다. 아래 역사 기록은 변경하지 않았으며 승인 manifest hash는 실제 전달 bundle의 build 출력에서 별도로 받아야 한다.
+
 기준 C HEAD: a756b6c9e5f3f0108b51683c8f9e3626bf579485. 작업 저장소에서는 커밋하지 않는다. DL1 7f9d659 / DL2 e46a44e는 읽기 전용이다. 실제 데이터, network download, remote, pretrained weights를 사용하지 않는다.
 
 | Finding | 상태 | 수정 또는 문서 범위 |

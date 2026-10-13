@@ -236,6 +236,35 @@ def test_real_dl2_checkpoint_b_search_cannot_be_sealed_against_index_a(tmp_path)
     sa=read(root/'search_a.json');sb=read(root/'search_b.json')
     assert [r['score'] for r in sa['primary']] != [r['score'] for r in sb['primary']]
     expected={k:a[k] for k in ('schema_version','checkpoint_fingerprint','view_fingerprint')}
+    from simcompare.dl_results import sha
+    create_exchange(root/'actual_a_exchange.json', context=root/'numeric_context.json',
+                    dl2=root/'search_a.json', dl2_index=root/'index_a.json',
+                    dl2_expected=expected, dl2_cohort=root/'cohort.json')
+    assert read_results(root/'actual_a_exchange.json')['dl2']['status'] == 'available'
+    profile = read(root/'actual_a_exchange.json')
+    profile['dl2']['result'] = {'path': 'search_b.json', 'sha256': sha(root/'search_b.json')}
+    write(root/'actual_b_search_a_exchange.json', profile)
+    with pytest.raises(NumericContractError, match='dl2_scores_do_not_match_index'):
+        read_results(root/'actual_b_search_a_exchange.json')
     with pytest.raises(NumericContractError,match='dl2_scores_do_not_match_index'):
         create_exchange(root/'negative_b_search_a_index.json',context=root/'numeric_context.json',
                         dl2=root/'search_b.json',dl2_index=root/'index_a.json',dl2_expected=expected,dl2_cohort=root/'cohort.json',force=True)
+
+
+def test_handoff_evaluation_block_skips_empty_relations(tmp_path):
+    """Execute the documented guard with a fake Python; empty labels must not run."""
+    import re
+    text = (ROOT/'docs/handoff/commands.md').read_text()
+    block = re.search(r'if \[\[ -n "\$DL1_RELATIONS" \]\]; then\n([^\n]*psdl1.evaluate[^\n]*)\nfi', text)
+    assert block, 'evaluation must be guarded when the whole block is pasted'
+    fake = tmp_path/'python'
+    fake.write_text('#!/bin/sh\nprintf called > "$RUN/called"\n')
+    fake.chmod(0o755)
+    env = os.environ.copy()
+    env.update(DL1_RELATIONS='', D1=str(fake), RUN=str(tmp_path), BUNDLE=str(tmp_path),
+               DL1_MANIFEST='manifest', DL1_SPLIT='split', TOPK='5')
+    subprocess.run(['bash', '-eu', '-c', block.group(0)], env=env, check=True)
+    assert not (tmp_path/'called').exists()
+    env['DL1_RELATIONS'] = 'approved.json'
+    subprocess.run(['bash', '-eu', '-c', block.group(0)], env=env, check=True)
+    assert (tmp_path/'called').read_text() == 'called'

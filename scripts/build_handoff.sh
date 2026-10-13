@@ -29,7 +29,7 @@ try:
     a.out.mkdir(parents=True,exist_ok=True)
     manifest={'schema_version':'simcompare_handoff_v1','id_versions':{'numeric':'numeric_v2','roi':'review_roi_v1','exchange':'dl_file_exchange_v1','dl1':'dl1_shape_v1_draft','dl2':'original_roi_bundle_v1'},
               'python_version':platform.python_version(),'weights':[],
-              'pending_gates':['G1_density_unit_inspected_area','G2_one_unit_from_2x2_image_container_bit_depth_layout_polarity','G4_real_DL2_geometry_layer_policy_max_pair_attempts','G5_real_DL1_grid_minimum_line_width_CNT_VIA_source','G6_labels_acceptance_targets','DL2_connectivity_geometric_proxy','public_ConvNeXt_V2_weights_license_unverified'],
+              'pending_gates':['G1_density_unit_inspected_area','G2_one_unit_from_2x2_image_mode_bit_depth','G4_real_DL2_geometry_layer_policy_max_pair_attempts','G5_real_DL1_grid_minimum_line_width_CNT_VIA_source','G6_labels_acceptance_targets','DL2_connectivity_geometric_proxy','public_ConvNeXt_V2_weights_license_unverified'],
               'repositories':{},'metadata_files':{}}
     for name,(repo,commit,dirty) in repos.items():
         archive=git(repo,'archive','--format=tar',commit)
