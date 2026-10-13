@@ -421,3 +421,12 @@ term_5b40a375-ec59-46d7-b700-11cf9981cd28. Coordinator is live and bound.
   573 passed, 1 skipped; own tree with `.PNG` files, PXL/pxl case variants, two all-white same-name OCNT
   files exported in image_only (exit 0, verified, both warnings present, spellings kept, 0 connections).
 - Refresh review started (structured, claude-opus-5-5 / high). Report docs/review/DL1_CNO_RO2_REVIEW.md.
+- Refresh review R-O2: task_78d365d1ea16 / ctx_6228fc4cc3ef, **PASS-WITH-NOTES for
+  d4dd896d315d99c7e72e68570a95f659b24aa6ea**, 0 blocking, 8 notes (08:34:27Z, ~14 min). N1, N2, N3, N4, N8,
+  N9 fixed; manifest and assets byte-identical to 60de205 for every input both commits accept; relations
+  mode reports byte-identical. Report docs/review/DL1_CNO_RO2_REVIEW.md.
+- Run run_84882a6a9a35 complete: plan, O1, O1b, O1c, O2, O3 and reviews R-O, R-O2 all settled; reclaimable 0;
+  Sol terminal closed. Final DL1 candidate feat/png-input@d4dd896 (5 commits on e67a8b2), suite 573
+  passed, 1 skipped. Pushed at the user's request after the PASS.
+- Open after this Run: same-electrode rule for relations mode (user-confirmed fact, not implemented);
+  per-CNT-kind input channels; R-O2 notes; Windows and real data unverified.
