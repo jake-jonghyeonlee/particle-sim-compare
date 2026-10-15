@@ -252,19 +252,21 @@ def test_real_dl2_checkpoint_b_search_cannot_be_sealed_against_index_a(tmp_path)
 
 
 def test_handoff_evaluation_block_skips_empty_relations(tmp_path):
-    """Execute the documented guard with a fake Python; empty labels must not run."""
+    """CMD must guard evaluation when no approved relations are supplied."""
     import re
     text = (ROOT/'docs/handoff/commands.md').read_text()
-    block = re.search(r'if \[\[ -n "\$DL1_RELATIONS" \]\]; then\n([^\n]*psdl1.evaluate[^\n]*)\nfi', text)
+    block = re.search(r'if defined DL1_RELATIONS \(\n[^)]*psdl1.evaluate[^)]*\n\)', text)
     assert block, 'evaluation must be guarded when the whole block is pasted'
-    fake = tmp_path/'python'
-    fake.write_text('#!/bin/sh\nprintf called > "$RUN/called"\n')
-    fake.chmod(0o755)
+    if os.name != 'nt':
+        pytest.skip('CMD execution requires Windows; documented guard checked above')
+    fake = tmp_path/'python.cmd'
+    fake.write_text('@echo off\necho called> "%RUN%\\called"\n')
     env = os.environ.copy()
-    env.update(DL1_RELATIONS='', D1=str(fake), RUN=str(tmp_path), BUNDLE=str(tmp_path),
+    env.pop('DL1_RELATIONS', None)
+    env.update(D1=str(fake), RUN=str(tmp_path), BUNDLE=str(tmp_path),
                DL1_MANIFEST='manifest', DL1_SPLIT='split', TOPK='5')
-    subprocess.run(['bash', '-eu', '-c', block.group(0)], env=env, check=True)
+    subprocess.run(['cmd', '/d', '/c', block.group(0)], env=env, check=True)
     assert not (tmp_path/'called').exists()
     env['DL1_RELATIONS'] = 'approved.json'
-    subprocess.run(['bash', '-eu', '-c', block.group(0)], env=env, check=True)
-    assert (tmp_path/'called').read_text() == 'called'
+    subprocess.run(['cmd', '/d', '/c', block.group(0)], env=env, check=True)
+    assert (tmp_path/'called').read_text().strip() == 'called'

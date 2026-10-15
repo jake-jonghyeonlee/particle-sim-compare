@@ -1,6 +1,6 @@
 # 실패와 복구
 
-폐쇄망 목표 호스트는 Windows이며 실행 검증은 macOS에서만 했다. Windows 명령은 [commands.md](commands.md)의 미실행 PowerShell/Git Bash 안내를 따른다. DL1은 `feat/png-input` @ `e67a8b2a3719d7141472a32503d00f52bbdf625c` (main 미병합)이다. layout/electrode·CNT PNG = **BLACK pattern on WHITE background** (DL1 importer), hotspot PNG = **WHITE pattern on BLACK background** (compare, `value_semantics: binary`).
+폐쇄망 목표 호스트는 Windows이며 실행 검증은 macOS에서만 했다. Windows 명령은 [commands.md](commands.md)의 미실행 CMD/Git Bash 안내를 따른다. DL1은 `feat/png-input` @ `e67a8b2a3719d7141472a32503d00f52bbdf625c` (main 미병합)이다. layout/electrode·CNT PNG = **BLACK pattern on WHITE background** (DL1 importer), hotspot PNG = **WHITE pattern on BLACK background** (compare, `value_semantics: binary`).
 
 | 출력 사유 | 확인과 복구 |
 | --- | --- |

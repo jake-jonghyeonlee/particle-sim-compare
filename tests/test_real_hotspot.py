@@ -466,15 +466,3 @@ def test_map_inventory_uncertainty_is_partial_but_pair_table_is_not_required(tmp
     mapped=compute_electrode_maps(configured_dataset(confirmed,load_real_manifest(confirmed),
         _assignment(pair_table=False)),diameter_um=1).layers[0]
     assert mapped.status=='available' and mapped.coverage['source_coverage_status']=='available'
-
-
-def test_windows_smoke_consumes_configured_status_and_never_passes_exit_zero():
-    script=(Path(__file__).resolve().parents[1]/'scripts/install_and_smoke.ps1').read_text()
-    assert '$comparison.weighted_rates_status' in script
-    assert '$comparison.line_pixel_rates_status' not in script
-    assert 'function Require-ExitCode' in script and 'Fail "$Command expected exit $Expected, got $Actual" 9' in script
-    assert 'if ($Code -eq 0) { $Code = 9 }' in script
-    # Contract cases consumed by Require-ExitCode: expected 3 succeeds only for 3.
-    def smoke_exit(expected, actual):
-        return 0 if actual==expected else 9
-    assert [smoke_exit(3,actual) for actual in (0,2,3)] == [9,9,0]

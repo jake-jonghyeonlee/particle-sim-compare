@@ -122,8 +122,9 @@ def main() -> int:
 
     (output / "fixtures").mkdir()
     create_fixture(output / "fixtures" / "real_hotspot")
-    for name in ("install_and_smoke.ps1", "verify_windows_bundle.py"):
+    for name in ("install_offline.cmd", "verify_windows_bundle.py"):
         shutil.copy2(ROOT / "scripts" / name, output / name)
+    shutil.copy2(ROOT / "docs" / "usage.md", output / "INSTALL_CMD.md")
     wheel_entries = []
     for wheel in sorted(wheelhouse.glob("*.whl")):
         wheel_entries.append({"file": wheel.name, "sha256": digest(wheel), "size_bytes": wheel.stat().st_size})

@@ -142,7 +142,7 @@ uv pip install --python .venv/bin/python pyarrow zarr
 - docs/open_questions.md
 - docs/usage.md
 - pyproject.toml
-- scripts/1_install.sh
+- scripts/install_offline.cmd (배포 ZIP 내부에서 CMD로 실행)
 - scripts/2_demo.sh
 - src/simcompare/cli.py
 - src/simcompare/pipeline.py

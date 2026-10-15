@@ -4,24 +4,16 @@
 
 현재 검증 범위는 합성 numeric_v2 데이터다. G1의 실제 밀도 단위·조사면적 변환과 G2의 원천 어댑터·한 unit 환산은 pending이다. 전체 2×2 domain을 임의로 4로 나누지 않는다. 가중값과 panel delta는 명시 합성 계약에서만 계산하고 실제 미확정 값은 null과 사유로 표시한다.
 
-## 설치와 합성 실행
+## Windows 폐쇄망 설치와 실행
 
-Python 3.11+와 uv가 필요하다. numpy, Pillow, PyYAML을 직접 사용하며 pandas는 유지된 particle-sim legacy export 검사에 필요하다. torch, scikit-learn, matplotlib, scipy는 필요하지 않다.
+**CMD + 설치된 Python 3.12 x64 + 동봉된 wheel**을 사용한다. Git에 포함된 [설치 ZIP](bundles/windows_cp312_win_amd64.zip)을 사용자 폴더에 풀고 [실행 가이드](docs/usage.md)의 CMD 명령을 한 줄씩 실행한다. 설치·pip check·도움말까지 사용자 성공 확인이 있으며, 실자료 검증은 별도다.
 
-```bash
-bash scripts/1_install.sh
-bash scripts/2_demo.sh
-uv run simcompare --help
-```
+설치 후 압축 해제 폴더의 CMD에서:
 
-직접 실행하려면:
-
-```bash
-uv run simcompare demo-data --out demo_data
-uv run simcompare validate-data --config demo_data/config.yaml
-uv run simcompare compare --config demo_data/config.yaml
-uv run simcompare electrode-map --config demo_data/config.yaml
-uv run simcompare export-review-rois --config demo_data/config.yaml --out demo_data/review_rois
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare --help
+.venv-cmd\Scripts\python.exe -m simcompare demo-data --out demo_data
+.venv-cmd\Scripts\python.exe -m simcompare compare --config demo_data/config.yaml
 ```
 
 `validate-data`는 gate pending을 포함하면 exit 3이다. 완료는 0, 부분/blocked는 3, 입력 불가는 2다. 기본 지도는 count 배열과 PNG이며 자동 영역/순위를 만들지 않는다. 영역은 `electrode-map --min-count 3`처럼 사용자가 threshold를 지정할 때만 계산한다. 기본 demo ROI는 빈 목록이며 사용자 위치를 명시한 뒤 내보낸다.
@@ -41,9 +33,8 @@ uv run simcompare export-review-rois --config demo_data/config.yaml --out demo_d
 
 `merge-exports`는 particle-sim의 기존 1.x export를 병합하며 source ID, raw tuple, source-step assignment와 배열을 보존한다. numeric_v2 변환이나 비교를 수행하지 않는다.
 
-```bash
-uv run simcompare merge-exports --out merged export_reference export_target
-bash scripts/5_check_particle_sim_run.sh /path/to/particle-sim/run
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare merge-exports --out merged export_reference export_target
 ```
 
 `schema.py`, `adapters/example.py`, `preprocess.py`는 legacy export를 검산하는 loader로만 유지한다. `adapters/particle_sim_run.py`와 `merge.py`도 이 형식에 속한다. 숫자 비교 CLI는 이 loader를 사용하지 않는다. 실제 numeric adapter는 G2 확인 전 pending이다.

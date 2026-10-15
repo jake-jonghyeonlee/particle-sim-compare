@@ -6,7 +6,7 @@
 
 ## 패키지 만들기와 검증
 
-폐쇄망 호스트는 **Windows**다. 지금까지 실행 검증은 **macOS에서만** 했다. Windows 명령은 미실행 안내이며 Windows용 Python/wheel과 Git Bash를 별도로 준비해야 한다. [commands.md](commands.md)에 POSIX와 PowerShell 명령을 나란히 둔다.
+폐쇄망에서는 CMD를 사용한다. compare 설치·pip check·도움말은 사용자 성공 확인이 있으며 전체 DL 연동은 Windows 미검증이다. Windows용 Python/wheel과 handoff 도구용 Git Bash를 준비한다. [commands.md](commands.md)에 CMD 명령을 기록한다.
 
 DL1 pin: **`feat/png-input` @ `e67a8b2a3719d7141472a32503d00f52bbdf625c`**, 아직 `main`에 merge되지 않았다. importer 독립 리뷰는 `1f9d005`에 PASS-WITH-NOTES였고 `e67a8b2`는 `docs/USAGE.md`만 다르다. 상세 입력 계약은 bundle의 `particle-sim-dl1/docs/USAGE.md`를 따른다.
 
@@ -14,17 +14,10 @@ build script의 python3는 >=3.11.4가 필요하다. 미지원 버전은 출력 
 
 Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행한다. 승인된 정확한 ref를 사용한다.
 
-```bash
-bash scripts/build_handoff.sh /approved-output/bundle \
-  --compare-ref APPROVED_COMPARE_COMMIT \
-  --dl1-ref e67a8b2a3719d7141472a32503d00f52bbdf625c \
-  --dl2-ref e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b
-bash scripts/check_handoff.sh /approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
-```
 
-Windows PowerShell (미실행, Git Bash `bash` 필요):
+Windows CMD (미실행, Git Bash `bash` 필요):
 
-```powershell
+```bat
 bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref e67a8b2a3719d7141472a32503d00f52bbdf625c --dl2-ref e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b
 bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
@@ -35,20 +28,13 @@ bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256
 
 검증/설치 결과와 실제 입력은 bundle 밖에 둔다. bundle 내부 파일을 수정하거나 `.venv`를 추가하면 inventory가 바뀐다. 세 env를 밖에 설치한 뒤:
 
-```bash
-COMPARE_PYTHON=/approved-envs/compare/bin/python \
-DL1_PYTHON=/approved-envs/dl1/bin/python \
-DL2_PYTHON=/approved-envs/dl2/bin/python \
-bash scripts/validate_offline.sh /approved-output/bundle --out /approved-output/offline-validation \
-  --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
-```
 
-Windows PowerShell (미실행):
+Windows CMD (전체 연동 미실행):
 
-```powershell
-$env:COMPARE_PYTHON = "D:/approved-envs/compare/Scripts/python.exe"
-$env:DL1_PYTHON = "D:/approved-envs/dl1/Scripts/python.exe"
-$env:DL2_PYTHON = "D:/approved-envs/dl2/Scripts/python.exe"
+```bat
+set "COMPARE_PYTHON=D:/approved-envs/compare/Scripts/python.exe"
+set "DL1_PYTHON=D:/approved-envs/dl1/Scripts/python.exe"
+set "DL2_PYTHON=D:/approved-envs/dl2/Scripts/python.exe"
 bash scripts/validate_offline.sh D:/approved-output/bundle --out D:/approved-output/offline-validation --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
 
@@ -93,7 +79,7 @@ DL1 입력은 manifest를 손으로 쓰지 않고 importer로 검사 → `--insp
 G7a의 failure pieces와 G7b short-only map은 2026-10-08 사용자 결정이 적용됐다. map은 위치 취약성을 표시하고 DL2는 사용자가 선택한 위치와 비슷한 구조를 검색한다. open piece나 자동 영역 순위를 추가하지 않는다.
 
 
-기존 scripts/1_install.sh 등 이전 스크립트는 bundle 안에서 실행하지 않는다. .venv/demo_data 생성은 inventory를 바꾸며 uv sync가 network를 사용할 수 있다. validate_offline은 기존 non-empty 출력 디렉터리를 거부하고 각 환경 interpreter 버전을 기록한다. 실행 증거는 배포 설명서가 아닌 별도 review/검증 기록에 둔다.
+가상환경·demo_data는 검증 대상 bundle 밖에 둔다. 설치는 CMD 로컬 wheel 절차를 사용한다. validate_offline은 기존 non-empty 출력 디렉터리를 거부하고 각 환경 interpreter 버전을 기록한다. 실행 증거는 배포 설명서가 아닌 별도 review/검증 기록에 둔다.
 
 DL2 score는 승인 index query/candidate embedding의 float64 cosine을 6자리 반올림하여 다시 계산하고 absolute tolerance 1.5e-6(반올림 한 단계와 여유) 이내 일치를 요구한다. 이는 supplied index와의 수치 일치를 증명할 뿐, native search에 producer fingerprint가 없어 원래 생성 checkpoint 신원을 암호학적으로 증명하지 못한다. 서로 다른 checkpoint가 동일한 rounded scores를 내면 구별할 수 없다. primary/supplementary는 별도 목록이고 cohort 파일 SHA256, expanded, coverage를 보존한다. seal/context는 --force 없이 기존 output을 교체하지 않으며 실패 시 기존 파일을 지우지 않는다. `context --force`는 새 context를 성공적으로 쓴 뒤, 교체한 context가 참조한 output root 내부의 `numeric_map/<stem>_<uuid>/` 한 디렉터리만 정리한다. 이 정리 실행은 macOS에서만 검증했으며 Windows에서는 경로 separator 비교를 모사한 시험만 했다.
 
