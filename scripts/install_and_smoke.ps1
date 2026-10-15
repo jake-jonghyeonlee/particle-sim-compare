@@ -15,8 +15,10 @@ function Require-ExitCode([string]$Command, [int]$Expected, [int]$Actual) {
     if ($Actual -ne $Expected) { Fail "$Command expected exit $Expected, got $Actual" 9 }
 }
 
-if ($env:OS -ne "Windows_NT" -or [IntPtr]::Size -ne 8 -or [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne "X64") {
-    Fail "This bundle requires 64-bit Windows x86_64 (win_amd64)." 2
+# Windows PowerShell 5.1 may lack RuntimeInformation.OSArchitecture.
+# PROCESSOR_ARCHITECTURE identifies this process; require native x64 PowerShell.
+if ($env:OS -ne "Windows_NT" -or [IntPtr]::Size -ne 8 -or $env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+    Fail "This bundle requires 64-bit x86_64 Windows PowerShell (not x86 or ARM64)." 2
 }
 $py = Get-Command py -ErrorAction SilentlyContinue
 if (-not $py) { Fail "Python Launcher (py.exe) is required to select CPython 3.12." 2 }

@@ -6,7 +6,7 @@
 
 Git에 포함된 [`bundles/windows_cp312_win_amd64.zip`](../bundles/windows_cp312_win_amd64.zip)을 사용한다. Git으로 저장소를 옮기면 ZIP도 함께 전달된다. ZIP은 압축 해제해야 사용할 수 있으며, PC에는 **CPython 3.12 x64와 Python Launcher (`py.exe`)가 이미 설치**되어 있어야 한다. Python 자체 설치 파일은 이 묶음에 포함되지 않는다.
 
-저장소 루트에서 **PowerShell**로 실행한다. `outputs/offline`은 아직 없는 경로를 사용한다.
+저장소 루트에서 **64비트 PowerShell**로 실행한다(Windows PowerShell 5.1 지원, x86 버전 제외). `outputs/offline`은 아직 없는 경로를 사용한다.
 
 ```powershell
 Expand-Archive -LiteralPath '.\bundles\windows_cp312_win_amd64.zip' -DestinationPath '.\outputs\offline'
@@ -105,6 +105,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install_and_smoke.ps1 -VenvPath .\.venv-offline
 ```
 
-위 명령은 저장소 루트에서 시작한다. 연결 환경에서 묶음을 재생성한 경우 검증을 마친 `outputs/windows_cp312_win_amd64.zip`을 `bundles/windows_cp312_win_amd64.zip`에 복사해 커밋해야 Git으로 새 묶음이 전달된다. 현재 동봉본의 검토 대상과 해시는 [R3 검토 기록](review/REAL_HOTSPOT_REVIEW_R3.md)에 있다.
+위 명령은 저장소 루트에서 시작한다. 연결 환경에서 묶음을 재생성한 경우 검증을 마친 `outputs/windows_cp312_win_amd64.zip`을 `bundles/windows_cp312_win_amd64.zip`에 복사해 커밋해야 Git으로 새 묶음이 전달된다. 애플리케이션 wheel의 검토 대상과 해시는 [R3 검토 기록](review/REAL_HOTSPOT_REVIEW_R3.md)에 있다. 이후 설치 스크립트의 PowerShell 5.1 호환성 수정으로 ZIP 자체의 해시는 달라졌다. 실제 Windows 실행 검증은 별도로 필요하다.
+
+이전 압축 해제본에서 `OSArchitecture` 속성 오류가 발생하면 저장소를 업데이트한 후, 저장소 루트에서 아래 명령으로 설치 스크립트만 교체할 수 있다. 기존 wheel을 다시 다운로드할 필요는 없다.
+
+```powershell
+Copy-Item -LiteralPath '.\scripts\install_and_smoke.ps1' -Destination '.\outputs\offline\windows_cp312_win_amd64\install_and_smoke.ps1' -Force
+Set-Location '.\outputs\offline\windows_cp312_win_amd64'
+.\install_and_smoke.ps1 -VenvPath .\.venv-offline -KeepVenv
+```
 
 이 구현 환경의 wheel 다운로드·hash·fixture 검증은 Windows 실행 검증을 대신하지 않는다. 실제 Windows 인수 시 설치, `pip check`, import, import-hotspots, validate-data, compare, electrode-map이 성공하고 마지막 네 CLI 단계만 문서화된 incomplete 결과로 exit 3이어야 한다. 수백 파일 resource 측정은 `python scripts/benchmark_real_hotspots.py --cases 312`로 재현하며 출력에 플랫폼, case/파일 수, 1270×1270 입력, peak RSS와 시간, 500,000,000-cell 그룹 guard 결과가 포함된다.
