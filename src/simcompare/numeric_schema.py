@@ -142,12 +142,14 @@ def require_same_frame(first: Frame, second: Frame) -> None:
 @dataclass(frozen=True)
 class Endpoint:
     electrode_id: str
-    role: str
+    role: str | None
     actual_layer: str
 
     def __post_init__(self):
-        for name in ('electrode_id', 'role', 'actual_layer'):
+        for name in ('electrode_id', 'actual_layer'):
             text(getattr(self, name), name)
+        if self.role is not None and (not isinstance(self.role, str) or not self.role.strip()):
+            raise NumericContractError('invalid_endpoint_role')
 
 
 @dataclass(frozen=True)
@@ -191,6 +193,8 @@ class MaskRecord:
     source_ca: SourceCA | None = None
     identity: CaseIdentity | None = None
     analysis_layer: str | None = None
+    conservation_atol_um2: float = 1e-9
+    conservation_rtol: float = 1e-9
 
     def __post_init__(self):
         if self.identity is not None and self.identity.frame_id != self.frame.frame_id:
@@ -198,6 +202,8 @@ class MaskRecord:
         if not isinstance(self.reasons, tuple) or any(not isinstance(r, str) or not r for r in self.reasons):
             raise NumericContractError('invalid_record_reasons')
         finite(self.diameter_um, 'diameter', positive=True)
+        finite(self.conservation_atol_um2, 'conservation atol', nonnegative=True)
+        finite(self.conservation_rtol, 'conservation rtol', nonnegative=True)
         if self.input_status not in ('observed', 'missing', 'not_applicable'):
             raise NumericContractError('invalid_input_status')
         if self.input_status == 'observed':

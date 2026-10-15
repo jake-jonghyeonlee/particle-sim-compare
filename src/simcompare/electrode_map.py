@@ -329,10 +329,14 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
         coverage = {'observed': [], 'missing': [], 'not_applicable': [], 'measurement_errors': [],
                     'source_coverage_status': 'available', 'valid_area_um2': float(frame.valid.sum())*frame.pixel_pitch_um**2,
                     'full_area_um2': frame.valid.size*frame.pixel_pitch_um**2,
+                    'source_coverage_summary': {'expected_case_inventory_status':
+                        'unconfirmed' if any('expected_case_inventory_unprovided' in c.reasons for c in entries)
+                        else 'confirmed'},
                     'valid_fraction': float(frame.valid.mean())}
         touched, observed = {}, []
         reasons = set()
         for case in sorted(entries, key=lambda c: c.identity.case_id):
+            reasons.update(case.reasons)
             record = next((r for d, r in case.records.items() if diameter_key(d) == diameter_key(diameter)), None)
             identity = asdict(case.identity)
             if record is None or record.input_status == 'missing':
@@ -343,7 +347,11 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
             if record.input_status == 'not_applicable':
                 continue
             measured = measure_full_mask(record)
-            reasons.update(measured.reasons)
+            reasons.update((*record.reasons, *measured.reasons))
+            if measured.status == 'partial':
+                coverage['measurement_errors'].append({'identity': identity,
+                    'reasons': tuple(dict.fromkeys((*record.reasons, *measured.reasons))),
+                    'original_case_ca': asdict(measured)})
             if measured.status == 'unavailable':
                 coverage['measurement_errors'].append({'identity': identity, 'reasons': measured.reasons, 'original_case_ca': asdict(measured)})
                 reasons.update(measured.reasons)
@@ -353,8 +361,15 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                 name = endpoint.electrode_id
                 touched[name] = touched.get(name, np.zeros(frame.shape_yx, bool)) | active
             observed.append((case, record, measured))
-        if coverage['missing'] or coverage['measurement_errors'] or missing_manifest:
+        inventory_unconfirmed = coverage['source_coverage_summary']['expected_case_inventory_status'] != 'confirmed'
+        if coverage['missing'] or coverage['measurement_errors'] or missing_manifest or inventory_unconfirmed:
             coverage['source_coverage_status'] = 'partial' if observed else 'unavailable'
+        coverage['source_coverage_summary'].update(
+            observed_case_count=len(coverage['observed']),
+            missing_case_count=len(coverage['missing']),
+            measurement_error_count=len(coverage['measurement_errors']),
+            missing_manifest_case_count=len(missing_manifest),
+            source_coverage_status=coverage['source_coverage_status'])
         if missing_manifest:
             reasons.add('manifest_case_missing')
         if not frame.valid.all():

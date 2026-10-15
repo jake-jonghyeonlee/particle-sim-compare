@@ -1,19 +1,27 @@
-# numeric_v2 실행 예시. 실제 reader/domain 계약(G2)이 pending이므로 실행 수락 불가.
-# G1/G2 미확정: density_contracts/unit_bases를 지정하지 않으며 가중값/delta는 null.
-# 사용자 gate 답변이나 synthetic 표시를 실제 자료에 임의 적용하지 않는다.
+# real_hotspot_v1 관측 manifest 실행 예시. import-hotspots 출력 폴더를 가리킨다.
+# product/process/exposure/unit/role/height 메타데이터는 원천에서 제공되지 않아 null이다.
+# 아래 단계는 raw 면적을 검사하고 분류/가중 비교 및 전극 지도는 보수적으로 차단한다.
 schema_version: numeric_config_v1
 mode: real
 output_dir: ../outputs/numeric_real
 reference:
-  data_dir: ../data/reference
-  product_id: REFERENCE_PRODUCT
+  data_dir: ../data/imported/reference
+  # grouping을 요청할 때만 실제로 확인된 값을 제공하세요.
+  # condition_assignment:
+  #   product_id: <confirmed-product>
+  #   design_version: <confirmed-design>
+  #   source_id: <confirmed-source>
+  #   process_step_id: <confirmed-step>
+  #   exposure_id: <confirmed-exposure>
+  #   unit_id: <confirmed-unit>
+  #   layer_stack:
+  #     - {actual_layer: <layer>, stack_order: <order>, density_process_layer: <process-layer>}
+  #   pair_table_path: pairs.csv  # omit while classification table is unavailable
 target:
-  data_dir: ../data/target
-  product_id: TARGET_PRODUCT
+  data_dir: ../data/imported/target
 map:
   input:
-    data_dir: ../data/reference
-    product_id: REFERENCE_PRODUCT
+    data_dir: ../data/imported/reference
   diameter_um: 5
 review_rois:
   map_region_ids: []

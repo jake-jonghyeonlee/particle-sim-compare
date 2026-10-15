@@ -40,6 +40,10 @@ def _parser() -> argparse.ArgumentParser:
     _korean_help(demo)
     demo.add_argument("--out", required=True, help="출력 디렉터리")
     demo.add_argument("--numeric-only", action="store_true", help=argparse.SUPPRESS)
+    importer = _korean_help(sub.add_parser("import-hotspots", add_help=False, help="실제 hotspot 폴더를 관측 우선 manifest로 변환"))
+    importer.add_argument("--root", required=True, help="입력 hotspot root")
+    importer.add_argument("--out", required=True, help="새 출력 디렉터리")
+    importer.add_argument("--expected-cases", help="누락된 case 폴더 확인용 case 이름 목록")
     for name in ("compare", "electrode-map", "export-review-rois"):
         command = _korean_help(sub.add_parser(name, add_help=False, help="numeric_v2 수치/검토 위치 명령(학습 호출 없음)"))
         command.add_argument("--config", required=True, help="numeric_config_v1 YAML")
@@ -90,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
 
             _print(merge_exports([Path(s) for s in args.sources], Path(args.out)))
             return 0
+        if args.command == "import-hotspots":
+            from simcompare.adapters.real_hotspot import import_hotspots
+            result = import_hotspots(Path(args.root), Path(args.out),
+                                     expected_cases=Path(args.expected_cases) if args.expected_cases else None)
+            _print(result)
+            return 0 if result['status'] == 'available' else 3
         from simcompare import pipeline
         cfg = pipeline.load_numeric_config(args.config)
         if getattr(args, "min_count", None) is not None:
@@ -106,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
         # numeric 계약 오류에는 완성 리포트 대신 실패 marker만 쓴다.
-        if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data"):
+        if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots"):
             error = {"status":"unavailable","reasons":[getattr(exc,"code","input_or_config_error")],
                      "detail":str(exc),"command":args.command,"outputs":[],"exit_code":2}
             output = getattr(args,"out",None)

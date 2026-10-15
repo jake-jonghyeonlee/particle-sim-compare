@@ -2,6 +2,16 @@
 
 ## numeric_v2 — 수치 경로의 내부 canonical 계약 초안
 
+### real_hotspot_v1 관측 import
+
+`simcompare import-hotspots --root <hotspot-root> --out <new-directory> [--expected-cases <text-file>]`는 사용자가 확인한 실제 폴더 레이아웃을 별도 `real_hotspot_v1` manifest로 변환한다. 입력 root는 바깥 `images` 폴더 유무와 무관하며 하위 case 디렉터리에서 찾는다. case 이름은 `불량명-전극1-layer1-전극2-layer2` 다섯 필드이고 `1.png`, `2.png`, `hotspot_<불량명><지름>.png`, case 내부 `result/<불량명>.csv`를 사용한다. case-local CSV가 없으면 다른 위치에서 찾아 대체하지 않는다.
+
+Hotspot PNG는 엄격한 기존 PNG chunk/CRC/zlib/orientation/pixel-limit 검증 뒤 grayscale로만 받는다. 검정은 0, 회색 nonzero는 occupied다. RGB는 세 channel이 pixel마다 동일할 때 grayscale로 허용한다. palette, alpha, 유색, 손상 파일은 거부하며 기존 numeric_v2 binary reader의 의미는 바뀌지 않는다. 전극 image 크기는 서로 같아야 하고 hotspot은 전극의 각 축보다 정확히 1000 px 작아야 한다. importer는 중앙 crop mask를 저장하고 frame origin `(50,50)` µm, pitch `0.1` µm/px, 공통 crop frame을 기록한다. 원본 이미지와 hotspot hash도 보존한다.
+
+지름은 1–30, 40, 50 µm를 기대한다. `03`은 숫자 3이고 같은 case의 `3`과 중복이다. 누락 image는 `missing`, 검정 관측 image는 면적 `0`인 `observed`이며 서로 대체할 수 없다. 이미지 면적은 occupied pixel count × 0.01 µm²다. case CSV의 `defect_size(um),Area(um2)` 원문 문자열/정밀도와 값은 별도 보존한다. 일치 tolerance는 CSV 마지막 기록 자릿수 절반과 pixel 면적 절반의 합으로 정하고, PNG 면적이나 CSV 값을 덮어쓰지 않는다.
+
+이 계약은 원천 관측용이다. product/design/source/process/exposure/unit, electrode role/polarity, vertical height는 제공되지 않으므로 JSON null로 남는다. `validate-data`는 관측 면적과 missing/CSV 진단을 출력한다. `compare`는 case별 원 면적만 제공하고 line/pixel, density, unit/panel, delta 계산을 unavailable로 둔다. `electrode-map`은 극성 및 pair classification이 확인될 때까지 blocked다. `--expected-cases`가 없으면 발견한 디렉터리 밖의 case coverage는 미확정이다. pair 표나 condition assignment를 폴더명/정렬순으로 만들지 않는다. 한 번에 한 PNG/crop mask만 materialize하며 개별 source pixel 수는 import resource limit로 제한한다. numeric_v2 manifest·loader·legacy 동작은 별도 유지된다.
+
 근거: [PLAN_v2 §1–3, T1](plan/PLAN_v2.md). 이 절은 새 line/pixel 수치 경로의 문서 계약이다. 로더·CLI 구현 완료 또는 실자료 승인 증거가 아니다. 아래 **기존 1.x / CAA / AE 계약**은 별도 legacy 계약이며 numeric_v2의 규칙을 소급 적용하지 않는다. 합성 예제는 [numeric_v2/README.md](domain-input-example/numeric_v2/README.md)에 있다.
 
 ### 원천 형식과 변환 경계

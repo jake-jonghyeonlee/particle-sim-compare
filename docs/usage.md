@@ -35,7 +35,15 @@ uv run simcompare export-review-rois --config demo_data/config.yaml --out demo_d
 
 ## 실제 자료
 
-`configs/real.example.yaml`을 복사하되 현재 G2 실제 원천/migration reader는 pending이다. legacy export를 numeric manifest로 이름만 바꿔 실행하지 않는다. G1 실제 밀도 단위·조사면적 변환, G2 한-unit 환산과 G4 crop 정책은 미확정이다. full-mask 면적을 기록하는 것과 실제 weighted/panel 결과를 승인하는 것은 다르다. 자동 /4, 누락 0 채움은 없다.
+확인된 실제 폴더 구조는 먼저 별도 `real_hotspot_v1` 관측 manifest로 변환한다. 출력 디렉터리는 새 경로여야 한다.
+
+```bash
+uv run simcompare import-hotspots --root input/hotspot --out imported/reference --expected-cases expected_cases.txt
+```
+
+`--expected-cases`는 case 이름을 줄마다 적은 선택 파일이며, 없으면 발견되지 않은 case folder coverage는 unconfirmed로 남는다. 입력 hotspot은 opaque grayscale PNG여야 한다. 검정=0, 모든 회색 nonzero=occupied다. 변환기는 1/2 electrode image shape와 hotspot shape의 정확한 1000 px 축 차이를 검사하고 중앙 frame `(50,50)` µm로 기록한다. case-local `result/<불량명>.csv`의 원 숫자/정밀도와 PNG 면적 차이를 보존한다. 누락 image는 missing, 검정 image는 observed area 0이다.
+
+`validate-data`는 관측 면적과 missing/CSV 진단을 출력하고 `compare`는 raw 면적과 상태를 출력한다. config에 확인된 `condition_assignment`와 선택 pair table을 제공하면 기존 line/pixel 면적 집계와 electrode map을 연결한다. assignment에는 `product_id`, `design_version`, `source_id`, `process_step_id`, `exposure_id`, `unit_id`, `layer_stack`을 넣고 pair table은 기존 `pairs.csv` 열을 사용한다. 값이 없으면 null로 남기고 grouping을 요구하는 결과는 unavailable이다. pair table이 없는 pair를 pixel로 자동 배정하지 않는다. density 단위/조사면적 및 한 unit 환산이 없으면 weighted rate, panel, delta는 unavailable이며 electrode image polarity가 확인되지 않은 경우 review ROI만 blocked다. Electrode map은 hotspot mask와 explicit case assignment를 사용하며 polarity를 요구하지 않는다. configured mask materialization은 group 500,000,000 cells, 전체 source 6,000,000,000 cells, 보수적 whole-operation 추정 8 GiB로 제한한다. 마지막 제한은 모든 source mask, diameter별 retained output, per-case transient margin을 추정하며 streaming 보장은 아니다. `max_operation_bytes`는 낮출 수 있고 8 GiB보다 높일 수 없다. 초과 입력은 명시 오류로 중단된다. Windows 실행과 실자료 검증은 별도 수행해야 한다.
 
 `bash scripts/3_check_my_data.sh configs/real.yaml`과 `bash scripts/4_analyze_my_data.sh configs/real.yaml`은 numeric 검사·비교·지도만 호출한다. 실제 adapter가 미확정이면 명시 오류가 정상이며 임의 synthetic 표시로 우회하지 않는다. [데이터 계약](data_contract.md), [질문 상태](open_questions.md)를 확인한다.
 
@@ -56,3 +64,18 @@ train/embed/analyze/evaluate/all은 명시 오류를 낸다. analyze의 대체�
 uv run pytest -p no:warnings
 uv run pytest -p no:warnings tests/test_retired_paths.py tests/test_numeric_cli.py tests/test_numeric_inputs.py
 ```
+
+## Windows 폐쇄망 CPython 3.12 x64 묶음
+
+연결된 빌드 컴퓨터에서 `uv 0.11.23`, Python/pip, 네트워크를 준비한 뒤 저장소 루트에서 `python scripts/build_windows_bundle.py`를 실행한다. 이 명령은 pyproject의 직접 의존성 여섯 개를 포함해 CPython 3.12 `win_amd64` 대상 전이 의존성을 binary wheel로 해석·다운로드하고 자체 `simcompare` wheel, requirements 해시, manifest, fixture, 설치 검증 스크립트를 `outputs/windows_cp312_win_amd64.zip`에 넣는다. `scripts/windows-build-constraints.txt`는 Hatchling 1.27.0을 고정한다. 빌더는 연결 환경용이며 생성 ZIP만 폐쇄망으로 반입한다.
+
+Windows x64에서 ZIP을 한글 또는 공백이 포함된 경로에 풀고 PowerShell에서 실행한다. 스크립트는 CPython 3.12 x64를 확인하고 wheel SHA256 및 wheel 목록을 검사한 뒤 venv를 만들고 `pip --no-index --only-binary=:all: --require-hashes`로 설치한다. fixture의 validate/compare/map 출력은 `is_synthetic=false`를 보존하며 분류·물리 메타데이터가 미제공된 결과의 exit 3만 허용한다. 다른 오류 코드는 그대로 전달된다.
+
+```powershell
+Expand-Archive -LiteralPath '.\windows_cp312_win_amd64.zip' -DestinationPath '.\폐쇄망 테스트'
+Set-Location '.\폐쇄망 테스트\windows_cp312_win_amd64'
+Set-ExecutionPolicy -Scope Process Bypass
+.\install_and_smoke.ps1
+```
+
+이 구현 환경의 wheel 다운로드·hash·fixture 검증은 Windows 실행 검증을 대신하지 않는다. 실제 Windows 인수 시 설치, `pip check`, import, import-hotspots, validate-data, compare, electrode-map이 성공하고 마지막 네 CLI 단계만 문서화된 incomplete 결과로 exit 3이어야 한다. 수백 파일 resource 측정은 `python scripts/benchmark_real_hotspots.py --cases 312`로 재현하며 출력에 플랫폼, case/파일 수, 1270×1270 입력, peak RSS와 시간, 500,000,000-cell 그룹 guard 결과가 포함된다.

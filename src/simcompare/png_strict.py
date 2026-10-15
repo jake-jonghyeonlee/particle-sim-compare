@@ -286,3 +286,52 @@ def read_png(path, relative_path, *, sha256=None):
         raise NumericContractError('png_invalid_idat_stream', relative_path) from exc
     except (OSError, ValueError, TypeError, SyntaxError, struct.error) as exc:
         raise NumericContractError('png_decode_failed', relative_path) from exc
+
+
+def read_gray_hotspot(path, relative_path, *, sha256=None, return_sha256=False):
+    """Decode opaque grayscale hotspot occupancy from the same validated bytes.
+
+    Unlike the legacy binary reader, every nonzero gray sample is occupied.
+    RGB is accepted only when all three channels are identical; palette and alpha
+    encodings are rejected rather than converted.
+    """
+    try:
+        data = path.read_bytes()
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        if sha256 is not None and (not isinstance(sha256, str) or actual_sha256 != sha256):
+            raise NumericContractError('input_hash_mismatch', relative_path)
+        with decoder_session() as pixel_limit:
+            _validate_png_structure(data, pixel_limit=pixel_limit)
+            try:
+                with Image.open(BytesIO(data)) as image:
+                    if image.format != 'PNG' or image.mode not in {'L', 'RGB'}:
+                        raise _PNGError('png_hotspot_grayscale_required', str(image.mode))
+                    if image.getexif().get(274, 1) != 1:
+                        raise _PNGError('png_nonidentity_orientation', 'nonidentity orientation metadata')
+                    image.load()
+                    pixels = np.asarray(image)
+                    if image.mode == 'RGB':
+                        if not np.array_equal(pixels[..., 0], pixels[..., 1]) or not np.array_equal(pixels[..., 0], pixels[..., 2]):
+                            raise _PNGError('png_hotspot_color_rejected', 'RGB channels differ')
+                        pixels = pixels[..., 0]
+                    mask = pixels != 0
+                    mask.setflags(write=False)
+                    return (mask, actual_sha256) if return_sha256 else mask
+            except (_PNGError, NumericContractError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+                raise
+            except Exception as exc:
+                raise _PNGError('png_decode_failed', str(exc)) from exc
+    except _PNGError as exc:
+        raise NumericContractError(exc.code, relative_path+': '+str(exc)) from exc
+    except NumericContractError as exc:
+        if relative_path in str(exc):
+            raise
+        raise NumericContractError(exc.code, relative_path) from exc
+    except Image.DecompressionBombError as exc:
+        raise NumericContractError('png_pixel_limit_error', relative_path) from exc
+    except Image.DecompressionBombWarning as exc:
+        raise NumericContractError('png_pixel_limit_warning', relative_path) from exc
+    except zlib.error as exc:
+        raise NumericContractError('png_invalid_idat_stream', relative_path) from exc
+    except (OSError, ValueError, TypeError, SyntaxError, struct.error) as exc:
+        raise NumericContractError('png_decode_failed', relative_path) from exc

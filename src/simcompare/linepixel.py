@@ -233,7 +233,11 @@ def _validate_case(case: NumericCase) -> None:
         raise NumericContractError('expected_canonical_short_case')
     if len(case.endpoints) != 2:
         raise NumericContractError('invalid_case_endpoints')
-    pair_of(*(ep.electrode_id for ep in case.endpoints))
+    if len({ep.electrode_id for ep in case.endpoints}) != 2:
+        if case.pair_id is not None or case.classification is not None:
+            raise NumericContractError('same_electrode_pair_cannot_be_classified')
+    else:
+        pair_of(*(ep.electrode_id for ep in case.endpoints))
     text(case.analysis_layer, 'analysis_layer')
     text(case.density_process_layer, 'density_process_layer')
     text(case.metadata.get('unit_id'), 'unit_id')
@@ -296,6 +300,7 @@ def _group(key, entries, chunk_cells, table_version):
                 raise NumericContractError('pair_id_collision')
             electrodes[pid] = pair
             lineage.setdefault(pid, []).append(source_key)
+        reasons.update(case.reasons)
         if record.input_status == 'observed':
             reasons.update(measured.reasons)
             if measured.status == 'unavailable':

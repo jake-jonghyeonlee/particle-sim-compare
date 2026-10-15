@@ -196,6 +196,9 @@ def _cases(root, manifest, frames, pairs, synthetic):
         if identity.frame_id not in frames:
             raise NumericContractError('unknown_frame')
         frame = frames[identity.frame_id]
+        if any(not isinstance(ep.get('role'), str) or not ep['role'].strip()
+               for ep in raw_case['endpoints']):
+            raise NumericContractError('legacy_endpoint_role_required')
         endpoints = tuple(Endpoint(**ep) for ep in raw_case['endpoints'])
         if len(endpoints) != 2 or len({ep.electrode_id for ep in endpoints}) != 2:
             raise NumericContractError('invalid_case_endpoints')

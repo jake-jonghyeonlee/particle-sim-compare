@@ -1,0 +1,6 @@
+numpy>=1.26
+pandas>=2.1
+pyarrow>=14
+zarr>=3
+pillow>=10.0
+pyyaml>=6.0

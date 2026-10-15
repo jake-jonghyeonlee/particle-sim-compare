@@ -34,7 +34,10 @@ def union_masks(records: Sequence[MaskRecord]) -> np.ndarray:
                 raise NumericContractError('incompatible_source_conditions')
         elif record.identity != first.identity:
             raise NumericContractError('incompatible_source_identity')
-    return np.logical_or.reduce([r.mask for r in records])
+    result = np.zeros(first.frame.shape_yx, dtype=bool)
+    for record in records:
+        np.logical_or(result, record.mask, out=result)
+    return result
 
 
 def _slabs(rectangles):
@@ -69,8 +72,8 @@ def _cell_areas(frame, rectangles):
 
 
 def _conservation(record, rtol, atol):
-    finite(rtol, 'conservation rtol', nonnegative=True)
-    finite(atol, 'conservation atol', nonnegative=True)
+    rtol = max(finite(rtol, 'conservation rtol', nonnegative=True), record.conservation_rtol)
+    atol = max(finite(atol, 'conservation atol', nonnegative=True), record.conservation_atol_um2)
     source = record.source_ca
     if source is None:
         return None, None, ()
@@ -103,7 +106,7 @@ def measure_union(record: MaskRecord, windows: Sequence[PhysicalWindow], *,
                            'not_applicable' if record.input_status == 'not_applicable' else 'unavailable',
                            record.reasons, identity=record.identity, basis='physical_window_union')
     outside_valid = int(np.count_nonzero(record.mask & ~record.frame.valid))
-    warnings = (f'active_cells_outside_valid:{outside_valid}',) if outside_valid else ()
+    warnings = tuple(record.reasons) + ((f'active_cells_outside_valid:{outside_valid}',) if outside_valid else ())
     residual, source_ca, errors = _conservation(record, conservation_rtol, conservation_atol_um2)
     if errors:
         return Measurement(None, 0.0, requested, None, 'unavailable', (*errors,*warnings),
@@ -118,6 +121,7 @@ def measure_union(record: MaskRecord, windows: Sequence[PhysicalWindow], *,
     x0, y0, x1, y1 = record.frame.bbox_um
     complete = (all(a >= x0 and b >= y0 and c <= x1 and d <= y1 for a, b, c, d in rectangles)
                 and not np.any(cell_areas[~record.frame.valid] > 0))
+    complete = complete and not record.reasons
     return Measurement(observed_ca if complete else None, valid_area, requested,
                        observed_ca / valid_area if complete else None,
                        'available' if complete else 'partial', warnings if complete else ('partial_observation',*warnings),
