@@ -1,6 +1,33 @@
-# numeric_v2 실행 가이드
+# numeric_v2 / real_hotspot_v1 실행 가이드
 
-## 설치와 예제
+## Windows 폐쇄망 설치 — 먼저 실행
+
+폐쇄망에서는 `scripts/1_install.sh`, `uv sync`, `uv run`을 사용하지 않는다. 이 경로는 인터넷에서 패키지를 다운로드할 수 있다. `Failed to download pandas...`가 발생했다면 아래 wheel 묶음 설치를 사용한다.
+
+Git에 포함된 [`bundles/windows_cp312_win_amd64.zip`](../bundles/windows_cp312_win_amd64.zip)을 사용한다. Git으로 저장소를 옮기면 ZIP도 함께 전달된다. ZIP은 압축 해제해야 사용할 수 있으며, PC에는 **CPython 3.12 x64와 Python Launcher (`py.exe`)가 이미 설치**되어 있어야 한다. Python 자체 설치 파일은 이 묶음에 포함되지 않는다.
+
+저장소 루트에서 **PowerShell**로 실행한다. `outputs/offline`은 아직 없는 경로를 사용한다.
+
+```powershell
+Expand-Archive -LiteralPath '.\bundles\windows_cp312_win_amd64.zip' -DestinationPath '.\outputs\offline'
+Set-Location '.\outputs\offline\windows_cp312_win_amd64'
+Set-ExecutionPolicy -Scope Process Bypass
+.\install_and_smoke.ps1 -VenvPath .\.venv-offline
+```
+
+이 스크립트는 가상환경 생성, 동봉된 wheel의 해시 확인, `pip --no-index` 설치, 설치된 프로그램의 smoke 검증을 수행한다. 기존 저장소 `.venv`와 별도 경로를 사용한다. 설치 후에는 가상환경 활성화나 uv 없이 같은 폴더에서 직접 실행한다.
+
+```powershell
+.\.venv-offline\Scripts\python.exe -m simcompare --help
+# 실제 입력·설정 파일의 절대 경로로 변경한다. import 출력은 새 경로여야 한다.
+.\.venv-offline\Scripts\python.exe -m simcompare import-hotspots --root 'D:\data\input\hotspot' --out 'D:\data\imported\reference'
+.\.venv-offline\Scripts\python.exe -m simcompare validate-data --config 'D:\data\real.yaml'
+.\.venv-offline\Scripts\python.exe -m simcompare compare --config 'D:\data\real.yaml'
+```
+
+설정은 [`configs/real.example.yaml`](../configs/real.example.yaml)을 복사해 실제 입력 경로와 확인된 메타데이터를 지정한다. 아래 예제의 `uv run simcompare`도 폐쇄망에서는 이 가상환경의 `python.exe -m simcompare`로 바꿔 실행한다. 실제 Windows 실행·실자료 검증은 아직 별도 확인이 필요하다.
+
+## 인터넷 연결 환경의 설치와 예제
 
 저장소 루트에서 `uv sync`로 설치한다. torch나 GPU가 필요하지 않다. pandas는 particle-sim legacy export 검사용 직접 의존성이다. `bash scripts/1_install.sh`와 `bash scripts/2_demo.sh`로 설치·합성 실행을 할 수 있다.
 
@@ -72,10 +99,12 @@ uv run pytest -p no:warnings tests/test_retired_paths.py tests/test_numeric_cli.
 Windows x64에서 ZIP을 한글 또는 공백이 포함된 경로에 풀고 PowerShell에서 실행한다. 스크립트는 CPython 3.12 x64를 확인하고 wheel SHA256 및 wheel 목록을 검사한 뒤 venv를 만들고 `pip --no-index --only-binary=:all: --require-hashes`로 설치한다. fixture의 validate/compare/map 출력은 `is_synthetic=false`를 보존하며 분류·물리 메타데이터가 미제공된 결과의 exit 3만 허용한다. 다른 오류 코드는 그대로 전달된다.
 
 ```powershell
-Expand-Archive -LiteralPath '.\windows_cp312_win_amd64.zip' -DestinationPath '.\폐쇄망 테스트'
+Expand-Archive -LiteralPath '.\bundles\windows_cp312_win_amd64.zip' -DestinationPath '.\폐쇄망 테스트'
 Set-Location '.\폐쇄망 테스트\windows_cp312_win_amd64'
 Set-ExecutionPolicy -Scope Process Bypass
-.\install_and_smoke.ps1
+.\install_and_smoke.ps1 -VenvPath .\.venv-offline
 ```
+
+위 명령은 저장소 루트에서 시작한다. 연결 환경에서 묶음을 재생성한 경우 검증을 마친 `outputs/windows_cp312_win_amd64.zip`을 `bundles/windows_cp312_win_amd64.zip`에 복사해 커밋해야 Git으로 새 묶음이 전달된다. 현재 동봉본의 검토 대상과 해시는 [R3 검토 기록](review/REAL_HOTSPOT_REVIEW_R3.md)에 있다.
 
 이 구현 환경의 wheel 다운로드·hash·fixture 검증은 Windows 실행 검증을 대신하지 않는다. 실제 Windows 인수 시 설치, `pip check`, import, import-hotspots, validate-data, compare, electrode-map이 성공하고 마지막 네 CLI 단계만 문서화된 incomplete 결과로 exit 3이어야 한다. 수백 파일 resource 측정은 `python scripts/benchmark_real_hotspots.py --cases 312`로 재현하며 출력에 플랫폼, case/파일 수, 1270×1270 입력, peak RSS와 시간, 500,000,000-cell 그룹 guard 결과가 포함된다.
