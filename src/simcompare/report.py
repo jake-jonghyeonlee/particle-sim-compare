@@ -10,7 +10,11 @@ from pathlib import Path
 import numpy as np
 
 from .numeric_schema import NumericContractError, current_gate_decisions
-from .linepixel import FAILURE_PIECES, FAILURE_PIECE_POLICY
+from .linepixel import FAILURE_PIECES, FAILURE_PIECE_POLICY, FRACTION_NAMES, compare_fractions
+
+FRACTION_NOTE = ('frame 면적 비율은 각 제품의 측정 2×2 frame 면적으로 나눈 단위 없는 값입니다. '
+                 '유닛 크기가 달라도 비교할 수 있으며 G2의 한 unit 환산이 필요 없습니다. '
+                 '밀도·unit·panel 가중값이나 확률·수율이 아니며 유한 2×2 경계 효과는 남아 있습니다.')
 
 
 def json_value(value):
@@ -61,10 +65,11 @@ def comparison_report(reference, target, deltas):
                'reference':reference.to_dict(),'target':target.to_dict(),
                'deltas':[v.to_dict() for _,v in sorted(deltas.items())],
                'failure_fragment_policy':dict(FAILURE_PIECE_POLICY),
-               'failure_piece_axis_note':'불량 유형 조각은 line / pixel과 다른 축입니다. 두 축의 값을 서로 더하거나 빼지 않습니다.'}
+               'failure_piece_axis_note':'불량 유형 조각은 line / pixel과 다른 축입니다. 두 축의 값을 서로 더하거나 빼지 않습니다.',
+               'fraction_of_frame_note':FRACTION_NOTE}
     summary, areas, buckets, cases = [], [], [], []
     weighted_buckets, delta_buckets = [], []
-    bucket_checks, pieces = [], []
+    bucket_checks, pieces, fractions = [], [], []
     for side, result in (('reference',reference), ('target',target)):
         for key, layer in sorted(result.layers.items()):
             for classification in ('line','pixel'):
@@ -98,6 +103,10 @@ def comparison_report(reference, target, deltas):
                                'layer':key.analysis_layer,'diameter_um':key.diameter_um,
                                'axis':'failure_type','piece':name,'domain':'full_mask',
                                **asdict(metric),'frame':group.to_dict()['frame']})
+            for name in FRACTION_NAMES:
+                fractions.append({'side':side,'group_id':group_id,'product_id':key.product_id,
+                                  'layer':key.analysis_layer,'diameter_um':key.diameter_um,'metric':name,
+                                  'domain':'frame_fraction',**asdict(group.fractions[name])})
             for classification in ('line','pixel'):
                 share = getattr(group,classification)
                 links = []
@@ -141,6 +150,15 @@ def comparison_report(reference, target, deltas):
             pieces.append({**_metric_row('delta',delta.target_product_id,key.analysis_layer,name,'panel',
                                         asdict(delta.failure_pieces[name]),context=asdict(key)),
                            'axis':'failure_type','piece':name})
+    fraction_deltas = compare_fractions(reference.areas, target.areas)
+    payload['fraction_deltas'] = [{'comparison_key':asdict(ck),'diameter_um':d,
+                                   'metrics':{name:asdict(m) for name,m in metrics.items()}}
+                                  for (ck,d),metrics in sorted(fraction_deltas.items())]
+    for (ck,d),metrics in sorted(fraction_deltas.items()):
+        for name,metric in metrics.items():
+            fractions.append({'side':'delta','group_id':None,'product_id':None,'layer':ck.analysis_layer,
+                              'diameter_um':d,'metric':name,'domain':'frame_fraction',**asdict(metric),
+                              'comparison_key':asdict(ck)})
     payload['bucket_totals'] = bucket_checks
     payload['failure_pieces_table'] = pieces
     complete = bool(deltas) and all(getattr(d,c).status == 'available'
@@ -149,7 +167,8 @@ def comparison_report(reference, target, deltas):
     payload['reasons'] = sorted({r for d in deltas.values() for c in ('line','pixel','transfer')
                                  for r in getattr(d,c).reasons})
     return json_value(payload), {'summary':summary,'areas':areas,'buckets':buckets,'case_ca':cases,
-                                  'weighted_buckets':weighted_buckets,'delta_buckets':delta_buckets,'failure_pieces':pieces}
+                                  'weighted_buckets':weighted_buckets,'delta_buckets':delta_buckets,'failure_pieces':pieces,
+                                  'fractions':fractions}
 
 
 def map_report(result, *, per_cell=False):
@@ -233,6 +252,13 @@ def write_numeric_report(out, name, payload, tables):
             for row in tables[table]:
                 table_html += '<tr>'+''.join('<td>'+escape(json.dumps(json_value(row.get(k)),ensure_ascii=False,allow_nan=False))+'</td>' for k in columns)+'</tr>'
             table_html += '</table>'
+    if 'fractions' in tables:
+        table_html += '<h2>frame 면적 비율 (fraction_of_frame)</h2><p>'+escape(payload.get('fraction_of_frame_note',FRACTION_NOTE))+'</p>'
+        columns=['side','product_id','layer','diameter_um','metric','value','partial_value','status','reasons']
+        table_html += '<table><tr>'+''.join('<th>'+escape(k)+'</th>' for k in columns)+'</tr>'
+        for row in tables['fractions']:
+            table_html += '<tr>'+''.join('<td>'+escape(json.dumps(json_value(row.get(k)),ensure_ascii=False,allow_nan=False))+'</td>' for k in columns)+'</tr>'
+        table_html += '</table>'
     # JSON을 script에 삽입하지 않고 모든 텍스트를 escape하여 정적으로 표시한다.
     html = ('<!doctype html><html lang="ko"><meta charset="utf-8"><title>'+escape(name)+
             '</title><style>body{font-family:system-ui;max-width:1100px;margin:2rem auto}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>'+

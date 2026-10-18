@@ -8,7 +8,7 @@ from __future__ import annotations
 from .numeric_schema import current_gate_decisions
 
 from collections import Counter
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import copy
 import hashlib
 import json
@@ -87,6 +87,39 @@ class AreaMetric:
 
 
 @dataclass(frozen=True)
+class FractionMetric:
+    """area / frame area of the measured 2×2 domain: dimensionless, unit-size independent.
+
+    The G2 one-unit divisor cancels in this ratio; the finite 2×2 edge effect does not.
+    It is a comparison index, never a probability, yield or density-weighted value.
+    """
+    value: float | None
+    partial_value: float | None
+    status: Status
+    reasons: tuple[str, ...]
+    numerator_um2: float
+    frame_area_um2: float
+    valid_area_um2: float
+    unit: str = '1'
+    basis: str = 'area_over_frame_area'
+
+
+FRACTION_NAMES = ('line', 'pixel_effective', 'transfer', 'union', *FAILURE_PIECES)
+
+
+def fraction_of_frame(metric: AreaMetric, frame: Frame) -> FractionMetric:
+    frame_area = frame.valid.size * frame.pixel_pitch_um ** 2
+    valid_area = int(frame.valid.sum()) * frame.pixel_pitch_um ** 2
+    if metric.status == 'available':
+        return FractionMetric(finite(metric.value / frame_area, 'fraction', nonnegative=True), None, 'available',
+                              metric.reasons, metric.value, frame_area, valid_area)
+    partial = None
+    if metric.status == 'partial' and metric.partial_value is not None:
+        partial = finite(metric.partial_value / frame_area, 'partial fraction', nonnegative=True)
+    return FractionMetric(None, partial, metric.status, metric.reasons, metric.observed_area_um2, frame_area, valid_area)
+
+
+@dataclass(frozen=True)
 class SourceCaseArea:
     source_key: str
     identity: CaseIdentity
@@ -141,10 +174,15 @@ class GroupArea:
     pair_table_version: str | None
     failure_pieces: dict[str, AreaMetric]
     failure_piece_masks: dict[str, np.ndarray]
+    fractions: dict[str, FractionMetric] = field(default_factory=dict)
 
     @property
     def coverage(self) -> Coverage:
         return self.union.coverage
+
+    @property
+    def frame_area_um2(self) -> float:
+        return self.frame.valid.size * self.frame.pixel_pitch_um ** 2
 
     def to_dict(self) -> dict:
         """JSON-ready provenance and area schema; binary arrays remain original assets."""
@@ -163,6 +201,8 @@ class GroupArea:
                                            'contributing_source_case_keys':'observed_mask_intersects_bucket_at_diameter'},
             'failure_pieces': {name:asdict(metric) for name,metric in self.failure_pieces.items()},
             'failure_fragment_policy': copy.deepcopy(FAILURE_PIECE_POLICY),
+            'frame_area_um2': self.frame_area_um2,
+            'fraction_of_frame': {name:asdict(metric) for name,metric in self.fractions.items()},
         }
 
 
@@ -374,9 +414,15 @@ def _group(key, entries, chunk_cells, table_version):
                                  reasons=('all_vertical_sources_not_applicable',))
     for mask in (line, effective, transfer, union, *piece_masks.values()):
         mask.setflags(write=False)
-    return GroupArea(key, frame, shares(LINE, frame.valid), shares(PIXEL, frame.valid & ~line),
-                     metric(int(transfer.sum()) * pixel_area), metric(int(union.sum()) * pixel_area),
-                     tuple(sources), electrodes, line, effective, transfer, union, table_version, pieces, piece_masks)
+    group = GroupArea(key, frame, shares(LINE, frame.valid), shares(PIXEL, frame.valid & ~line),
+                      metric(int(transfer.sum()) * pixel_area), metric(int(union.sum()) * pixel_area),
+                      tuple(sources), electrodes, line, effective, transfer, union, table_version, pieces, piece_masks)
+    group.fractions = {'line': fraction_of_frame(group.line.area, frame),
+                       'pixel_effective': fraction_of_frame(group.pixel.area, frame),
+                       'transfer': fraction_of_frame(group.transfer, frame),
+                       'union': fraction_of_frame(group.union, frame),
+                       **{name: fraction_of_frame(pieces[name], frame) for name in FAILURE_PIECES}}
+    return group
 
 
 def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells: int = 65536) -> AreaResult:
@@ -834,3 +880,68 @@ def compare_rates(reference: RateResult,target: RateResult,*,reference_product_i
                                           None if b is None else b.failure_pieces[name].panel)
                                for name in FAILURE_PIECES})
     return output
+
+
+@dataclass(frozen=True)
+class FractionDelta:
+    """target − reference of fraction_of_frame per comparison layer and diameter.
+
+    Complete only when both sides are available; a layer missing on one side is
+    unknown, never zero. No density, unit or panel scaling is involved.
+    """
+    value: float | None
+    status: Status
+    reasons: tuple[str, ...]
+    reference_value: float | None
+    target_value: float | None
+    frame_area_um2: dict
+    unit: str = '1'
+    direction: str = 'target_minus_reference'
+
+
+def compare_fractions(reference: AreaResult, target: AreaResult) -> dict:
+    """{(ComparisonKey, diameter_um): {name: FractionDelta}} for every layer/diameter seen on either side."""
+    if not isinstance(reference, AreaResult) or not isinstance(target, AreaResult):
+        raise NumericContractError('expected_area_result')
+
+    def index(result):
+        out = {}
+        for key, group in result.groups.items():
+            data = asdict(key)
+            diameter = data.pop('diameter_um')
+            comparison = (LayerKey(**data).comparison_key, diameter)
+            if comparison in out:
+                raise NumericContractError('ambiguous_comparison_layer')
+            out[comparison] = group
+        return out
+    ra, ta = index(reference), index(target)
+    output = {}
+    for key in sorted(set(ra) | set(ta)):
+        a, b = ra.get(key), ta.get(key)
+        metrics = {}
+        for name in FRACTION_NAMES:
+            am = None if a is None else a.fractions[name]
+            bm = None if b is None else b.fractions[name]
+            reasons = set()
+            if am is None:
+                reasons.add('reference_layer_unknown')
+            if bm is None:
+                reasons.add('target_layer_unknown')
+            for side, metric in (('reference', am), ('target', bm)):
+                if metric is not None and metric.status != 'available':
+                    reasons.add(f'{side}_{metric.status}')
+                    reasons.update(f'{side}:{r}' for r in metric.reasons)
+            if am is not None and bm is not None and am.status == bm.status == 'not_applicable':
+                status = 'not_applicable'
+            elif reasons:
+                status = 'unavailable'
+            else:
+                status = 'available'
+            value = finite(bm.value - am.value, 'fraction delta') if status == 'available' else None
+            metrics[name] = FractionDelta(value, status, tuple(sorted(reasons)),
+                                          None if am is None else am.value, None if bm is None else bm.value,
+                                          {'reference': None if am is None else am.frame_area_um2,
+                                           'target': None if bm is None else bm.frame_area_um2})
+        output[key] = metrics
+    return output
+

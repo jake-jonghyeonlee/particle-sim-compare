@@ -454,3 +454,43 @@ def run_numeric_roi_export(cfg, out):
     root,dataset,maps = _numeric_map(cfg)
     return export_review_rois(dataset,root,out,maps=maps,selections=cfg.get('review_rois',{}),
                               asset_manifest=cfg['map']['input'].get('asset_manifest'))
+
+
+def _dataset_for(cfg, section, label):
+    """numeric_v2 dataset, or the explicitly configured real_hotspot_v1 dataset."""
+    from simcompare.numeric_schema import NumericContractError
+    real = _real_source(cfg, section)
+    if real is not None:
+        configured = _configured_real(cfg, section, real)
+        if configured is None:
+            raise NumericContractError('explicit_condition_assignments_required', label)
+        return configured[1]
+    return _numeric_input(cfg, section)[1]
+
+
+def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter_um=None, sort_diameter_um=None,
+                            compact_json=False):
+    """compare-windows: same physical window around corresponding positions, b − a."""
+    from simcompare.correspondence import bind_pairs, load_correspondence
+    from simcompare.local_delta import compute_local_delta, correspondence_hash, write_local_delta
+    reference = _dataset_for(cfg, cfg.get('reference'), 'reference')
+    target = _dataset_for(cfg, cfg.get('target'), 'target')
+    payload = load_correspondence(correspondence)
+    pairs = bind_pairs(payload, reference, target)
+    result = compute_local_delta(pairs, reference, target, window_sizes_um=window_sizes_um, jitter_um=jitter_um,
+                                 sort_diameter_um=sort_diameter_um,
+                                 provenance={'correspondence_path': str(Path(correspondence).resolve()),
+                                             'correspondence_sha256': correspondence_hash(correspondence),
+                                             'correspondence_producer': payload['producer'],
+                                             'correspondence_warnings': payload['warnings']})
+    output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
+    paths = write_local_delta(output, result, compact=compact_json)
+    try:
+        from simcompare.local_delta_report import write_local_delta_html
+    except ImportError:
+        write_local_delta_html = None
+    if write_local_delta_html is not None:
+        paths += write_local_delta_html(output, result, cfg=cfg, reference=reference, target=target)
+    return {'status': result.status, 'reasons': list(result.reasons), 'outputs': paths,
+            'exit_code': 0 if result.status == 'available' else 3}
+

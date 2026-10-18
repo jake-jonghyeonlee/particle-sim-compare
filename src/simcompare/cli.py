@@ -52,6 +52,17 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--per-cell-text", action="store_true", help="4096 cells 이하에서만 셀별 텍스트 출력")
         if name in ("electrode-map", "export-review-rois"):
             command.add_argument("--min-count", type=int, help="명시할 때만 4-neighbour 영역 계산")
+    windows = _korean_help(sub.add_parser("compare-windows", add_help=False,
+                                          help="대응 위치의 같은 물리 창 안 ΔCA(b−a). 창 크기는 기본값 없음"))
+    windows.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference=a, target=b)")
+    windows.add_argument("--correspondence", required=True, help="roi_correspondence_v1 JSON")
+    windows.add_argument("--window-sizes", required=True, nargs="+", type=float, metavar="UM",
+                         help="창 한 변(µm) 목록. 예: --window-sizes 10 20 30")
+    windows.add_argument("--jitter-um", type=float, help="명시할 때만 중심을 ±j 이동한 네 창의 Δ 범위를 기록")
+    windows.add_argument("--sort-diameter-um", type=float, help="명시할 때만 이 지름의 |Δ|로 쌍을 정렬")
+    windows.add_argument("--compact-json", action="store_true",
+                         help="JSON에서 행별 세부 지표를 빼고 CSV에만 남김(수십 쌍 × 여러 창일 때 용량 절약)")
+    windows.add_argument("--out", help="출력 디렉터리")
     merge = _korean_help(sub.add_parser(
         "merge-exports", add_help=False,
         help="particle-sim export-simcompare 결과 여러 개(원안·변경본·다른 제품)를 data_dir 하나로 합침"))
@@ -70,7 +81,7 @@ def _print(payload) -> None:
 
 def _remove_reports(folder):
     """Only this application's report files, never inputs/user assets."""
-    for prefix in ('comparison','electrode_map','validation','review_rois'):
+    for prefix in ('comparison','electrode_map','validation','review_rois','local_delta','window_sensitivity'):
         for path in Path(folder).glob(prefix+'*'):
             if path.is_file() and path.suffix in ('.json','.csv','.html','.png','.npz'):
                 path.unlink()
@@ -106,9 +117,15 @@ def main(argv: list[str] | None = None) -> int:
             cfg.setdefault("map", {})["min_count"] = args.min_count
         if getattr(args,"per_cell_text",False):
             cfg.setdefault("map",{})["per_cell_text"]=True
-        runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
-                   "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}
-        result = runners[args.command](cfg,args.out)
+        if args.command == "compare-windows":
+            result = pipeline.run_numeric_local_delta(cfg, args.out, correspondence=args.correspondence,
+                                                      window_sizes_um=args.window_sizes, jitter_um=args.jitter_um,
+                                                      sort_diameter_um=args.sort_diameter_um,
+                                                      compact_json=args.compact_json)
+        else:
+            runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
+                       "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}
+            result = runners[args.command](cfg,args.out)
         output = Path(args.out) if args.out is not None else pipeline._numeric_path(cfg,cfg["output_dir"])
         (output/"execution.json").write_text(json.dumps({"command":args.command,**result},ensure_ascii=False,indent=2),encoding="utf-8")
         (output/"error.json").unlink(missing_ok=True)
@@ -116,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
         # numeric 계약 오류에는 완성 리포트 대신 실패 marker만 쓴다.
-        if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots"):
+        if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots", "compare-windows"):
             error = {"status":"unavailable","reasons":[getattr(exc,"code","input_or_config_error")],
                      "detail":str(exc),"command":args.command,"outputs":[],"exit_code":2}
             output = getattr(args,"out",None)
