@@ -190,3 +190,20 @@ def test_r2_retired_arch_pages_label_themselves_legacy():
     root=Path(__file__).resolve().parents[1]
     for name in ('config','checks'):
         assert (root/f'docs/arch/{name}.md').read_text().startswith('> **legacy / archived**')
+
+
+def test_bucket_conservation_tolerates_float_summation_at_fine_pitch():
+    """pitch 0.1: 1×0.01 + 9×0.01 != 10×0.01 in binary floating point; the oracle must not fail on that."""
+    from simcompare.linepixel import compare_rates
+    from simcompare.report import comparison_report
+    from test_density import density
+    from test_linepixel import make_case
+    from test_panel_comparison import weighted
+    cases=[make_case('AB','A','B',{0},width=12,pitch=0.1),
+           make_case('AC','A','C',set(range(1,10)),width=12,pitch=0.1)]
+    result=weighted(cases,density({5:1}),panel=(12,1))
+    delta=compare_rates(result,result,reference_product_id='product',target_product_id='product')
+    payload,tables=comparison_report(result,result,delta)
+    check=[r for r in payload['bucket_totals'] if r['side']=='reference' and r['class']=='line' and '"diameter_um":5.0' in r['group_id']]
+    assert len(check)==1 and check[0]['status']=='available'
+    assert abs(check[0]['value']-0.1)<1e-12

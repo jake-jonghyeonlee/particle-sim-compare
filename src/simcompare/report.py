@@ -48,6 +48,13 @@ def unique_bucket_total(rows):
     return {'value':sum(value for value,_,_,_ in unique.values()),'status':'available','reasons':[]}
 
 
+def _conservation_tolerance_um2(frame):
+    """bucket 합과 class 총합은 같은 정수 셀 수에서 오지만 float 곱셈·합산 순서가 다르다
+    (Σ(nᵢ×p²) vs (Σnᵢ)×p²). 실제 보존 위반은 최소 한 셀이므로 반 셀 면적까지만 허용한다.
+    float 오차는 (bucket 수+1)·ε·총면적 수준이라 2000×2000·pitch 0.1·bucket 100에서도 약 4e-10 µm²다."""
+    return 0.5 * frame.pixel_pitch_um ** 2
+
+
 def _metric_row(side, product, layer, classification, domain, metric, *, context=None):
     return {'side':side,'product_id':product,'layer':layer,'class':classification,'domain':domain,
             'value':metric['value'],'unit':metric['unit'],'status':metric['status'],
@@ -123,7 +130,7 @@ def comparison_report(reference, target, deltas):
                 if share.area.status != 'available':
                     total = {'value':None,'partial_value':share.area.partial_value,
                              'status':share.area.status,'reasons':list(share.area.reasons)}
-                elif total['value'] != share.area.value:
+                elif abs(total['value'] - share.area.value) > _conservation_tolerance_um2(group.frame):
                     raise NumericContractError('report_bucket_conservation_failed')
                 bucket_checks.append({'side':side,'group_id':group_id,'class':classification,**total,'unit':'um^2'})
             for case in group.source_cases:

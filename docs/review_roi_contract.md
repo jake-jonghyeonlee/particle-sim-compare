@@ -29,7 +29,7 @@ simcompare export-review-rois --config demo_data/config.yaml --out demo_data/rev
 
 합성 계산에만 `density_contracts`(DensityContract 필드), `unit_bases`(UnitAreaBasis 필드), `panel`(PanelSpec 필드)를 명시할 수 있다. 원천의 지정 distribution_id를 선택하고 분포를 합치거나 정규화하지 않는다. line/pixel은 분리하며 transfer는 진단 순변화다. 2×2 mask의 기본 divisor는 없다. 지름마다 한 값이므로 bin 폭을 곱하지 않는다. G7a 종류별 조각 지표는 별도 Task다.
 
-`comparison.json`에는 T3/T4 전체 schema와 case별 원 CA, frame, coverage, weighted bucket/delta, 계산 provenance가 있다. CSV는 summary, areas, buckets, case_ca, weighted_buckets, delta_buckets로 구분한다. buckets의 pair별 shared 반복행은 같은 bucket_id의 링크이며 합계는 ID별 한 번만 센다. `bucket_totals`는 이 중복 제거를 검산한다. weighted CSV는 partial_value·coverage·source/process 문맥도 보존한다. null은 CSV 문자열 `null`, 사유는 JSON 배열이며 빈 숫자나 0으로 바꾸지 않는다. HTML은 모든 텍스트/ID를 escape한 정적 JSON 표시다. map CSV는 원본 row/col과 물리 셀 좌상단 좌표, valid 및 관측 count 하한을 표시한다.
+`comparison.json`에는 T3/T4 전체 schema와 case별 원 CA, frame, coverage, weighted bucket/delta, 계산 provenance가 있다. CSV는 summary, areas, buckets, case_ca, weighted_buckets, delta_buckets로 구분한다. buckets의 pair별 shared 반복행은 같은 bucket_id의 링크이며 합계는 ID별 한 번만 센다. `bucket_totals`는 이 중복 제거를 검산하며, float 합산 오차는 반 셀 면적까지만 허용한다. weighted CSV는 partial_value·coverage·source/process 문맥도 보존한다. null은 CSV 문자열 `null`, 사유는 JSON 배열이며 빈 숫자나 0으로 바꾸지 않는다. HTML은 모든 텍스트/ID를 escape한 정적 JSON 표시다. map CSV는 원본 row/col과 물리 셀 좌상단 좌표, valid 및 관측 count 하한을 표시한다.
 
 ## 원본 asset manifest 읽기 검사
 
