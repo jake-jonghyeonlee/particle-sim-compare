@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
             result = pipeline.run_numeric_local_delta(cfg, args.out, correspondence=args.correspondence,
                                                       window_sizes_um=args.window_sizes, jitter_um=args.jitter_um,
                                                       sort_diameter_um=args.sort_diameter_um,
-                                                      compact_json=args.compact_json)
+                                                      compact_json=args.compact_json, config_path=args.config)
         else:
             runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
                        "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}

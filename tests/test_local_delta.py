@@ -98,6 +98,7 @@ def test_clipped_window_and_valid_hole_inside_block_delta_but_hole_outside_does_
     assert window['a']['union'].partial_value == pytest.approx(0.7)
     assert window['delta']['union'].status == 'unavailable' and window['delta']['union'].value is None
     assert 'a_partial' in window['delta']['union'].reasons and 'a:partial_observation' in window['delta']['union'].reasons
+    assert 'window_clipped_a' in window['delta']['union'].reasons and 'valid_incomplete_a' not in window['delta']['union'].reasons
     assert clipped.status == 'partial' and clipped.reasons == ('incomplete_local_delta',)
     valid = np.ones((4, 4), bool)
     valid[0, 0] = False  # hole at x∈[0,.5), y∈[0,.5)
@@ -111,6 +112,7 @@ def test_clipped_window_and_valid_hole_inside_block_delta_but_hole_outside_does_
     assert near['a']['union'].status == 'partial' and near['a']['union'].partial_value == pytest.approx(0.75)
     assert near['a']['union'].valid_area_um2 == pytest.approx(0.75)
     assert near['delta']['union'].status == 'unavailable'
+    assert 'valid_incomplete_a' in near['delta']['union'].reasons and 'window_clipped_a' not in near['delta']['union'].reasons
 
 
 def test_attributable_core_is_inner_square_and_not_applicable_when_window_le_diameter():
@@ -314,9 +316,9 @@ def test_explained_fraction_matches_product_delta_when_repeats_cover_everything(
     base = [pair('P1', a, b, (1.0, 1.0), (1.0, 1.0)), pair('P2', a, b, (1.0, 3.0), (1.0, 3.0)),
             pair('P3', a, b, (3.0, 1.0), (3.0, 1.0))]
     without = compute_local_delta(base, a, b, window_sizes_um=[1.0])
-    assert without.explained['status'] == 'unavailable' and without.explained['reasons'] == ['repeats_per_unit_required']
+    assert without.explained['status'] == 'unavailable' and without.explained['reasons'] == ['repeats_per_frame_required']
     assert without.explained['pairs_without_repeats'] == ['P1', 'P2', 'P3']
-    once = [replace(p, repeats_per_unit={'a': 1, 'b': 1}) for p in base]
+    once = [replace(p, repeats_per_frame={'a': 1, 'b': 1}) for p in base]
     result = compute_local_delta(once, a, b, window_sizes_um=[1.0, 2.0])
     at5 = result.explained['by_window_size']['1.0']['5.0']
     assert at5['status'] == 'available'
@@ -324,14 +326,52 @@ def test_explained_fraction_matches_product_delta_when_repeats_cover_everything(
     assert at5['actual_delta_fraction_of_frame'] == pytest.approx(1.5 / 16) and at5['residual'] == pytest.approx(0.0)
     at7 = result.explained['by_window_size']['1.0']['7.0']
     assert at7['explained_delta'] == 0 and at7['actual_delta_fraction_of_frame'] == 0
-    twice = [replace(p, repeats_per_unit={'a': 1, 'b': 2}) for p in base]
+    twice = [replace(p, repeats_per_frame={'a': 1, 'b': 2}) for p in base]
     doubled = compute_local_delta(twice, a, b, window_sizes_um=[1.0]).explained['by_window_size']['1.0']['5.0']
     assert doubled['explained_delta'] == pytest.approx(3.0 / 16) and doubled['residual'] == pytest.approx(-1.5 / 16)
-    # 2 um windows around (1,1) and (1,3) touch at y=2 (half-open → no overlap); 3 um windows overlap
+    # 2 um windows around (1,1) and (1,3) touch at y=2 (half-open → no overlap)
     assert result.explained['by_window_size']['2.0']['5.0']['status'] == 'available'
-    overlapping = compute_local_delta(once, a, b, window_sizes_um=[3.0]).explained['by_window_size']['3.0']['5.0']
-    assert overlapping['status'] == 'unavailable' and 'overlapping_windows_a' in overlapping['reasons']
+    assert result.explained['status'] == 'available'
     assert json.loads(json.dumps(result.to_dict()))['explained_fraction']['direction'] == 'b_minus_a'
+
+
+def test_overlapping_windows_of_one_group_are_measured_once_as_a_union():
+    shape = (16, 16)  # 8 um × 8 um → 64 um²
+    a = [make_case2d('lat', 'A', 'C', set(), shape=shape)]
+    b = [make_case2d('lat', 'A', 'C', rect([4], [4]), shape=shape, product='B')]  # one cell at x,y ∈ [2,2.5)
+    base = [pair('P1', a, b, (2.0, 2.0), (2.0, 2.0)), pair('P2', a, b, (3.0, 2.0), (3.0, 2.0))]  # 2 um windows overlap on x ∈ [2,3)
+    same = [replace(p, repeats_per_frame={'a': 1, 'b': 1}) for p in base]
+    result = compute_local_delta(same, a, b, window_sizes_um=[2.0])
+    entry = result.explained['by_window_size']['2.0']['5.0']
+    assert entry['status'] == 'available'
+    assert entry['explained_b'] == pytest.approx(0.25 / 64)  # counted once, not 0.5 / 64
+    assert entry['actual_delta_fraction_of_frame'] == pytest.approx(0.25 / 64) and entry['residual'] == pytest.approx(0.0)
+    assert entry['overlapping_windows_measured_as_union'] == [
+        {'side': 'a', 'pair_ids': ['P1', 'P2'], 'union_ca_um2': pytest.approx(0.0), 'repeats': 1},
+        {'side': 'b', 'pair_ids': ['P1', 'P2'], 'union_ca_um2': pytest.approx(0.25), 'repeats': 1}]
+    different = [replace(base[0], repeats_per_frame={'a': 1, 'b': 1}), replace(base[1], repeats_per_frame={'a': 1, 'b': 2})]
+    entry = compute_local_delta(different, a, b, window_sizes_um=[2.0]).explained['by_window_size']['2.0']['5.0']
+    assert entry['status'] == 'unavailable' and entry['reasons'] == ['overlapping_windows_with_different_repeats_b:P1,P2']
+    touching = [replace(pair('P1', a, b, (2.0, 2.0), (2.0, 2.0)), repeats_per_frame={'a': 1, 'b': 1}),
+                replace(pair('P2', a, b, (4.0, 2.0), (4.0, 2.0)), repeats_per_frame={'a': 1, 'b': 1})]  # [1,3) and [3,5)
+    entry = compute_local_delta(touching, a, b, window_sizes_um=[2.0]).explained['by_window_size']['2.0']['5.0']
+    assert entry['status'] == 'available' and entry['overlapping_windows_measured_as_union'] == []
+
+
+def test_flush_frame_edge_windows_are_complete_with_exact_bounds():
+    """Reviewer cases: float ulp at a flush frame edge must not turn a complete window partial."""
+    from simcompare.local_delta import _measure_cropped
+    from simcompare.numeric_schema import PhysicalWindow
+    for pitch, origin, cells, window in ((0.05, 0.1, 101, (4.15, 4.15, 5.15, 5.15)), (0.3, 0.0, 77, (20.1, 20.1, 23.1, 23.1))):
+        frame = Frame('f', pitch, (origin, origin), (cells, cells), np.ones((cells, cells), bool))
+        mask = np.ones((cells, cells), bool)
+        measured = _measure_cropped(frame, mask, PhysicalWindow(*window), diameter=5.0, analysis_layer='M2')
+        assert measured.status == 'available', (pitch, measured.reasons)
+        side = window[2] - window[0]
+        assert measured.ca_um2 == pytest.approx(side * side)
+    frame = Frame('f', 0.05, (0.1, 0.1), (101, 101), np.ones((101, 101), bool))
+    beyond = _measure_cropped(frame, np.ones((101, 101), bool), PhysicalWindow(4.15, 4.15, 5.16, 5.16), diameter=5.0, analysis_layer='M2')
+    assert beyond.status == 'partial' and 'window_clipped' in beyond.reasons
 
 
 def test_compact_json_keeps_rows_in_csv_only(tmp_path):

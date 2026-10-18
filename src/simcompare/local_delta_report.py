@@ -251,7 +251,11 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
                 if dataset is None or areas is None:
                     thumbs[label] = {'layout': None, 'hotspot': None, 'layout_note': 'dataset_not_supplied', 'layout_masks': None}
                 else:
-                    thumbs[label] = _side_thumbnails(side, dataset, assets[label], areas, rows_by_d[display_d], size, label)
+                    try:
+                        thumbs[label] = _side_thumbnails(side, dataset, assets[label], areas, rows_by_d[display_d], size, label)
+                    except Exception as exc:  # the numbers are already written; the page must still render
+                        thumbs[label] = {'layout': None, 'hotspot': None, 'layout_masks': None,
+                                         'layout_note': 'thumbnail_failed:' + getattr(exc, 'code', type(exc).__name__)}
             iou = None
             if thumbs['a']['layout_masks'] is not None and thumbs['b']['layout_masks'] is not None:
                 bounds = rows_by_d[display_d]['window']['bounds_um']

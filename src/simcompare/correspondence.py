@@ -24,7 +24,7 @@ SIDE_REQUIRED = ('product_id', 'design_version', 'frame_id', 'center_xy_um', 'an
 SIDE_OPTIONAL = ('endpoints', 'failure_type', 'roi_id', 'source_id', 'process_step_id',
                  'exposure_id', 'unit_id')
 SIDE_FILTERS = ('source_id', 'process_step_id', 'exposure_id', 'unit_id')
-PAIR_FIELDS = {'pair_id', 'a', 'b', 'repeats_per_unit', 'source', 'status', 'reasons'}
+PAIR_FIELDS = {'pair_id', 'a', 'b', 'repeats_per_frame', 'source', 'status', 'reasons'}
 SOURCE_REQUIRED = {'manual': ('labelled_by', 'labelled_at'),
                    'template_match': ('method', 'version'),
                    'dl2_search': ('score', 'rank', 'checkpoint_fingerprint', 'index_fingerprint')}
@@ -154,7 +154,7 @@ def validate_correspondence(payload) -> dict:
         if status == 'blocked' and not reasons:
             raise NumericContractError('invalid_correspondence_status', pair_id + ': blocked requires reasons')
         pair = {'pair_id': pair_id, 'a': _side(raw['a'], where + '.a'), 'b': _side(raw['b'], where + '.b'),
-                'repeats_per_unit': _repeats(raw.get('repeats_per_unit'), where),
+                'repeats_per_frame': _repeats(raw.get('repeats_per_frame'), where),
                 'source': _source(raw['source'], where + '.source'), 'status': status, 'reasons': sorted(set(reasons))}
         key = tuple((pair[s]['product_id'], pair[s]['design_version'], pair[s]['frame_id'], tuple(pair[s]['center_xy_um']),
                      pair[s]['analysis_layer']) for s in ('a', 'b'))
@@ -205,14 +205,14 @@ class BoundPair:
     pair_id: str
     a: BoundSide
     b: BoundSide
-    repeats_per_unit: dict | None
+    repeats_per_frame: dict | None
     source: dict
     status: str
     reasons: tuple[str, ...]
 
     def to_dict(self):
         return {'pair_id': self.pair_id, 'a': self.a.to_dict(), 'b': self.b.to_dict(),
-                'repeats_per_unit': self.repeats_per_unit, 'source': copy.deepcopy(self.source),
+                'repeats_per_frame': self.repeats_per_frame, 'source': copy.deepcopy(self.source),
                 'status': self.status, 'reasons': list(self.reasons)}
 
 
@@ -261,7 +261,7 @@ def bind_pairs(payload, reference: NumericDataset, target: NumericDataset) -> li
         b, reasons_b = _bind_side(pair['b'], target, 'b')
         reasons = sorted(set(pair['reasons']) | set(reasons_a) | set(reasons_b))
         status = 'blocked' if reasons else 'ready'
-        bound.append(BoundPair(pair['pair_id'], a, b, pair['repeats_per_unit'], pair['source'], status, tuple(reasons)))
+        bound.append(BoundPair(pair['pair_id'], a, b, pair['repeats_per_frame'], pair['source'], status, tuple(reasons)))
     return bound
 
 
@@ -300,8 +300,12 @@ def to_review_roi_config(cfg, payload, side: str) -> tuple[dict, dict]:
     for name in ('reference', 'target'):
         if isinstance(derived.get(name), dict):
             absolute(derived[name])
+    if base is not None and isinstance(derived.get('output_dir'), str) and not Path(derived['output_dir']).is_absolute():
+        derived['output_dir'] = str((Path(base) / derived['output_dir']).resolve())
     existing_map = derived.get('map') if isinstance(derived.get('map'), dict) else {}
-    derived['map'] = {'input': copy.deepcopy(derived[side]), 'diameter_um': existing_map.get('diameter_um', 5)}
+    # keep the user's map settings (diameter, threshold, text) and only point the input at the chosen side
+    derived['map'] = {**{k: copy.deepcopy(v) for k, v in existing_map.items() if k != 'input'},
+                      'input': copy.deepcopy(derived[side])}
     requests, missing_context = [], []
     for pair in payload['pairs']:
         if pair['status'] != 'ready':
@@ -345,7 +349,8 @@ def _match_roi(side, rows):
 
 
 def attach_roi_ids(payload, export_a, export_b) -> tuple[dict, dict]:
-    """Fill roi_id from review_roi_v1 exports by identity, centre and context; never by shape."""
+    """Fill roi_id from review_roi_v1 exports by identity, centre and context; never by shape.
+    Blocked ROI rows are reported, not attached: DL2 never indexes them."""
     payload = validate_correspondence(payload)
     rows = {'a': _export_rows(export_a), 'b': _export_rows(export_b)}
     report = {'attached': 0, 'not_found': [], 'ambiguous': [], 'blocked_roi': []}
@@ -358,6 +363,7 @@ def attach_roi_ids(payload, export_a, export_b) -> tuple[dict, dict]:
                 if row.get('status') != 'ready':
                     report['blocked_roi'].append({'pair_id': pair['pair_id'], 'side': key, 'roi_id': row.get('roi_id'),
                                                   'reasons': row.get('reasons', [])})
+                    continue
                 side['roi_id'] = row['roi_id']
                 report['attached'] += 1
             elif matches:
@@ -452,7 +458,7 @@ def from_dl2_search(results, index, query_export, index_export, *, include_suppl
                 continue
             seen.add(pair_id)
             pairs.append({'pair_id': pair_id, 'a': _side_from_roi_row(query_rows[query_id], 'query'),
-                          'b': _side_from_roi_row(index_rows[cid], 'candidate'), 'repeats_per_unit': None,
+                          'b': _side_from_roi_row(index_rows[cid], 'candidate'), 'repeats_per_frame': None,
                           'source': {'kind': 'dl2_search', 'score': float(candidate['score']), 'rank': rank,
                                      'scope': scope, 'checkpoint_fingerprint': index['checkpoint_fingerprint'],
                                      'index_fingerprint': index['view_fingerprint'],
@@ -528,7 +534,7 @@ def main(argv=None) -> int:
             payload, report = attach_roi_ids(load_correspondence(args.correspondence),
                                              _read_json(args.export_a), _read_json(args.export_b))
             path = write_correspondence(args.out, payload)
-            complete = not report['not_found'] and not report['ambiguous']
+            complete = not report['not_found'] and not report['ambiguous'] and not report['blocked_roi']
             _print({'status': 'available' if complete else 'partial', 'outputs': [path], **report})
             return 0 if complete else 3
         if args.command == 'to-dl2-relations':

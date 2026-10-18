@@ -43,7 +43,7 @@ def manual_source():
 def payload(pairs=None):
     pairs = [{'pair_id': 'P1', 'a': side('reference', 'reference_frame', [102.5, 200.5], eps=endpoints(), failure_type='lateral_short'),
               'b': side('target', 'target_frame', [101.5, 200.5], eps=endpoints(), failure_type='lateral_short'),
-              'repeats_per_unit': None, 'source': manual_source(), 'status': 'ready', 'reasons': []},
+              'repeats_per_frame': None, 'source': manual_source(), 'status': 'ready', 'reasons': []},
              {'pair_id': 'P2', 'a': side('reference', 'reference_frame', [104.5, 200.5]),
               'b': side('target', 'target_frame', [100.5, 201.5]),
               'source': manual_source(), 'status': 'ready'}] if pairs is None else pairs
@@ -65,7 +65,7 @@ def test_validate_normalises_and_warns_on_duplicate_centres():
     doubled['pairs'].append({**copy.deepcopy(doubled['pairs'][0]), 'pair_id': 'P3'})
     result = validate_correspondence(doubled)
     assert [p['pair_id'] for p in result['pairs']] == ['P1', 'P2', 'P3']
-    assert result['pairs'][1]['repeats_per_unit'] is None and result['pairs'][1]['reasons'] == []
+    assert result['pairs'][1]['repeats_per_frame'] is None and result['pairs'][1]['reasons'] == []
     assert result['pairs'][1]['a']['endpoints'] is None and result['pairs'][1]['a']['failure_type'] is None
     assert result['warnings'] == [{'pair_id': 'P3', 'duplicate_of': 'P1', 'warning': 'duplicate_centres'}]
 
@@ -78,7 +78,7 @@ def test_validate_normalises_and_warns_on_duplicate_centres():
     (lambda p: p['pairs'][0]['a'].update(center_xy_um=[float('nan'), 1.0]), 'invalid_number'),
     (lambda p: p['pairs'][0]['a'].update(endpoints=endpoints('A', 'A')), 'invalid_correspondence_endpoints'),
     (lambda p: p['pairs'][0]['a'].update(failure_type='open'), 'invalid_correspondence_failure_type'),
-    (lambda p: p['pairs'][0].update(repeats_per_unit={'a': 0, 'b': 1}), 'invalid_correspondence_repeats'),
+    (lambda p: p['pairs'][0].update(repeats_per_frame={'a': 0, 'b': 1}), 'invalid_correspondence_repeats'),
     (lambda p: p['pairs'][0].update(source={'kind': 'dl2_search', 'score': 0.9, 'rank': 1}), 'invalid_correspondence_source'),
     (lambda p: p['pairs'][0].update(source={'kind': 'manual', 'labelled_by': 'x'}), 'invalid_correspondence_source'),
     (lambda p: p['pairs'][0].update(status='blocked', reasons=[]), 'invalid_correspondence_status'),
@@ -137,15 +137,16 @@ def test_review_roi_round_trip_attaches_ids_and_builds_dl_relations(tmp_path, de
         exports[key] = json.loads((tmp_path / ('rois_' + side_name) / 'review_rois.json').read_text())
         assert result['n_rois'] == 2 and result['n_ready'] == 1  # P2 lacks endpoints → case_context_required
     attached, report = attach_roi_ids(source, exports['a'], exports['b'])
-    assert report['attached'] == 4 and report['not_found'] == [] and report['ambiguous'] == []
-    assert {entry['pair_id'] for entry in report['blocked_roi']} == {'P2'}
+    # P2 lacks endpoints → its ROI rows are blocked → no roi_id attached (DL2 never indexes blocked rows)
+    assert report['attached'] == 2 and report['not_found'] == [] and report['ambiguous'] == []
+    assert [(e['pair_id'], e['side']) for e in report['blocked_roi']] == [('P2', 'a'), ('P2', 'b')]
     ids = {(p['pair_id'], k): p[k]['roi_id'] for p in attached['pairs'] for k in ('a', 'b')}
-    assert all(v is not None and v.startswith('roi_') for v in ids.values())
+    assert ids[('P1', 'a')].startswith('roi_') and ids[('P1', 'b')].startswith('roi_')
+    assert ids[('P2', 'a')] is None and ids[('P2', 'b')] is None
     relations, rel_report = to_dl2_relations(attached)
     assert relations['schema_version'] == 'roi_relations_v1'
-    assert relations['relations'] == [{'a': ids[('P1', 'a')], 'b': ids[('P1', 'b')], 'relation': 'similar'},
-                                      {'a': ids[('P2', 'a')], 'b': ids[('P2', 'b')], 'relation': 'similar'}]
-    assert rel_report['skipped'] == []
+    assert relations['relations'] == [{'a': ids[('P1', 'a')], 'b': ids[('P1', 'b')], 'relation': 'similar'}]
+    assert rel_report['skipped'] == [{'pair_id': 'P2', 'reason': 'roi_id_missing'}]
     rows, dl1_report = to_dl1_relations(attached)
     assert rows == [('reference', 'target', 'similar')] and dl1_report['skipped'] == []
     written = write_correspondence(tmp_path / 'attached.json', attached)

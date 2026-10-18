@@ -13,7 +13,7 @@ these numbers.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 import hashlib
 import json
@@ -24,7 +24,7 @@ import numpy as np
 
 from .correspondence import BoundPair, BoundSide
 from .linepixel import FAILURE_PIECES, AreaMetric, AreaResult, GroupArea
-from .measurement import measure_union
+from .measurement import _cell_areas, measure_union
 from .numeric_schema import (
     DIAMETERS_UM, Frame, MaskRecord, NumericContractError, NumericDataset, PhysicalWindow, Status,
     diameter_key, finite,
@@ -71,7 +71,8 @@ def _window_area(window: PhysicalWindow) -> float:
 
 
 def _group_matches(key, side: BoundSide, diameter) -> bool:
-    if (key.product_id, key.frame_id, key.analysis_layer) != (side.product_id, side.frame.frame_id, side.analysis_layer):
+    if (key.product_id, key.design_version, key.frame_id, key.analysis_layer) != (
+            side.product_id, side.design_version, side.frame.frame_id, side.analysis_layer):
         return False
     if diameter_key(key.diameter_um) != diameter_key(diameter):
         return False
@@ -120,20 +121,68 @@ def crop_to_window(frame: Frame, mask, window: PhysicalWindow, *, margin_cells: 
     return sub_frame, np.asarray(mask)[r0:r1, c0:c1]
 
 
-def _measure_cropped(frame: Frame, mask, window: PhysicalWindow, *, diameter, analysis_layer, identity=None,
-                     input_status='observed', reasons=()):
-    """measure_union on the window crop; unobserved records keep their status without a mask."""
+def _exact_inside(frame: Frame, window: PhysicalWindow) -> bool:
+    """Window inside the frame, decided on the declared decimal numbers (no float ulp at flush edges)."""
+    x0, y0, x1, y1 = (Fraction(str(v)) for v in window.bounds_um())
+    ox, oy = (Fraction(str(v)) for v in frame.origin_xy_um)
+    pitch = Fraction(str(frame.pixel_pitch_um))
+    h, w = frame.shape_yx
+    return x0 >= ox and y0 >= oy and x1 <= ox + w * pitch and y1 <= oy + h * pitch
+
+
+def _windows_touch_invalid(frame: Frame, windows) -> bool:
+    areas = _cell_areas(frame, [w.bounds_um() for w in windows])
+    return bool(np.any(areas[~frame.valid] > 0))
+
+
+def _reconcile(measured, frame: Frame, crop_frame: Frame, windows):
+    """Re-decide available/partial with exact frame bounds and name the cause:
+    window_clipped (leaves the frame) and/or valid_incomplete (covers an invalid cell)."""
+    if measured.status not in ('available', 'partial'):
+        return measured
+    inside = all(_exact_inside(frame, w) for w in windows)
+    touches = _windows_touch_invalid(crop_frame, windows)
+    base = {r for r in measured.reasons if r != 'partial_observation'}
+    if inside and not touches:
+        observed = measured.observed_ca_um2
+        return replace(measured, status='available', ca_um2=observed,
+                       ca_per_valid_area=observed / measured.valid_area_um2 if measured.valid_area_um2 else None,
+                       reasons=tuple(sorted(base)), partial_value=None, partial_ca_per_valid_area=None)
+    causes = {'window_clipped'} if not inside else set()
+    if touches:
+        causes.add('valid_incomplete')
+    observed = measured.observed_ca_um2
+    return replace(measured, status='partial', ca_um2=None, ca_per_valid_area=None,
+                   reasons=tuple(sorted(base | {'partial_observation'} | causes)), partial_value=observed,
+                   partial_ca_per_valid_area=observed / measured.valid_area_um2 if measured.valid_area_um2 else None)
+
+
+def _bounding_window(windows):
+    bounds = [w.bounds_um() for w in windows]
+    return PhysicalWindow(min(b[0] for b in bounds), min(b[1] for b in bounds),
+                          max(b[2] for b in bounds), max(b[3] for b in bounds))
+
+
+def _measure_cropped_windows(frame: Frame, mask, windows, *, diameter, analysis_layer, identity=None,
+                             input_status='observed', reasons=()):
+    """measure_union over the windows on a crop around their bounding box; unobserved records keep
+    their status without a mask. Completeness is reconciled with exact frame bounds."""
+    windows = list(windows)
     if input_status != 'observed':
         record = MaskRecord(float(diameter), frame, None, input_status, tuple(reasons), identity=identity,
                             analysis_layer=analysis_layer)
-        return measure_union(record, [window])
-    sub_frame, sub_mask = crop_to_window(frame, mask, window)
+        return measure_union(record, windows)
+    sub_frame, sub_mask = crop_to_window(frame, mask, _bounding_window(windows))
     if sub_frame is None:
-        # window entirely outside the frame: same outcome as the full-frame measurement
+        # windows entirely outside the frame: same outcome as the full-frame measurement (empty valid area)
         record = MaskRecord(float(diameter), frame, np.zeros(frame.shape_yx, bool), identity=identity, analysis_layer=analysis_layer)
-        return measure_union(record, [window])
+        return measure_union(record, windows)
     record = MaskRecord(float(diameter), sub_frame, sub_mask, identity=identity, analysis_layer=analysis_layer)
-    return measure_union(record, [window])
+    return _reconcile(measure_union(record, windows), frame, sub_frame, windows)
+
+
+def _measure_cropped(frame: Frame, mask, window: PhysicalWindow, **kwargs):
+    return _measure_cropped_windows(frame, mask, [window], **kwargs)
 
 
 def _unavailable(window: PhysicalWindow, reasons) -> WindowMetric:
@@ -184,6 +233,11 @@ def delta_of(a: WindowMetric, b: WindowMetric) -> WindowDelta:
         if metric.status != 'available':
             reasons.add(f'{label}_{metric.status}')
             reasons.update(f'{label}:{r}' for r in metric.reasons)
+            for cause in ('window_clipped', 'valid_incomplete'):
+                if cause in metric.reasons:
+                    reasons.add(f'{cause}_{label}')
+            if metric.status == 'not_applicable' and {'all_vertical_sources_not_applicable', 'below_height_vertical_short'} & set(metric.reasons):
+                reasons.add(f'below_height_vertical_short_{label}')
     return WindowDelta(None, 'unavailable', tuple(sorted(reasons)), None)
 
 
@@ -192,7 +246,8 @@ def _named_case(cases, side: BoundSide):
     matches = []
     for case in cases:
         identity = case.identity
-        if (identity.product_id, identity.frame_id, case.analysis_layer) != (side.product_id, side.frame.frame_id, side.analysis_layer):
+        if (identity.product_id, identity.design_version, identity.frame_id, case.analysis_layer) != (
+                side.product_id, side.design_version, side.frame.frame_id, side.analysis_layer):
             continue
         if frozenset(e.electrode_id for e in case.endpoints) != ids:
             continue
@@ -322,7 +377,8 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
                             'side_um': float(core_side)}
                 named = None
                 if pair.a.endpoints is not None and pair.b.endpoints is not None:
-                    named = _named_pair(reference, target, pair, diameter, window_a, window_b)
+                    named = _named_pair(reference, target, pair, diameter, window_a, window_b,
+                                        window['a']['union'], window['b']['union'])
                 jitter = None
                 if jitter_um is not None:
                     jitter = _jitter(pair, group_a, group_b, reasons_a, reasons_b, diameter, size, jitter_um)
@@ -372,9 +428,10 @@ def _frames(dataset):
             for fid, f in sorted(dataset.frames.items())}
 
 
-def _named_pair(reference, target, pair, diameter, window_a, window_b):
+def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=None, union_b=None):
     out = {'a': None, 'b': None, 'delta': None, 'cases': {'a': None, 'b': None}, 'reasons': []}
     metrics = {}
+    unions = {'a': union_a, 'b': union_b}
     for label, dataset, side, window in (('a', reference, pair.a, window_a), ('b', target, pair.b, window_b)):
         matches = _named_case(dataset.cases, side)
         if len(matches) != 1:
@@ -389,6 +446,12 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b):
         measured = _measure_cropped(record.frame, record.mask, window, diameter=diameter, analysis_layer=record.analysis_layer,
                                     identity=record.identity, input_status=record.input_status, reasons=record.reasons)
         metrics[label] = _from_measurement(measured, window, 'physical_window_single_case')
+        union = unions[label]
+        if (union is not None and union.status == 'available' and metrics[label].status == 'available'
+                and metrics[label].value > union.value + 1e-9):
+            reason = f'named_pair_exceeds_group_union_{label}'
+            out['reasons'].append(reason)
+            metrics[label] = replace(metrics[label], reasons=(*metrics[label].reasons, reason))
     out['a'], out['b'] = metrics['a'], metrics['b']
     out['delta'] = delta_of(metrics['a'], metrics['b'])
     return out
@@ -478,61 +541,104 @@ def _rectangles_overlap(a, b):
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
+def _overlap_components(bounds):
+    """Connected components (indices) of rectangles that overlap; half-open touching is no overlap."""
+    parent = list(range(len(bounds)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for i in range(len(bounds)):
+        for j in range(i + 1, len(bounds)):
+            if _rectangles_overlap(bounds[i], bounds[j]):
+                parent[find(i)] = find(j)
+    groups = {}
+    for i in range(len(bounds)):
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
+
+
 def explained_fraction(rows, ready_pairs, areas_a, areas_b, sizes):
-    """PLAN_v3 T3b: Σ(window CA × repeats_per_unit) / frame_area per side, against the
-    product-level fraction_of_frame delta of the referenced groups. Available only when
-    every ready pair declares repeats and the windows of one side do not overlap."""
+    """PLAN_v3 T3b: Σ(window union CA × repeats_per_frame) / frame_area per side, against the
+    product-level fraction_of_frame delta of the referenced groups. repeats_per_frame counts the
+    repeats of the structure inside the measured frame (the 2×2 domain on the real path), never a
+    per-unit count. Windows of one group that overlap are measured once as a union when their
+    repeats agree; otherwise that diameter is unavailable."""
     if not ready_pairs:
         return {'status': 'unavailable', 'reasons': ['no_ready_pairs'], 'by_window_size': {}}
-    missing = [p.pair_id for p in ready_pairs if p.repeats_per_unit is None]
+    missing = [p.pair_id for p in ready_pairs if p.repeats_per_frame is None]
     if missing:
-        return {'status': 'unavailable', 'reasons': ['repeats_per_unit_required'], 'pairs_without_repeats': missing,
+        return {'status': 'unavailable', 'reasons': ['repeats_per_frame_required'], 'pairs_without_repeats': missing,
                 'by_window_size': {}}
-    repeats = {p.pair_id: p.repeats_per_unit for p in ready_pairs}
-    frame_area = {'a': {p.pair_id: p.a.frame.valid.size * p.a.frame.pixel_pitch_um ** 2 for p in ready_pairs},
-                  'b': {p.pair_id: p.b.frame.valid.size * p.b.frame.pixel_pitch_um ** 2 for p in ready_pairs}}
-    by_size = {}
+    repeats = {p.pair_id: p.repeats_per_frame for p in ready_pairs}
+    by_size, statuses = {}, []
     for size in sizes:
         per_diameter = {}
         for diameter in DIAMETERS_UM:
             selected = [r for r in rows if r['window_size_um'] == size and diameter_key(r['diameter_um']) == diameter_key(diameter)]
             if not selected:
                 continue
-            reasons = set()
-            for label in ('a', 'b'):
-                bounds = [r['window']['bounds_um'][label] for r in selected]
-                if any(_rectangles_overlap(x, y) for i, x in enumerate(bounds) for y in bounds[i + 1:]):
-                    reasons.add(f'overlapping_windows_{label}')
-            sums = {'a': 0.0, 'b': 0.0}
-            for row in selected:
-                for label in ('a', 'b'):
-                    metric = row['window'][label]['union']
-                    if metric.status != 'available':
-                        reasons.add(f'{label}_{metric.status}:{row["pair_id"]}')
-                        continue
-                    sums[label] += metric.value * repeats[row['pair_id']][label] / frame_area[label][row['pair_id']]
-            actual = {'a': 0.0, 'b': 0.0}
+            reasons, sums, actual, unions = set(), {'a': 0.0, 'b': 0.0}, {'a': 0.0, 'b': 0.0}, []
             for label, areas in (('a', areas_a), ('b', areas_b)):
-                keys = {tuple(sorted(row[f'group_{label}'].items())) for row in selected if row[f'group_{label}'] is not None}
-                if len(keys) != len({row['pair_id'] for row in selected if row[f'group_{label}'] is not None}) and not keys:
-                    reasons.add(f'group_missing_{label}')
-                for key in keys:
+                by_group = {}
+                for row in selected:
+                    key = row[f'group_{label}']
+                    if key is None:
+                        reasons.add(f'group_missing_{label}:{row["pair_id"]}')
+                        continue
+                    by_group.setdefault(tuple(sorted(key.items())), []).append(row)
+                for key, group_rows in by_group.items():
                     group = next((g for k, g in areas.groups.items() if tuple(sorted(asdict(k).items())) == key), None)
-                    fraction = None if group is None else group.fractions['union']
-                    if fraction is None or fraction.status != 'available':
-                        reasons.add(f'{label}_fraction_{"missing" if fraction is None else fraction.status}')
+                    if group is None:
+                        reasons.add(f'group_missing_{label}')
+                        continue
+                    fraction = group.fractions['union']
+                    if fraction.status != 'available':
+                        reasons.add(f'{label}_fraction_{fraction.status}')
                         continue
                     actual[label] += fraction.value
+                    frame_area = group.frame_area_um2
+                    bounds = [r['window']['bounds_um'][label] for r in group_rows]
+                    for component in _overlap_components(bounds):
+                        component_rows = [group_rows[i] for i in component]
+                        pair_ids = [r['pair_id'] for r in component_rows]
+                        counts = {repeats[pid][label] for pid in pair_ids}
+                        if len(component) == 1:
+                            metric = component_rows[0]['window'][label]['union']
+                            if metric.status != 'available':
+                                reasons.add(f'{label}_{metric.status}:{pair_ids[0]}')
+                                continue
+                            sums[label] += metric.value * counts.pop() / frame_area
+                            continue
+                        if len(counts) != 1:
+                            reasons.add(f'overlapping_windows_with_different_repeats_{label}:' + ','.join(sorted(pair_ids)))
+                            continue
+                        state, _ = _group_state(group.union)
+                        measured = _measure_cropped_windows(group.frame, group.union_mask,
+                                                            [PhysicalWindow(*r['window']['bounds_um'][label]) for r in component_rows],
+                                                            diameter=diameter, analysis_layer=group.key.analysis_layer)
+                        if measured.status != 'available' or state != 'available':
+                            reasons.add(f'{label}_union_{measured.status if measured.status != "available" else state}:' + ','.join(sorted(pair_ids)))
+                            continue
+                        unions.append({'side': label, 'pair_ids': sorted(pair_ids), 'union_ca_um2': measured.ca_um2,
+                                       'repeats': counts.pop()})
+                        sums[label] += measured.ca_um2 * unions[-1]['repeats'] / frame_area
             available = not reasons
+            statuses.append(available)
             per_diameter[str(float(diameter))] = {
                 'status': 'available' if available else 'unavailable', 'reasons': sorted(reasons),
                 'explained_a': sums['a'] if available else None, 'explained_b': sums['b'] if available else None,
                 'explained_delta': (sums['b'] - sums['a']) if available else None,
                 'actual_delta_fraction_of_frame': (actual['b'] - actual['a']) if available else None,
-                'residual': ((actual['b'] - actual['a']) - (sums['b'] - sums['a'])) if available else None}
+                'residual': ((actual['b'] - actual['a']) - (sums['b'] - sums['a'])) if available else None,
+                'overlapping_windows_measured_as_union': unions}
         by_size[str(size)] = per_diameter
-    return {'status': 'available', 'reasons': [], 'unit': '1', 'direction': 'b_minus_a',
-            'definition': 'Σ(window union CA × repeats_per_unit) / frame_area per side; actual = Σ fraction_of_frame(union) of the referenced groups',
+    status = 'available' if statuses and all(statuses) else 'partial' if any(statuses) else 'unavailable'
+    return {'status': status, 'reasons': [] if status == 'available' else ['some_diameters_unavailable'] if statuses else ['no_rows'],
+            'unit': '1', 'direction': 'b_minus_a',
+            'definition': 'Σ(window union CA × repeats_per_frame) / frame_area per side; actual = Σ fraction_of_frame(union) of the referenced groups; repeats count structures inside the measured frame, not per unit',
             'by_window_size': by_size}
 
 

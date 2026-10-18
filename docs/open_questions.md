@@ -70,4 +70,5 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 창(window)의 뜻 | answered | 유닛 크기가 아니라 ROI 중심 주변 물리 크기(µm). 측정 창과 DL2 near/wide는 별개. 기본값 없음 | 10/20/30 µm 민감도 실험 뒤 G4 값 결정(T4) |
 | 유닛 크기가 다른 제품의 비교 | answered | CA 절대값 비교 불가. 제품 수준은 CA / 2×2 frame 면적 비율(단위 없음, G2의 /4가 분자·분모에서 상쇄), 국부 수준은 같은 물리 창 안의 CA | 유한 2×2 경계 효과는 한계로 기록 |
 | 작업 순서 | answered | DL 없이 수동 라벨 + C 창 측정으로 가치 확인 → 창 크기 실험 → DL2와 비DL 기준선 평가 → DL2 확장 | PLAN_v3 T0~T8 |
-| `repeats_per_unit`, jitter 폭, 정렬 지름, 위치 hit 허용오차, 기본 표시 수준, 라벨 입력 형식 | pending | PLAN_v3 §8 Q1~Q6 | 모두 인수로 받으므로 답 없이 구현 진행 가능 |
+| `repeats_per_frame`(측정 2×2 frame 안의 반복 수; per-unit 아님), jitter 폭, 정렬 지름, 위치 hit 허용오차, 기본 표시 수준, 라벨 입력 형식 | pending | PLAN_v3 §8 Q1~Q6 | 모두 인수로 받으므로 답 없이 구현 진행 가능 |
+| 실자료에서 창 Δ가 나오는 조건 | 기록 | real_hotspot 입력은 확인된 case 목록(`--expected-cases`), `condition_assignment`, pair 표가 있어야 group이 available이 되고 그때 창 Δ도 available이다. 그 전에는 모든 창이 partial이고 Δ는 null이다(독립 리뷰 A7) | 실자료 준비 |

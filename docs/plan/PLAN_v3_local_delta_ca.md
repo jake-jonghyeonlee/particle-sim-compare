@@ -23,7 +23,7 @@ CA / 2×2 면적  =  (면적당 구조 수)  ×  (구조 하나당 CA)
                    ↑ 유닛 크기·pitch       ↑ 형상 변경   ← 설계자가 보려는 항
 제품 수준:  F(d)      = CA(d) / frame_area                      (fraction_of_frame)
 국부 수준:  ΔCA_w(d)  = CA_w,B(d) − CA_w,A(d), 같은 물리 창 w   (local_delta)
-연결:       Σ ΔCA_w × repeats_per_unit / frame_area  vs  ΔF     (explained_fraction, repeats 확보 시)
+연결:       Σ ΔCA_w × repeats_per_frame / frame_area  vs  ΔF    (explained_fraction, repeats 확보 시)
 ```
 
 ## 1. 범위와 비범위
@@ -64,7 +64,7 @@ C가 소유하는 schema다. 수동 라벨, template matching, DL2 검색이 **�
             "endpoints": [{"electrode_id": "G1", "role": "gate", "actual_layer": "GAT"},
                           {"electrode_id": "D1", "role": "data", "actual_layer": "SD"}],
             "failure_type": "vertical_short", "roi_id": null},
-      "repeats_per_unit": null,
+      "repeats_per_frame": null,
       "source": {"kind": "manual", "labelled_by": "designer-1", "labelled_at": "2026-10-20", "note": ""},
       "status": "ready", "reasons": []
     }
@@ -79,7 +79,7 @@ C가 소유하는 schema다. 수동 라벨, template matching, DL2 검색이 **�
 | 좌표 | `center_xy_um`은 각 제품 **자기 frame**의 물리 좌표. 제품 간 좌표 변환은 없다 |
 | `analysis_layer` | 양쪽 **필수**. 창 안 group 측정이 비교할 layer를 정한다. 이름이 달라도 추론하지 않는다 |
 | `endpoints` / `failure_type` | 선택. 있으면 해당 case의 창 안 CA를 **named_pair**로 추가 보고. 없으면 group 측정만 |
-| `repeats_per_unit` | 선택. `{"a": n, "b": n}`. 없으면 연결 항 `explained_fraction`은 unavailable |
+| `repeats_per_frame` | 선택. `{"a": n, "b": n}`, 측정 frame(실자료는 2×2 영역) 안에 그 구조가 반복되는 수. unit당 수를 넣지 않는다(G2 /4 미확정). 없으면 연결 항 `explained_fraction`은 unavailable |
 | `source.kind` | `manual` / `template_match` / `dl2_search`. `dl2_search`는 `score`, `rank`, `checkpoint_fingerprint`, `index_fingerprint` 필수. 점수는 표시 문맥이며 측정에 쓰지 않는다 |
 | `roi_id` | review_roi_v1 export 뒤 채우는 왕복 필드. 없으면 null |
 | 검증 | 제품·design·frame이 config의 reference/target과 일치해야 한다. 불일치는 `correspondence_product_mismatch`로 거부. 중복 `pair_id` 거부. 같은 두 중심의 중복 쌍은 허용하되 경고 |
@@ -113,7 +113,7 @@ C가 소유하는 schema다. 수동 라벨, template matching, DL2 검색이 **�
 
 ### 3.3 연결 항 (T3b, 선택)
 
-`explained_fraction = Σ_pairs ΔCA_w × repeats_per_unit / frame_area` 를 `delta_fraction_of_frame`과 나란히 보고한다. 모든 ready 쌍에 `repeats_per_unit`이 있고 같은 layer·지름의 창이 서로 겹치지 않을 때만 available. 겹치면 창 합집합으로 다시 재되 (`measure_union`이 합집합 지원) repeats가 다르면 unavailable, 사유 `overlapping_windows_with_different_repeats`. 설명 안 된 나머지는 숫자로 두되 해석을 붙이지 않는다.
+`explained = Σ_side(window union CA × repeats_per_frame) / frame_area`를 side별로 구해 `explained_delta = explained_b − explained_a`를 `delta_fraction_of_frame`(참조 group들의 union fraction 차이)과 나란히 보고한다. `repeats_per_frame`은 측정 frame 안의 반복 수이며 per-unit 수가 아니다. 모든 ready 쌍에 repeats가 있어야 하고, 같은 group의 창이 겹치면 겹친 창들을 `measure_union`으로 한 번에 재어 중복을 제거하되 repeats가 다르면 그 지름은 unavailable(`overlapping_windows_with_different_repeats_<side>`)이다. 설명 안 된 나머지(`residual`)는 숫자로 두되 해석을 붙이지 않는다.
 
 ## 4. Task 목록
 
@@ -137,7 +137,7 @@ C가 소유하는 schema다. 수동 라벨, template matching, DL2 검색이 **�
 
 - Target: 신규 `src/simcompare/local_delta.py`, `src/simcompare/cli.py`(명령 추가), `src/simcompare/pipeline.py`(실행 함수), `tests/test_local_delta.py`.
 - Change: `simcompare compare-windows --config <numeric_config_v1> --correspondence <json> --window-sizes 10 20 30 [--jitter-um j] [--sort-diameter-um d] --out <dir>`. 출력 `local_delta.json`(schema `local_delta_v1`, config hash, correspondence hash, window sizes, 행별 §3.1 값), `local_delta.csv`. `--window-sizes`는 필수이고 기본값이 없다. 정렬 지름은 명시할 때만 summary를 만든다.
-- Constraints: `numeric_config_v1`의 허용 key(`src/simcompare/pipeline.py:92`)는 바꾸지 않는다. 기존 `compare` 출력과 수치는 변하지 않는다. mask resize 없음. null을 0으로 쓰지 않는다. DL 점수는 읽어도 계산에 쓰지 않는다.
+- Constraints: `numeric_config_v1`의 허용 key(`src/simcompare/pipeline.py:92`)는 바꾸지 않는다. 기존 `compare` 출력과 수치는 변하지 않는다. mask resize 없음. null을 0으로 쓰지 않는다. DL 점수는 읽어도 계산에 쓰지 않는다. Δ 사유는 `window_clipped_<side>`, `valid_incomplete_<side>`, `below_height_vertical_short_<side>`를 포함한다.
 - Acceptance (손으로 계산한 기대값):
   - pitch 0.5 µm, 3×3 전부 활성 mask, 창 1.0 µm → `ca_w = 1.0`, `fraction_of_window = 1.0`. 창이 셀 경계와 어긋나도 같은 값(부분 셀 비례).
   - A와 B가 같은 mask, 같은 중심 → 모든 Δ = 0, status available.
@@ -244,7 +244,7 @@ T6a (독립, 읽기 전용) ─► T6 (DL2) ─► T7 ─► T8
 
 | ID | 질문 | 답 전 가능한 일 | 차단되는 것 |
 |---|---|---|---|
-| Q1 | `repeats_per_unit`을 누가 어떻게 주는가 | T3b 외 전부 | explained_fraction |
+| Q1 | `repeats_per_frame`(측정 2×2 frame 안의 반복 수)을 누가 어떻게 주는가. per-unit 수는 G2 미확정이라 받지 않는다 | T3b 외 전부 | explained_fraction |
 | Q2 | jitter 폭 (예 0.5 µm = 5 px) | 기본 없음으로 구현 | 안정성 표의 실자료 값 |
 | Q3 | 정렬·썸네일 지름 (지도 대표값 5 µm과 같게?) | 인수로 받음 | 없음 |
 | Q4 | T6 위치 hit 허용오차 `t` (창 반폭?) | 인수로 받음 | DL2 채택 판정 |
@@ -267,7 +267,7 @@ T6a (독립, 읽기 전용) ─► T6 (DL2) ─► T7 ─► T8
 | T1 | 완료 | `src/simcompare/correspondence.py` (검증, bind, to-review-rois, attach-roi-ids, to-dl2-relations, to-dl1-relations, from-dl2-search) | `tests/test_correspondence.py` 19 |
 | T2 | 완료 | `src/simcompare/local_delta.py`, `compare-windows` CLI, `pipeline.run_numeric_local_delta` | `tests/test_local_delta.py` 16 (손계산 창 면적, 평행이동 불변, clipping/valid, core, 조각 합, named_pair, jitter, 오류, CLI) |
 | T3 | 완료 | `linepixel.FractionMetric`/`fraction_of_frame`/`compare_fractions`, report `fractions` 표·HTML 절 | `tests/test_fraction_of_frame.py` 5 |
-| T3b | 완료 | `local_delta.explained_fraction` (repeats 필수, 겹치는 창 거부) | `test_local_delta.py::test_explained_fraction_*` |
+| T3b | 완료 | `local_delta.explained_fraction` (`repeats_per_frame` 필수, 같은 group의 겹치는 창은 합집합으로 한 번 측정, repeats 다르면 unavailable) | `test_local_delta.py::test_explained_fraction_*`, `test_overlapping_windows_*` |
 | T4 | 완료 | `local_delta.window_sensitivity` (`window_sensitivity.json/csv`, Spearman, 부호 일치, core 적용 지름) | `test_local_delta.py` |
 | T5 | 완료 | `src/simcompare/local_delta_report.py` (`local_delta.html`, base64 PNG, 조각 색, 창/core 사각형, 선택 IoU) | `tests/test_local_delta_report.py` 4 |
 | T6a | 완료 | `scripts/check_candidate_coverage.py` | `tests/test_candidate_coverage.py` 1 |
@@ -278,3 +278,27 @@ T6a (독립, 읽기 전용) ─► T6 (DL2) ─► T7 ─► T8
 C 전체 suite: 신규 시험 포함 통과. 단 `tests/test_handoff.py::test_offline_full_candidate_in_temporary_git_archive`는 형제 저장소 DL2의 작업 트리가 dirty(이 구현의 미커밋 변경)라 `dirty working tree refused`로 실패하며, DL2 커밋 뒤 다시 통과해야 한다.
 
 알려진 비용·한계: `local_delta.json`은 쌍 하나·창 하나에 약 0.4 MB(32 지름 × 2 kind × 4 metric의 전체 dataclass)라 수십 쌍 × 세 창이면 수십 MB다. 필요하면 요약 전용 출력 옵션을 후속으로 둔다. HTML의 선택 IoU는 셀 중심 표본이며 정합이 아니다. 후보 ROI 격자(`grid_candidate`)는 미구현이며 T6a 결과에 따라 schema v2로 다룬다. 남은 사용자 결정은 §8 Q1~Q6과 G4 값이다.
+
+성능(2026-10-18, macOS 개발기, 합성): 2000×2000 frame(0.1 µm/px) 제품 2개 × case 2개 × 32 지름의 `compute_areas` 1.8 s, `compute_local_delta` 5쌍 × 창 3개 × 32 지름 + jitter 2.0 s(쌍·창당 약 0.13 s). 창 측정은 창 주변 한 셀 여백의 crop에서 하며(`crop_to_window`), 전체 frame 측정과 같은 값·상태임을 무작위 시험으로 확인했다. 실자료의 비용은 case 수에 비례하는 `compute_areas`가 좌우한다.
+
+## 11. 독립 리뷰 (2026-10-18)
+
+별도 세션(Opus, high, 읽기 전용)이 C `2a54543..65195a5`와 DL2 `43614d3`을 검토했다. 판정 **PASS-WITH-NOTES**, blocking 없음("조사한 모든 곳에서 fail-closed이며 잘못된 숫자, 부분 Δ, 기본 창 크기는 없다"). advisory 12건 중 아래를 후속 커밋으로 반영했다.
+
+| 리뷰 항목 | 조치 |
+|---|---|
+| A1 repeats의 per-unit/per-frame 의미 | 필드를 `repeats_per_frame`으로 바꾸고 측정 frame 안의 반복 수로 정의. per-unit 수는 받지 않음(G2 /4 미확정). Q1 문구 갱신 |
+| A2 창 crop이 frame 가장자리에서 ulp 차이로 상태를 뒤집음 | 완전성 판정을 선언 십진수(Fraction) frame 경계로 다시 결정(`_reconcile`). 리뷰어 반례 두 건을 시험으로 추가. 전체 frame `measure_union`의 같은 float 문제는 창 경로에서만 보정 |
+| A3 겹치는 창을 거부만 함 | 같은 group의 겹치는 창을 합집합으로 한 번 측정, repeats 다르면 unavailable |
+| A4 `group_missing` 미발생·최상위 status 고정 | 조건 수정, status를 지름별 집계(available/partial/unavailable)로 |
+| A5 사유 코드가 계획과 다름 | `window_clipped_<side>`, `valid_incomplete_<side>`, `below_height_vertical_short_<side>` 추가(기존 `a_partial`, `a:…`도 유지) |
+| A6 named_pair ≤ union 검사 없음, config hash 없음 | 창 안 named 값이 group union을 넘으면 `named_pair_exceeds_group_union_<side>` 기록; provenance에 `config_sha256` 추가 |
+| A8 design_version 무시 | group·case 매칭에 design_version 포함 |
+| A9 blocked ROI의 roi_id를 붙임, map 설정 덮어씀 | blocked 행은 붙이지 않고 보고(exit 3); map의 다른 key 보존, diameter 주입 없음, output_dir 절대경로화 |
+| A10 real/numeric 혼합 미검사, HTML writer의 조용한 ImportError | `mixed_real_and_numeric_source_formats` 거부; try/except 제거 |
+| A11 썸네일 예외가 CLI를 중단 | 썸네일 실패는 `thumbnail_failed:<code>`로 표기하고 페이지는 씀 |
+| A12 DL2: pitch 불일치 미검사, 짝수 median, 중복 질의 | `pixel_pitch_mismatch` 사유, 올바른 median, 중복 예측은 무시하고 집계에 기록. `role_layer_unions` docstring에 "export 행이 참조한 전극의 합집합"임을 명시 |
+| A7 실자료 운영 결과 | 문서화: real_hotspot의 case 목록·condition_assignment·pair 표가 확인되기 전에는 모든 창이 partial이고 Δ가 null이다 |
+
+A9의 endpoint 순서(review ROI export는 순서 비교, 창 측정은 무순서)는 문서에 적고 코드 동작은 유지했다. 수정 뒤 두 저장소 suite를 다시 통과시켰다. 이 수정 커밋 자체는 아직 독립 리뷰를 받지 않았다.
+

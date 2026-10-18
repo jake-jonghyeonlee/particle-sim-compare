@@ -469,10 +469,16 @@ def _dataset_for(cfg, section, label):
 
 
 def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter_um=None, sort_diameter_um=None,
-                            compact_json=False):
+                            compact_json=False, config_path=None):
     """compare-windows: same physical window around corresponding positions, b − a."""
+    import hashlib
     from simcompare.correspondence import bind_pairs, load_correspondence
     from simcompare.local_delta import compute_local_delta, correspondence_hash, write_local_delta
+    from simcompare.local_delta_report import write_local_delta_html
+    from simcompare.numeric_schema import NumericContractError
+    real = [_real_source(cfg, cfg.get(name)) is not None for name in ('reference', 'target')]
+    if any(real) and not all(real):
+        raise NumericContractError('mixed_real_and_numeric_source_formats')
     reference = _dataset_for(cfg, cfg.get('reference'), 'reference')
     target = _dataset_for(cfg, cfg.get('target'), 'target')
     payload = load_correspondence(correspondence)
@@ -482,15 +488,12 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
                                  provenance={'correspondence_path': str(Path(correspondence).resolve()),
                                              'correspondence_sha256': correspondence_hash(correspondence),
                                              'correspondence_producer': payload['producer'],
-                                             'correspondence_warnings': payload['warnings']})
+                                             'correspondence_warnings': payload['warnings'],
+                                             'config_path': None if config_path is None else str(Path(config_path).resolve()),
+                                             'config_sha256': None if config_path is None else hashlib.sha256(Path(config_path).read_bytes()).hexdigest()})
     output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
     paths = write_local_delta(output, result, compact=compact_json)
-    try:
-        from simcompare.local_delta_report import write_local_delta_html
-    except ImportError:
-        write_local_delta_html = None
-    if write_local_delta_html is not None:
-        paths += write_local_delta_html(output, result, cfg=cfg, reference=reference, target=target)
+    paths += write_local_delta_html(output, result, cfg=cfg, reference=reference, target=target)
     return {'status': result.status, 'reasons': list(result.reasons), 'outputs': paths,
             'exit_code': 0 if result.status == 'available' else 3}
 

@@ -76,7 +76,7 @@ py -3.12 -m venv .venv-cmd
 | `window_sensitivity.json/csv` | 창 크기별 Δ_union, 부호 일치, 크기 쌍 간 \|Δ\| 순위 상관, core 적용 가능 지름. 추천값은 없고 사용자가 G4를 정한다 |
 | `local_delta.html` | 쌍마다 a/b layout crop과 hotspot crop(조각 색), a/b/Δ 표. 정렬 지름의 \|Δ_union\| 내림차순. PNG 내장이라 `file://`로 열린다 |
 
-`--compact-json`을 주면 JSON에서 행별 세부 지표를 빼고 CSV에만 남긴다(쌍 하나·창 하나가 약 0.4 MB이므로 수십 쌍 × 여러 창일 때 쓴다). 규칙: attributable core는 한 변 (창 − 지름)의 안쪽 정사각형이며 창 ≤ 지름이면 not_applicable이다. 창이 frame 밖으로 나가거나 valid 구멍을 포함하면 해당 Δ는 null이고 실행은 exit 3이다. 원천 누락·미매핑은 창 측정도 partial로 만든다. `--jitter-um j`를 주면 중심을 ±j 이동한 네 창의 Δ_union 범위와 부호 일치를 기록한다. DL2 검색에서 온 쌍의 점수는 출처 표시일 뿐 수치에 들어가지 않는다.
+소요 시간은 개발기 합성 기준으로 2000×2000 frame에서 쌍·창당 약 0.13 s이고, 그 앞의 group 계산(`compare`와 같은 비용)이 case 수에 비례해 더 크다. `--compact-json`을 주면 JSON에서 행별 세부 지표를 빼고 CSV에만 남긴다(쌍 하나·창 하나가 약 0.4 MB이므로 수십 쌍 × 여러 창일 때 쓴다). 규칙: attributable core는 한 변 (창 − 지름)의 안쪽 정사각형이며 창 ≤ 지름이면 not_applicable이다. 창이 frame 밖으로 나가면 `window_clipped_<side>`, valid 구멍을 포함하면 `valid_incomplete_<side>` 사유로 해당 Δ는 null이고 실행은 exit 3이다. 원천 누락·미매핑은 창 측정도 partial로 만든다. **실자료에서는** `import-hotspots --expected-cases`로 case 목록을 확인하고 config에 `condition_assignment`와 pair 표를 넣어야 group이 available이 되며, 그 전에는 모든 창이 partial이고 Δ는 null이다. 대응 파일의 `repeats_per_frame`은 측정 2×2 frame 안의 반복 수이며 per-unit 수를 넣지 않는다. 대응 파일의 endpoints 순서는 export-review-rois가 case와 같은 순서로 비교하므로 case의 순서대로 적는다(창 측정 자체는 순서를 보지 않는다). `--jitter-um j`를 주면 중심을 ±j 이동한 네 창의 Δ_union 범위와 부호 일치를 기록한다. DL2 검색에서 온 쌍의 점수는 출처 표시일 뿐 수치에 들어가지 않는다.
 
 같은 실행의 `compare` 결과에는 `fraction_of_frame`(면적 / 2×2 frame 면적, 단위 없음)이 group별·delta별로 추가된다(`comparison_fractions.csv`, HTML의 "frame 면적 비율"). G2의 한 unit 환산 없이 유닛 크기가 다른 제품을 비교하는 제품 수준 지표다.
 

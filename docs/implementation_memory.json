@@ -511,8 +511,8 @@
       "cross_unit_size_comparison": "Absolute CA cannot be compared across products with different unit sizes. Product level: CA / 2x2 frame area (dimensionless; the G2 /4 cancels in the ratio; the finite 2x2 edge effect remains a caveat). Local level: CA inside the same physical window at the corresponding position.",
       "order": "Manual labels + C window measurement first (value check without DL) -> window-size experiment -> DL2 vs template-matching baseline -> DL2 expansion."
     },
-    "decomposition": "CA / frame_area = (structures per area) x (CA per structure). Unit size and pitch act on the first factor; a shape change acts on the second, which is what the designer wants. fraction_of_frame = CA/frame_area; local_delta = CA_w(B) - CA_w(A) in the same window; explained_fraction = sum(local_delta x repeats_per_unit)/frame_area vs delta fraction, only when repeats are supplied.",
-    "exchange_format": "roi_correspondence_v1 (owned by C): pairs of (product, design_version, frame_id, center_xy_um, analysis_layer, optional endpoints/failure_type, optional roi_id) for sides a and b, optional repeats_per_unit, source.kind manual|template_match|dl2_search. The same file feeds compare-windows regardless of producer; DL2 scores are display context only.",
+    "decomposition": "CA / frame_area = (structures per area) x (CA per structure). Unit size and pitch act on the first factor; a shape change acts on the second, which is what the designer wants. fraction_of_frame = CA/frame_area; local_delta = CA_w(B) - CA_w(A) in the same window; explained_fraction = sum(local_delta x repeats_per_frame)/frame_area vs delta fraction, only when repeats are supplied.",
+    "exchange_format": "roi_correspondence_v1 (owned by C): pairs of (product, design_version, frame_id, center_xy_um, analysis_layer, optional endpoints/failure_type, optional roi_id) for sides a and b, optional repeats_per_frame (repeats inside the measured frame, never per unit), source.kind manual|template_match|dl2_search. The same file feeds compare-windows regardless of producer; DL2 scores are display context only.",
     "measurement_rules": [
       "Window = half-open square of side s um centred on the labelled centre; existing PhysicalWindow/measure_union; no resize.",
       "Pieces lateral_only/vertical_only/simultaneous/union of the mapped short cases of the given analysis_layer group, restricted to the window; pieces sum to union.",
@@ -522,13 +522,14 @@
       "named_pair: when endpoints are given, the matching case's own mask is measured in the window in addition to the group pieces."
     ],
     "pending": [
-      "repeats_per_unit source",
+      "repeats_per_frame source (count inside the measured 2x2 frame; per-unit counts are not accepted while G2 is pending)",
       "jitter amplitude",
       "sort/thumbnail diameter",
       "DL2 position hit tolerance",
       "default display level (layer pieces vs named pair)",
       "label input format (JSON direct vs CSV)"
     ],
-    "status": "Plan written 2026-10-18; implementation in progress on branch rewrite/line-pixel-rate. Synthetic validation only."
+    "status": "Implemented and committed 2026-10-18 on branch rewrite/line-pixel-rate (C) and main (DL2); synthetic validation only.",
+    "independent_review_2026_10_18": "PASS-WITH-NOTES, no blocking finding; advisory items fixed in a follow-up commit (see PLAN_v3 §11). The fix commit itself is not yet independently reviewed."
   }
 }
