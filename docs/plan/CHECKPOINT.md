@@ -112,3 +112,12 @@ Phase 3 (DL2, T10-T11) is not started: gate G3 (DL2 repository name) and G4 (win
 - DL1·DL2 저장소에는 별도 인수 파일을 추가하지 않았다(절차는 C의 `docs/handoff/`에 있음). 검토된 commit을 그대로 유지하기 위한 coordinator 결정이다.
 - Orca task: T12-C `task_2d84068803e6`, R5, R5 수정 `task_7c24b94b2ce8`, R5b.
 - 남은 메모: R5b R3~R5, R7~R12. 미결 게이트: G1 단위, G2 unit 환산·파일 형식·layout 극성, G4, G5 실제 격자·CNT 형식, G6.
+
+## 인수 묶음 대상 갱신 — 2026-10-18
+
+- 일반 Claude Code 세션(Orca Run 아님). 위의 2026-10-09 대상 commit을 아래로 대체한다.
+- 새 대상: C `rewrite/line-pixel-rate` HEAD(이 커밋), DL1 `feat/png-input` @ `f0a559815b8f538c8e8b8b599a67c18f6209dc87`, DL2 `main` @ `7397c96677c06919f6602b6ea88ac1e82fd037a5`(R4c 리뷰된 `e46a44e` 위 문서 2개만 추가).
+- DL1 `d4dd896..f0a5598`(13 commits) 독립 리뷰: fresh read-only Claude Opus 5.5 high, risk tier High, **PASS-WITH-NOTES**, 차단 0, 메모 8. 보고서 `docs/review/DL1_HEAD_F0A5598_REVIEW.md`.
+- coordinator 검증: DL1 전체 862 passed, 1 skipped (f0a5598). C `tests/test_handoff.py` 14 passed, 1 skipped(Windows CMD 전용) — 2026-10-15에 dirty sibling 때문에 실패했던 full-candidate 시험 포함. 단, C `.venv`에 simcompare가 설치되어 있지 않아 `PYTHONPATH=src`가 필요했다(없으면 `test_actual_producer_round_trip`이 `ModuleNotFoundError`). 환경 문제이며 코드 수정 없음.
+- 시험 build/check(d774920·f0a5598·7397c96, clean): 둘 다 available, 시험 manifest SHA256 `ad471488a416307a8c07989dea6dc230356633cfc08c8816d104ecac2a9d7290`. build 호스트 Python 3.14.7. 실제 전달 bundle의 승인 hash가 아니다.
+- 남은 것: DL1 리뷰 메모 1–3(업데이트 wheel 설치 후 ZIP 기준 검증 실패 안내, update 폴더 CRLF 보호), Windows 실제 실행·실자료 인수 미확인, C `.venv` 복구, `main` 병합.

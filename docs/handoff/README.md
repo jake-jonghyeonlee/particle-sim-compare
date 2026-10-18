@@ -8,7 +8,9 @@
 
 폐쇄망에서는 CMD를 사용한다. compare 설치·pip check·도움말은 사용자 성공 확인이 있으며 전체 DL 연동은 Windows 미검증이다. Windows용 Python/wheel과 handoff 도구용 Git Bash를 준비한다. [commands.md](commands.md)에 CMD 명령을 기록한다.
 
-DL1 pin: **`feat/png-input` @ `e67a8b2a3719d7141472a32503d00f52bbdf625c`**, 아직 `main`에 merge되지 않았다. importer 독립 리뷰는 `1f9d005`에 PASS-WITH-NOTES였고 `e67a8b2`는 `docs/USAGE.md`만 다르다. 상세 입력 계약은 bundle의 `particle-sim-dl1/docs/USAGE.md`를 따른다.
+DL1 pin: **`feat/png-input` @ `f0a559815b8f538c8e8b8b599a67c18f6209dc87`**, 아직 `main`에 merge되지 않았다. `d4dd896..f0a5598` 독립 리뷰는 PASS-WITH-NOTES다([DL1_HEAD_F0A5598_REVIEW.md](../review/DL1_HEAD_F0A5598_REVIEW.md)). DL1 Windows 설치 ZIP의 psdl1은 `78a2f91` 소스이므로 f0a5598 코드를 쓰려면 DL1의 `bundles/updates/grid-diagnostics-f74a718` wheel을 추가로 설치한다. 설치 후에는 ZIP 기준 설치 검증이 `installed psdl1 source differs`로 실패하는 것이 예상 동작이다(리뷰 메모 1–2). 상세 입력 계약은 bundle의 `particle-sim-dl1/docs/USAGE.md`를 따른다.
+
+DL2 pin: **`main` @ `7397c96677c06919f6602b6ea88ac1e82fd037a5`**. 리뷰된 `e46a44e`(R4c PASS-WITH-NOTES) 위에 `README.md`와 `docs/USAGE.md`만 추가한 커밋이다.
 
 build script의 python3는 >=3.11.4가 필요하다. 미지원 버전은 출력 생성 전에 오류로 중단한다.
 
@@ -18,7 +20,7 @@ Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행
 Windows CMD (미실행, Git Bash `bash` 필요):
 
 ```bat
-bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref e67a8b2a3719d7141472a32503d00f52bbdf625c --dl2-ref e46a44e0afbe94cd3f7a8d0264ee02f3076cf44b
+bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref f0a559815b8f538c8e8b8b599a67c18f6209dc87 --dl2-ref 7397c96677c06919f6602b6ea88ac1e82fd037a5
 bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
 
