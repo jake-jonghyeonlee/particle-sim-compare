@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>simcompare 쉽게 읽는 안내</title>
+<meta name="description" content="particle-sim-compare(simcompare)가 무엇을 하는 도구인지, 어떤 숫자를 내고 어떻게 읽는지, 지금 어디까지 왔는지를 그림과 쉬운 말로 설명한 안내서(v2).">
+<style>
+/* Layout: 좌측 고정 목차 + 본문 한 열. 그림 위주, 시스템 글꼴만 사용(폐쇄망 file:// 열람). */
+:root {
+  --bg: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f5; --fg: #1b2430; --fg-muted: #5b6673;
+  --line: #d6dce4; --accent: #1f5f8b; --accent-soft: #e3eef7;
+  --ok: #1a7f4b; --warn: #b26a00; --crit: #b3261e; --hold: #6b5ca5;
+  --lateral: #005ac8; --vertical: #00965a; --simul: #c81e1e; --electrode: #e08a1e; --particle: #7a4fb0;
+  --code-bg: #f0f3f7;
+  --font-body: "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Malgun Gothic", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Consolas", "D2Coding", "Noto Sans Mono CJK KR", ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141a21; --surface: #1b232c; --surface-2: #232d38; --fg: #e4e9ef; --fg-muted: #9aa7b5;
+    --line: #34404d; --accent: #7fb5df; --accent-soft: #1f3345; --ok: #5fcf8f; --warn: #e5a94a; --crit: #f08a82;
+    --hold: #b2a5e6; --lateral: #6ea6ff; --vertical: #4ed49a; --simul: #ff7a7a; --electrode: #f0b060; --particle: #b795e8;
+    --code-bg: #0f151b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141a21; --surface: #1b232c; --surface-2: #232d38; --fg: #e4e9ef; --fg-muted: #9aa7b5;
+  --line: #34404d; --accent: #7fb5df; --accent-soft: #1f3345; --ok: #5fcf8f; --warn: #e5a94a; --crit: #f08a82;
+  --hold: #b2a5e6; --lateral: #6ea6ff; --vertical: #4ed49a; --simul: #ff7a7a; --electrode: #f0b060; --particle: #b795e8;
+  --code-bg: #0f151b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.75; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, pre { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.55; margin: 0.8rem 0; }
+pre code { background: none; padding: 0; }
+h1, h2, h3 { line-height: 1.3; text-wrap: balance; font-weight: 700; margin: 0; }
+h1 { font-size: 2rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.5rem; padding-top: 0.6rem; border-top: 2px solid var(--accent); margin-top: 3rem; }
+h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 0.5rem; }
+h3 { font-size: 1.15rem; margin-top: 1.8rem; }
+p { margin: 0.7rem 0; }
+ul, ol { padding-left: 1.3rem; margin: 0.5rem 0; }
+li { margin: 0.3rem 0; }
+.page { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 2.5rem; max-width: 1160px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 1.5rem 4rem; }
+nav.toc { position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow-y: auto; font-size: 0.88rem; line-height: 1.5; }
+nav.toc .label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; color: var(--fg-muted); margin-bottom: 0.5rem; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; }
+nav.toc li { margin: 0; }
+nav.toc a { display: block; padding: 0.25rem 0.5rem; border-left: 2px solid var(--line); color: var(--fg-muted); text-decoration: none; }
+nav.toc a:hover { color: var(--fg); border-color: var(--accent); }
+nav.toc .n { display: inline-block; width: 1.6em; color: var(--accent); font-variant-numeric: tabular-nums; }
+main { min-width: 0; max-width: 74ch; }
+header.hero { padding-bottom: 1.2rem; border-bottom: 1px solid var(--line); }
+.eyebrow { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.74rem; color: var(--accent); font-weight: 600; }
+.lede { font-size: 1.1rem; margin-top: 0.9rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; font-size: 0.85rem; color: var(--fg-muted); margin-top: 0.9rem; font-variant-numeric: tabular-nums; }
+.meta b { color: var(--fg); font-weight: 600; }
+.chip { display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 0.05rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; line-height: 1.5; vertical-align: middle; white-space: nowrap; }
+.chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.crit { color: var(--crit); } .chip.hold { color: var(--hold); } .chip.muted { color: var(--fg-muted); }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 0.7rem 1rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+.note.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+.term { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 0.8rem 1rem; margin: 1rem 0; }
+.term dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0; }
+.term dt { font-weight: 600; white-space: nowrap; }
+.term dd { margin: 0; color: var(--fg); }
+.tbl { overflow-x: auto; margin: 0.8rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; line-height: 1.5; }
+th, td { text-align: left; vertical-align: top; padding: 0.5rem 0.65rem; border-bottom: 1px solid var(--line); }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+figure { margin: 1.3rem 0; }
+figure svg { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+figcaption { font-size: 0.85rem; color: var(--fg-muted); margin-top: 0.45rem; }
+.svg-text { font-family: var(--font-body); fill: var(--fg); }
+.svg-mono { font-family: var(--font-mono); fill: var(--fg); }
+.svg-muted { fill: var(--fg-muted); }
+.svg-box { fill: var(--surface-2); stroke: var(--line); }
+.svg-accent { fill: var(--accent-soft); stroke: var(--accent); }
+.svg-line { stroke: var(--fg-muted); fill: none; }
+.svg-arrow { fill: var(--fg-muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.8rem; margin: 1rem 0; }
+.card { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0.8rem 1rem; }
+.card .t { font-weight: 700; margin-bottom: 0.3rem; }
+.card .s { font-size: 0.9rem; color: var(--fg-muted); }
+.card.ok { border-top: 4px solid var(--ok); } .card.warn { border-top: 4px solid var(--warn); } .card.crit { border-top: 4px solid var(--crit); } .card.muted { border-top: 4px solid var(--fg-muted); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem; margin: 1.2rem 0; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; }
+.stat .v { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat .k { font-size: 0.8rem; color: var(--fg-muted); margin-top: 0.2rem; }
+.timeline { list-style: none; padding: 0; margin: 1rem 0; border-left: 2px solid var(--line); }
+.timeline li { position: relative; padding: 0 0 0.9rem 1.2rem; margin: 0; }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 0.6em; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); }
+.timeline .d { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); margin-right: 0.5rem; }
+.check { list-style: none; padding: 0; }
+.check li { padding-left: 1.6rem; position: relative; }
+.check li::before { position: absolute; left: 0; font-weight: 700; }
+.check li.done::before { content: "✓"; color: var(--ok); }
+.check li.todo::before { content: "○"; color: var(--warn); }
+.check li.hold::before { content: "–"; color: var(--hold); }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--fg-muted); }
+@media (max-width: 960px) {
+  .page { grid-template-columns: 1fr; gap: 1rem; }
+  nav.toc { position: static; max-height: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; background: var(--surface); }
+  nav.toc ol { columns: 2; column-gap: 1rem; }
+  .term dl { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) { nav.toc ol { columns: 1; } h1 { font-size: 1.6rem; } }
+</style>
+</head>
+<body>
+<div class="page">
+<nav class="toc" aria-label="목차">
+  <div class="label">목차</div>
+  <ol>
+    <li><a href="#s1"><span class="n">1</span>한 줄로 말하면</a></li>
+    <li><a href="#s2"><span class="n">2</span>왜 이런 도구가 필요한가</a></li>
+    <li><a href="#s3"><span class="n">3</span>자주 나오는 말 풀이</a></li>
+    <li><a href="#s4"><span class="n">4</span>이 도구가 내는 다섯 가지 숫자</a></li>
+    <li><a href="#s5"><span class="n">5</span>결과를 읽는 법</a></li>
+    <li><a href="#s6"><span class="n">6</span>실제로 어떻게 쓰나</a></li>
+    <li><a href="#s7"><span class="n">7</span>세 개의 저장소</a></li>
+    <li><a href="#s8"><span class="n">8</span>이 도구가 지키는 약속</a></li>
+    <li><a href="#s9"><span class="n">9</span>지금까지 어떻게 왔나</a></li>
+    <li><a href="#s10"><span class="n">10</span>지금 상태와 남은 일</a></li>
+    <li><a href="#s11"><span class="n">11</span>코드는 어떻게 생겼나</a></li>
+    <li><a href="#s12"><span class="n">12</span>더 알고 싶으면</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">particle-sim-compare · 쉽게 읽는 안내 (v2)</div>
+  <h1>simcompare 쉽게 읽는 안내</h1>
+  <p class="lede">이물(먼지 같은 작은 입자) 시뮬레이션 결과를 받아서 <b>"어느 설계가 더 안전한가, 이 모양 변경이 불량을 얼마나 줄였나"</b>를 숫자로 알려 주는 도구입니다. 이 문서는 그 도구가 무엇을 하고, 어떤 숫자를 내고, 지금 어디까지 왔는지를 그림과 쉬운 말로 설명합니다.</p>
+  <div class="meta">
+    <span>기준 커밋 <b>a060a0b</b></span>
+    <span>작성일 <b>2026-10-18</b></span>
+    <span>자세한 기술 문서는 <b>repo_summary.html (v1)</b></span>
+  </div>
+</header>
+
+<!-- ================================================================ -->
+<h2 id="s1"><span class="num">1</span>한 줄로 말하면</h2>
+<p>시뮬레이터(particle-sim)는 "이물이 어디에 떨어지면 불량이 나는지"를 그림(흑백 이미지)으로 내줍니다. simcompare는 그 그림들을 받아서 <b>넓이를 재고, 제품끼리 비교하고, 약한 자리를 지도로 그려 주는 계산기</b>입니다. 새로 예측하는 AI 모델이 아니라, 이미 나온 결과를 정확하게 세는 도구입니다.</p>
+
+<figure>
+<svg viewBox="0 0 760 230" role="img" aria-label="입력에서 출력까지 큰 그림">
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <rect x="20" y="30" width="200" height="170" rx="8" class="svg-box"/>
+  <text x="120" y="58" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">들어가는 것</text>
+  <text x="120" y="88" text-anchor="middle" class="svg-text" font-size="12">시뮬레이터가 만든 흑백 그림</text>
+  <text x="120" y="108" text-anchor="middle" class="svg-text" font-size="12">(불량 나는 자리 = 흰색)</text>
+  <text x="120" y="138" text-anchor="middle" class="svg-text" font-size="12">전극 모양 그림</text>
+  <text x="120" y="166" text-anchor="middle" class="svg-text" font-size="12">전극 쌍 분류표 · 설정 파일</text>
+  <rect x="280" y="30" width="200" height="170" rx="8" class="svg-accent"/>
+  <text x="380" y="58" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">simcompare가 하는 일</text>
+  <text x="380" y="88" text-anchor="middle" class="svg-text" font-size="12">흰 칸을 정확히 센다</text>
+  <text x="380" y="110" text-anchor="middle" class="svg-text" font-size="12">종류별로 나눠 센다</text>
+  <text x="380" y="132" text-anchor="middle" class="svg-text" font-size="12">두 제품을 나란히 비교한다</text>
+  <text x="380" y="154" text-anchor="middle" class="svg-text" font-size="12">약한 자리를 지도로 그린다</text>
+  <text x="380" y="180" text-anchor="middle" class="svg-muted" font-size="11">모르는 값은 비워 두고 이유를 적는다</text>
+  <rect x="540" y="30" width="200" height="170" rx="8" class="svg-box"/>
+  <text x="640" y="58" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">나오는 것</text>
+  <text x="640" y="88" text-anchor="middle" class="svg-text" font-size="12">표 (JSON · CSV)</text>
+  <text x="640" y="110" text-anchor="middle" class="svg-text" font-size="12">브라우저로 보는 보고서 (HTML)</text>
+  <text x="640" y="132" text-anchor="middle" class="svg-text" font-size="12">지도 그림 (PNG)</text>
+  <text x="640" y="154" text-anchor="middle" class="svg-text" font-size="12">검토할 위치 목록 (DL2에 전달)</text>
+  <path d="M220 115 H280" class="svg-line" stroke-width="1.5" marker-end="url(#a1)"/>
+  <path d="M480 115 H540" class="svg-line" stroke-width="1.5" marker-end="url(#a1)"/>
+</svg>
+<figcaption>그림 1. 들어가는 것과 나오는 것. 가운데가 이 저장소의 역할입니다.</figcaption>
+</figure>
+
+<div class="stats">
+  <div class="stat"><div class="v">8</div><div class="k">명령어</div></div>
+  <div class="stat"><div class="v">5</div><div class="k">내는 숫자의 종류</div></div>
+  <div class="stat"><div class="v">870</div><div class="k">자동 시험 통과</div></div>
+  <div class="stat"><div class="v">116</div><div class="k">커밋 (한 달 남짓)</div></div>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s2"><span class="num">2</span>왜 이런 도구가 필요한가</h2>
+
+<h3>2.1 이물이 떨어지면 생기는 일</h3>
+<p>디스플레이 패널에는 아주 가는 전극(전기가 흐르는 선)이 촘촘히 깔려 있습니다. 공정 중에 지름 몇 µm짜리 이물이 두 전극 사이에 떨어지면 두 전극이 붙어 버립니다. 이것을 <b>short</b>라고 합니다. 이물이 크면 클수록 붙을 수 있는 자리가 넓어집니다.</p>
+
+<figure>
+<svg viewBox="0 0 760 260" role="img" aria-label="이물이 두 전극 사이에 떨어져 short가 나는 모습">
+  <!-- left: safe -->
+  <text x="130" y="30" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">괜찮은 자리</text>
+  <rect x="40" y="60" width="180" height="22" fill="var(--electrode)" opacity="0.85"/>
+  <rect x="40" y="170" width="180" height="22" fill="var(--electrode)" opacity="0.85"/>
+  <text x="228" y="76" class="svg-muted" font-size="11">전극 A</text>
+  <text x="228" y="186" class="svg-muted" font-size="11">전극 B</text>
+  <circle cx="130" cy="112" r="22" fill="var(--particle)" opacity="0.6"/>
+  <text x="130" y="230" text-anchor="middle" class="svg-text" font-size="12">이물이 전극 A에만 닿음 → 불량 아님</text>
+  <!-- right: short -->
+  <text x="520" y="30" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">불량 나는 자리</text>
+  <rect x="430" y="60" width="180" height="22" fill="var(--electrode)" opacity="0.85"/>
+  <rect x="430" y="170" width="180" height="22" fill="var(--electrode)" opacity="0.85"/>
+  <circle cx="520" cy="126" r="60" fill="var(--particle)" opacity="0.55"/>
+  <path d="M520 66 V186" stroke="var(--simul)" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="520" y="230" text-anchor="middle" class="svg-text" font-size="12">큰 이물이 A와 B에 동시에 닿음 → short</text>
+  <!-- middle: hotspot band -->
+  <rect x="300" y="100" width="60" height="52" fill="none"/>
+  <text x="330" y="118" text-anchor="middle" class="svg-muted" font-size="11">지름이</text>
+  <text x="330" y="134" text-anchor="middle" class="svg-muted" font-size="11">커지면 →</text>
+</svg>
+<figcaption>그림 2. 같은 자리라도 이물 지름에 따라 불량이 되기도, 안 되기도 합니다. 그래서 지름 1~30, 40, 50 µm의 32가지 조건마다 따로 계산합니다.</figcaption>
+</figure>
+
+<h3>2.2 시뮬레이터가 주는 그림: hotspot과 CA</h3>
+<p>시뮬레이터는 이물의 <b>중심</b>을 한 칸씩 옮겨 가며 "여기에 중심이 오면 short가 나는가"를 전부 확인하고, 불량이 나는 중심 자리를 흰색으로 칠한 흑백 그림을 내줍니다. 이 그림을 <b>hotspot</b>이라고 부릅니다. 흰색 칸의 넓이를 합친 값이 <b>CA</b>(critical area, 위험 넓이, 단위 µm²)입니다. 넓을수록 이물이 떨어졌을 때 불량이 될 확률이 큽니다.</p>
+
+<figure>
+<svg viewBox="0 0 760 240" role="img" aria-label="hotspot 그림의 흰 칸을 세어 CA를 구하는 모습">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <!-- grid 10x8 -->
+  <g transform="translate(40,40)">
+    <rect x="0" y="0" width="240" height="160" fill="#111" />
+    <!-- white cells -->
+    <g fill="#fff">
+      <rect x="72" y="40" width="24" height="20"/><rect x="96" y="40" width="24" height="20"/><rect x="120" y="40" width="24" height="20"/>
+      <rect x="48" y="60" width="24" height="20"/><rect x="72" y="60" width="24" height="20"/><rect x="96" y="60" width="24" height="20"/><rect x="120" y="60" width="24" height="20"/><rect x="144" y="60" width="24" height="20"/>
+      <rect x="48" y="80" width="24" height="20"/><rect x="72" y="80" width="24" height="20"/><rect x="96" y="80" width="24" height="20"/><rect x="120" y="80" width="24" height="20"/><rect x="144" y="80" width="24" height="20"/><rect x="168" y="80" width="24" height="20"/>
+      <rect x="72" y="100" width="24" height="20"/><rect x="96" y="100" width="24" height="20"/><rect x="120" y="100" width="24" height="20"/><rect x="144" y="100" width="24" height="20"/>
+    </g>
+    <!-- grid lines -->
+    <g stroke="#555" stroke-width="0.6">
+      <path d="M24 0V160M48 0V160M72 0V160M96 0V160M120 0V160M144 0V160M168 0V160M192 0V160M216 0V160"/>
+      <path d="M0 20H240M0 40H240M0 60H240M0 80H240M0 100H240M0 120H240M0 140H240"/>
+    </g>
+  </g>
+  <text x="160" y="222" text-anchor="middle" class="svg-text" font-size="12">hotspot 그림 (검정 배경, 흰색 = 불량 자리)</text>
+  <path d="M300 120 H360" class="svg-line" stroke-width="1.5" marker-end="url(#a2)"/>
+  <g transform="translate(380,50)">
+    <text x="0" y="0" class="svg-text" font-weight="700" font-size="13">흰 칸을 센다</text>
+    <text x="0" y="28" class="svg-text" font-size="12">흰 칸 18개</text>
+    <text x="0" y="52" class="svg-text" font-size="12">칸 하나 = 0.1 µm × 0.1 µm = 0.01 µm²</text>
+    <text x="0" y="84" class="svg-text" font-weight="700" font-size="14">CA = 18 × 0.01 = 0.18 µm²</text>
+    <text x="0" y="118" class="svg-muted" font-size="11">실제 그림은 2000 × 2000칸 정도이고</text>
+    <text x="0" y="136" class="svg-muted" font-size="11">지름마다 한 장씩, 32장이 있습니다.</text>
+    <text x="0" y="162" class="svg-muted" font-size="11">그림을 늘리거나 줄이지 않고 원본 그대로 셉니다.</text>
+  </g>
+</svg>
+<figcaption>그림 3. CA는 "흰 칸 수 × 칸 넓이"입니다. simcompare의 모든 계산은 결국 이 세기에서 출발합니다.</figcaption>
+</figure>
+
+<h3>2.3 설계자가 알고 싶은 두 가지</h3>
+<div class="cards">
+  <div class="card"><div class="t">제품 전체로 보면, 어느 설계가 더 안전한가?</div><div class="s">제품마다 화소 크기가 달라서 CA 숫자를 그냥 비교하면 큰 제품이 불리합니다. 그래서 "측정한 영역 넓이 대비 몇 %인가"로 바꿔 비교합니다. (→ 4.4)</div></div>
+  <div class="card"><div class="t">이 자리 모양을 바꾸면, 불량이 얼마나 줄어드나?</div><div class="s">비슷한 두 제품에서 설계자가 "여기와 여기가 같은 자리"라고 짝지어 주면, 그 둘레 같은 크기의 창 안에서 CA를 재고 차이를 냅니다. 눈으로 하기엔 너무 오래 걸리는 일입니다. (→ 4.5)</div></div>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s3"><span class="num">3</span>자주 나오는 말 풀이</h2>
+<div class="term"><dl>
+  <dt>hotspot</dt><dd>이물 중심이 오면 불량이 나는 자리를 흰색으로 칠한 흑백 그림. 지름마다 한 장.</dd>
+  <dt>CA</dt><dd>hotspot의 흰 칸 넓이 합(µm²). 클수록 위험.</dd>
+  <dt>case</dt><dd>"어떤 불량 종류, 어떤 전극 둘, 어떤 층"의 한 조합. 폴더 이름이 <code>불량명-전극1-층1-전극2-층2</code>로 되어 있음.</dd>
+  <dt>frame</dt><dd>그림 한 장이 덮는 물리 영역. 왼쪽 위 좌표(µm), 칸 크기(0.1 µm), 칸 수로 정해짐. 실제 자료는 화소 2×2개 크기의 영역.</dd>
+  <dt>valid</dt><dd>그림에서 "관측한 칸"을 표시한 마스크. valid 밖은 "불량 없음"이 아니라 "안 봄"으로 취급.</dd>
+  <dt>line / pixel</dt><dd>전극 쌍을 두 묶음으로 나눈 분류. 선 불량(line)이 나는 쌍과 점(화소) 불량(pixel)이 나는 쌍. 분류표는 사용자가 줍니다.</dd>
+  <dt>lateral / vertical</dt><dd>옆으로 붙는 short(같은 층)와 위아래로 붙는 short(다른 층). 원천 case가 어느 쪽인지 적혀 있음.</dd>
+  <dt>전극 수 지도</dt><dd>각 칸마다 "서로 다른 전극 몇 개의 hotspot이 겹치는가"를 센 지도. 숫자가 큰 곳이 약한 자리.</dd>
+  <dt>ROI</dt><dd>검토할 위치. 사용자가 찍거나 지도에서 고른 자리. DL2에 "이 자리와 비슷한 구조를 찾아 달라"고 넘기는 단위.</dd>
+  <dt>DL1 / DL2</dt><dd>별도 저장소의 딥러닝 도구. DL1은 비슷한 제품을, DL2는 비슷한 위치를 찾습니다. 점수는 참고용이고 계산에는 안 들어갑니다.</dd>
+  <dt>gate (G1~G6)</dt><dd>사용자 답을 기다리는 질문 번호. 답이 없으면 그에 걸린 계산은 비워 둡니다.</dd>
+</dl></div>
+
+<!-- ================================================================ -->
+<h2 id="s4"><span class="num">4</span>이 도구가 내는 다섯 가지 숫자</h2>
+<p>다섯 숫자는 서로 다른 질문에 답하는 것이라 하나로 합치지 않습니다. 각각 따로 봅니다.</p>
+
+<h3>4.1 line / pixel 넓이</h3>
+<p>같은 층의 short case들을 전극 쌍 분류표에 따라 <b>line 묶음</b>과 <b>pixel 묶음</b>으로 나누고, 각 묶음의 hotspot을 포개서(합집합) 넓이를 잽니다. 한 칸이 두 묶음 모두에 들어가면 <b>line을 우선</b>으로 셉니다. 겹친 부분은 "transfer"라는 이름으로 따로 기록만 합니다.</p>
+<figure>
+<svg viewBox="0 0 760 230" role="img" aria-label="line 묶음과 pixel 묶음의 겹침">
+  <ellipse cx="300" cy="115" rx="190" ry="85" fill="var(--lateral)" fill-opacity="0.16" stroke="var(--lateral)" stroke-width="2"/>
+  <ellipse cx="470" cy="115" rx="190" ry="85" fill="var(--vertical)" fill-opacity="0.16" stroke="var(--vertical)" stroke-width="2"/>
+  <text x="200" y="60" class="svg-text" font-weight="700" font-size="14">line 묶음 (L)</text>
+  <text x="530" y="60" class="svg-text" font-weight="700" font-size="14">pixel 묶음 (P)</text>
+  <text x="385" y="108" text-anchor="middle" class="svg-text" font-weight="600" font-size="13">겹침</text>
+  <text x="385" y="128" text-anchor="middle" class="svg-text" font-size="12">= transfer (기록만)</text>
+  <text x="200" y="122" text-anchor="middle" class="svg-text" font-size="12">line 넓이</text>
+  <text x="575" y="122" text-anchor="middle" class="svg-text" font-size="12">pixel 순수 넓이</text>
+  <text x="380" y="220" text-anchor="middle" class="svg-text" font-size="12">전체 = line 넓이 + pixel 순수 넓이   (겹침은 두 번 더하지 않음)</text>
+</svg>
+<figcaption>그림 4. 겹친 칸을 두 번 세지 않도록 line을 우선하고, 겹침은 따로 기록합니다.</figcaption>
+</figure>
+<p>같은 묶음 안에서도 "어느 전극 쌍 때문인가"를 남깁니다. 한 쌍만 관여한 칸은 exclusive, 여러 쌍이 겹친 칸은 shared로 묶어 두고 shared는 한 번만 더합니다. 그래서 나중에 "이 넓이는 어느 쌍에서 왔나"를 거슬러 찾을 수 있습니다.</p>
+
+<h3>4.2 불량 종류별 조각 (옆 short / 위아래 short / 둘 다)</h3>
+<p>같은 층의 short case를 이번에는 <b>종류</b>로 나눕니다. 옆으로 붙는 lateral short만 나는 칸, 위아래로 붙는 vertical short만 나는 칸, 둘 다 나는 칸. 세 조각은 겹치지 않고 합치면 전체 short 넓이가 됩니다.</p>
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="lateral short와 vertical short의 단면">
+  <!-- lateral -->
+  <text x="190" y="30" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">lateral short (옆으로)</text>
+  <rect x="60" y="120" width="260" height="16" fill="var(--fg-muted)" opacity="0.35"/>
+  <text x="330" y="132" class="svg-muted" font-size="11">기판</text>
+  <rect x="80" y="90" width="80" height="30" fill="var(--electrode)" opacity="0.9"/>
+  <rect x="220" y="90" width="80" height="30" fill="var(--electrode)" opacity="0.9"/>
+  <circle cx="190" cy="92" r="34" fill="var(--particle)" opacity="0.55"/>
+  <text x="120" y="80" text-anchor="middle" class="svg-text" font-size="11">전극 A</text>
+  <text x="260" y="80" text-anchor="middle" class="svg-text" font-size="11">전극 B</text>
+  <text x="190" y="170" text-anchor="middle" class="svg-text" font-size="12">같은 층의 두 전극 사이를 이물이 메움</text>
+  <rect x="150" y="190" width="80" height="14" fill="var(--lateral)"/>
+  <text x="240" y="202" class="svg-text" font-size="11">조각 색: lateral_only</text>
+  <!-- vertical -->
+  <text x="560" y="30" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">vertical short (위아래로)</text>
+  <rect x="440" y="150" width="240" height="16" fill="var(--fg-muted)" opacity="0.35"/>
+  <rect x="470" y="120" width="180" height="26" fill="var(--electrode)" opacity="0.9"/>
+  <text x="660" y="138" class="svg-muted" font-size="11">아래 층</text>
+  <rect x="470" y="60" width="180" height="26" fill="var(--electrode)" opacity="0.55"/>
+  <text x="660" y="78" class="svg-muted" font-size="11">위 층</text>
+  <circle cx="560" cy="103" r="26" fill="var(--particle)" opacity="0.6"/>
+  <text x="560" y="185" text-anchor="middle" class="svg-text" font-size="12">층 사이에 낀 이물이 위아래 전극을 이음</text>
+  <text x="560" y="203" text-anchor="middle" class="svg-muted" font-size="11">이물이 층 간격보다 작으면 생길 수 없음 → "해당 없음"</text>
+  <rect x="520" y="215" width="80" height="14" fill="var(--vertical)"/>
+  <text x="610" y="227" class="svg-text" font-size="11">조각 색: vertical_only</text>
+  <rect x="330" y="215" width="80" height="14" fill="var(--simul)"/>
+  <text x="330" y="243" class="svg-text" font-size="11">둘 다: simultaneous</text>
+</svg>
+<figcaption>그림 5. 옆 short와 위아래 short. 위아래 short는 이물 지름이 층 간격보다 작으면 애초에 생길 수 없어서 그 지름은 "해당 없음"으로 둡니다. 세 색은 결과 HTML의 썸네일 색과 같습니다.</figcaption>
+</figure>
+
+<h3>4.3 전극 수 지도</h3>
+<p>한 제품의 그림을 모두 포개 놓고, 칸마다 "서로 다른 전극 몇 개가 여기서 short를 낼 수 있나"를 셉니다. 숫자가 큰 칸은 여러 전극이 몰려 있어 약한 자리입니다. 기본 지름은 5 µm이며 층별 지도와, 모든 층 중 최댓값을 모은 제품 지도를 만듭니다.</p>
+<figure>
+<svg viewBox="0 0 760 260" role="img" aria-label="전극 수 지도 예시">
+  <g transform="translate(40,30)">
+    <!-- 8x6 grid of counts -->
+    <g font-family="var(--font-mono)" font-size="12" text-anchor="middle">
+      <!-- row0 -->
+      <rect x="0" y="0" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="20" y="21" fill="#333">0</text>
+      <rect x="40" y="0" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="60" y="21" fill="#333">0</text>
+      <rect x="80" y="0" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="100" y="21" fill="#333">1</text>
+      <rect x="120" y="0" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="140" y="21" fill="#333">1</text>
+      <rect x="160" y="0" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="180" y="21" fill="#333">0</text>
+      <rect x="200" y="0" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="220" y="21" fill="#333">0</text>
+      <rect x="240" y="0" width="40" height="32" fill="#a0a0a0" stroke="#bbb"/><text x="260" y="21" fill="#333">–</text>
+      <rect x="280" y="0" width="40" height="32" fill="#a0a0a0" stroke="#bbb"/><text x="300" y="21" fill="#333">–</text>
+      <!-- row1 -->
+      <rect x="0" y="32" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="20" y="53" fill="#333">0</text>
+      <rect x="40" y="32" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="60" y="53" fill="#333">1</text>
+      <rect x="80" y="32" width="40" height="32" fill="#9ec4e6" stroke="#bbb"/><text x="100" y="53" fill="#333">2</text>
+      <rect x="120" y="32" width="40" height="32" fill="#9ec4e6" stroke="#bbb"/><text x="140" y="53" fill="#333">2</text>
+      <rect x="160" y="32" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="180" y="53" fill="#333">1</text>
+      <rect x="200" y="32" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="220" y="53" fill="#333">0</text>
+      <rect x="240" y="32" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="260" y="53" fill="#333">0</text>
+      <rect x="280" y="32" width="40" height="32" fill="#a0a0a0" stroke="#bbb"/><text x="300" y="53" fill="#333">–</text>
+      <!-- row2 -->
+      <rect x="0" y="64" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="20" y="85" fill="#333">1</text>
+      <rect x="40" y="64" width="40" height="32" fill="#9ec4e6" stroke="#bbb"/><text x="60" y="85" fill="#333">2</text>
+      <rect x="80" y="64" width="40" height="32" fill="#4f8fc7" stroke="#bbb"/><text x="100" y="85" fill="#fff">3</text>
+      <rect x="120" y="64" width="40" height="32" fill="#4f8fc7" stroke="#bbb"/><text x="140" y="85" fill="#fff">3</text>
+      <rect x="160" y="64" width="40" height="32" fill="#9ec4e6" stroke="#bbb"/><text x="180" y="85" fill="#333">2</text>
+      <rect x="200" y="64" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="220" y="85" fill="#333">1</text>
+      <rect x="240" y="64" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="260" y="85" fill="#333">0</text>
+      <rect x="280" y="64" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="300" y="85" fill="#333">0</text>
+      <!-- row3 -->
+      <rect x="0" y="96" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="20" y="117" fill="#333">0</text>
+      <rect x="40" y="96" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="60" y="117" fill="#333">1</text>
+      <rect x="80" y="96" width="40" height="32" fill="#9ec4e6" stroke="#bbb"/><text x="100" y="117" fill="#333">2</text>
+      <rect x="120" y="96" width="40" height="32" fill="#4f8fc7" stroke="#bbb"/><text x="140" y="117" fill="#fff">3</text>
+      <rect x="160" y="96" width="40" height="32" fill="#9ec4e6" stroke="#bbb"/><text x="180" y="117" fill="#333">2</text>
+      <rect x="200" y="96" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="220" y="117" fill="#333">0</text>
+      <rect x="240" y="96" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="260" y="117" fill="#333">0</text>
+      <rect x="280" y="96" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="300" y="117" fill="#333">0</text>
+      <!-- row4 -->
+      <rect x="0" y="128" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="20" y="149" fill="#333">0</text>
+      <rect x="40" y="128" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="60" y="149" fill="#333">0</text>
+      <rect x="80" y="128" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="100" y="149" fill="#333">1</text>
+      <rect x="120" y="128" width="40" height="32" fill="#d6e6f5" stroke="#bbb"/><text x="140" y="149" fill="#333">1</text>
+      <rect x="160" y="128" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="180" y="149" fill="#333">0</text>
+      <rect x="200" y="128" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="220" y="149" fill="#333">0</text>
+      <rect x="240" y="128" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="260" y="149" fill="#333">0</text>
+      <rect x="280" y="128" width="40" height="32" fill="#ffffff" stroke="#bbb"/><text x="300" y="149" fill="#333">0</text>
+    </g>
+    <!-- region outline for >=3 -->
+    <path d="M80 64 H160 V96 H160 V128 H120 V96 H80 Z" fill="none" stroke="var(--simul)" stroke-width="2.5" stroke-dasharray="5 3"/>
+  </g>
+  <g transform="translate(400,40)">
+    <text x="0" y="0" class="svg-text" font-weight="700" font-size="13">읽는 법</text>
+    <rect x="0" y="14" width="18" height="14" fill="#ffffff" stroke="#bbb"/><text x="26" y="26" class="svg-text" font-size="12">0 = 봤는데 불량 자리 아님</text>
+    <rect x="0" y="38" width="18" height="14" fill="#9ec4e6" stroke="#bbb"/><text x="26" y="50" class="svg-text" font-size="12">1, 2, 3… = 겹치는 전극 수 (진해짐)</text>
+    <rect x="0" y="62" width="18" height="14" fill="#a0a0a0" stroke="#bbb"/><text x="26" y="74" class="svg-text" font-size="12">회색 = 관측 안 한 칸 (0과 다름)</text>
+    <path d="M0 92 H18" stroke="var(--simul)" stroke-width="2.5" stroke-dasharray="5 3"/><text x="26" y="96" class="svg-text" font-size="12">빨간 점선 = "3 이상" 영역</text>
+    <text x="0" y="128" class="svg-muted" font-size="11">영역은 사용자가 기준 숫자를 줄 때만 그립니다.</text>
+    <text x="0" y="146" class="svg-muted" font-size="11">도구가 알아서 "여기가 제일 위험"이라고</text>
+    <text x="0" y="164" class="svg-muted" font-size="11">순위를 매기지는 않습니다.</text>
+  </g>
+</svg>
+<figcaption>그림 6. 전극 수 지도의 작은 예. 실제 PNG도 이렇게 숫자마다 다른 색을 쓰고, 안 본 칸은 회색으로 구분합니다.</figcaption>
+</figure>
+
+<h3>4.4 영역 넓이 대비 비율 (제품끼리 비교할 때)</h3>
+<p>제품 A는 화소가 크고 제품 B는 작다면, 같은 넓이의 그림 안에 B의 구조가 더 많이 들어갑니다. CA 숫자만 비교하면 공정하지 않습니다. 그래서 <b>CA ÷ 측정 영역 넓이</b>, 즉 "영역의 몇 %가 위험한가"로 바꿔 비교합니다. 단위가 없는 비율이라 화소 크기가 달라도 나란히 놓을 수 있습니다.</p>
+<figure>
+<svg viewBox="0 0 760 240" role="img" aria-label="화소 크기가 다른 두 제품을 비율로 비교">
+  <!-- product A -->
+  <text x="170" y="28" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">제품 A (화소가 큼)</text>
+  <rect x="50" y="40" width="240" height="140" class="svg-box"/>
+  <rect x="50" y="40" width="120" height="70" fill="none" stroke="var(--fg-muted)" stroke-dasharray="3 3"/>
+  <rect x="170" y="40" width="120" height="70" fill="none" stroke="var(--fg-muted)" stroke-dasharray="3 3"/>
+  <rect x="50" y="110" width="120" height="70" fill="none" stroke="var(--fg-muted)" stroke-dasharray="3 3"/>
+  <rect x="170" y="110" width="120" height="70" fill="none" stroke="var(--fg-muted)" stroke-dasharray="3 3"/>
+  <g fill="var(--simul)" opacity="0.7"><rect x="150" y="60" width="40" height="30"/><rect x="150" y="130" width="40" height="30"/><rect x="100" y="100" width="140" height="10"/></g>
+  <text x="170" y="205" text-anchor="middle" class="svg-text" font-size="12">CA 3.8 µm² / 영역 33.6 µm² = 11 %</text>
+  <!-- product B -->
+  <text x="560" y="28" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">제품 B (화소가 작음)</text>
+  <rect x="440" y="40" width="240" height="140" class="svg-box"/>
+  <g fill="none" stroke="var(--fg-muted)" stroke-dasharray="3 3">
+    <rect x="440" y="40" width="60" height="35"/><rect x="500" y="40" width="60" height="35"/><rect x="560" y="40" width="60" height="35"/><rect x="620" y="40" width="60" height="35"/>
+    <rect x="440" y="75" width="60" height="35"/><rect x="500" y="75" width="60" height="35"/><rect x="560" y="75" width="60" height="35"/><rect x="620" y="75" width="60" height="35"/>
+    <rect x="440" y="110" width="60" height="35"/><rect x="500" y="110" width="60" height="35"/><rect x="560" y="110" width="60" height="35"/><rect x="620" y="110" width="60" height="35"/>
+    <rect x="440" y="145" width="60" height="35"/><rect x="500" y="145" width="60" height="35"/><rect x="560" y="145" width="60" height="35"/><rect x="620" y="145" width="60" height="35"/>
+  </g>
+  <g fill="var(--simul)" opacity="0.7">
+    <rect x="490" y="50" width="20" height="15"/><rect x="550" y="50" width="20" height="15"/><rect x="610" y="50" width="20" height="15"/>
+    <rect x="490" y="85" width="20" height="15"/><rect x="550" y="85" width="20" height="15"/><rect x="610" y="85" width="20" height="15"/>
+    <rect x="490" y="120" width="20" height="15"/><rect x="550" y="120" width="20" height="15"/><rect x="610" y="120" width="20" height="15"/>
+    <rect x="490" y="155" width="20" height="15"/><rect x="550" y="155" width="20" height="15"/><rect x="610" y="155" width="20" height="15"/>
+  </g>
+  <text x="560" y="205" text-anchor="middle" class="svg-text" font-size="12">CA 5.2 µm² / 영역 33.6 µm² = 15 %</text>
+  <text x="380" y="232" text-anchor="middle" class="svg-muted" font-size="11">CA 절대값은 B가 크지만, 그건 구조가 더 많아서일 수도 있습니다. 비율로 보면 공정하게 비교됩니다. (숫자는 예시)</text>
+</svg>
+<figcaption>그림 7. 같은 넓이 안에 작은 화소는 더 많이 들어갑니다. 그래서 넓이 대비 비율로 비교합니다.</figcaption>
+</figure>
+
+<h3>4.5 같은 자리의 창 안 비교 (국부 ΔCA)</h3>
+<p>설계자가 "제품 A의 이 자리와 제품 B의 저 자리는 같은 구조"라고 짝을 지어 주면, 두 자리 둘레에 <b>같은 크기의 정사각형 창</b>(예: 한 변 20 µm)을 놓고 그 안의 CA를 각각 잽니다. 그 차이(B − A)가 "모양 변경이 불량을 얼마나 바꿨나"입니다. 창 크기가 같으니 화소 크기가 달라도 바로 비교할 수 있습니다.</p>
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="두 제품의 대응 위치에 같은 크기 창을 놓고 비교">
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <!-- A -->
+  <text x="160" y="26" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">제품 A (기준)</text>
+  <rect x="40" y="40" width="240" height="180" class="svg-box"/>
+  <g fill="var(--electrode)" opacity="0.5"><rect x="60" y="80" width="200" height="14"/><rect x="60" y="150" width="200" height="14"/><rect x="120" y="50" width="14" height="160"/><rect x="200" y="50" width="14" height="160"/></g>
+  <g fill="var(--simul)" opacity="0.75"><rect x="112" y="94" width="30" height="56"/><rect x="192" y="94" width="30" height="56"/></g>
+  <rect x="110" y="70" width="110" height="110" fill="none" stroke="var(--simul)" stroke-width="2.5"/>
+  <circle cx="165" cy="125" r="3" fill="var(--fg)"/>
+  <text x="165" y="245" text-anchor="middle" class="svg-text" font-size="12">창 안 CA_A = 0.84 µm²</text>
+  <!-- B -->
+  <text x="600" y="26" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">제품 B (비교 대상)</text>
+  <rect x="480" y="40" width="240" height="180" class="svg-box"/>
+  <g fill="var(--electrode)" opacity="0.5"><rect x="500" y="80" width="200" height="14"/><rect x="500" y="150" width="200" height="14"/><rect x="552" y="50" width="14" height="160"/><rect x="648" y="50" width="14" height="160"/></g>
+  <g fill="var(--simul)" opacity="0.75"><rect x="546" y="94" width="20" height="56"/><rect x="646" y="94" width="20" height="56"/></g>
+  <rect x="550" y="70" width="110" height="110" fill="none" stroke="var(--simul)" stroke-width="2.5"/>
+  <circle cx="605" cy="125" r="3" fill="var(--fg)"/>
+  <text x="605" y="245" text-anchor="middle" class="svg-text" font-size="12">창 안 CA_B = 0.56 µm²</text>
+  <!-- middle -->
+  <path d="M290 130 H470" class="svg-line" stroke-width="1.5" marker-end="url(#a3)" stroke-dasharray="4 3"/>
+  <text x="380" y="118" text-anchor="middle" class="svg-text" font-size="12">같은 자리 (설계자가 짝지음)</text>
+  <text x="380" y="150" text-anchor="middle" class="svg-muted" font-size="11">같은 크기 창 (예: 20 µm)</text>
+  <text x="380" y="280" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">Δ = CA_B − CA_A = −0.28 µm²  → 전극 간격을 넓힌 B가 이 자리에서 더 안전</text>
+</svg>
+<figcaption>그림 8. 같은 자리에 같은 크기 창을 놓고 안쪽 CA를 뺍니다. 두 제품 그림을 겹쳐 맞추는 일은 하지 않습니다. (숫자는 예시)</figcaption>
+</figure>
+<p>몇 가지 세부 규칙이 있습니다.</p>
+<ul>
+  <li><b>창 크기는 사용자가 정합니다.</b> 코드에 기본값이 없습니다. 10 / 20 / 30 µm 세 가지로 돌려 보고 어느 크기가 안정적인지 표(민감도 표)를 보고 고릅니다.</li>
+  <li><b>창 안쪽 핵심 구역</b>: 창 가장자리의 불량은 창 밖 전극 때문일 수도 있습니다. 그래서 창에서 이물 지름만큼 안쪽으로 들어간 작은 정사각형 값도 따로 냅니다. 창이 지름보다 작으면 이 값은 "해당 없음"입니다.</li>
+  <li><b>창이 그림 밖으로 나가거나 안 본 칸을 포함하면</b> 그 쪽 값은 "부분"이 되고 차이는 비웁니다. 반쪽짜리 차이를 만들지 않습니다.</li>
+  <li><b>흔들어 보기</b>: 라벨을 찍을 때 조금 어긋날 수 있으니, 중심을 ±0.5 µm 정도 네 방향으로 옮겨 다시 재서 결과 부호가 바뀌는지 기록합니다.</li>
+  <li>결과는 쌍마다 A/B 그림 조각과 숫자 표를 나란히 둔 HTML로도 나옵니다. 폐쇄망에서 파일만 열면 됩니다.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s5"><span class="num">5</span>결과를 읽는 법</h2>
+<p>모든 숫자에는 <b>상태</b>가 붙어 있습니다. 숫자만 보지 말고 상태를 먼저 보세요. 비어 있는 칸은 "0"이 아니라 "아직 모름"입니다.</p>
+<div class="cards">
+  <div class="card ok"><div class="t">available</div><div class="s">다 봤고, 쓸 수 있는 값. "0"도 여기 들어갑니다(봤는데 불량 자리가 없음).</div></div>
+  <div class="card warn"><div class="t">partial</div><div class="s">일부만 봄. 값 칸은 비우고 "본 부분까지의 합"을 따로 적습니다. 이유가 같이 붙습니다.</div></div>
+  <div class="card crit"><div class="t">unavailable</div><div class="s">계산할 수 없음. 사용자 답을 기다리는 질문이 걸려 있거나 입력이 안 맞음. 이유를 적습니다.</div></div>
+  <div class="card muted"><div class="t">not_applicable</div><div class="s">원래 해당 없음. 예: 층 간격보다 작은 이물의 위아래 short.</div></div>
+</div>
+<p>명령을 실행하면 끝날 때 숫자 하나(종료 코드)를 돌려줍니다.</p>
+<div class="tbl"><table>
+<thead><tr><th>종료 코드</th><th>뜻</th><th>할 일</th></tr></thead>
+<tbody>
+<tr><td class="num">0</td><td>요청한 결과가 모두 나옴</td><td>결과 파일을 봅니다</td></tr>
+<tr><td class="num">3</td><td>일부는 나왔고 일부는 비어 있음</td><td>비어 있는 항목의 이유(reasons)를 확인합니다. 대개 사용자 입력이 더 필요합니다</td></tr>
+<tr><td class="num">2</td><td>입력이나 설정이 잘못됨</td><td>오류 메시지와 <code>error.json</code>을 봅니다. 결과 파일은 만들지 않습니다</td></tr>
+</tbody></table></div>
+<div class="note">실제 자료를 처음 넣으면 3이 나오는 것이 정상입니다. 원천 폴더에는 제품·공정·전극 쌍 분류표 같은 정보가 없어서, 사용자가 설정 파일에 확인된 값을 넣어 주기 전까지는 "그림 넓이"만 계산하고 나머지는 비워 둡니다.</div>
+
+<!-- ================================================================ -->
+<h2 id="s6"><span class="num">6</span>실제로 어떻게 쓰나</h2>
+<p>폐쇄망 Windows PC에서 명령 프롬프트(CMD)로 씁니다. 설치 파일(wheel 묶음)은 Git에 들어 있고 설치·도움말 실행은 사용자가 성공을 확인했습니다.</p>
+<figure>
+<svg viewBox="0 0 760 330" role="img" aria-label="실행 순서">
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <g>
+    <rect x="20" y="20" width="160" height="60" rx="8" class="svg-box"/>
+    <text x="100" y="44" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">① 설치</text>
+    <text x="100" y="64" text-anchor="middle" class="svg-mono" font-size="10">ZIP 풀고 pip install</text>
+    <rect x="210" y="20" width="160" height="60" rx="8" class="svg-box"/>
+    <text x="290" y="44" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">② 실제 폴더 가져오기</text>
+    <text x="290" y="64" text-anchor="middle" class="svg-mono" font-size="10">import-hotspots</text>
+    <rect x="400" y="20" width="160" height="60" rx="8" class="svg-box"/>
+    <text x="480" y="44" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">③ 입력 점검</text>
+    <text x="480" y="64" text-anchor="middle" class="svg-mono" font-size="10">validate-data</text>
+    <rect x="590" y="20" width="150" height="60" rx="8" class="svg-accent"/>
+    <text x="665" y="44" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">④ 두 제품 비교</text>
+    <text x="665" y="64" text-anchor="middle" class="svg-mono" font-size="10">compare</text>
+    <path d="M180 50 H210" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+    <path d="M370 50 H400" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+    <path d="M560 50 H590" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+  </g>
+  <g>
+    <rect x="590" y="120" width="150" height="60" rx="8" class="svg-accent"/>
+    <text x="665" y="144" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">⑤ 약한 자리 지도</text>
+    <text x="665" y="164" text-anchor="middle" class="svg-mono" font-size="10">electrode-map</text>
+    <rect x="400" y="120" width="160" height="60" rx="8" class="svg-box"/>
+    <text x="480" y="144" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">⑥ 검토 위치 내보내기</text>
+    <text x="480" y="164" text-anchor="middle" class="svg-mono" font-size="10">export-review-rois → DL2</text>
+    <rect x="210" y="120" width="160" height="60" rx="8" class="svg-accent"/>
+    <text x="290" y="144" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">⑦ 같은 자리 창 비교</text>
+    <text x="290" y="164" text-anchor="middle" class="svg-mono" font-size="10">compare-windows</text>
+    <rect x="20" y="120" width="160" height="60" rx="8" class="svg-box"/>
+    <text x="100" y="144" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">⑧ 설계자 검토</text>
+    <text x="100" y="164" text-anchor="middle" class="svg-mono" font-size="10">local_delta.html</text>
+    <path d="M665 80 V120" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+    <path d="M590 150 H560" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+    <path d="M400 150 H370" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+    <path d="M210 150 H180" class="svg-line" stroke-width="1.5" marker-end="url(#a4)"/>
+  </g>
+  <rect x="20" y="215" width="720" height="95" rx="8" class="svg-box" stroke-dasharray="4 3"/>
+  <text x="380" y="240" text-anchor="middle" class="svg-text" font-weight="700" font-size="12">⑦에 필요한 것: 대응 위치 파일 (roi_correspondence_v1)</text>
+  <text x="380" y="262" text-anchor="middle" class="svg-text" font-size="11">설계자가 "A의 (x, y)와 B의 (x', y')는 같은 자리"라고 적은 JSON. 수십 개면 충분합니다.</text>
+  <text x="380" y="282" text-anchor="middle" class="svg-text" font-size="11">나중에는 DL2가 찾은 위치도 같은 형식으로 받아 같은 길로 계산합니다.</text>
+  <text x="380" y="300" text-anchor="middle" class="svg-muted" font-size="10">파란 상자가 이 저장소의 핵심 계산 세 가지입니다.</text>
+</svg>
+<figcaption>그림 9. 설치부터 설계자 검토까지. ④⑤⑦이 핵심 계산입니다.</figcaption>
+</figure>
+
+<p>자주 쓰는 명령은 이렇습니다. 경로는 실제 위치로 바꿉니다.</p>
+<pre><code>:: 실제 자료 가져오기 (출력 폴더는 새 폴더)
+.venv-cmd\Scripts\python.exe -m simcompare import-hotspots --root "D:\data\input\hotspot" --out "D:\data\imported\reference"
+
+:: 점검 → 비교 → 지도
+.venv-cmd\Scripts\python.exe -m simcompare validate-data --config "D:\data\real.yaml"
+.venv-cmd\Scripts\python.exe -m simcompare compare       --config "D:\data\real.yaml"
+.venv-cmd\Scripts\python.exe -m simcompare electrode-map --config "D:\data\real.yaml"
+
+:: 같은 자리 창 비교 (창 크기는 반드시 적어 줌)
+.venv-cmd\Scripts\python.exe -m simcompare compare-windows --config "D:\data\real.yaml" ^
+    --correspondence "D:\data\pairs.json" --window-sizes 10 20 30 --sort-diameter-um 5 --out "D:\data\local"</code></pre>
+<p>연습용 가짜 자료가 필요하면 <code>demo-data --out demo_data</code>로 만들 수 있습니다. 가짜 자료는 코드가 도는지 보는 용도이지 실제 결과가 아닙니다.</p>
+
+<!-- ================================================================ -->
+<h2 id="s7"><span class="num">7</span>세 개의 저장소</h2>
+<p>이 일은 저장소 세 개가 나눠 맡습니다. 이 문서의 주인공은 <b>C</b>입니다.</p>
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="C, DL1, DL2 세 저장소의 역할">
+  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <rect x="20" y="30" width="240" height="190" rx="8" class="svg-accent"/>
+  <text x="140" y="58" text-anchor="middle" class="svg-text" font-weight="700" font-size="15">C · 계산기 (이 저장소)</text>
+  <text x="140" y="84" text-anchor="middle" class="svg-text" font-size="12">넓이를 세고 비교하고 지도를 그림</text>
+  <text x="34" y="114" class="svg-text" font-size="12">• 숫자는 전부 여기서 나옴</text>
+  <text x="34" y="136" class="svg-text" font-size="12">• 교환 파일 형식의 주인</text>
+  <text x="34" y="158" class="svg-text" font-size="12">• DL 결과가 바뀌지 않았는지 검사</text>
+  <text x="34" y="190" class="svg-muted" font-size="11">딥러닝 없음, 학습 없음</text>
+  <rect x="500" y="30" width="240" height="80" rx="8" class="svg-box"/>
+  <text x="620" y="56" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">DL1 · 비슷한 제품 찾기</text>
+  <text x="620" y="78" text-anchor="middle" class="svg-text" font-size="12">전극 모양 그림으로 후보 제품을 고름</text>
+  <text x="620" y="98" text-anchor="middle" class="svg-muted" font-size="11">particle-sim-dl1</text>
+  <rect x="500" y="140" width="240" height="80" rx="8" class="svg-box"/>
+  <text x="620" y="166" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">DL2 · 비슷한 자리 찾기</text>
+  <text x="620" y="188" text-anchor="middle" class="svg-text" font-size="12">사용자가 찍은 자리와 닮은 자리를 다른 제품에서 찾음</text>
+  <text x="620" y="208" text-anchor="middle" class="svg-muted" font-size="11">particle-sim-dl2</text>
+  <path d="M260 70 H500" class="svg-line" stroke-width="1.5" marker-end="url(#a5)" marker-start="url(#a5)"/>
+  <text x="380" y="62" text-anchor="middle" class="svg-text" font-size="11">제품 목록 ↔ 점수</text>
+  <path d="M260 180 H500" class="svg-line" stroke-width="1.5" marker-end="url(#a5)" marker-start="url(#a5)"/>
+  <text x="380" y="172" text-anchor="middle" class="svg-text" font-size="11">검토 위치 → 닮은 위치</text>
+  <text x="380" y="125" text-anchor="middle" class="svg-muted" font-size="11">DL 점수는 "참고"로 옆에 붙을 뿐 계산에는 안 들어갑니다</text>
+</svg>
+<figcaption>그림 10. C가 숫자를 내고, DL1·DL2는 "어디를 볼지"를 찾아 줍니다.</figcaption>
+</figure>
+
+<!-- ================================================================ -->
+<h2 id="s8"><span class="num">8</span>이 도구가 지키는 약속</h2>
+<ol>
+  <li><b>그림을 고치지 않습니다.</b> 늘리기, 줄이기, 회전, 흐리기 없이 원본 칸을 그대로 셉니다. 두 제품 그림을 겹쳐 맞추지도 않습니다.</li>
+  <li><b>모르는 건 모른다고 합니다.</b> 사용자가 아직 답하지 않은 값(밀도 단위, 화소 하나로 환산하는 방법, 창 크기)은 코드에 기본값으로 넣지 않습니다. 그 값이 필요한 계산은 비우고 이유를 적습니다.</li>
+  <li><b>비어 있음과 0을 구분합니다.</b> "봤는데 없음"은 0, "안 봄"은 빈칸, "원래 해당 없음"은 따로 표시합니다. CSV에서도 빈칸을 0으로 바꾸지 않습니다.</li>
+  <li><b>이름을 바꾸지 않습니다.</b> 전극 이름, case 이름을 대소문자나 기호까지 그대로 둡니다. 나중에 원천 파일로 되돌아갈 수 있어야 하기 때문입니다.</li>
+  <li><b>DL은 조수입니다.</b> DL1·DL2 점수는 결과 옆에 표시만 하고 어떤 숫자에도 곱하거나 더하지 않습니다.</li>
+  <li><b>입력 파일을 의심합니다.</b> PNG는 열기 전에 손상·투명도·16비트·회전 정보까지 검사하고, 조금이라도 애매하면 "다시 저장해 달라"고 거부합니다. 모든 입력 파일의 해시(지문)를 기록합니다.</li>
+</ol>
+
+<!-- ================================================================ -->
+<h2 id="s9"><span class="num">9</span>지금까지 어떻게 왔나</h2>
+<p>한 달 남짓 동안 한 번 큰 방향 전환이 있었습니다. 처음에는 여러 입력을 섞어 배우는 딥러닝 모델로 "비슷한 사례 찾기"를 하려 했지만, 10월 7일에 <b>"이미 나온 그림을 정확히 세는 계산기"</b>로 다시 만들었습니다. 그 뒤로는 사용자 답변을 받을 때마다 계산 범위를 한 단계씩 넓혀 왔습니다.</p>
+<ul class="timeline">
+  <li><span class="d">9/16</span>첫 설계. 다섯 가지 입력을 섞어 배우는 딥러닝 모델 (지금은 보관용 브랜치에만 남음)</li>
+  <li><span class="d">9/27</span>CA 단위 버그 수정. 시뮬레이터가 이미 나눈 값을 또 나누던 문제</li>
+  <li><span class="d">10/7</span><b>방향 전환.</b> 계획서 v2 채택: 그림 세기 계산기 + 전극 수 지도 + DL 분리</li>
+  <li><span class="d">10/8~9</span>핵심 계산 구현과 독립 리뷰 두 차례. 옛 기능(학습·검색) 정리. DL1·DL2 저장소 시작. 폐쇄망 인수 절차</li>
+  <li><span class="d">10/13</span>실제 파일 형식 확정(검정 배경 흰 패턴, 칸 0.1 µm). PNG 엄격 검사기</li>
+  <li><span class="d">10/15</span>실제 폴더 가져오기 명령, Windows 오프라인 설치 묶음</li>
+  <li><span class="d">10/18</span><b>같은 자리 창 비교</b>(compare-windows), 비율 비교, 창 크기 민감도, 나란히 보는 HTML. 독립 리뷰 2회 통과</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s10"><span class="num">10</span>지금 상태와 남은 일</h2>
+<h3>된 것</h3>
+<ul class="check">
+  <li class="done">다섯 가지 숫자 계산 전부 구현, 가짜 자료로 자동 시험 870개 통과</li>
+  <li class="done">독립 리뷰(다른 세션이 읽기 전용으로 검토) 모두 "통과, 메모 있음"</li>
+  <li class="done">Windows 폐쇄망 설치·도움말 실행을 사용자가 확인</li>
+  <li class="done">실제 폴더를 읽어 들이는 명령과 파일 형식 검사기</li>
+  <li class="done">DL1·DL2와 주고받는 파일 형식, 위조·변경 검사</li>
+</ul>
+<h3>사용자 답을 기다리는 것 (답이 올 때까지 해당 계산은 빈칸)</h3>
+<ul class="check">
+  <li class="todo"><b>G1</b> 이물 밀도의 단위와 조사 면적. 지름마다 값 하나라는 것까지는 확정</li>
+  <li class="todo"><b>G2</b> 화소 2×2 그림에서 화소 하나 값을 어떻게 뽑을지. 칸 크기 0.1 µm는 확정</li>
+  <li class="todo"><b>G4</b> 창 크기. 10 / 20 / 30 µm로 실험해 보고 고르기로 함</li>
+  <li class="todo"><b>G5·G6</b> DL1의 실제 격자 크기, 정답 라벨과 합격 기준</li>
+</ul>
+<h3>실제 자료로 해 봐야 하는 것</h3>
+<ul class="check">
+  <li class="todo">폐쇄망에서 실제 그림 수백 장으로 비교·지도 실행 (메모리 16 GB 확인 포함)</li>
+  <li class="todo">설계자가 짝지은 수십 개 자리의 창 비교 표를 보고 "눈으로 본 판단과 맞다"고 기록</li>
+  <li class="todo">창 크기 세 가지 중 하나 고르기 (G4 닫기)</li>
+  <li class="todo">DL2가 찾은 자리와 단순한 기준선(패턴 매칭) 중 어느 쪽이 더 맞는지 비교</li>
+</ul>
+<h3>일부러 미뤄 둔 것</h3>
+<ul class="check">
+  <li class="hold">수율(%)로 환산하기</li>
+  <li class="hold">여러 층 윤곽을 한 화면에 겹쳐 보는 화면, 클릭해서 따라가는 뷰어</li>
+  <li class="hold">설계 변경 하나하나에 불량을 배분하는 분석</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s11"><span class="num">11</span>코드는 어떻게 생겼나</h2>
+<p>Python 패키지 하나(<code>src/simcompare</code>, 26개 파일, 약 9,700줄)와 시험(37개 파일, 약 7,700줄)으로 되어 있습니다. 외부 라이브러리는 numpy, pandas, pillow 정도이고 딥러닝 라이브러리는 없습니다.</p>
+<div class="tbl"><table>
+<thead><tr><th>묶음</th><th>파일</th><th>하는 일 (쉬운 말)</th></tr></thead>
+<tbody>
+<tr><td>입구</td><td><code>cli.py</code>, <code>pipeline.py</code></td><td>명령어를 받아 알맞은 계산을 부르고 결과 파일을 씀</td></tr>
+<tr><td>입력 읽기</td><td><code>adapters/real_hotspot.py</code>, <code>adapters/numeric.py</code>, <code>png_strict.py</code>, <code>numeric_images.py</code></td><td>실제 폴더와 가짜 자료를 읽고, PNG를 엄격히 검사하고, 파일 지문을 확인</td></tr>
+<tr><td>자료 모양</td><td><code>numeric_schema.py</code></td><td>frame, case, 전극 쌍 같은 자료의 모양과 검사 규칙</td></tr>
+<tr><td>세기</td><td><code>measurement.py</code>, <code>linepixel.py</code>, <code>density.py</code></td><td>흰 칸 세기, line/pixel·종류별 조각·비율, (가짜 자료에서만) 밀도 곱하기</td></tr>
+<tr><td>지도</td><td><code>electrode_map.py</code>, <code>heatmap.py</code></td><td>전극 수 지도 계산과 PNG 그리기</td></tr>
+<tr><td>같은 자리 비교</td><td><code>correspondence.py</code>, <code>local_delta.py</code>, <code>local_delta_report.py</code></td><td>대응 위치 파일 읽기·변환, 창 안 비교, 나란히 보는 HTML</td></tr>
+<tr><td>DL과 주고받기</td><td><code>roi_export.py</code>, <code>dl_results.py</code></td><td>검토 위치 내보내기, DL 결과 파일의 지문 고정과 검사</td></tr>
+<tr><td>보고서</td><td><code>report.py</code></td><td>JSON/CSV/HTML 쓰기. 빈칸을 0으로 바꾸지 않음</td></tr>
+<tr><td>옛 호환</td><td><code>schema.py</code>, <code>adapters/example.py</code>, <code>preprocess.py</code>, <code>merge.py</code>, <code>adapters/particle_sim_run.py</code></td><td>예전 시뮬레이터 출력 형식을 검사·병합하는 용도로만 남김</td></tr>
+</tbody></table></div>
+
+<!-- ================================================================ -->
+<h2 id="s12"><span class="num">12</span>더 알고 싶으면</h2>
+<div class="tbl"><table>
+<thead><tr><th>궁금한 것</th><th>볼 문서</th></tr></thead>
+<tbody>
+<tr><td>정확한 규칙과 용어 정의 (기술 문서)</td><td><code>docs/repo_summary.html</code> (v1), <code>docs/data_contract.md</code>, <code>SPEC.md</code></td></tr>
+<tr><td>설치하고 실행하는 순서</td><td><code>docs/usage.md</code>, <code>docs/handoff/commands.md</code></td></tr>
+<tr><td>어떤 질문이 아직 안 닫혔나</td><td><code>docs/open_questions.md</code></td></tr>
+<tr><td>같은 자리 창 비교의 계획과 리뷰 반영</td><td><code>docs/plan/PLAN_v3_local_delta_ca.md</code></td></tr>
+<tr><td>뭔가 실패했을 때</td><td><code>docs/handoff/troubleshooting.md</code></td></tr>
+<tr><td>지금까지 사용자가 결정한 것들</td><td><code>docs/implementation_memory.json</code></td></tr>
+</tbody></table></div>
+
+<footer>
+  <p>이 안내는 2026-10-18 저장소 상태(<code>rewrite/line-pixel-rate @ a060a0b</code>)를 쉬운 말로 풀어 쓴 것입니다. 그림 속 숫자는 설명용 예시입니다. 정확한 규칙은 <code>docs/data_contract.md</code>와 <code>SPEC.md</code>가 우선합니다. 외부 참조 없이 <code>file://</code>로 열립니다.</p>
+</footer>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>simcompare 저장소 요약</title>
+<meta name="description" content="particle-sim-compare(simcompare) 저장소의 목적, 구조, 데이터 계약, 핵심 계산, 폐쇄망 운영, 검증 이력과 미결 사항을 한 문서로 정리한 기술 요약.">
+<style>
+/* Layout: 좌측 고정 목차 + 본문 한 열(최대 76ch). 폰트는 외부 참조 없이 시스템 글꼴만 사용(폐쇄망 file:// 열람). */
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --fg: #1b2430;
+  --fg-muted: #5b6673;
+  --line: #d6dce4;
+  --accent: #1f5f8b;
+  --accent-soft: #e3eef7;
+  --ok: #1a7f4b;
+  --warn: #b26a00;
+  --crit: #b3261e;
+  --hold: #6b5ca5;
+  --lateral: #005ac8;
+  --vertical: #00965a;
+  --simul: #c81e1e;
+  --code-bg: #f0f3f7;
+  --font-body: "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Malgun Gothic", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Consolas", "D2Coding", "Noto Sans Mono CJK KR", ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141a21; --surface: #1b232c; --surface-2: #232d38; --fg: #e4e9ef; --fg-muted: #9aa7b5;
+    --line: #34404d; --accent: #7fb5df; --accent-soft: #1f3345; --ok: #5fcf8f; --warn: #e5a94a; --crit: #f08a82;
+    --hold: #b2a5e6; --lateral: #6ea6ff; --vertical: #4ed49a; --simul: #ff7a7a; --code-bg: #0f151b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141a21; --surface: #1b232c; --surface-2: #232d38; --fg: #e4e9ef; --fg-muted: #9aa7b5;
+  --line: #34404d; --accent: #7fb5df; --accent-soft: #1f3345; --ok: #5fcf8f; --warn: #e5a94a; --crit: #f08a82;
+  --hold: #b2a5e6; --lateral: #6ea6ff; --vertical: #4ed49a; --simul: #ff7a7a; --code-bg: #0f151b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body);
+  font-size: 15.5px; line-height: 1.7; -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, pre, kbd { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.9rem 1rem; overflow-x: auto; line-height: 1.55; margin: 0.8rem 0; }
+pre code { background: none; padding: 0; font-size: 0.86em; }
+h1, h2, h3, h4 { line-height: 1.3; text-wrap: balance; font-weight: 700; margin: 0; }
+h1 { font-size: 2rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; padding-top: 0.6rem; border-top: 2px solid var(--accent); margin-top: 2.8rem; }
+h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 0.5rem; }
+h3 { font-size: 1.12rem; margin-top: 1.8rem; }
+h4 { font-size: 1rem; margin-top: 1.2rem; color: var(--fg-muted); }
+p { margin: 0.7rem 0; }
+ul, ol { padding-left: 1.3rem; margin: 0.5rem 0; }
+li { margin: 0.25rem 0; }
+.page {
+  display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 2.5rem;
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 1.5rem 4rem;
+}
+nav.toc {
+  position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow-y: auto;
+  font-size: 0.86rem; line-height: 1.5; padding-right: 0.5rem;
+}
+nav.toc .label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; color: var(--fg-muted); margin-bottom: 0.5rem; }
+nav.toc ol { list-style: none; padding: 0; margin: 0; }
+nav.toc li { margin: 0; }
+nav.toc a { display: block; padding: 0.22rem 0.5rem; border-left: 2px solid var(--line); color: var(--fg-muted); text-decoration: none; }
+nav.toc a:hover { color: var(--fg); border-color: var(--accent); }
+nav.toc .n { display: inline-block; width: 1.6em; color: var(--accent); font-variant-numeric: tabular-nums; }
+main { min-width: 0; max-width: 76ch; }
+header.hero { padding-bottom: 1.2rem; border-bottom: 1px solid var(--line); }
+.eyebrow { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.74rem; color: var(--accent); font-weight: 600; }
+.lede { font-size: 1.08rem; color: var(--fg); margin-top: 0.9rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; font-size: 0.84rem; color: var(--fg-muted); margin-top: 0.9rem; font-variant-numeric: tabular-nums; }
+.meta b { color: var(--fg); font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.6rem; margin: 1.2rem 0; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; }
+.stat .v { font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat .k { font-size: 0.78rem; color: var(--fg-muted); margin-top: 0.2rem; }
+.chip { display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 0.05rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; line-height: 1.5; vertical-align: middle; white-space: nowrap; }
+.chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.crit { color: var(--crit); } .chip.hold { color: var(--hold); } .chip.info { color: var(--accent); } .chip.muted { color: var(--fg-muted); }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 0.6rem 0.9rem; margin: 0.9rem 0; border-radius: 0 6px 6px 0; }
+.note.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+.tbl { overflow-x: auto; margin: 0.8rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; line-height: 1.5; }
+th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td code { white-space: nowrap; }
+.legacy td { color: var(--fg-muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; font-size: 0.84rem; margin: 0.4rem 0; }
+.legend span::before { content: ""; display: inline-block; width: 0.8em; height: 0.8em; border-radius: 2px; margin-right: 0.4em; vertical-align: -0.05em; background: var(--c); }
+figure { margin: 1.2rem 0; }
+figure svg { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+figcaption { font-size: 0.82rem; color: var(--fg-muted); margin-top: 0.4rem; }
+.svg-text { font-family: var(--font-body); fill: var(--fg); }
+.svg-mono { font-family: var(--font-mono); fill: var(--fg); }
+.svg-muted { fill: var(--fg-muted); }
+.svg-box { fill: var(--surface-2); stroke: var(--line); }
+.svg-accent { fill: var(--accent-soft); stroke: var(--accent); }
+.svg-line { stroke: var(--fg-muted); fill: none; }
+.svg-arrow { fill: var(--fg-muted); }
+details { border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem 0.9rem; margin: 0.8rem 0; background: var(--surface); }
+summary { cursor: pointer; font-weight: 600; }
+.timeline { list-style: none; padding: 0; margin: 1rem 0; border-left: 2px solid var(--line); }
+.timeline li { position: relative; padding: 0 0 0.9rem 1.2rem; margin: 0; }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 0.55em; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); }
+.timeline .d { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); margin-right: 0.5rem; }
+.timeline .c { color: var(--fg-muted); font-family: var(--font-mono); font-size: 0.8em; }
+.formula { font-family: var(--font-mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 1rem; margin: 0.8rem 0; overflow-x: auto; white-space: pre; line-height: 1.6; font-size: 0.86rem; }
+.ref { font-size: 0.8rem; color: var(--fg-muted); font-family: var(--font-mono); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; }
+.cols > div { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; }
+.cols h4 { margin-top: 0; color: var(--fg); }
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: 0.82rem; color: var(--fg-muted); }
+@media (max-width: 960px) {
+  .page { grid-template-columns: 1fr; gap: 1rem; }
+  nav.toc { position: static; max-height: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; background: var(--surface); }
+  nav.toc ol { columns: 2; column-gap: 1rem; }
+}
+@media (max-width: 520px) { nav.toc ol { columns: 1; } h1 { font-size: 1.6rem; } }
+</style>
+</head>
+<body>
+<div class="page">
+<nav class="toc" aria-label="목차">
+  <div class="label">목차</div>
+  <ol>
+    <li><a href="#s1"><span class="n">1</span>한눈에 보기</a></li>
+    <li><a href="#s2"><span class="n">2</span>배경과 문제 정의</a></li>
+    <li><a href="#s3"><span class="n">3</span>변천사</a></li>
+    <li><a href="#s4"><span class="n">4</span>저장소 구조와 모듈</a></li>
+    <li><a href="#s5"><span class="n">5</span>명령과 출력</a></li>
+    <li><a href="#s6"><span class="n">6</span>데이터 계약</a></li>
+    <li><a href="#s7"><span class="n">7</span>핵심 계산 정의</a></li>
+    <li><a href="#s8"><span class="n">8</span>국부 ΔCA와 대응 위치</a></li>
+    <li><a href="#s9"><span class="n">9</span>DL1/DL2 교환</a></li>
+    <li><a href="#s10"><span class="n">10</span>폐쇄망 운영</a></li>
+    <li><a href="#s11"><span class="n">11</span>검증과 독립 리뷰</a></li>
+    <li><a href="#s12"><span class="n">12</span>미결 게이트와 보류</a></li>
+    <li><a href="#s13"><span class="n">13</span>폐기·legacy 경로</a></li>
+    <li><a href="#s14"><span class="n">14</span>문서 지도</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">particle-sim-compare · 저장소 기술 요약</div>
+  <h1>simcompare 저장소 요약</h1>
+  <p class="lede">이미 계산된 디스플레이 이물(particle) 시뮬레이션 결과(binary short mask)를 받아, 제품 간 line / pixel 면적, 불량 유형 조각, 전극 수 지도, 대응 위치의 국부 ΔCA를 <b>수치로 비교</b>하는 Python 패키지다. CA나 hotspot을 예측하는 모델이 아니며, 누락을 0으로 채우지 않고 미확정 값은 <code>null</code>과 사유로 남긴다.</p>
+  <div class="meta">
+    <span>기준 커밋 <b>a060a0b</b></span>
+    <span>브랜치 <b>rewrite/line-pixel-rate</b></span>
+    <span>작성일 <b>2026-10-18</b></span>
+    <span>패키지 <b>simcompare 0.1.0</b></span>
+    <span>Python <b>≥ 3.11</b></span>
+  </div>
+</header>
+
+<!-- ================================================================ -->
+<h2 id="s1"><span class="num">1</span>한눈에 보기</h2>
+
+<div class="stats">
+  <div class="stat"><div class="v">26</div><div class="k">src 모듈 (9,658줄)</div></div>
+  <div class="stat"><div class="v">37</div><div class="k">테스트 파일 (7,695줄)</div></div>
+  <div class="stat"><div class="v">870</div><div class="k">pytest 통과 · 3 skip · 47 s</div></div>
+  <div class="stat"><div class="v">116</div><div class="k">커밋 (2026-09-16 ~ 10-18)</div></div>
+  <div class="stat"><div class="v">8</div><div class="k">공개 CLI 명령 + 변환기 1</div></div>
+  <div class="stat"><div class="v">6</div><div class="k">교환 schema 버전</div></div>
+</div>
+
+<p>이 저장소는 세 저장소 묶음의 <b>C</b>(compare)다. C는 수치를 계산하고, 별도 저장소 <b>DL1</b>(<code>particle-sim-dl1</code>, 원본 구조로 제품 후보 검색)과 <b>DL2</b>(<code>particle-sim-dl2</code>, 사용자가 고른 위치와 비슷한 ROI 검색)가 학습·검색을 맡는다. DL 점수는 C의 수치 옆에 표시만 하고 어떤 계산에도 들어가지 않는다.</p>
+
+<div class="tbl"><table>
+<thead><tr><th>관점</th><th>현재 상태</th></tr></thead>
+<tbody>
+<tr><td>검증 범위</td><td>합성 <code>numeric_v2</code> 데이터로 전 경로 검증. 실자료는 <code>real_hotspot_v1</code> import까지 코드가 있으며 수치 검증은 폐쇄망(Windows)에서 아직 수행 전 <span class="chip warn">pending</span></td></tr>
+<tr><td>독립 리뷰</td><td>R1·R2(수치 경로), R5b(인수), R6b(strict PNG), 실자료 import R1~R3, PLAN_v3 2회 모두 PASS-WITH-NOTES. 마지막 커밋 <code>a060a0b</code>의 후속 수정은 미리뷰 <span class="chip ok">PASS-WITH-NOTES</span></td></tr>
+<tr><td>폐쇄망 설치</td><td>Windows CMD + CPython 3.12 x64 + 동봉 wheel(<code>bundles/windows_cp312_win_amd64.zip</code>). 설치·pip check·도움말은 사용자 성공 확인 <span class="chip ok">확인됨</span></td></tr>
+<tr><td>미결 게이트</td><td>G1 밀도 단위·조사면적, G2 한 unit 환산, G4 창 크기(10/20/30 µm 실험 후 결정), G5 DL1 실제 격자, G6 라벨·수락 기준 <span class="chip warn">pending</span></td></tr>
+<tr><td>보류 항목</td><td>수율 환산, 밀도 단위 환산, layer 겹쳐 보기 화면, 클릭 추적 뷰어 <span class="chip hold">on hold</span></td></tr>
+<tr><td>폐기 경로</td><td><code>train</code>·<code>embed</code>·<code>analyze</code>·<code>evaluate</code>·<code>all</code>, AE/PCA/CAA, legacy demo generator. <code>docs/arch</code>·walkthrough는 archived 기록 <span class="chip muted">retired</span></td></tr>
+</tbody></table></div>
+
+<p><b>지표는 서로 다른 축이며 하나로 합치지 않는다.</b> line / pixel 면적, pair exclusive / shared, transfer, 세 failure pieces(lateral_only / vertical_only / simultaneous), 전극 수 지도, fraction_of_frame, 국부 ΔCA는 각각 독립 출력이다. 관측 0은 available 0이고 누락(missing)과 적용 제외(not_applicable)는 별도 상태로 구분한다.</p>
+
+<!-- ================================================================ -->
+<h2 id="s2"><span class="num">2</span>배경과 문제 정의</h2>
+
+<h3>2.1 도메인</h3>
+<p>디스플레이 패널 공정에서 지름 1~50 µm 이물이 전극 사이에 떨어지면 short(또는 open)이 난다. particle-sim(별도 저장소)은 전극 layout 이미지 위에 이물 중심을 옮겨 가며 short가 나는 위치의 궤적을 <b>hotspot</b>(binary mask)으로 만들고, 그 면적을 <b>CA</b>(critical area, µm²)로 낸다. 한 case는 <code>불량명-전극1-layer1-전극2-layer2</code> 다섯 필드이며 지름 조건은 1~30, 40, 50의 32개다.</p>
+<p>설계자가 알고 싶은 것은 두 수준이다.</p>
+<ul>
+  <li><b>제품 수준</b>: 어느 설계가 더 안전한가. 제품마다 unit 크기가 달라 CA 절대값은 비교할 수 없으므로 측정 2×2 frame 면적으로 나눈 단위 없는 비율(<code>fraction_of_frame</code>)을 쓴다.</li>
+  <li><b>국부 수준</b>: 이 형상 변경이 불량 유형별 CA를 얼마나 바꿨나. 비슷한 제품끼리 설계자가 짝지은 <b>대응 위치</b> 주변의 같은 물리 창(µm) 안에서 CA를 재고 b − a를 낸다(<code>compare-windows</code>).</li>
+</ul>
+<div class="formula">CA / 2×2 면적  =  (면적당 구조 수)  ×  (구조 하나당 CA)
+                   ↑ 유닛 크기·pitch       ↑ 형상 변경   ← 설계자가 보려는 항
+제품 수준:  F(d)      = CA(d) / frame_area                      (fraction_of_frame)
+국부 수준:  ΔCA_w(d)  = CA_w,B(d) − CA_w,A(d), 같은 물리 창 w   (local_delta)
+연결:       Σ ΔCA_w × repeats_per_frame / frame_area  vs  ΔF    (explained_fraction)</div>
+<p class="ref">출처: docs/plan/PLAN_v3_local_delta_ca.md §0, docs/implementation_memory.json <code>local_delta_ca_2026_10_18</code></p>
+
+<h3>2.2 설계 원칙</h3>
+<ul>
+  <li><b>원본 mask를 그대로 잰다.</b> resize·warp·확률 union·재팽창 없음. frame의 pitch, origin, valid가 호환될 때만 같은 group에서 union한다.</li>
+  <li><b>fail-closed.</b> 사용자 답변이 없는 값(밀도 단위, 한 unit 환산, 창 크기)은 코드 기본값으로 넣지 않는다. 2×2 mask를 자동으로 /4 하지 않는다.</li>
+  <li><b>상태와 사유를 보존한다.</b> 모든 지표는 <code>{value, partial_value, unit, status, reasons, coverage, basis}</code>를 가지며 partial/unavailable이면 value는 null이다. CSV도 null을 0이나 빈칸으로 바꾸지 않는다.</li>
+  <li><b>ID는 raw 그대로.</b> case ID, 전극 ID, pair key의 문장부호·대소문자·Unicode를 바꾸지 않고 delimiter로 분해하지도 않는다. 복합 source identity 8 필드로 join한다.</li>
+  <li><b>제품 간 좌표를 겹치지 않는다.</b> 각 제품은 자기 frame에서 따로 측정하며 overlay·정합(registration)은 하지 않는다.</li>
+  <li><b>DL은 보조.</b> DL1/DL2는 위치와 후보를 찾는 도구이고 점수는 provenance 표시용이다.</li>
+</ul>
+
+<h3>2.3 세 저장소의 역할</h3>
+<figure>
+<svg viewBox="0 0 760 250" role="img" aria-label="C, DL1, DL2 저장소 역할과 교환 형식">
+  <rect x="20" y="30" width="230" height="190" rx="8" class="svg-accent"/>
+  <text x="135" y="58" text-anchor="middle" class="svg-text" font-weight="700" font-size="15">C · particle-sim-compare</text>
+  <text x="135" y="82" text-anchor="middle" class="svg-text" font-size="12">이 저장소 · 수치 계산</text>
+  <text x="34" y="108" class="svg-text" font-size="12">• line / pixel · failure pieces</text>
+  <text x="34" y="128" class="svg-text" font-size="12">• 전극 수 지도 · review ROI</text>
+  <text x="34" y="148" class="svg-text" font-size="12">• fraction_of_frame · 국부 ΔCA</text>
+  <text x="34" y="168" class="svg-text" font-size="12">• DL 결과 seal / read (교환 검증)</text>
+  <text x="34" y="196" class="svg-muted" font-size="11">schema 소유: numeric_v2, review_roi_v1,</text>
+  <text x="34" y="212" class="svg-muted" font-size="11">roi_correspondence_v1, local_delta_v1</text>
+
+  <rect x="500" y="30" width="240" height="80" rx="8" class="svg-box"/>
+  <text x="620" y="55" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">DL1 · particle-sim-dl1</text>
+  <text x="620" y="76" text-anchor="middle" class="svg-text" font-size="12">원본 layout/CNT PNG로 제품 후보 검색</text>
+  <text x="620" y="96" text-anchor="middle" class="svg-muted" font-size="11">pin main @ dc9a019</text>
+
+  <rect x="500" y="140" width="240" height="80" rx="8" class="svg-box"/>
+  <text x="620" y="165" text-anchor="middle" class="svg-text" font-weight="700" font-size="14">DL2 · particle-sim-dl2</text>
+  <text x="620" y="186" text-anchor="middle" class="svg-text" font-size="12">사용자가 고른 위치와 비슷한 ROI 검색</text>
+  <text x="620" y="206" text-anchor="middle" class="svg-muted" font-size="11">pin main @ ce98fd3</text>
+
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <path d="M250 70 H500" class="svg-line" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#ah)"/>
+  <text x="375" y="62" text-anchor="middle" class="svg-mono" font-size="11">dl1_bindings · relations csv</text>
+  <path d="M250 180 H500" class="svg-line" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#ah)"/>
+  <text x="375" y="172" text-anchor="middle" class="svg-mono" font-size="11">review_roi_v1 → roi_relations_v1</text>
+  <text x="375" y="198" text-anchor="middle" class="svg-mono" font-size="11">search.json → roi_correspondence_v1</text>
+  <text x="375" y="125" text-anchor="middle" class="svg-muted" font-size="11">dl_file_exchange_v1 sidecar가 SHA256·fingerprint 고정</text>
+</svg>
+<figcaption>C가 교환 형식을 소유한다. DL 결과는 native JSON 그대로 두고 C의 <code>seal</code>이 sidecar로 바이트와 fingerprint를 고정한 뒤 <code>read</code>가 수치 옆에 붙인다.</figcaption>
+</figure>
+
+<!-- ================================================================ -->
+<h2 id="s3"><span class="num">3</span>변천사</h2>
+<p>이 저장소는 한 번 크게 방향을 바꿨다. 처음에는 layout·hotspot·CA·Fab·형상 다섯 입력을 다루는 다중 모달 autoencoder/PCA로 유사 사례를 검색하는 설계였고, 2026-10-07에 "이미 계산된 binary mask의 수치 비교"로 재작성했다. 그 이전 코드는 <code>archive/pre-rewrite-20261007</code> 브랜치에 보존돼 있다.</p>
+
+<ul class="timeline">
+  <li><span class="d">2026-09-16</span>초기 계약과 모듈 <span class="c">25 commits</span><br>config/caa/dataset/model 등을 MMO(local Qwen) 배치로 생성. Ngiam 2011, Wang 2015, Wu 2022를 참고한 다중 모달 AE 설계(<code>docs/references.md</code>).</li>
+  <li><span class="d">2026-09-17</span>walkthrough PDF, SVG 그림, 도메인 입력 규칙 <span class="c">7</span></li>
+  <li><span class="d">2026-09-27</span>CA 단위·면적 정규화 수정 <span class="c">4</span><br>particle-sim이 이미 ROI로 나눈 CA를 다시 나누던 결함 수정. 원 CA를 µm²로 받아 한 번만 나눈다(<code>docs/decisions/2026-09-27-ca-unit-and-area.md</code>). Fab 매칭 계약 1.2.</li>
+  <li><span class="d">2026-09-29</span>유사 제품 이웃 비교, 회피 후보, open 회피 보류 <span class="c">8 · PR #1~#3</span></li>
+  <li><span class="d">2026-10-07</span><b>재작성 결정</b> <span class="c">7</span><br>PLAN_v1 리뷰(차단 3건) → PLAN_v2 채택. line / pixel 수치 경로, 전극 수 지도, review ROI, DL1/DL2 분리를 정의. 사용자 gate G1~G7 설정.</li>
+  <li><span class="d">2026-10-08</span>T1~T6 구현, R1 독립 리뷰 <span class="c">15</span><br>numeric_v2 계약·측정·union·density/panel·지도·CLI. R1 FAIL(차단 2) → 수정 → PASS-WITH-NOTES. gate 답변(short-only, 지름별 한 값).</li>
+  <li><span class="d">2026-10-09</span>T7 폐기, R2, DL1·DL2 단계, 인수(T12) <span class="c">12</span><br>train/embed/analyze/evaluate/all 폐기. DL1 T8~T9(R3), DL2 T10~T11(R4·R4b·R4c), handoff build/check/validate_offline과 <code>dl_results</code> seal/read(R5·R5b).</li>
+  <li><span class="d">2026-10-13</span>실자료 PNG 입력과 strict reader <span class="c">23</span><br>hotspot PNG 극성(검정 배경 / 흰 패턴), 해상도 0.1 µm/px 확정. 모든 chunk/CRC/zlib를 검증하는 strict PNG reader(R6·R6b). DL1 cno stack order 계획(RO·RO2).</li>
+  <li><span class="d">2026-10-15</span>실제 hotspot import, Windows 오프라인 bundle <span class="c">4</span><br><code>import-hotspots</code>(real_hotspot_v1), CMD 전용 설치 절차, wheel bundle.</li>
+  <li><span class="d">2026-10-18</span><b>PLAN_v3 국부 ΔCA</b> <span class="c">11</span><br>roi_correspondence_v1, <code>compare-windows</code>, fraction_of_frame, 창 크기 민감도, 나란히 보는 HTML, 후보 커버리지 점검, DL2 위치 평가·ZNCC 기준선. 독립 리뷰 2회 PASS-WITH-NOTES, 인수 pin 갱신.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s4"><span class="num">4</span>저장소 구조와 모듈</h2>
+
+<pre><code>particle-sim-compare/
+├── src/simcompare/          패키지 본체 (26 모듈)
+│   └── adapters/            numeric_v2 · real_hotspot_v1 · legacy loader
+├── tests/                   pytest 37 파일 + fixtures (handoff, numeric_v2, review_roi_v1)
+├── scripts/                 handoff build/check, 폐쇄망 검증, Windows bundle, 커버리지 점검
+├── bundles/                 windows_cp312_win_amd64.zip (오프라인 wheel 묶음)
+├── configs/                 demo.yaml, real.example.yaml (numeric_config_v1)
+├── docs/
+│   ├── data_contract.md     현행 데이터 계약 (가장 중요)
+│   ├── review_roi_contract.md · usage.md · open_questions.md · SPEC.md(루트)
+│   ├── plan/                PLAN_v1~v3, DL1 계획, CHECKPOINT (Orca 운영 기록)
+│   ├── review/              독립 리뷰 보고서 22건
+│   ├── handoff/             폐쇄망 인수 절차·명령·troubleshooting·manifest schema
+│   ├── domain-input-example/ 합성 입력 예제 (numeric_v2 manifest 등)
+│   ├── arch/ · walkthrough/ legacy / archived 기록
+│   └── implementation_memory.json  사용자 결정 기록 (2026-10-04~10-18)
+├── pyproject.toml (hatchling) · uv.lock · README.md · SPEC.md</code></pre>
+
+<h3>4.1 현행 모듈 지도</h3>
+<div class="tbl"><table>
+<thead><tr><th>모듈</th><th class="num">줄</th><th>역할</th><th>주요 공개 함수·타입</th></tr></thead>
+<tbody>
+<tr><td><code>cli.py</code></td><td class="num">156</td><td>argparse 진입점, 종료 코드, 오류 시 리포트 제거와 <code>error.json</code></td><td><code>main</code>, <code>RETIRED</code></td></tr>
+<tr><td><code>pipeline.py</code></td><td class="num">502</td><td>명령 구현. numeric_v2와 real_hotspot_v1 입력을 구분하고 config를 해석</td><td><code>load_numeric_config</code>, <code>run_numeric_compare/map/validate/roi_export/local_delta</code></td></tr>
+<tr><td><code>numeric_schema.py</code></td><td class="num">500</td><td>독립 numeric_v2 타입. raw identity는 분류 key가 되지 않음</td><td><code>Frame</code>, <code>Endpoint</code>, <code>CaseIdentity</code>, <code>MaskRecord</code>, <code>Pair</code>, <code>NumericCase</code>, <code>NumericDataset</code>, <code>PhysicalWindow</code>, <code>DIAMETERS_UM</code>, <code>current_gate_decisions</code></td></tr>
+<tr><td><code>adapters/numeric.py</code></td><td class="num">372</td><td>numeric_v2 manifest loader. 실제 non-synthetic 입력은 <code>real_input_requires_approved_adapter</code>로 차단</td><td><code>load_dataset</code>, <code>source_payload_hash</code></td></tr>
+<tr><td><code>adapters/real_hotspot.py</code></td><td class="num">696</td><td>확인된 실제 폴더 구조를 관측 우선 manifest로 변환, 명시 assignment로 dataset 구성</td><td><code>import_hotspots</code>, <code>load_real_manifest</code>, <code>configured_dataset</code></td></tr>
+<tr><td><code>numeric_images.py</code></td><td class="num">73</td><td>root 안 상대 경로만 허용하는 binary asset IO, SHA256 검사</td><td><code>resolve_path</code>, <code>check_hash</code>, <code>read_binary</code></td></tr>
+<tr><td><code>png_strict.py</code></td><td class="num">337</td><td>Pillow decode 전에 chunk/CRC/zlib/scanline을 독립 검증하는 PNG reader (psdl1에서 이식)</td><td><code>read_png</code>, <code>read_gray_hotspot</code>, <code>decoder_session</code></td></tr>
+<tr><td><code>measurement.py</code></td><td class="num">139</td><td>원 CA와 half-open 물리 창 union 측정. 부분 셀은 물리 비례 적분</td><td><code>union_masks</code>, <code>measure_union</code>, <code>measure_window</code>, <code>measure_full_mask</code></td></tr>
+<tr><td><code>linepixel.py</code></td><td class="num">947</td><td>line/pixel union, pair bucket, failure pieces, fraction_of_frame, 합성 density 가중·panel·delta</td><td><code>compute_areas</code>, <code>compute_rates</code>, <code>compare_rates</code>, <code>compare_fractions</code>, <code>GroupArea</code>, <code>PanelSpec</code></td></tr>
+<tr><td><code>density.py</code></td><td class="num">149</td><td>지름별 한 값(per_bin) density 계약. 확률 정규화·bin 적분 없음</td><td><code>DensityContract</code>, <code>density_per_um2</code>, <code>adapt_density</code></td></tr>
+<tr><td><code>electrode_map.py</code></td><td class="num">436</td><td>full-mask distinct electrode count 지도, 4-neighbour 영역(명시 threshold만), 제품 summary</td><td><code>compute_electrode_maps</code>, <code>find_regions</code>, <code>summary_map</code></td></tr>
+<tr><td><code>heatmap.py</code></td><td class="num">89</td><td>Pillow discrete heat-map PNG와 물리 extent sidecar</td><td><code>write_heatmap</code>, <code>count_color</code></td></tr>
+<tr><td><code>report.py</code></td><td class="num">270</td><td>JSON/CSV/HTML 리포트. shared bucket은 ID별 한 번만 합산</td><td><code>comparison_report</code>, <code>map_report</code>, <code>write_numeric_report</code></td></tr>
+<tr><td><code>roi_export.py</code></td><td class="num">299</td><td>review_roi_v1 내보내기. 원본 asset은 읽기 검증만</td><td><code>export_review_rois</code>, <code>check_asset_manifest</code></td></tr>
+<tr><td><code>correspondence.py</code></td><td class="num">568</td><td>roi_correspondence_v1 검증·바인딩·변환기 CLI</td><td><code>validate_correspondence</code>, <code>bind_pairs</code>, <code>attach_roi_ids</code>, <code>to_dl2_relations</code>, <code>from_dl2_search</code></td></tr>
+<tr><td><code>local_delta.py</code></td><td class="num">746</td><td>창 안 국부 측정과 Δ, attributable core, jitter, 창 크기 민감도, explained_fraction</td><td><code>compute_local_delta</code>, <code>window_sensitivity</code>, <code>explained_fraction</code>, <code>crop_to_window</code></td></tr>
+<tr><td><code>local_delta_report.py</code></td><td class="num">296</td><td>쌍별 a/b layout·hotspot crop과 Δ 표의 정적 HTML (PNG base64 내장)</td><td><code>write_local_delta_html</code></td></tr>
+<tr><td><code>dl_results.py</code></td><td class="num">537</td><td>DL 결과 파일 교환: context → seal → read. 점수 재계산 허용오차 1.5e-6</td><td><code>create_context</code>, <code>create_exchange</code>, <code>read_results</code></td></tr>
+<tr><td><code>synthetic.py</code></td><td class="num">134</td><td>결정적 numeric_v2 합성 예제(reference 1×6, target 2×3 셀)</td><td><code>generate_numeric_demo</code></td></tr>
+<tr><td><code>merge.py</code></td><td class="num">173</td><td>particle-sim 1.x export 병합(legacy 호환, 변환 없음)</td><td><code>merge_exports</code></td></tr>
+<tr class="legacy"><td><code>schema.py</code></td><td class="num">500</td><td>legacy 1.x AnalysisBundle 계약. export 검산 loader로만 유지</td><td><code>AnalysisBundle</code>, <code>validate_bundle</code>, <code>canonicalize_ca</code></td></tr>
+<tr class="legacy"><td><code>adapters/example.py</code></td><td class="num">826</td><td>legacy CSV/JSON/이미지 어댑터</td><td><code>load_dataset</code>, <code>read_image</code></td></tr>
+<tr class="legacy"><td><code>adapters/particle_sim_run.py</code></td><td class="num">797</td><td>particle-sim 실행 결과(parquet/zarr) 읽기 전용 점검</td><td><code>check_run</code>, <code>main</code></td></tr>
+<tr class="legacy"><td><code>preprocess.py</code></td><td class="num">278</td><td>legacy letterbox·범례·곡선 정렬·정규화</td><td><code>letterbox</code>, <code>align_curve</code>, <code>Normalizer</code></td></tr>
+</tbody></table></div>
+<p class="ref">회색 행은 legacy 1.x 호환 경로이며 numeric 비교 CLI가 사용하지 않는다. 줄 수는 2026-10-18 <code>wc -l</code> 기준.</p>
+
+<h3>4.2 의존성</h3>
+<p>런타임: numpy ≥ 1.26, pandas ≥ 2.1, pyarrow ≥ 14, zarr ≥ 3, pillow ≥ 10.0, pyyaml ≥ 6.0. 개발: pytest ≥ 8. pyarrow·zarr는 legacy particle-sim 검사 wrapper 때문에 남아 있다. strict PNG 동작은 lock의 <b>Pillow 12.3.0</b>에서만 실행 검증했으므로 폐쇄망 설치는 lock 버전을 쓴다. scipy·torch 의존성은 없다(연결 성분은 자체 구현).</p>
+
+<h3>4.3 실행 흐름</h3>
+<figure>
+<svg viewBox="0 0 760 330" role="img" aria-label="simcompare 실행 흐름">
+  <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/></marker></defs>
+  <!-- inputs -->
+  <rect x="20" y="20" width="200" height="56" rx="6" class="svg-box"/>
+  <text x="120" y="42" text-anchor="middle" class="svg-text" font-weight="600" font-size="12">실제 hotspot 폴더 (PNG + CSV)</text>
+  <text x="120" y="62" text-anchor="middle" class="svg-mono" font-size="10">import-hotspots → real_hotspot_v1</text>
+  <rect x="20" y="96" width="200" height="56" rx="6" class="svg-box"/>
+  <text x="120" y="118" text-anchor="middle" class="svg-text" font-weight="600" font-size="12">합성 numeric_v2 manifest</text>
+  <text x="120" y="138" text-anchor="middle" class="svg-mono" font-size="11">demo-data / adapters.numeric</text>
+  <rect x="20" y="172" width="200" height="56" rx="6" class="svg-box"/>
+  <text x="120" y="194" text-anchor="middle" class="svg-text" font-weight="600" font-size="12">numeric_config_v1 YAML</text>
+  <text x="120" y="214" text-anchor="middle" class="svg-mono" font-size="10">reference·target·map·review_rois</text>
+  <!-- core -->
+  <rect x="280" y="20" width="200" height="208" rx="6" class="svg-accent"/>
+  <text x="380" y="44" text-anchor="middle" class="svg-text" font-weight="700" font-size="13">NumericDataset</text>
+  <text x="380" y="70" text-anchor="middle" class="svg-mono" font-size="11">measurement · linepixel</text>
+  <text x="380" y="90" text-anchor="middle" class="svg-text" font-size="11">L / P / transfer / U · pieces</text>
+  <text x="380" y="116" text-anchor="middle" class="svg-mono" font-size="11">electrode_map · heatmap</text>
+  <text x="380" y="136" text-anchor="middle" class="svg-text" font-size="11">layer count · summary max</text>
+  <text x="380" y="162" text-anchor="middle" class="svg-mono" font-size="10">local_delta · correspondence</text>
+  <text x="380" y="182" text-anchor="middle" class="svg-text" font-size="11">창 안 ΔCA · 민감도</text>
+  <text x="380" y="208" text-anchor="middle" class="svg-mono" font-size="11">roi_export · dl_results</text>
+  <!-- outputs -->
+  <rect x="540" y="20" width="200" height="44" rx="6" class="svg-box"/>
+  <text x="640" y="47" text-anchor="middle" class="svg-mono" font-size="11">comparison.json/csv/html</text>
+  <rect x="540" y="76" width="200" height="44" rx="6" class="svg-box"/>
+  <text x="640" y="103" text-anchor="middle" class="svg-mono" font-size="10">electrode_map.json + PNG + NPZ</text>
+  <rect x="540" y="132" width="200" height="44" rx="6" class="svg-box"/>
+  <text x="640" y="159" text-anchor="middle" class="svg-mono" font-size="10">local_delta · window_sensitivity</text>
+  <rect x="540" y="188" width="200" height="44" rx="6" class="svg-box"/>
+  <text x="640" y="215" text-anchor="middle" class="svg-mono" font-size="11">review_rois.json → DL2</text>
+  <path d="M220 48 H280" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <path d="M220 124 H280" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <path d="M220 200 H280" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <path d="M480 42 H540" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <path d="M480 98 H540" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <path d="M480 154 H540" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <path d="M480 210 H540" class="svg-line" stroke-width="1.5" marker-end="url(#ah2)"/>
+  <!-- bottom note -->
+  <rect x="20" y="256" width="720" height="54" rx="6" class="svg-box" stroke-dasharray="4 3"/>
+  <text x="380" y="278" text-anchor="middle" class="svg-text" font-size="12">모든 출력 metric = {value, partial_value, unit, status, reasons, coverage, basis}</text>
+  <text x="380" y="298" text-anchor="middle" class="svg-muted" font-size="11">status ∈ available · partial · unavailable · not_applicable — partial/unavailable이면 value = null, 부분합은 partial_value에만</text>
+</svg>
+<figcaption>입력 → 공통 <code>NumericDataset</code> → 명령별 계산 → JSON/CSV/HTML/PNG. 실제 입력은 <code>condition_assignment</code>와 pair 표가 있어야 group 계산이 available이 된다.</figcaption>
+</figure>
+
+<!-- ================================================================ -->
+<h2 id="s5"><span class="num">5</span>명령과 출력</h2>
+
+<div class="tbl"><table>
+<thead><tr><th>명령</th><th>역할</th><th>주요 인자</th><th>출력</th></tr></thead>
+<tbody>
+<tr><td><code>demo-data</code></td><td>결정적 합성 numeric_v2 예제 생성</td><td><code>--out</code></td><td><code>reference/</code>, <code>target/</code>, <code>config.yaml</code></td></tr>
+<tr><td><code>import-hotspots</code></td><td>실제 hotspot 폴더를 real_hotspot_v1 관측 manifest로 변환</td><td><code>--root</code>, <code>--out</code>(새 폴더), <code>--expected-cases</code></td><td><code>manifest.json</code>, 중앙 crop mask, hash</td></tr>
+<tr><td><code>validate-data</code></td><td>계약·hash·case/frame/지름 coverage 검사</td><td><code>--config</code>, <code>--out</code></td><td><code>validation.json</code>; gate pending이면 exit 3</td></tr>
+<tr><td><code>compare</code></td><td>reference·target 각 frame의 수치와 target − reference</td><td><code>--config</code>, <code>--out</code></td><td><code>comparison.json</code>, CSV 7종, <code>comparison.html</code></td></tr>
+<tr><td><code>electrode-map</code></td><td>단독 제품 layer별 distinct electrode count와 pixelwise max summary</td><td><code>--config</code>, <code>--min-count</code>, <code>--per-cell-text</code></td><td><code>electrode_map.json</code>, PNG + sidecar, NPZ</td></tr>
+<tr><td><code>export-review-rois</code></td><td>사용자 위치 또는 명시 threshold 영역에서 review_roi_v1 생성</td><td><code>--config</code>, <code>--out</code>, <code>--min-count</code></td><td><code>review_rois.json</code>(원본 asset 상대 참조)</td></tr>
+<tr><td><code>compare-windows</code></td><td>대응 위치의 같은 물리 창 안 ΔCA(b − a), core, 민감도, HTML</td><td><code>--correspondence</code>, <code>--window-sizes</code>(필수, 기본값 없음), <code>--jitter-um</code>, <code>--sort-diameter-um</code>, <code>--compact-json</code></td><td><code>local_delta.json/csv/html</code>, <code>window_sensitivity.json/csv</code></td></tr>
+<tr><td><code>merge-exports</code></td><td>particle-sim 1.x export 병합(legacy, 변환 없음)</td><td><code>--out</code>, <code>sources…</code></td><td>합친 data_dir</td></tr>
+<tr><td><code>python -m simcompare.correspondence</code></td><td>roi_correspondence_v1 검증과 변환</td><td><code>validate</code>, <code>to-review-rois</code>, <code>attach-roi-ids</code>, <code>to-dl2-relations</code>, <code>to-dl1-relations</code>, <code>from-dl2-search</code></td><td>JSON/CSV/YAML</td></tr>
+<tr><td><code>python -m simcompare.dl_results</code></td><td>DL 교환 파일 검증</td><td><code>context</code>, <code>seal</code>, <code>read</code></td><td>numeric context, sidecar, joined 결과</td></tr>
+</tbody></table></div>
+<p class="ref">출처: src/simcompare/cli.py:30-75, SPEC.md "공개 명령"</p>
+
+<h3>5.1 종료 코드</h3>
+<div class="tbl"><table>
+<thead><tr><th class="num">코드</th><th>의미</th><th>확인할 것</th></tr></thead>
+<tbody>
+<tr><td class="num">0</td><td>요청 범위의 결과가 available이거나 생성 완료</td><td><code>execution.json</code>, provenance</td></tr>
+<tr><td class="num">3</td><td>partial / unavailable / blocked 항목을 포함한 사용 가능한 부분 출력</td><td><code>status</code>, <code>reasons</code>, <code>coverage</code>, <code>partial_value</code></td></tr>
+<tr><td class="num">2</td><td>입력·설정 계약 오류, 폐기 명령, 지도 incomplete</td><td>stderr의 <code>오류:</code> 메시지, <code>error.json</code>. 관리 리포트는 제거됨</td></tr>
+</tbody></table></div>
+<p>오류 시 출력 폴더의 이 애플리케이션 리포트(<code>comparison*</code>, <code>electrode_map*</code>, <code>validation*</code>, <code>review_rois*</code>, <code>local_delta*</code>, <code>window_sensitivity*</code>의 json/csv/html/png/npz)만 지우고 입력·사용자 파일은 건드리지 않는다. 성공하면 stale <code>error.json</code>을 지운다.</p>
+
+<h3>5.2 설정 파일 (<code>numeric_config_v1</code>)</h3>
+<pre><code>schema_version: numeric_config_v1
+mode: real                       # synthetic | real
+output_dir: ../outputs/numeric_real
+reference:
+  data_dir: ../data/imported/reference
+  # condition_assignment:        # 실제 입력에서 group 계산을 열 때만, 확인된 값으로
+  #   product_id / design_version / source_id / process_step_id / exposure_id / unit_id
+  #   layer_stack: [{actual_layer, stack_order, density_process_layer}]
+  #   pair_table_path: pairs.csv
+target:
+  data_dir: ../data/imported/target
+map:
+  input: {data_dir: ../data/imported/reference}
+  diameter_um: 5                 # 지도 대표 지름 (기본 5)
+  # min_count: 3                 # 명시할 때만 4-neighbour 영역
+review_rois:
+  map_region_ids: []
+  manual: []                     # product/design/frame/case/center_xy_um + 원본 asset 연결</code></pre>
+<p>상대 경로는 설정 파일 기준이다. 합성 모드에서만 <code>density_contracts</code>, <code>unit_bases</code>, <code>panel</code>로 가중값·panel 계산을 열 수 있다. 실제 모드에서 numeric_v2 non-synthetic manifest를 직접 주면 <code>real_input_requires_approved_adapter</code>로 거부되며, real_hotspot_v1 manifest만 <code>mode: real</code>에서 받는다.</p>
+
+<!-- ================================================================ -->
+<h2 id="s6"><span class="num">6</span>데이터 계약</h2>
+<p>현행 계약은 <code>docs/data_contract.md</code>가 단일 출처다. 여기서는 schema별 핵심만 추린다.</p>
+
+<div class="tbl"><table>
+<thead><tr><th>schema</th><th>소유</th><th>용도</th><th>생산자 → 소비자</th></tr></thead>
+<tbody>
+<tr><td><code>numeric_v2</code></td><td>C</td><td>내부 canonical 입력(case, frame, 32 지름 record, pair 표, density, unit_domain)</td><td>adapter → compare / map / ROI</td></tr>
+<tr><td><code>real_hotspot_v1</code></td><td>C</td><td>실제 폴더 구조의 관측 우선 manifest. 제품/공정/극성/높이 메타는 null</td><td>import-hotspots → validate / compare / (assignment 후) map</td></tr>
+<tr><td><code>numeric_config_v1</code></td><td>C</td><td>실행 설정</td><td>사용자 → CLI</td></tr>
+<tr><td><code>review_roi_v1</code></td><td>C</td><td>검토 위치와 원본 shape/CNT/VIA/valid 참조. hotspot/CA는 포함하지 않음</td><td>export-review-rois → DL2 index/query → C read(roi_id 왕복)</td></tr>
+<tr><td><code>review_assets_v1</code></td><td>C(합성 내부)</td><td>원본 asset manifest(layouts·valid·cnt·via 상대 경로와 hash)</td><td>config <code>asset_manifest</code> → roi_export 읽기 검사</td></tr>
+<tr><td><code>roi_correspondence_v1</code></td><td>C</td><td>두 제품의 대응 위치 쌍. 수동·template_match·dl2_search 공통</td><td>설계자/DL2 → compare-windows, DL1/DL2 relations</td></tr>
+<tr><td><code>local_delta_v1</code> · <code>window_sensitivity_v1</code></td><td>C</td><td>창 안 Δ 결과와 창 크기 민감도</td><td>compare-windows → 설계자</td></tr>
+<tr><td><code>dl_file_exchange_v1</code> · <code>numeric_dl_context_v1</code></td><td>C</td><td>native DL 결과의 SHA256·fingerprint sidecar와 numeric context</td><td>seal → read</td></tr>
+</tbody></table></div>
+
+<h3>6.1 numeric_v2 핵심 규칙</h3>
+<ul>
+  <li><b>identity</b>: <code>(product_id, design_version, source_id, process_step_id, exposure_id, case_id, frame_id, source_contract_version)</code> 8 필드 복합 키. 제품마다 반복되는 case ID만으로 join하지 않는다.</li>
+  <li><b>endpoint</b>: <code>(electrode_id, role, actual_layer)</code>를 하나의 결합 객체로 보존. 순서를 바꿀 때 객체째 옮기며 role/layer를 서로 바꾸지 않는다.</li>
+  <li><b>pair 표</b>: unordered 전극 ID 집합 → <code>class = line | pixel</code>. layer/role/failure_type은 분류 key가 아니다. 미매핑은 <code>unmapped_pair</code>로 남기고 0이나 pixel로 추정하지 않는다.</li>
+  <li><b>frame</b>: <code>origin_xy_um</code>, <code>pixel_pitch_um</code>(등방), <code>shape_yx</code>, <code>axis_order=yx</code>, <code>origin_convention=top_left_cell_edge</code>, valid mask. bbox는 half-open <code>[xmin, ymin, xmax, ymax)</code>. layout/hotspot/valid의 frame·pitch·origin·shape가 모두 같아야 한다.</li>
+  <li><b>32 지름 record</b>: <code>input_status = observed | missing | not_applicable</code>. 관측 0 ≠ 누락 ≠ 높이 미만 vertical N/A. 보간·외삽·0 채움 없음.</li>
+  <li><b>vertical short</b>: 실제 상부 layer(<code>upper_actual_layer</code>)에 귀속하고 <code>height_um</code> 근거가 있어야 한다. <code>d &lt; height_um</code>만 N/A, 등호는 적용 대상. 5 µm 이상 높이는 없다는 사용자 사실은 유지하되 개별 높이를 추측하지 않는다.</li>
+  <li><b>이진 이미지 극성</b>: asset 참조의 <code>value_semantics</code>는 <code>binary</code>(nonzero가 표시, 기본) 또는 <code>binary_zero_is_marked</code>. 실제 hotspot PNG는 검정 배경 / 흰 패턴이므로 <code>binary</code>를 적는다(사용자 확인 2026-10-13). 자동 판별은 없고 non-synthetic asset은 반드시 명시한다.</li>
+</ul>
+
+<h3>6.2 real_hotspot_v1 (실제 폴더 import)</h3>
+<ul>
+  <li>case 디렉터리 이름 <code>불량명-전극1-layer1-전극2-layer2</code>. 파일은 <code>1.png</code>, <code>2.png</code>(전극), <code>hotspot_&lt;불량명&gt;&lt;지름&gt;.png</code>, <code>result/&lt;불량명&gt;.csv</code>. case-local CSV가 없으면 다른 곳에서 대체하지 않는다.</li>
+  <li>hotspot은 전극 image보다 각 축 정확히 1000 px 작아야 하며 importer가 중앙 crop mask를 저장한다. frame origin (50, 50) µm, pitch 0.1 µm/px. 면적 = occupied pixel × 0.01 µm².</li>
+  <li>CSV <code>defect_size(um),Area(um2)</code>의 원문 문자열·정밀도를 보존하고, PNG 면적과의 일치 tolerance는 CSV 마지막 자릿수 절반 + 픽셀 면적 절반이다. 어느 쪽도 덮어쓰지 않는다.</li>
+  <li>product/design/source/process/exposure/unit, 전극 role/polarity, vertical height는 원천에 없으므로 null. 그래서 <code>compare</code>는 case별 원 면적만 내고 line/pixel·density·panel·delta는 unavailable, 지도는 blocked다. config의 <code>condition_assignment</code>와 pair 표를 확인된 값으로 넣어야 group 계산이 열린다.</li>
+  <li>자원 제한: group 5억 cells, 전체 source 60억 cells, 보수적 전체 추정 8 GiB(<code>max_operation_bytes</code>로 낮출 수만 있음). 한 번에 한 PNG/crop mask만 materialize.</li>
+</ul>
+
+<h3>6.3 strict PNG reader</h3>
+<p>numeric mask PNG는 Pillow decode 전에 원본 byte buffer에서 signature, chunk 순서, 모든 CRC, IHDR, 단일 IDAT zlib stream과 inflated 길이, PLTE/index, scanline filter를 독립 검증한다. 전체 inflated stream을 쌓지 않고 bounded inflate block과 packed row 두 개만 유지한다.</p>
+<div class="tbl"><table>
+<thead><tr><th>수락</th><th>조건</th></tr></thead>
+<tbody>
+<tr><td>greyscale (colour type 0)</td><td>bit depth 1/2/4/8. 모든 pixel 정확히 0/255 (8-bit L의 0/1도 수락). 0/1과 0/255 혼합은 거부</td></tr>
+<tr><td>RGB · LA · RGBA</td><td>8-bit, 모든 pixel이 정확히 검정/흰색, alpha 전부 255. luminance 변환·threshold 없음</td></tr>
+<tr><td>palette (P)</td><td>PLTE 존재, 사용 index 범위 안, 색은 정확히 검정/흰색, tRNS가 있으면 전부 255</td></tr>
+<tr><td>interlace</td><td>none 또는 Adam7 (pass별 scanline 길이·filter 검증)</td></tr>
+</tbody></table></div>
+<p>거부: 16-bit(<code>png_unsupported_bit_depth</code>), APNG, 투명도, 회색/유색 pixel, IEND 뒤 byte, orientation ≠ 1, 설치된 Pillow pixel limit(12.3.0 기본 89,478,485) 초과. 복구 방법은 "plain opaque black/white PNG로 다시 저장"이며 reader는 threshold·crop·회전·resize를 하지 않는다.</p>
+<details><summary>PNG 실패 사유 코드 전체</summary>
+<p>구조: <code>png_invalid_signature</code>, <code>png_truncated_chunk</code>, <code>png_invalid_chunk</code>, <code>png_invalid_chunk_order</code>, <code>png_crc_mismatch</code>, <code>png_invalid_header</code>, <code>png_unknown_critical_chunk</code><br>
+데이터: <code>png_invalid_idat_stream</code>, <code>png_idat_length_mismatch</code>, <code>png_invalid_scanline_filter</code>, <code>png_missing_palette</code>, <code>png_invalid_palette</code>, <code>png_palette_index_out_of_range</code><br>
+엄격성: <code>png_apng_unsupported</code>, <code>png_invalid_transparency</code>, <code>png_nonopaque_transparency</code>, <code>png_nonopaque_pixels</code>, <code>png_unsupported_bit_depth</code>, <code>png_trailing_bytes</code>, <code>png_nonidentity_orientation</code>, <code>nonbinary_nominal_mask</code>, <code>unsupported_png_mode</code><br>
+decoder: <code>png_pixel_limit_warning</code>, <code>png_pixel_limit_error</code>, <code>png_pixel_limit_disabled</code>, <code>png_decode_failed</code>. hash 불일치: <code>input_hash_mismatch</code>.</p>
+</details>
+
+<h3>6.4 review_roi_v1</h3>
+<ul>
+  <li>출처는 두 가지뿐: <code>electrode_count_region</code>(명시 threshold로 계산한 지도 영역 중 사용자가 고른 것)과 <code>manual</code>(기본). 검색 결과나 제품 간 대응으로 ROI를 자동 선택하지 않는다.</li>
+  <li>manual에는 product/design/frame/<code>center_xy_um</code>와 case 또는 명시 endpoint 문맥이 필요하다. 부족하면 <code>blocked: case_context_required</code>, 원본 shape 연결이 없으면 <code>source_shape_required</code>.</li>
+  <li>hotspot/CA/density/rate는 asset이나 tensor 입력으로 내보내지 않는다. 지도 대표 지름·threshold·4-neighbour는 선택 근거 provenance로만 남긴다. crop 크기(G4)는 <code>crop_recipe: pending</code>.</li>
+  <li><code>producer_commit</code>은 패키지 자체가 git checkout 안에 있을 때만 HEAD를 기록하고, 아니면 null과 사유.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s7"><span class="num">7</span>핵심 계산 정의</h2>
+
+<h3>7.1 line / pixel union과 transfer</h3>
+<p>union key는 <code>(product, design, source/process 조건, exposure, analysis_layer, diameter, frame)</code>다. 같은 layer라는 이유로 다른 노출·원천 조건을 합치지 않는다. 면적은 valid 안 셀 수 × pitch²다.</p>
+<figure>
+<svg viewBox="0 0 760 230" role="img" aria-label="line union L, pixel union P, transfer, effective pixel의 관계">
+  <ellipse cx="300" cy="115" rx="190" ry="85" fill="var(--lateral)" fill-opacity="0.14" stroke="var(--lateral)" stroke-width="2"/>
+  <ellipse cx="470" cy="115" rx="190" ry="85" fill="var(--vertical)" fill-opacity="0.14" stroke="var(--vertical)" stroke-width="2"/>
+  <text x="200" y="60" class="svg-text" font-weight="700" font-size="14">L = line pair union</text>
+  <text x="520" y="60" class="svg-text" font-weight="700" font-size="14">P = pixel pair union</text>
+  <text x="385" y="110" text-anchor="middle" class="svg-text" font-weight="600" font-size="13">transfer</text>
+  <text x="385" y="130" text-anchor="middle" class="svg-mono" font-size="12">P ∩ L (진단)</text>
+  <text x="560" y="120" text-anchor="middle" class="svg-text" font-size="12">P_effective = P \ L</text>
+  <text x="215" y="120" text-anchor="middle" class="svg-text" font-size="12">line 우선</text>
+  <text x="380" y="222" text-anchor="middle" class="svg-mono" font-size="12">U = L ∪ P,   area(U) = area(L) + area(P_effective)</text>
+</svg>
+<figcaption>transfer는 별도 진단이며 총합에 더하지 않는다. open은 count 지도와 short 수치에 포함하지 않는다(G7b short-only).</figcaption>
+</figure>
+<ul>
+  <li><b>pair bucket</b>: 한 class 안에서 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 shared bucket. shared는 나누어 배분하지 않고 bucket ID별 한 번만 합산하며 <code>exclusive + shared = class_total</code>을 지름/layer/panel에서 검사한다.</li>
+  <li><b>계보 vs 기여</b>: <code>pair_lineage_case_keys</code>는 그 pair의 원천 전체(missing·관측 0 포함), <code>contributing_source_case_keys</code>는 해당 지름에서 실제로 bucket과 겹치는 case만.</li>
+  <li>같은 pair의 여러 case를 OR한 뒤에도 원본 case별 CA·failure_type·layer·raw ID를 추적할 수 있어야 한다.</li>
+</ul>
+
+<h3>7.2 불량 유형 조각 (failure pieces, G7a)</h3>
+<p>같은 group의 mapped short case에서 lateral mask 합집합을 A, vertical 합집합을 B라 하면:</p>
+<div class="formula">lateral_only  = A \ B
+vertical_only = B \ A
+simultaneous  = A ∩ B
+세 조각은 서로 겹치지 않고  lateral_only + vertical_only + simultaneous = U</div>
+<div class="legend"><span style="--c: var(--lateral)">lateral_only</span><span style="--c: var(--vertical)">vertical_only</span><span style="--c: var(--simul)">simultaneous</span><span style="--c: var(--fg-muted)">invalid / 미관측</span></div>
+<p>line/pixel class와 무관하게 mapped short 전체를 쓰며 line/pixel·transfer·bucket에 더하거나 빼지 않는다. shared(다른 pair membership)와 simultaneous(다른 failure type)는 다른 개념이다. 높이 근거로 vertical이 모두 N/A인 지름은 vertical_only·simultaneous가 not_applicable이고 lateral_only와 전체 union은 lateral case로 계산한다. 위 색은 <code>local_delta.html</code> 썸네일의 조각 색과 같다.</p>
+
+<h3>7.3 metric 상태 규칙</h3>
+<div class="tbl"><table>
+<thead><tr><th>status</th><th>뜻</th><th>value</th><th>partial_value</th></tr></thead>
+<tbody>
+<tr><td><span class="chip ok">available</span></td><td>완전 관측·적용 가능한 값</td><td>값</td><td>—</td></tr>
+<tr><td><span class="chip warn">partial</span></td><td>valid 구멍·원천 누락·미매핑으로 알려진 부분합만 있음</td><td>null</td><td>부분합 (관측 부분합 0은 0)</td></tr>
+<tr><td><span class="chip crit">unavailable</span></td><td>산출 차단 (gate pending, frame 불일치, 호환 불가)</td><td>null</td><td>null 또는 부분합</td></tr>
+<tr><td><span class="chip muted">not_applicable</span></td><td>근거 있는 적용 제외 (높이 미만 vertical, 창 ≤ 지름)</td><td>null</td><td>—</td></tr>
+</tbody></table></div>
+<p>delta는 양쪽 complete일 때만 complete다. partial을 완전 panel/delta로 승격하지 않는다. <code>pending</code>은 gate/정책 상태이며 metric status enum과 섞지 않는다.</p>
+
+<h3>7.4 density 가중·unit·panel (합성 계약에서만)</h3>
+<ul>
+  <li>density는 <b>지름마다 한 값</b>(<code>bin_semantics = per_bin</code>, 2026-10-08). 연속 per-µm density가 아니므로 bin 폭을 곱하거나 적분하지 않으며 총합을 확률 1로 정규화하지 않는다.</li>
+  <li>per-bin 역면적 density(<code>um^-2</code> 등)가 확인된 때만 <code>V = Σ area_um2 × density_per_um2</code>. 실자료의 "10 count/glass"는 단위·조사면적 없이 쓸 수 없다(G1 pending).</li>
+  <li>unit_domain: 제품 간 µm/pixel은 같고(0.1 µm/px) pixel 수는 다르며 한 제품의 layer 크기는 같다. 2×2 → 한 unit 환산은 pending이라 <code>divisor = null</code>, <b>자동 /4 없음</b>.</li>
+  <li>panel: 축별 <code>floor | half_up_round</code>로 unit 수 N을 Decimal로 구하고 <code>V_panel = N × V_unit</code>, <code>delta = target − reference</code>. N = 0이면 <code>panel_has_no_units</code>.</li>
+  <li>같은 layer에 density 분포가 여럿이면 ambiguity 오류, 없으면 <code>missing_layer_density_distribution</code>로 그 layer만 null.</li>
+</ul>
+
+<h3>7.5 전극 수 지도 (electrode-map)</h3>
+<ul>
+  <li>대표 지름 기본 5 µm에서 각 셀을 덮는 short hotspot의 <b>distinct electrode 수</b>를 layer별로 센다. 제품 summary는 모든 layer의 pixelwise maximum이며 frame이 다르면 <code>incompatible_layer_frames</code>로 unavailable.</li>
+  <li>기본 출력은 count 배열(NPZ)·discrete PNG·물리 extent sidecar뿐이다. 자동 threshold·영역·순위는 없고 <code>--min-count k</code>를 명시할 때만 4-neighbour 연결 성분을 영역으로 만든다(scipy 없이 자체 구현, <code>electrode_map.py:32</code>).</li>
+  <li>PNG는 count마다 한 방향으로 진해지는 discrete 색과 legend, invalid 회색과 count 0 흰색을 구별한다. 작은 격자는 <code>max(1, ceil(400 / max(h, w)))</code> 정수 배 nearest 확대, 2000 px 격자는 1:1. 2×2 domain을 그대로 표시하고 제품 간 overlay는 없다.</li>
+  <li><code>--per-cell-text</code>는 4096 cells 이하에서만 셀별 텍스트를 추가한다.</li>
+</ul>
+
+<h3>7.6 fraction_of_frame (제품 수준, PLAN_v3 T3)</h3>
+<div class="formula">frame_area_um2   = shape_yx[0] × shape_yx[1] × pitch²      (실자료는 중앙 2×2 crop frame)
+fraction_of_frame = area / frame_area_um2                   (line, pixel_effective, transfer, union, 세 조각)
+delta_fraction    = F_target − F_reference                  (같은 ComparisonKey·지름, 양쪽 available일 때만)</div>
+<p>분자·분모가 같은 frame 위에 있으므로 G2의 /4가 상쇄되어 unit 크기가 다른 제품을 비교할 수 있다. 유한 2×2 경계 효과는 남는 한계이며 확률·수율·밀도 가중이 아니다. 한쪽에 없는 layer는 0이 아니라 <code>*_layer_unknown</code>. 기존 CSV 열은 유지하고 <code>comparison_fractions.csv</code>를 추가했다.</p>
+
+<!-- ================================================================ -->
+<h2 id="s8"><span class="num">8</span>국부 ΔCA와 대응 위치 (PLAN_v3)</h2>
+
+<h3>8.1 roi_correspondence_v1</h3>
+<pre><code>{
+  "schema_version": "roi_correspondence_v1",
+  "producer": {"kind": "manual", "version": "1", "commit": null, "created_at": "2026-10-18"},
+  "pairs": [{
+    "pair_id": "P0001",
+    "a": {"product_id": "A", "design_version": "v1", "frame_id": "f0",
+          "center_xy_um": [123.4, 56.7], "analysis_layer": "SD",
+          "endpoints": [{"electrode_id": "G1", "role": "gate", "actual_layer": "GAT"},
+                        {"electrode_id": "D1", "role": "data", "actual_layer": "SD"}],
+          "failure_type": "vertical_short", "roi_id": null},
+    "b": {"product_id": "B", "design_version": "v3", "frame_id": "f0",
+          "center_xy_um": [98.0, 61.2], "analysis_layer": "SD", "roi_id": null},
+    "repeats_per_frame": null,
+    "source": {"kind": "manual", "labelled_by": "designer-1", "labelled_at": "2026-10-20"},
+    "status": "ready", "reasons": []
+  }]
+}</code></pre>
+<ul>
+  <li>side 필수: <code>product_id</code>, <code>design_version</code>, <code>frame_id</code>, <code>center_xy_um</code>(자기 frame 좌표), <code>analysis_layer</code>. 선택: <code>endpoints</code>·<code>failure_type</code>(있으면 named_pair 추가 보고), <code>roi_id</code>, source/process/exposure/unit 필터.</li>
+  <li><code>source.kind</code>별 필수: manual은 <code>labelled_by/labelled_at</code>, template_match는 <code>method/version</code>, dl2_search는 <code>score/rank/checkpoint_fingerprint/index_fingerprint</code>. 점수는 표시용.</li>
+  <li>a는 config의 reference, b는 target에 묶인다. 제품·design·frame 불일치는 파일 거부(<code>correspondence_*_mismatch</code>), frame 밖 위치나 없는 layer는 그 쌍만 blocked, 중복 <code>pair_id</code>는 거부, 같은 중심 중복 쌍은 경고.</li>
+  <li><code>repeats_per_frame</code>은 측정 2×2 frame 안의 반복 수이며 per-unit 수가 아니다(G2 /4 미확정). 있어야 <code>explained_fraction</code>이 available.</li>
+</ul>
+
+<h3>8.2 창 안 측정과 attributable core</h3>
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="창과 attributable core의 기하">
+  <!-- frame -->
+  <rect x="30" y="20" width="420" height="260" class="svg-box" stroke-dasharray="5 4"/>
+  <text x="40" y="40" class="svg-muted" font-size="11">frame (origin, pitch, valid)</text>
+  <!-- window -->
+  <rect x="130" y="60" width="200" height="200" fill="var(--accent-soft)" stroke="var(--simul)" stroke-width="2"/>
+  <text x="230" y="55" text-anchor="middle" fill="var(--simul)" font-size="12" font-weight="600">window: 한 변 s (µm)</text>
+  <!-- core -->
+  <rect x="165" y="95" width="130" height="130" fill="none" stroke="var(--vertical)" stroke-width="2" stroke-dasharray="6 3"/>
+  <text x="230" y="165" text-anchor="middle" fill="var(--vertical)" font-size="12" font-weight="600">attributable core</text>
+  <text x="230" y="183" text-anchor="middle" fill="var(--vertical)" font-size="11">한 변 s − d</text>
+  <!-- centre -->
+  <circle cx="230" cy="160" r="3" fill="var(--fg)"/>
+  <text x="238" y="150" class="svg-text" font-size="11">c = center_xy_um</text>
+  <!-- d/2 annotation -->
+  <path d="M130 240 H165" stroke="var(--fg-muted)" stroke-width="1.5"/>
+  <path d="M130 236 V244 M165 236 V244" stroke="var(--fg-muted)" stroke-width="1.5"/>
+  <text x="147" y="256" text-anchor="middle" class="svg-muted" font-size="11">d/2</text>
+  <!-- particle outside -->
+  <circle cx="118" cy="120" r="14" fill="none" stroke="var(--lateral)" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <text x="80" y="160" class="svg-muted" font-size="10">창 밖 d/2 안의 전극이</text>
+  <text x="80" y="173" class="svg-muted" font-size="10">창 안 hotspot을 만들 수 있음</text>
+  <!-- right: rules -->
+  <text x="480" y="60" class="svg-text" font-weight="700" font-size="13">규칙</text>
+  <text x="480" y="85" class="svg-text" font-size="12">• half-open [cx−s/2, cx+s/2) × [cy−s/2, cy+s/2)</text>
+  <text x="480" y="107" class="svg-text" font-size="12">• 원본 mask 그대로, 부분 셀은 물리 비례</text>
+  <text x="480" y="129" class="svg-text" font-size="12">• s ≤ d → core not_applicable</text>
+  <text x="480" y="151" class="svg-text" font-size="12">• 창이 frame 밖 → window_clipped_&lt;side&gt;</text>
+  <text x="480" y="173" class="svg-text" font-size="12">• valid 구멍 → valid_incomplete_&lt;side&gt;</text>
+  <text x="480" y="195" class="svg-text" font-size="12">• Δ = b − a, 양쪽 available일 때만</text>
+  <text x="480" y="217" class="svg-text" font-size="12">• 부분 Δ 없음, 기본 창 크기 없음</text>
+  <text x="480" y="250" class="svg-muted" font-size="11">측정은 창 주변 한 셀 여백 crop에서 하며</text>
+  <text x="480" y="266" class="svg-muted" font-size="11">전체 frame 측정과 같은 값·상태 (crop_to_window)</text>
+</svg>
+<figcaption>창 값은 그 위치의 정확한 국부 위험이고, core 값은 "창 안 형상 탓"으로 읽을 수 있는 부분이다. 둘을 섞지 않는다.</figcaption>
+</figure>
+<ul>
+  <li>대상은 해당 제품·<code>analysis_layer</code>·지름 group의 mapped short union과 세 조각이며 창 안에서도 조각 합 = union을 검사한다. group은 정확히 하나여야 하고(<code>no_source_group_*</code> / <code>ambiguous_source_group_*</code>) <code>design_version</code>도 매칭에 포함된다.</li>
+  <li>창 값: <code>{value, partial_value, status, reasons, window_area_um2, valid_area_um2, fraction_of_window}</code>. 완전성은 선언 십진수(Fraction) 경계로 판정해 frame 가장자리나 안쪽 invalid 셀에 맞닿은 창이 float 오차로 partial이 되지 않는다(리뷰 A2 반례 3000건 검증).</li>
+  <li><b>named_pair</b>: endpoints가 있으면 unordered 전극 집합 + failure_type으로 case를 찾아 그 mask의 창 안 CA를 추가. group union을 넘으면 <code>named_pair_exceeds_group_union_&lt;side&gt;</code>로 unavailable(fail-closed).</li>
+  <li><b>jitter</b>(<code>--jitter-um j</code>): 중심을 x·y 각각 ±j 이동한 네 창의 Δ_union 범위와 부호 일치를 기록. 임계값 없음.</li>
+  <li><b>explained_fraction</b>: 모든 ready 쌍에 <code>repeats_per_frame</code>이 있을 때 side별 Σ(창 union CA × repeats) / frame_area와 참조 group의 fraction 차이를 나란히 둔다. 같은 group의 겹치는 창은 합집합으로 한 번 재고 repeats가 다르면 그 지름은 unavailable.</li>
+  <li><b>window_sensitivity_v1</b>: 쌍×지름의 창 크기별 Δ_union, 부호 일치, 크기 쌍 간 |Δ| Spearman 순위 상관(정렬 지름), core 적용 가능 지름. 추천 창 크기는 계산하지 않으며 사용자가 G4를 정한다.</li>
+</ul>
+<p><b>비용</b>: 2000×2000 frame 합성에서 <code>compute_areas</code> 1.8 s(제품 2 × case 2 × 32 지름), 창 측정 쌍·창당 약 0.13 s. <code>local_delta.json</code>은 쌍·창당 약 0.4 MB라 <code>--compact-json</code>으로 행별 세부를 CSV에만 남길 수 있다. 실자료 비용은 case 수에 비례하는 <code>compute_areas</code>가 좌우한다.</p>
+
+<h3>8.3 권장 운용값 (코드 기본값 아님)</h3>
+<div class="tbl"><table>
+<thead><tr><th>항목</th><th>권장</th><th>근거</th></tr></thead>
+<tbody>
+<tr><td>정렬·썸네일 지름</td><td>5 µm</td><td>전극 수 지도 대표 지름과 동일</td></tr>
+<tr><td>창 후보</td><td>10 / 20 / 30 µm</td><td>밀도가 큰 1~10 µm 이물에서 창 반폭 &gt; d/2</td></tr>
+<tr><td>jitter</td><td>0.5 µm (5 px)</td><td>라벨 찍기 오차 수준</td></tr>
+<tr><td>DL2 위치 hit 허용오차</td><td>선택한 창의 반폭</td><td>PLAN_v3 Q4</td></tr>
+</tbody></table></div>
+
+<h3>8.4 실행 순서 (수동 라벨 → DL2 확장)</h3>
+<pre><code>1. 설계자가 roi_correspondence_v1 파일을 채운다 (수십 쌍)
+2. simcompare import-hotspots … (양쪽 제품)                       -- 기존
+3. simcompare validate-data --config …                            -- 기존
+4. python -m simcompare.correspondence to-review-rois … --side a/b -- T1
+5. simcompare export-review-rois … → attach-roi-ids               -- roi_id 확보
+6. simcompare compare-windows --config … --correspondence … \
+     --window-sizes 10 20 30 --sort-diameter-um 5 --out …          -- T2/T4/T5
+7. 설계자 검토: local_delta.html, window_sensitivity.csv → G4 결정
+8. (2단계) psdl2 search --cohort {B} → eval_position · baseline_ncc  -- T6
+9. (2단계) from-dl2-search → compare-windows → HTML                 -- T7</code></pre>
+<div class="note warn">실자료에서는 <code>--expected-cases</code>로 case 목록을 확인하고 config에 <code>condition_assignment</code>와 pair 표를 넣어야 group이 available이 된다. 그 전에는 모든 창이 partial이고 Δ는 null이다(독립 리뷰 A7).</div>
+
+<!-- ================================================================ -->
+<h2 id="s9"><span class="num">9</span>DL1/DL2 교환</h2>
+<p>DL 결과 native 파일에는 schema_version이 없다. C의 <code>python -m simcompare.dl_results</code>가 세 단계로 교환을 검증한다.</p>
+<div class="tbl"><table>
+<thead><tr><th>단계</th><th>하는 일</th><th>검사</th></tr></thead>
+<tbody>
+<tr><td><code>context</code></td><td>numeric_v2와 원본 asset manifest를 다시 읽어 CA·line/pixel·지도와 ready ROI를 연결. 전극 수 배열을 <code>numeric_map/*.npz</code>로 저장</td><td>상대 경로·SHA256 고정. blocked ROI는 join 후보에서 제외</td></tr>
+<tr><td><code>seal</code></td><td>native DL1/DL2 결과의 정확한 SHA256, DL1 config fingerprint, DL2 index <code>checkpoint_fingerprint</code>·<code>view_fingerprint</code>, numeric context SHA256을 <code>dl_file_exchange_v1</code> sidecar에 기록</td><td>사용자 승인 checkpoint의 fingerprint를 입력해야 함. 다른 결과에서 복사하는 것은 승인이 아님</td></tr>
+<tr><td><code>read</code></td><td>hash·profile·fingerprint 검사 후 8-필드 복합 identity, frame, asset hash, 중심, endpoint binding을 정확히 맞춰 수치 옆에 DL 점수를 붙임</td><td>불일치는 exit 2이고 기존 joined output도 지움. DL2 점수는 float64 cosine 6자리 재계산, 허용오차 1.5e-6</td></tr>
+</tbody></table></div>
+<ul>
+  <li>DL1은 제품 점수라 단일 case 문맥이 없다. 사용자가 확인한 <code>dl1_bindings.json</code>(product, input_identity, roi_id, source identity, frame, asset)이 없으면 <code>dl1_product_source_context_required</code>로 unavailable.</li>
+  <li>DL2 primary/supplementary는 별도 목록이며 supplementary를 primary로 재표시하지 않는다. unavailable은 primary 없음을 뜻한다.</li>
+  <li>DL1 입력 PNG(layout/electrode·CNT)는 <b>검정 패턴 / 흰 배경</b>, compare의 hotspot PNG는 <b>흰 패턴 / 검정 배경</b>이다. DL1 importer는 <code>python -m psdl1.import_png</code> → <code>--inspect-grids</code> → <code>--export</code> → <code>--verify-bundle</code> 순서로 manifest를 만든다.</li>
+  <li>DL2의 CNT/VIA view check는 <code>global_contact_proxy_unverified</code> 기하 proxy이며 실제 도통 검증이 아니다.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s10"><span class="num">10</span>폐쇄망 운영</h2>
+
+<h3>10.1 Windows 설치 (사용자 성공 확인)</h3>
+<p>CMD + 설치된 CPython 3.12 x64(<code>py.exe</code>) + Git에 포함된 <code>bundles/windows_cp312_win_amd64.zip</code>. 온라인 설치와 PowerShell 스크립트는 제거했다. 관리자 권한·실행 정책 변경·venv 활성화가 필요 없다.</p>
+<pre><code>cd /d "%USERPROFILE%\simcompare-offline\windows_cp312_win_amd64"
+py -3.12 -m venv .venv-cmd
+.venv-cmd\Scripts\python.exe verify_windows_bundle.py .
+.venv-cmd\Scripts\python.exe -m pip --disable-pip-version-check install --no-index --only-binary=:all: --require-hashes --find-links=wheelhouse -r requirements-windows.txt
+.venv-cmd\Scripts\python.exe -m pip check
+.venv-cmd\Scripts\python.exe -m simcompare --help</code></pre>
+<p><code>wheel integrity OK</code>, <code>No broken requirements found</code>, 도움말이 보이면 설치 확인이다. 이는 실자료 수치 검증이 아니다. 묶음 빌드는 네트워크가 있는 빌드 컴퓨터에서 <code>python scripts/build_windows_bundle.py</code>(uv 0.11.23, Hatchling 1.27.0 고정)로 만들고 새 ZIP은 새 폴더에 푼다.</p>
+
+<h3>10.2 세 저장소 인수 bundle</h3>
+<pre><code>bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT \
+     --dl1-ref dc9a0197f0d9dce127072cdbbca4c9697344aac3 --dl2-ref ce98fd3dc835b7a605616bbc265c547ddc6e0cff
+bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
+bash scripts/validate_offline.sh D:/approved-output/bundle --out … --expect-manifest-sha256 …</code></pre>
+<ul>
+  <li><code>git archive &lt;commit&gt;</code>로 tracked 파일만 복사. <code>.venv</code>, 미추적 데이터, 가중치는 제외하며 tracked <code>.pt/.pth/.ckpt/.safetensors</code>가 있으면 build를 거부한다.</li>
+  <li><code>manifest.json</code>에 commit, lock hash(C는 uv.lock, DL은 requirements.lock), 파일별 SHA256, schema 버전, 빌드 호스트 Python 버전을 기록. 승인 hash는 별도 채널로 받아 <code>--expect-manifest-sha256</code>에 넣는다.</li>
+  <li><code>validate_offline.sh</code>는 각 자식 Python에 socket connect/DNS를 거부하는 <code>sitecustomize</code>를 넣고 import/help/C demo·validate·compare·map/DL1 search/DL2 import·index·search/C read를 실행해 <code>validation.json</code>에 기록한다. 조직 네트워크 차단은 그대로 유지한다.</li>
+  <li>현재 pin: DL1 <code>main @ dc9a019</code>, DL2 <code>main @ ce98fd3</code>. C는 coordinator가 승인한 commit. DL1/DL2 전체 연동의 Windows 실행은 아직 미검증이며 compare 설치만 사용자 확인이 있다.</li>
+</ul>
+
+<h3>10.3 폐쇄망 입력 사실 (사용자 확인)</h3>
+<div class="tbl"><table>
+<thead><tr><th>항목</th><th>확정 값</th><th>일자</th></tr></thead>
+<tbody>
+<tr><td>호스트</td><td>Windows, CMD</td><td>2026-10-13</td></tr>
+<tr><td>이미지 해상도</td><td>0.1 µm/pixel (hotspot 포함). 이전의 약 0.05 수치는 폐기</td><td>2026-10-13</td></tr>
+<tr><td>hotspot PNG</td><td>검정 배경 / 흰 패턴 → <code>value_semantics: binary</code></td><td>2026-10-13</td></tr>
+<tr><td>layout·CNT PNG (DL1)</td><td>흰 배경 / 검정 패턴</td><td>2026-10-13</td></tr>
+<tr><td>지름 조건</td><td>1~30, 40, 50 µm (32개). <code>03</code>은 <code>3</code>과 중복</td><td>2026-10-08</td></tr>
+<tr><td>지도 범위</td><td>short-only, open 미포함, 자동 threshold 없음</td><td>2026-10-08</td></tr>
+<tr><td>CNT 접촉</td><td>4-neighbour, 대각선만 닿는 접촉 없음. CNT 성분은 같은 전극의 layer를 잇는다</td><td>2026-10-13</td></tr>
+<tr><td>같은 net 쌍 제외</td><td>불필요. 입력 이전에 이미 처리됨</td><td>2026-10-13</td></tr>
+</tbody></table></div>
+
+<!-- ================================================================ -->
+<h2 id="s11"><span class="num">11</span>검증과 독립 리뷰</h2>
+
+<h3>11.1 자동 시험</h3>
+<p>2026-10-18 이 Mac(.venv Python 3.11.15, Pillow 12.3.0, numpy 2.4.6)에서 <code>pytest -o addopts="" -q</code>: <b>870 passed, 3 skipped, 47 s</b>. skip은 Windows CMD 전용과 cross-repo 조건부 시험이다. 시험은 손으로 계산한 기대값을 직접 비교한다(예: pitch 0.5 µm, 3×3 전부 활성, 창 1.0 µm → CA 1.0; 평행이동 불변 Δ = 0; frame 10×10·pitch 0.1·활성 25셀 → fraction 0.25).</p>
+<div class="tbl"><table>
+<thead><tr><th>시험 묶음</th><th>대상</th></tr></thead>
+<tbody>
+<tr><td><code>test_numeric_schema</code>, <code>test_numeric_inputs</code>, <code>test_numeric_images</code></td><td>타입 검증, loader, 경로 탈출·hash, strict PNG 수락/거부 fixture</td></tr>
+<tr><td><code>test_measurement</code>, <code>test_linepixel</code>, <code>test_failure_pieces</code>, <code>test_fraction_of_frame</code>, <code>test_density</code>, <code>test_panel_comparison</code></td><td>창 측정, union/bucket 보존식, 조각 합, 비율, 가중·panel·delta</td></tr>
+<tr><td><code>test_electrode_map</code>, <code>test_heatmap</code></td><td>count 지도, summary, 영역, PNG/sidecar</td></tr>
+<tr><td><code>test_correspondence</code>, <code>test_local_delta</code>, <code>test_local_delta_report</code>, <code>test_candidate_coverage</code>, <code>test_dl2_round_trip</code></td><td>PLAN_v3 전체: 변환기 왕복, 창 Δ 손계산, clipping/valid/core/jitter, HTML, DL2 결과 왕복</td></tr>
+<tr><td><code>test_real_hotspot</code></td><td>실제 폴더 import, CSV tolerance, 자원 제한, assignment</td></tr>
+<tr><td><code>test_roi_export</code>, <code>test_dl_results</code>, <code>test_handoff</code>, <code>test_windows_bundle</code></td><td>ROI 내보내기, seal/read, bundle build/check/tamper, Windows ZIP 무결성</td></tr>
+<tr><td><code>test_cli_e2e</code>, <code>test_numeric_cli</code>, <code>test_retired_paths</code>, <code>test_review_findings</code></td><td>종료 코드, error.json, 폐기 명령, 리뷰 반례 회귀</td></tr>
+<tr><td><code>test_schema</code>, <code>test_adapter_example_contract</code>, <code>test_preprocess*</code>, <code>test_merge_exports</code>, <code>test_particle_sim_*</code>, <code>test_ca_unit_contract</code></td><td>legacy 1.x loader·병합·particle-sim 검사 회귀</td></tr>
+</tbody></table></div>
+
+<h3>11.2 독립 리뷰 이력</h3>
+<p>Orca 정책에 따라 구현자와 다른 fresh 세션(주로 Claude Opus 5.5 high, 일부 Codex Astra)이 읽기 전용으로 리뷰했다. 보고서는 <code>docs/review/</code>에 있다.</p>
+<div class="tbl"><table>
+<thead><tr><th>리뷰</th><th>대상</th><th>판정</th></tr></thead>
+<tbody>
+<tr><td>R1 → 재리뷰</td><td>T1~T5 numeric 경로 (<code>d0cde4d</code> → <code>8a35c0e</code>)</td><td><span class="chip crit">FAIL</span> 차단 2 → <span class="chip ok">PASS-WITH-NOTES</span></td></tr>
+<tr><td>R2</td><td>T6 CLI·리포트·ROI, T7 폐기 (<code>e4086dd</code>)</td><td><span class="chip ok">PASS-WITH-NOTES</span> 메모 13</td></tr>
+<tr><td>R5 → R5b</td><td>T12 인수 bundle·dl_results (<code>15aa90a</code> → <code>325a33d</code>)</td><td><span class="chip crit">FAIL</span> → <span class="chip ok">PASS-WITH-NOTES</span></td></tr>
+<tr><td>R6 → R6b</td><td>strict PNG reader</td><td><span class="chip ok">PASS-WITH-NOTES</span></td></tr>
+<tr><td>REAL_HOTSPOT R1~R3</td><td>실제 hotspot import (A·B 구현, C·D 수정)</td><td><span class="chip ok">PASS</span> R3 기준</td></tr>
+<tr><td>DL1_PNG RA/RA2/RA3/RB/RB2, DL1_CNO RO/RO2, DL1_HEAD_F0A5598</td><td>DL1 PNG 입력·cno stack order·최종 HEAD (High-risk)</td><td><span class="chip ok">PASS-WITH-NOTES</span> 차단 0, 메모 8</td></tr>
+<tr><td>PLAN_v3 1차 · 2차</td><td>C <code>2a54543..65195a5</code>, <code>d9efcc0</code>; DL2 <code>43614d3</code>, <code>802bdb7</code></td><td><span class="chip ok">PASS-WITH-NOTES</span> × 2. 3차 수정 커밋(<code>a060a0b</code>)은 미리뷰</td></tr>
+</tbody></table></div>
+<p>리뷰에서 잡힌 대표 결함: 기본 격자값 추측(DL1 R3 B1), frame 가장자리 창의 ulp 오차로 상태 반전(A2, 3000건 중 76건 오판 → 0건), 겹치는 창 중복 집계(A3), named_pair ≤ union 미검사(A6), DL2 score와 index 미결합(R5 B2). 모두 후속 커밋에 반영됐다.</p>
+
+<!-- ================================================================ -->
+<h2 id="s12"><span class="num">12</span>미결 게이트와 보류</h2>
+<div class="tbl"><table>
+<thead><tr><th>ID</th><th>상태</th><th>내용</th><th>차단되는 범위</th></tr></thead>
+<tbody>
+<tr><td>G1</td><td><span class="chip warn">일부 answered</span></td><td>지름별 한 값(per_bin) 확정. 실제 단위·조사면적·공정/기간 환산 미답(사용자 보류)</td><td>실자료 가중값, parser 승인</td></tr>
+<tr><td>G2</td><td><span class="chip warn">일부 answered</span></td><td>0.1 µm/px, 제품별 pixel 수, layer 크기 동일 확정. 2×2 → 한 unit 환산 미답</td><td>자동 /4, unit/panel 완료, 실제 numeric adapter·migration</td></tr>
+<tr><td>G3</td><td><span class="chip ok">answered</span></td><td>DL2 저장소 <code>~/git/particle-sim-dl2</code>, 로컬만</td><td>remote/push는 별도 요청</td></tr>
+<tr><td>G4</td><td><span class="chip warn">방침 answered</span></td><td>창 = ROI 중심 주변 물리 크기(µm). 측정 창과 DL2 near/wide 분리. 10/20/30 µm 민감도 실험으로 결정</td><td>기본 창 크기, 실제 crop/channel recipe</td></tr>
+<tr><td>G5</td><td><span class="chip warn">일부 answered</span></td><td>whole-unit resize+pad, shape·connectivity 우선 확정. 실제 격자·최소 선폭·CNT/VIA endpoint 형식 미답</td><td>DL1 실자료 grid/augmentation 확정</td></tr>
+<tr><td>G6</td><td><span class="chip warn">pending</span></td><td>lineage/split, 라벨·negative 정의, Recall@k 목표, 수치 검산 오차</td><td>실자료 성능 PASS</td></tr>
+<tr><td>Q1~Q6</td><td><span class="chip warn">pending</span></td><td><code>repeats_per_frame</code> 제공 주체, jitter 폭, 정렬 지름, hit 허용오차, 기본 표시(조각 vs named_pair), 라벨 입력 형식(JSON vs CSV)</td><td>모두 인수로 받으므로 구현은 진행됨</td></tr>
+</tbody></table></div>
+<p><b>사용자 보류(on hold)</b>: 밀도 단위·조사면적 환산(G1 나머지), 수율 환산, layer별 윤곽 겹쳐 보기 화면, 눌러서 따라가는 뷰어, 레이아웃 변경별 불량 정량화(change attribution), open 회피·설계 규칙 입력. 사용자가 다시 꺼낼 때까지 구현하지 않는다.</p>
+<p><b>실자료 전 남은 일</b>: Windows 16 GB에서 수백 실제 이미지 처리, 실자료 비교·지도·ROI 검증, DL1/DL2 Windows 연동, 설계자의 수십 쌍 ΔCA 표 검토와 G4 결정, DL2 위치 오차 vs ZNCC 기준선 비교 기록, <code>validation-template.json</code>의 세 빈 항목(<code>local_delta_designer_agreement</code>, <code>window_size_decision</code>, <code>dl2_vs_baseline</code>) 채우기, <code>main</code> fast-forward 병합.</p>
+
+<!-- ================================================================ -->
+<h2 id="s13"><span class="num">13</span>폐기·legacy 경로</h2>
+<ul>
+  <li><b>폐기 명령</b>: <code>train</code>, <code>embed</code>, <code>analyze</code>, <code>evaluate</code>, <code>all</code>은 명시 오류(exit 2)를 낸다. <code>analyze</code>는 <code>compare</code> 또는 <code>electrode-map</code>으로 이동.</li>
+  <li><b>삭제된 모듈</b>: config, caa, dataset, model, losses, analysis, cards, split, checks, plots, variants, neighborhood, pair_geometry 등 AE/PCA/CAA 경로. 삭제 시험 목록은 <code>docs/model_design.md</code>에 있고 코드는 <code>archive/pre-rewrite-20261007</code> 브랜치에 보존.</li>
+  <li><b>유지된 legacy loader</b>: <code>schema.py</code>, <code>adapters/example.py</code>, <code>preprocess.py</code>, <code>merge.py</code>, <code>adapters/particle_sim_run.py</code>. particle-sim 1.x export의 ID·source-step assignment를 검산하는 용도이며 numeric_v2로 자동 변환하지 않는다. 1.2의 source-step Fab assignment와 numeric_v2의 실제 상부 layer 귀속이 충돌하면 <code>migration_assignment_conflict</code>.</li>
+  <li><b>archived 문서</b>: <code>docs/arch/*.md</code>(config·checks·pipeline 등 옛 계약), <code>docs/walkthrough/</code>·<code>docs/walkthrough.pdf</code>, <code>docs/references.md</code>(Ngiam 2011, Wang 2015, Wu 2022 참고 기록), <code>docs/model_design.md</code>. 현행 기능 설명이나 검증 근거로 쓰지 않는다.</li>
+  <li><b>CA 단위 결정(2026-09-27)</b>은 legacy 경로에 남아 있다: 원 면적 CA(nm²/µm²/mm²)는 canonical 길이 제곱으로 환산해 ROI 면적으로 한 번만 나누고(단위 1), legacy 무차원 CA는 1/µm². 두 계열을 섞으면 real은 오류, demo는 경고. pre-fix particle-sim export는 re-export를 요구한다.</li>
+</ul>
+
+<!-- ================================================================ -->
+<h2 id="s14"><span class="num">14</span>문서 지도</h2>
+<div class="cols">
+  <div><h4>먼저 읽을 것</h4><ul>
+    <li><code>README.md</code> 역할과 설치 요약</li>
+    <li><code>SPEC.md</code> 공개 명령과 계산 상태 명세</li>
+    <li><code>docs/usage.md</code> 폐쇄망 실행 가이드</li>
+    <li><code>docs/data_contract.md</code> 현행 계약 전체</li>
+    <li><code>docs/review_roi_contract.md</code> CLI·ROI·heat-map 세부</li>
+  </ul></div>
+  <div><h4>결정과 질문</h4><ul>
+    <li><code>docs/open_questions.md</code> gate 상태, 날짜별 답변 표</li>
+    <li><code>docs/implementation_memory.json</code> 사용자 결정 기록 (2026-10-04~10-18)</li>
+    <li><code>docs/decisions/2026-09-27-ca-unit-and-area.md</code></li>
+    <li><code>docs/png_input_notes_2026-10-12.md</code> DL1 PNG 입력 정정</li>
+  </ul></div>
+  <div><h4>계획과 운영 기록</h4><ul>
+    <li><code>docs/plan/PLAN_v2.md</code> 채택된 재작성 계획(+DL2 views addendum)</li>
+    <li><code>docs/plan/PLAN_v3_local_delta_ca.md</code> 국부 ΔCA 계획·구현 상태·리뷰 반영</li>
+    <li><code>docs/plan/CHECKPOINT.md</code> Orca Run/Task/리뷰 체크포인트</li>
+    <li><code>docs/plan/dl1_*</code>, <code>real_hotspot_*</code> 하위 계획</li>
+  </ul></div>
+  <div><h4>인수와 리뷰</h4><ul>
+    <li><code>docs/handoff/README.md</code>, <code>commands.md</code>, <code>troubleshooting.md</code>, <code>validation-template.json</code>, <code>manifest.schema.json</code></li>
+    <li><code>docs/windows_bundle_build.md</code> 묶음 빌드 절차</li>
+    <li><code>docs/review/*.md</code> 독립 리뷰 보고서 22건</li>
+    <li><code>docs/domain-input-example/numeric_v2/README.md</code> 합성 예제 검산</li>
+  </ul></div>
+</div>
+
+<footer>
+  <p>이 문서는 2026-10-18 저장소 상태(<code>rewrite/line-pixel-rate @ a060a0b</code>)를 요약한 것이며 계약의 원문이 아니다. 수치 규칙이 충돌하면 <code>docs/data_contract.md</code>와 <code>SPEC.md</code>가 우선한다. 외부 참조 없이 <code>file://</code>로 열린다.</p>
+</footer>
+</main>
+</div>
+</body>
+</html>
