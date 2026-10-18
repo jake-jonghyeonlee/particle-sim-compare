@@ -17,7 +17,7 @@
 | G7a | answered | lateral-only/vertical-only/simultaneous 지표 구현, open 제외(2026-10-08) | case 유형·기존 line/pixel 보존 | 면적·가중·panel·delta 구현; G1/G2 미답변 real 값은 null, shared/transfer를 simultaneous로 이름 변경 금지 |
 | G7b | answered | 지도는 현재 short-only, 사용자 결정 2026-10-08 | count 배열·heat-map, 수동 ROI 기본, 명시 threshold 영역 ROI | 누락 source/valid/frame/shape의 차단 사유 유지; legacy open helper는 보존 |
 | G3 | pending | null — DL1/DL2 별도 repo 이름·경로 확인 | 교환 계약 초안 | DL2 생성/rename/remote/push; 이름 답변은 push 허가 아님 |
-| G4 | pending | null — near/wide 물리 크기 및 비인접 pair 중간 layer 정책 | 매개변수 crop 시험·원본 layer·ROI 위치 계약 | 실자료 기본 crop/channel/학습 recipe 확정; 위치 export 자체는 가능 |
+| G4 | pending (방침 answered 2026-10-18) | null — near/wide 물리 크기 및 비인접 pair 중간 layer 정책. 2026-10-18: 창은 유닛 크기가 아니라 ROI 중심 주변 물리 크기(µm)이며, C의 측정 창은 DL2 near/wide와 분리한다. 10/20/30 µm 후보를 수십 개 라벨 위치에서 민감도 실험으로 결정한다(PLAN_v3 T4) | 매개변수 crop 시험·원본 layer·ROI 위치 계약·창 크기 민감도 표 | 실자료 기본 crop/channel/학습 recipe 확정; 위치 export 자체는 가능; 기본 창 크기는 코드에 넣지 않음 |
 | G5 | pending | null — whole-unit isotropic resize+pad / electrode×layer set 제안, 최소 선폭·격자, CNT/VIA endpoint 형식 | 독립 overlap/validator 수정·합성 비교 | 권고를 확정 설계로 표시·실자료 grid/augmentation 확정 |
 | G6 | pending | null — lineage/split, 선택 labels·unknown/negative, Recall@k/누락·자원/시간 목표, 수치 검산/오차 | harness·빈 수락 양식·baseline | 실자료 성능/기존 수치 일치 PASS |
 
@@ -58,3 +58,16 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 이미지 해상도 | answered | 사용자(2026-10-13): hotspot을 포함해 0.1 um/pixel. 2026-10-08의 약 0.05 um/pixel 수치는 쓰지 않음. 코드에 고정값은 없고 manifest의 frame pitch로 받음 | 없음 |
 
 참고: reader는 구조 검증 뒤 mode `1`, `L`, `RGB`, `LA`, `RGBA`, `P`의 불투명 exact black/white PNG를 받는다. 기존 8-bit L의 0/1 mask도 유지한다. 16-bit (`I`/`I;16`) PNG는 `png_unsupported_bit_depth`로 거부하며 threshold나 luminance 변환을 하지 않는다.
+
+## 2026-10-18 답변 (국부 ΔCA·제품 비율·대응 라벨, [PLAN_v3](plan/PLAN_v3_local_delta_ca.md))
+
+| 항목 | 상태 | 내용 | 남은 것 |
+|---|---|---|---|
+| 설계자 작업 흐름 | answered | DL2가 찾은 위치에서 대조된 CA를 보고 형상 변경에 따른 **불량 유형별 CA 변화**를 본다. 눈으로 하기엔 너무 오래 걸린다 | 자동화(T2/T5) |
+| 라벨 자료 | answered | 설계 전후 쌍은 없다. 비슷한 모델끼리 짝이 있고 양쪽 시뮬레이션 결과가 있다. 대응 위치 라벨은 수십 개 확보 가능 | 라벨 양식 `roi_correspondence_v1`로 수집(T1) |
+| open 포함 여부 | answered | 미포함. short-only 유지 | 없음 |
+| 결론 수준 | answered | 두 수준 모두: 어느 설계가 더 안전한가(제품), 형상 변경이 CA를 얼마나 바꿨나(국부). 공통 목표는 더 나은 설계 | `fraction_of_frame`(T3)과 창 안 Δ(T2) |
+| 창(window)의 뜻 | answered | 유닛 크기가 아니라 ROI 중심 주변 물리 크기(µm). 측정 창과 DL2 near/wide는 별개. 기본값 없음 | 10/20/30 µm 민감도 실험 뒤 G4 값 결정(T4) |
+| 유닛 크기가 다른 제품의 비교 | answered | CA 절대값 비교 불가. 제품 수준은 CA / 2×2 frame 면적 비율(단위 없음, G2의 /4가 분자·분모에서 상쇄), 국부 수준은 같은 물리 창 안의 CA | 유한 2×2 경계 효과는 한계로 기록 |
+| 작업 순서 | answered | DL 없이 수동 라벨 + C 창 측정으로 가치 확인 → 창 크기 실험 → DL2와 비DL 기준선 평가 → DL2 확장 | PLAN_v3 T0~T8 |
+| `repeats_per_unit`, jitter 폭, 정렬 지름, 위치 hit 허용오차, 기본 표시 수준, 라벨 입력 형식 | pending | PLAN_v3 §8 Q1~Q6 | 모두 인수로 받으므로 답 없이 구현 진행 가능 |

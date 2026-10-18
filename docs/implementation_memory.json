@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-09T08:21:11.398045+09:00",
+  "updated_at": "2026-10-18T15:53:29.487904+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -499,5 +499,36 @@
       "still open: container format of the image (PNG / BMP / TIFF, bit depth), whether layout images use the same polarity, and how one unit's value is taken from the 2x2 result",
       "T10/T11 proceed with parameterised windows; DL2 real crop recipe remains pending until the user fixes the sizes in the closed network"
     ]
+  },
+  "local_delta_ca_2026_10_18": {
+    "authority": "User, 2026-10-18, brainstorming session (non-Orca). Plan: docs/plan/PLAN_v3_local_delta_ca.md.",
+    "decisions": {
+      "designer_workflow": "The designer looks at the position DL2 found and the CA results contrasted there, i.e. how the CA of each defect type changes with the shape change. Doing this by eye takes too long.",
+      "label_data": "No before/after pairs of one design. Similar models are paired and both sides have simulation results. Tens of corresponding positions can be collected.",
+      "open": "Excluded. short-only is kept (consistent with G7b).",
+      "conclusion_levels": "Both: which design is safer (product level) and how much a shape change moved CA (local level). The common goal is a better design.",
+      "window_meaning": "A window is the physical size (um) of the square around a ROI centre, not the unit size. The C measurement window is separate from the DL2 near/wide windows. No default; 10/20/30 um candidates are tested on the labelled positions and the user picks (closes G4).",
+      "cross_unit_size_comparison": "Absolute CA cannot be compared across products with different unit sizes. Product level: CA / 2x2 frame area (dimensionless; the G2 /4 cancels in the ratio; the finite 2x2 edge effect remains a caveat). Local level: CA inside the same physical window at the corresponding position.",
+      "order": "Manual labels + C window measurement first (value check without DL) -> window-size experiment -> DL2 vs template-matching baseline -> DL2 expansion."
+    },
+    "decomposition": "CA / frame_area = (structures per area) x (CA per structure). Unit size and pitch act on the first factor; a shape change acts on the second, which is what the designer wants. fraction_of_frame = CA/frame_area; local_delta = CA_w(B) - CA_w(A) in the same window; explained_fraction = sum(local_delta x repeats_per_unit)/frame_area vs delta fraction, only when repeats are supplied.",
+    "exchange_format": "roi_correspondence_v1 (owned by C): pairs of (product, design_version, frame_id, center_xy_um, analysis_layer, optional endpoints/failure_type, optional roi_id) for sides a and b, optional repeats_per_unit, source.kind manual|template_match|dl2_search. The same file feeds compare-windows regardless of producer; DL2 scores are display context only.",
+    "measurement_rules": [
+      "Window = half-open square of side s um centred on the labelled centre; existing PhysicalWindow/measure_union; no resize.",
+      "Pieces lateral_only/vertical_only/simultaneous/union of the mapped short cases of the given analysis_layer group, restricted to the window; pieces sum to union.",
+      "delta = b - a only when both sides are available; a clipped window or valid hole makes delta null with a reason; no partial deltas.",
+      "attributable_core = inner square of side s - d; not_applicable when s <= d. Window value is the exact local risk, core value is the part attributable to in-window shape.",
+      "Optional jitter: four windows shifted by +-j in x and y; report delta range and sign stability; no threshold.",
+      "named_pair: when endpoints are given, the matching case's own mask is measured in the window in addition to the group pieces."
+    ],
+    "pending": [
+      "repeats_per_unit source",
+      "jitter amplitude",
+      "sort/thumbnail diameter",
+      "DL2 position hit tolerance",
+      "default display level (layer pieces vs named pair)",
+      "label input format (JSON direct vs CSV)"
+    ],
+    "status": "Plan written 2026-10-18; implementation in progress on branch rewrite/line-pixel-rate. Synthetic validation only."
   }
 }
