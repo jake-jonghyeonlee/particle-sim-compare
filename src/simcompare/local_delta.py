@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -25,7 +26,7 @@ from .correspondence import BoundPair, BoundSide
 from .linepixel import FAILURE_PIECES, AreaMetric, AreaResult, GroupArea
 from .measurement import measure_union
 from .numeric_schema import (
-    DIAMETERS_UM, MaskRecord, NumericContractError, NumericDataset, PhysicalWindow, Status,
+    DIAMETERS_UM, Frame, MaskRecord, NumericContractError, NumericDataset, PhysicalWindow, Status,
     diameter_key, finite,
 )
 
@@ -96,6 +97,45 @@ def _group_state(metric: AreaMetric) -> tuple[str, set[str]]:
     return ('partial' if nonspatial else 'available'), nonspatial
 
 
+def crop_to_window(frame: Frame, mask, window: PhysicalWindow, *, margin_cells: int = 1):
+    """Sub-frame and sub-mask covering the window plus a one-cell margin.
+
+    Cells outside the window contribute zero area, so measuring the crop gives the
+    same value, valid area and completeness as measuring the whole frame; a window
+    that leaves the original frame still leaves the crop (clipped at the same edge).
+    Avoids copying and integrating a full 2000² mask for every small window.
+    """
+    x0, y0, x1, y1 = window.bounds_um()
+    ox, oy = frame.origin_xy_um
+    pitch = frame.pixel_pitch_um
+    h, w = frame.shape_yx
+    c0 = min(w, max(0, int(math.floor((x0 - ox) / pitch)) - margin_cells))
+    c1 = max(c0, min(w, int(math.ceil((x1 - ox) / pitch)) + margin_cells))
+    r0 = min(h, max(0, int(math.floor((y0 - oy) / pitch)) - margin_cells))
+    r1 = max(r0, min(h, int(math.ceil((y1 - oy) / pitch)) + margin_cells))
+    if c1 <= c0 or r1 <= r0:
+        return None, None
+    sub_frame = Frame(frame.frame_id, pitch, (ox + c0 * pitch, oy + r0 * pitch), (r1 - r0, c1 - c0),
+                      frame.valid[r0:r1, c0:c1])
+    return sub_frame, np.asarray(mask)[r0:r1, c0:c1]
+
+
+def _measure_cropped(frame: Frame, mask, window: PhysicalWindow, *, diameter, analysis_layer, identity=None,
+                     input_status='observed', reasons=()):
+    """measure_union on the window crop; unobserved records keep their status without a mask."""
+    if input_status != 'observed':
+        record = MaskRecord(float(diameter), frame, None, input_status, tuple(reasons), identity=identity,
+                            analysis_layer=analysis_layer)
+        return measure_union(record, [window])
+    sub_frame, sub_mask = crop_to_window(frame, mask, window)
+    if sub_frame is None:
+        # window entirely outside the frame: same outcome as the full-frame measurement
+        record = MaskRecord(float(diameter), frame, np.zeros(frame.shape_yx, bool), identity=identity, analysis_layer=analysis_layer)
+        return measure_union(record, [window])
+    record = MaskRecord(float(diameter), sub_frame, sub_mask, identity=identity, analysis_layer=analysis_layer)
+    return measure_union(record, [window])
+
+
 def _unavailable(window: PhysicalWindow, reasons) -> WindowMetric:
     return WindowMetric(None, None, 'unavailable', tuple(sorted(set(reasons))), _window_area(window), 0.0, None)
 
@@ -110,8 +150,7 @@ def measure_group_metric(group: GroupArea | None, name: str, diameter, window: P
     if state == 'not_applicable':
         return WindowMetric(None, None, 'not_applicable', tuple(sorted(group_reasons | set(reasons))),
                             _window_area(window), 0.0, None)
-    record = MaskRecord(float(diameter), group.frame, mask, analysis_layer=group.key.analysis_layer)
-    measured = measure_union(record, [window])
+    measured = _measure_cropped(group.frame, mask, window, diameter=diameter, analysis_layer=group.key.analysis_layer)
     if measured.status == 'unavailable' or state == 'unavailable':
         status = 'unavailable'
     elif measured.status == 'partial' or state == 'partial':
@@ -346,7 +385,10 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b):
         case = matches[0]
         out['cases'][label] = {'case_id': case.identity.case_id, 'failure_type': case.failure_type,
                                'pair_id': case.pair_id, 'classification': case.classification}
-        metrics[label] = _from_measurement(measure_union(case.records[diameter], [window]), window, 'physical_window_single_case')
+        record = case.records[diameter]
+        measured = _measure_cropped(record.frame, record.mask, window, diameter=diameter, analysis_layer=record.analysis_layer,
+                                    identity=record.identity, input_status=record.input_status, reasons=record.reasons)
+        metrics[label] = _from_measurement(measured, window, 'physical_window_single_case')
     out['a'], out['b'] = metrics['a'], metrics['b']
     out['delta'] = delta_of(metrics['a'], metrics['b'])
     return out

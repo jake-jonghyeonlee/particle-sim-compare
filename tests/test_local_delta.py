@@ -348,3 +348,34 @@ def test_compact_json_keeps_rows_in_csv_only(tmp_path):
     assert (tmp_path / 'compact' / 'local_delta_rows.csv').read_text() == full_csv
     assert len(full_csv.splitlines()) == 1 + len(DIAMETERS_UM) * 2 * len(METRICS)
 
+
+def test_cropped_window_measurement_equals_full_frame_measurement():
+    """crop_to_window must not change value, valid area, status or completeness (edges, holes, outside)."""
+    import random
+    from simcompare.local_delta import _measure_cropped
+    from simcompare.measurement import measure_union
+    from simcompare.numeric_schema import MaskRecord, PhysicalWindow
+    rng = random.Random(1018)
+    for trial in range(60):
+        shape = (rng.randint(3, 9), rng.randint(3, 9))
+        pitch = rng.choice([0.5, 1.0, 0.25])
+        origin = (rng.choice([0.0, 10.0, -2.5]), rng.choice([0.0, 20.0]))
+        valid = np.ones(shape, bool)
+        if rng.random() < 0.5:
+            valid[rng.randrange(shape[0]), rng.randrange(shape[1])] = False
+        frame = Frame('f', pitch, origin, shape, valid)
+        mask = np.array([[rng.random() < 0.4 for _ in range(shape[1])] for _ in range(shape[0])])
+        width = shape[1] * pitch; height = shape[0] * pitch
+        cx = origin[0] + rng.uniform(-0.3 * width, 1.3 * width)
+        cy = origin[1] + rng.uniform(-0.3 * height, 1.3 * height)
+        side = rng.choice([pitch * 0.7, pitch * 1.5, pitch * 3.3])
+        window = PhysicalWindow(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+        full = measure_union(MaskRecord(5.0, frame, mask, analysis_layer='M2'), [window])
+        cropped = _measure_cropped(frame, mask, window, diameter=5.0, analysis_layer='M2')
+        assert cropped.status == full.status, (trial, cropped, full)
+        assert cropped.ca_um2 == pytest.approx(full.ca_um2) if full.ca_um2 is not None else cropped.ca_um2 is None
+        assert cropped.partial_value == pytest.approx(full.partial_value) if full.partial_value is not None else cropped.partial_value is None
+        assert cropped.observed_ca_um2 == pytest.approx(full.observed_ca_um2)
+        assert cropped.valid_area_um2 == pytest.approx(full.valid_area_um2)
+        assert cropped.requested_area_um2 == pytest.approx(full.requested_area_um2)
+
