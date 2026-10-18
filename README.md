@@ -28,6 +28,7 @@
 - [numeric_v2 합성 예제](docs/domain-input-example/numeric_v2/README.md)
 - [review ROI 계약](docs/review_roi_contract.md)
 - [답변과 pending 항목](docs/open_questions.md)
+- [대응 위치와 국부 ΔCA, frame 면적 비율](docs/plan/PLAN_v3_local_delta_ca.md) — `compare-windows`, `python -m simcompare.correspondence`, 사용법은 [실행 가이드](docs/usage.md)
 
 ## 유지된 legacy export 호환 경로
 

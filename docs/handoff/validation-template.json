@@ -8,5 +8,8 @@
   "measurements": [],
   "pending_decisions": [],
   "decision": null,
-  "notes": null
+  "notes": null,
+  "local_delta_designer_agreement": null,
+  "window_size_decision": null,
+  "dl2_vs_baseline": null
 }

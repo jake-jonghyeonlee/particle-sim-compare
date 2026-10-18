@@ -112,6 +112,42 @@ set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
 
 출력: `roi/review_rois.json`. manual이 기본 출처이고 multi-case region은 roi_id가 다른 행들로 남는다. blocked 행은 DL2 index/search에 들어가지 않는다. DL2 crop 설정은 다음 단계에서 사용자가 제공한다. C source root를 `%SOURCE_ROOT%`에, original asset manifest 상대 경로를 `%ASSET_MANIFEST%`에 지정한다.
 
+## 4b. 대응 위치 라벨과 국부 ΔCA (PLAN_v3)
+
+설계자가 짝지은 두 제품의 대응 위치를 `roi_correspondence_v1` JSON(`%PAIRS%`)으로 준비한다(수십 쌍, side a = reference, b = target). 창 크기(µm)는 사용자가 후보를 정하며 기본값이 없다. 결과 표와 HTML을 설계자가 보고 기존 판단과 맞는지 기록하고, 민감도 표로 창 크기(G4)를 정한다. DL 없이도 실행된다.
+
+
+Windows CMD (전체 연동 미실행):
+
+```bat
+set "PAIRS=USER_CORRESPONDENCE_JSON"
+set "WINDOW_SIZES=USER_UM_1 USER_UM_2 USER_UM_3"
+set "SORT_DIAMETER=USER_DIAMETER_UM"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare.correspondence validate --correspondence "%PAIRS%"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare compare-windows --config "%NUMERIC_CONFIG%" --correspondence "%PAIRS%" --window-sizes %WINDOW_SIZES% --sort-diameter-um "%SORT_DIAMETER%" --out "%RUN%/local"
+REM ROI 왕복과 DL 라벨 (선택)
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare.correspondence to-review-rois --config "%NUMERIC_CONFIG%" --correspondence "%PAIRS%" --side reference --out "%RUN%/config_a.yaml"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare export-review-rois --config "%RUN%/config_a.yaml" --out "%RUN%/roi_a"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare.correspondence to-review-rois --config "%NUMERIC_CONFIG%" --correspondence "%PAIRS%" --side target --out "%RUN%/config_b.yaml"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare export-review-rois --config "%RUN%/config_b.yaml" --out "%RUN%/roi_b"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare.correspondence attach-roi-ids --correspondence "%PAIRS%" --export-a "%RUN%/roi_a/review_rois.json" --export-b "%RUN%/roi_b/review_rois.json" --out "%RUN%/pairs_ids.json"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" -m simcompare.correspondence to-dl2-relations --correspondence "%RUN%/pairs_ids.json" --out "%RUN%/dl2_relations.json"
+set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
+"%C%" "%BUNDLE%/particle-sim-compare/scripts/check_candidate_coverage.py" --config "%RUN%/config_b.yaml" --correspondence "%PAIRS%" --min-counts USER_K_1 USER_K_2 --out "%RUN%/coverage"
+```
+
+출력: `local/local_delta.json|_rows.csv`, `local/window_sensitivity.*`, `local/local_delta.html`, `pairs_ids.json`, `dl2_relations.json`, `coverage/coverage.json`. 창 clipping·valid 구멍·원천 누락이면 Δ는 null이고 exit 3이다. 수락 기록은 `validation-template.json`의 `local_delta_designer_agreement`(쌍 수, 일치 수, 불일치 목록과 사유), `window_size_decision`(선택 µm, 근거, 민감도 파일), `dl2_vs_baseline`(허용오차, k, 두 top-1 hit rate, 질의 수, 결정)에 사용자가 채운다. 양식은 빈 값으로 전달되며 평가 숫자나 성공 판정을 미리 넣지 않는다.
+
+DL2 위치 평가와 비DL 기준선(7절 뒤): `"%D2%" -m psdl2.baseline_ncc --query-export "%RUN%/roi_a/review_rois.json" --index-export "%RUN%/roi_b/review_rois.json" --correspondence "%RUN%/pairs_ids.json" --window-um USER_UM --topk "%TOPK%" --out "%RUN%/baseline.json"` 뒤 `"%D2%" -m psdl2.eval_position --baseline "%RUN%/baseline.json" --correspondence "%RUN%/pairs_ids.json" --hit-tolerance-um USER_UM --k "%TOPK%" --out "%RUN%/eval_baseline.json"`, 같은 인수로 `--search "%RUN%/dl2_search.json"`을 넣어 `eval_dl2.json`을 만들고 `dl2_vs_baseline`에 기록한다.
+
 ## 5. DL1 validate / train / search / evaluate
 
 DL1은 `main` @ `dc9a0197f0d9dce127072cdbbca4c9697344aac3`를 사용한다. 상세 입력 규칙은 bundle의 `particle-sim-dl1/docs/USAGE.md`다. manifest를 손으로 작성하지 않고 아래 importer로 생성한다.

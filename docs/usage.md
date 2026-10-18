@@ -59,6 +59,43 @@ py -3.12 -m venv .venv-cmd
 
 `demo-data`는 numeric_v2 합성 데이터만 만든다. 실제 데이터 검증을 대신하지 않는다.
 
+## 대응 위치와 국부 ΔCA (compare-windows)
+
+비슷한 두 제품에서 설계자가 짝지은 위치의 **같은 물리 창** 안 CA를 비교한다([PLAN_v3](plan/PLAN_v3_local_delta_ca.md)). 창은 유닛 크기가 아니라 ROI 중심 주변 정사각형의 한 변(µm)이며 기본값이 없다. 대응 위치는 `roi_correspondence_v1` JSON으로 준다([데이터 계약](data_contract.md)). reference가 a, target이 b이고 방향은 b − a다. 유닛 크기가 달라도 같은 물리 창이므로 절대 비교가 된다.
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence validate --correspondence "D:\data\pairs.json"
+.venv-cmd\Scripts\python.exe -m simcompare compare-windows --config "D:\data\real.yaml" --correspondence "D:\data\pairs.json" --window-sizes 10 20 30 --sort-diameter-um 5 --out "D:\data\local"
+```
+
+출력:
+
+| 파일 | 내용 |
+|---|---|
+| `local_delta.json`, `local_delta_rows.csv` | 쌍 × 창 크기 × 32 지름 × {window, attributable_core} × {union, lateral_only, vertical_only, simultaneous}의 a / b / Δ, 창 면적 비율, 상태·사유. endpoints가 있으면 named_pair(그 case 자체의 창 안 CA) 추가 |
+| `window_sensitivity.json/csv` | 창 크기별 Δ_union, 부호 일치, 크기 쌍 간 \|Δ\| 순위 상관, core 적용 가능 지름. 추천값은 없고 사용자가 G4를 정한다 |
+| `local_delta.html` | 쌍마다 a/b layout crop과 hotspot crop(조각 색), a/b/Δ 표. 정렬 지름의 \|Δ_union\| 내림차순. PNG 내장이라 `file://`로 열린다 |
+
+`--compact-json`을 주면 JSON에서 행별 세부 지표를 빼고 CSV에만 남긴다(쌍 하나·창 하나가 약 0.4 MB이므로 수십 쌍 × 여러 창일 때 쓴다). 규칙: attributable core는 한 변 (창 − 지름)의 안쪽 정사각형이며 창 ≤ 지름이면 not_applicable이다. 창이 frame 밖으로 나가거나 valid 구멍을 포함하면 해당 Δ는 null이고 실행은 exit 3이다. 원천 누락·미매핑은 창 측정도 partial로 만든다. `--jitter-um j`를 주면 중심을 ±j 이동한 네 창의 Δ_union 범위와 부호 일치를 기록한다. DL2 검색에서 온 쌍의 점수는 출처 표시일 뿐 수치에 들어가지 않는다.
+
+같은 실행의 `compare` 결과에는 `fraction_of_frame`(면적 / 2×2 frame 면적, 단위 없음)이 group별·delta별로 추가된다(`comparison_fractions.csv`, HTML의 "frame 면적 비율"). G2의 한 unit 환산 없이 유닛 크기가 다른 제품을 비교하는 제품 수준 지표다.
+
+대응 파일 변환(ROI 왕복, DL 라벨, DL2 결과 받기, 후보 커버리지):
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence to-review-rois --config "D:\data\real.yaml" --correspondence "D:\data\pairs.json" --side reference --out "D:\data\real_a.yaml"
+.venv-cmd\Scripts\python.exe -m simcompare export-review-rois --config "D:\data\real_a.yaml" --out "D:\data\rois_a"
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence to-review-rois --config "D:\data\real.yaml" --correspondence "D:\data\pairs.json" --side target --out "D:\data\real_b.yaml"
+.venv-cmd\Scripts\python.exe -m simcompare export-review-rois --config "D:\data\real_b.yaml" --out "D:\data\rois_b"
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence attach-roi-ids --correspondence "D:\data\pairs.json" --export-a "D:\data\rois_a\review_rois.json" --export-b "D:\data\rois_b\review_rois.json" --out "D:\data\pairs_ids.json"
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence to-dl2-relations --correspondence "D:\data\pairs_ids.json" --out "D:\data\dl2_relations.json"
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence to-dl1-relations --correspondence "D:\data\pairs.json" --out "D:\data\dl1_relations.csv"
+.venv-cmd\Scripts\python.exe -m simcompare.correspondence from-dl2-search --search "D:\data\dl2_search.json" --index "D:\data\dl2_index.json" --query-export "D:\data\rois_a\review_rois.json" --index-export "D:\data\rois_b\review_rois.json" --out "D:\data\pairs_dl2.json"
+.venv-cmd\Scripts\python.exe scripts\check_candidate_coverage.py --config "D:\data\real.yaml" --correspondence "D:\data\pairs.json" --min-counts 2 3 4 --out "D:\data\coverage"
+```
+
+endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`로 blocked가 된다. `to-dl2-relations`는 양쪽 roi_id가 있는 ready 쌍만 `similar`로 쓴다. `check_candidate_coverage.py`는 라벨 위치가 전극 수 지도 영역 안에 드는 비율을 threshold별로 보고하는 읽기 전용 점검이다.
+
 ## 종료 코드
 
 | 코드 | 의미 | 확인 |
@@ -67,7 +104,9 @@ py -3.12 -m venv .venv-cmd
 | 3 | partial/unavailable/blocked 항목을 포함한 사용 가능한 부분 출력 | status, reasons, coverage, partial_value |
 | 2 | 입력/설정 불가 또는 지도 incomplete/unavailable | 오류 메시지, error.json; 지도 리포트 없음 |
 
-입력 오류 시 출력 디렉터리의 관리 리포트(comparison/electrode_map/validation/review_rois JSON·CSV·HTML·PNG·NPZ)를 제거하고 error.json/execution.json만 남긴다. 성공 또는 허용된 부분 비교 실행 후에는 stale error.json을 제거한다. electrode-map은 incomplete/unavailable이면 exit 2이고 리포트 세트를 쓰지 않는다. 기본 지도·ROI 출처 선택과 가중값 미확정 여부는 서로 독립이다.
+`compare-windows`는 모든 ready 쌍의 창 Δ가 available(또는 근거 있는 not_applicable)이면 0, 창 clipping·valid 구멍·원천 누락·blocked 쌍이 있으면 3, 대응 파일·창 크기·제품 불일치 오류는 2다.
+
+입력 오류 시 출력 디렉터리의 관리 리포트(comparison/electrode_map/validation/review_rois/local_delta/window_sensitivity JSON·CSV·HTML·PNG·NPZ)를 제거하고 error.json/execution.json만 남긴다. 성공 또는 허용된 부분 비교 실행 후에는 stale error.json을 제거한다. electrode-map은 incomplete/unavailable이면 exit 2이고 리포트 세트를 쓰지 않는다. 기본 지도·ROI 출처 선택과 가중값 미확정 여부는 서로 독립이다.
 
 ## 결과 읽기
 
