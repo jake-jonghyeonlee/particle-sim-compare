@@ -114,7 +114,7 @@ set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"
 
 ## 5. DL1 validate / train / search / evaluate
 
-DL1은 main에 merge되지 않은 `feat/png-input` @ `dc9a0197f0d9dce127072cdbbca4c9697344aac3`를 사용한다. 상세 입력 규칙은 bundle의 `particle-sim-dl1/docs/USAGE.md`다. manifest를 손으로 작성하지 않고 아래 importer로 생성한다.
+DL1은 `main` @ `dc9a0197f0d9dce127072cdbbca4c9697344aac3`를 사용한다. 상세 입력 규칙은 bundle의 `particle-sim-dl1/docs/USAGE.md`다. manifest를 손으로 작성하지 않고 아래 importer로 생성한다.
 
 사용자 제공: 원본 layout/electrode·CNT PNG 폴더, `dl1_png_metadata_v1` 계보/설계 metadata (모델별 lineage_id/design_version), candidate_grid, minimum line width 근거, lineage-safe split, relation label(미확정 G6는 unavailable 유지), epochs/batch/lr/seed, query_id. hotspot/CA를 입력 shape로 쓰지 않는다. grid를 임의로 덮어쓰지 않는다.
 

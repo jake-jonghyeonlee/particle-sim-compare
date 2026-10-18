@@ -122,3 +122,4 @@ Phase 3 (DL2, T10-T11) is not started: gate G3 (DL2 repository name) and G4 (win
 - 시험 build/check(d774920·f0a5598·7397c96, clean): 둘 다 available, 시험 manifest SHA256 `ad471488a416307a8c07989dea6dc230356633cfc08c8816d104ecac2a9d7290`. build 호스트 Python 3.14.7. 실제 전달 bundle의 승인 hash가 아니다.
 - 남은 것: DL1 리뷰 메모 1–3(업데이트 wheel 설치 후 ZIP 기준 검증 실패 안내, update 폴더 CRLF 보호), Windows 실제 실행·실자료 인수 미확인, `main` 병합(fast-forward).
 - 후속(2026-10-18): DL1 리뷰 메모 2–3을 `dc9a0197f0d9dce127072cdbbca4c9697344aac3`(문서·`.gitattributes`만, `src` 변경 없음)로 보완하고 인수 DL1 대상을 이 commit으로 갱신했다. 업데이트 폴더 `SHA256SUMS.txt` OK, DL1 `tests/test_windows_bundle.py` 통과. coordinator 검증만, 별도 재리뷰 없음(Trivial).
+- DL1 `feat/png-input`을 `main`에 fast-forward 병합(2026-10-18, `03bf3e3` → `dc9a019`, 26 commits). 인수 대상 commit은 그대로 `dc9a019`.
