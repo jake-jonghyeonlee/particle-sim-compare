@@ -295,6 +295,9 @@ def test_cli_compare_windows_on_demo_data(tmp_path):
     payload = json.loads((tmp_path / 'out' / 'local_delta.json').read_text())
     assert payload['status'] == 'available' and payload['provenance']['n_ready'] == 1
     assert payload['provenance']['correspondence_sha256']
+    import hashlib
+    assert payload['provenance']['config_sha256'] == hashlib.sha256((data / 'config.yaml').read_bytes()).hexdigest()
+    assert payload['provenance']['config_path'] == str((data / 'config.yaml').resolve())
     d5 = next(r for r in payload['rows'] if r['window_size_um'] == 1 and r['diameter_um'] == 5)
     assert d5['window']['a']['union']['value'] == 1.0 and d5['window']['b']['union']['value'] == 1.0
     assert d5['window']['delta']['union']['value'] == 0 and d5['named_pair']['cases']['a']['case_id'] == 'AB'
@@ -418,4 +421,44 @@ def test_cropped_window_measurement_equals_full_frame_measurement():
         assert cropped.observed_ca_um2 == pytest.approx(full.observed_ca_um2)
         assert cropped.valid_area_um2 == pytest.approx(full.valid_area_um2)
         assert cropped.requested_area_um2 == pytest.approx(full.requested_area_um2)
+
+
+def test_interior_invalid_column_flush_with_window_edge_is_not_touched():
+    """Second review: an invalid cell whose boundary coincides with the window edge must not make the window partial."""
+    from simcompare.local_delta import _measure_cropped
+    from simcompare.numeric_schema import PhysicalWindow
+    cells = 101
+    valid = np.ones((cells, cells), bool)
+    valid[:, 40] = False  # x ∈ [2.1, 2.15)
+    frame = Frame('f', 0.05, (0.1, 0.1), (cells, cells), valid)
+    mask = np.ones((cells, cells), bool)
+    flush = _measure_cropped(frame, mask, PhysicalWindow(1.1, 1.1, 2.1, 2.1), diameter=5.0, analysis_layer='M2')
+    assert flush.status == 'available' and flush.ca_um2 == pytest.approx(1.0)
+    touching = _measure_cropped(frame, mask, PhysicalWindow(1.1, 1.1, 2.11, 2.1), diameter=5.0, analysis_layer='M2')
+    assert touching.status == 'partial' and 'valid_incomplete' in touching.reasons and 'window_clipped' not in touching.reasons
+    left = _measure_cropped(frame, mask, PhysicalWindow(2.15, 1.1, 3.15, 2.1), diameter=5.0, analysis_layer='M2')
+    assert left.status == 'available'
+
+
+def test_named_pair_above_group_union_fails_closed_and_below_height_codes():
+    from simcompare.local_delta import WindowMetric, _as_dataset, _named_pair, _square
+    a = [make_case2d('lat', 'A', 'C', rect(range(4), range(4)))]
+    b = [make_case2d('lat', 'A', 'C', rect(range(4), range(4)), product='B')]
+    eps = (Endpoint('A', 'gate', 'M2'), Endpoint('C', 'data', 'M2'))
+    bound = pair('p', a, b, (1.0, 1.0), (1.0, 1.0), eps=eps)
+    tiny = WindowMetric(0.0, None, 'available', (), 1.0, 1.0, 0.0)
+    named = _named_pair(_as_dataset(a), _as_dataset(b), bound, 5, _square((1.0, 1.0), 1.0), _square((1.0, 1.0), 1.0), tiny, tiny)
+    assert named['reasons'] == ['named_pair_exceeds_group_union_a', 'named_pair_exceeds_group_union_b']
+    assert named['a'].status == 'unavailable' and named['a'].value is None and named['delta'].status == 'unavailable'
+    assert 'a:named_pair_exceeds_group_union_a' in named['delta'].reasons
+    va = [make_case2d('vert', 'A', 'B', rect(range(4), range(4)), failure_type='vertical_short', kind='pixel')]
+    vb = [make_case2d('vert', 'A', 'B', rect(range(4), range(4)), failure_type='vertical_short', kind='pixel', product='B')]
+    result = compute_local_delta([pair('v', va, vb, (1.0, 1.0), (1.0, 1.0))], va, vb, window_sizes_um=[1.0])
+    delta = row_at(result, 'v', 1.0, 2)['window']['delta']['vertical_only']
+    assert delta.status == 'not_applicable'
+    assert {'below_height_vertical_short_a', 'below_height_vertical_short_b'} <= set(delta.reasons)
+    other = replace(pair('d', a, b, (1.0, 1.0), (1.0, 1.0)), a=replace(bound.a, design_version='other', endpoints=None))
+    mismatch = compute_local_delta([other], a, b, window_sizes_um=[1.0])
+    assert row_at(mismatch, 'd', 1.0)['window']['a']['union'].reasons == ('no_source_group_a',)
+    assert compute_local_delta([pair('p', a, b, (1.0, 1.0), (1.0, 1.0))], a, b, window_sizes_um=[1.0]).explained['reasons'] == ['repeats_per_frame_required']
 

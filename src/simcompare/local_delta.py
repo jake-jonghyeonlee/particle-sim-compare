@@ -24,7 +24,7 @@ import numpy as np
 
 from .correspondence import BoundPair, BoundSide
 from .linepixel import FAILURE_PIECES, AreaMetric, AreaResult, GroupArea
-from .measurement import _cell_areas, measure_union
+from .measurement import measure_union
 from .numeric_schema import (
     DIAMETERS_UM, Frame, MaskRecord, NumericContractError, NumericDataset, PhysicalWindow, Status,
     diameter_key, finite,
@@ -131,8 +131,21 @@ def _exact_inside(frame: Frame, window: PhysicalWindow) -> bool:
 
 
 def _windows_touch_invalid(frame: Frame, windows) -> bool:
-    areas = _cell_areas(frame, [w.bounds_um() for w in windows])
-    return bool(np.any(areas[~frame.valid] > 0))
+    """Does any window cover part of an invalid cell? Decided on exact decimal cell edges of the
+    declared frame (half-open), so an edge flush with a cell boundary never touches the next cell."""
+    invalid = ~frame.valid
+    if not invalid.any():
+        return False
+    ox, oy = (Fraction(str(v)) for v in frame.origin_xy_um)
+    pitch = Fraction(str(frame.pixel_pitch_um))
+    h, w = frame.shape_yx
+    for window in windows:
+        x0, y0, x1, y1 = (Fraction(str(v)) for v in window.bounds_um())
+        c0, c1 = max(0, math.floor((x0 - ox) / pitch)), min(w, math.ceil((x1 - ox) / pitch))
+        r0, r1 = max(0, math.floor((y0 - oy) / pitch)), min(h, math.ceil((y1 - oy) / pitch))
+        if c1 > c0 and r1 > r0 and invalid[r0:r1, c0:c1].any():
+            return True
+    return False
 
 
 def _reconcile(measured, frame: Frame, crop_frame: Frame, windows):
@@ -141,7 +154,7 @@ def _reconcile(measured, frame: Frame, crop_frame: Frame, windows):
     if measured.status not in ('available', 'partial'):
         return measured
     inside = all(_exact_inside(frame, w) for w in windows)
-    touches = _windows_touch_invalid(crop_frame, windows)
+    touches = _windows_touch_invalid(frame, windows)  # original frame: exact declared origin and pitch
     base = {r for r in measured.reasons if r != 'partial_observation'}
     if inside and not touches:
         observed = measured.observed_ca_um2
@@ -224,7 +237,11 @@ def _from_measurement(measured, window: PhysicalWindow, basis) -> WindowMetric:
 
 def delta_of(a: WindowMetric, b: WindowMetric) -> WindowDelta:
     if a.status == 'not_applicable' and b.status == 'not_applicable':
-        return WindowDelta(None, 'not_applicable', ('a_not_applicable', 'b_not_applicable'), None)
+        reasons = {'a_not_applicable', 'b_not_applicable'}
+        for label, metric in (('a', a), ('b', b)):
+            if {'all_vertical_sources_not_applicable', 'below_height_vertical_short'} & set(metric.reasons):
+                reasons.add(f'below_height_vertical_short_{label}')
+        return WindowDelta(None, 'not_applicable', tuple(sorted(reasons)), None)
     if a.status == 'available' and b.status == 'available':
         value = finite(b.value - a.value, 'delta')
         return WindowDelta(value, 'available', (), finite(b.fraction_of_window - a.fraction_of_window, 'fraction delta'))
@@ -451,7 +468,8 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
                 and metrics[label].value > union.value + 1e-9):
             reason = f'named_pair_exceeds_group_union_{label}'
             out['reasons'].append(reason)
-            metrics[label] = replace(metrics[label], reasons=(*metrics[label].reasons, reason))
+            metrics[label] = replace(metrics[label], status='unavailable', value=None, partial_value=None,
+                                     fraction_of_window=None, reasons=(*metrics[label].reasons, reason))
     out['a'], out['b'] = metrics['a'], metrics['b']
     out['delta'] = delta_of(metrics['a'], metrics['b'])
     return out
@@ -636,7 +654,10 @@ def explained_fraction(rows, ready_pairs, areas_a, areas_b, sizes):
                 'overlapping_windows_measured_as_union': unions}
         by_size[str(size)] = per_diameter
     status = 'available' if statuses and all(statuses) else 'partial' if any(statuses) else 'unavailable'
-    return {'status': status, 'reasons': [] if status == 'available' else ['some_diameters_unavailable'] if statuses else ['no_rows'],
+    reasons = ([] if status == 'available' else ['some_diameters_unavailable'] if status == 'partial'
+               else ['all_diameters_unavailable'] if statuses else ['no_rows'])
+    return {'status': status, 'reasons': reasons,
+            'status_semantics': 'available = every window size × diameter complete; partial = some complete; unavailable = none',
             'unit': '1', 'direction': 'b_minus_a',
             'definition': 'Σ(window union CA × repeats_per_frame) / frame_area per side; actual = Σ fraction_of_frame(union) of the referenced groups; repeats count structures inside the measured frame, not per unit',
             'by_window_size': by_size}

@@ -290,7 +290,7 @@ def to_review_roi_config(cfg, payload, side: str) -> tuple[dict, dict]:
     if not isinstance(cfg, dict) or not isinstance(cfg.get(side), dict):
         raise NumericContractError('numeric_input_required', side)
     base = cfg.get('_config_dir')
-    derived = {k: copy.deepcopy(v) for k, v in cfg.items() if k != '_config_dir'}
+    derived = {k: copy.deepcopy(v) for k, v in cfg.items() if not str(k).startswith('_')}
 
     def absolute(section):
         if isinstance(section, dict) and isinstance(section.get('data_dir'), str) and base is not None:

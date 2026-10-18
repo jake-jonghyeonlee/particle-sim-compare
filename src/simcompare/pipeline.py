@@ -82,10 +82,12 @@ def _real_validation(cfg, section, output):
 def load_numeric_config(path):
     import yaml
     from simcompare.numeric_schema import NumericContractError, text
+    import hashlib
     path = Path(path).resolve()
+    raw = path.read_bytes()
     try:
-        cfg = yaml.safe_load(path.read_text(encoding='utf-8'))
-    except yaml.YAMLError as exc:
+        cfg = yaml.safe_load(raw.decode('utf-8'))
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise NumericContractError('invalid_numeric_config',str(exc)) from exc
     if not isinstance(cfg,dict) or cfg.get('schema_version') != 'numeric_config_v1':
         raise NumericContractError('unsupported_numeric_config', 'numeric_config_v1 설정을 사용하세요; legacy export의 numeric 변환은 G2 pending입니다')
@@ -94,6 +96,8 @@ def load_numeric_config(path):
         raise NumericContractError('invalid_numeric_config')
     text(cfg['output_dir'],'output_dir')
     cfg['_config_dir'] = path.parent
+    cfg['_config_path'] = path
+    cfg['_config_sha256'] = hashlib.sha256(raw).hexdigest()
     return cfg
 
 
@@ -471,7 +475,6 @@ def _dataset_for(cfg, section, label):
 def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter_um=None, sort_diameter_um=None,
                             compact_json=False, config_path=None):
     """compare-windows: same physical window around corresponding positions, b − a."""
-    import hashlib
     from simcompare.correspondence import bind_pairs, load_correspondence
     from simcompare.local_delta import compute_local_delta, correspondence_hash, write_local_delta
     from simcompare.local_delta_report import write_local_delta_html
@@ -489,8 +492,8 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
                                              'correspondence_sha256': correspondence_hash(correspondence),
                                              'correspondence_producer': payload['producer'],
                                              'correspondence_warnings': payload['warnings'],
-                                             'config_path': None if config_path is None else str(Path(config_path).resolve()),
-                                             'config_sha256': None if config_path is None else hashlib.sha256(Path(config_path).read_bytes()).hexdigest()})
+                                             'config_path': str(cfg.get('_config_path', config_path or '')) or None,
+                                             'config_sha256': cfg.get('_config_sha256')})
     output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
     paths = write_local_delta(output, result, compact=compact_json)
     paths += write_local_delta_html(output, result, cfg=cfg, reference=reference, target=target)

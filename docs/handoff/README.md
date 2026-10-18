@@ -10,7 +10,7 @@
 
 DL1 pin: **`main` @ `dc9a0197f0d9dce127072cdbbca4c9697344aac3`** (`feat/png-input`을 2026-10-18 fast-forward 병합). `d4dd896..f0a5598` 독립 리뷰는 PASS-WITH-NOTES다([DL1_HEAD_F0A5598_REVIEW.md](../review/DL1_HEAD_F0A5598_REVIEW.md)). `dc9a019`는 그 위에 메모 2–3 보완(문서, `.gitattributes`)만 더했다. DL1 Windows 설치 ZIP의 psdl1은 `78a2f91` 소스이므로 현재 코드를 쓰려면 DL1의 `bundles/updates/grid-diagnostics-f74a718` wheel을 추가로 설치한다. 설치 후에는 ZIP 기준 설치 검증이 `installed psdl1 source differs`로 실패하는 것이 예상 동작이다(리뷰 메모 1–2, DL1 `docs/WINDOWS_OFFLINE.md`). 상세 입력 계약은 bundle의 `particle-sim-dl1/docs/USAGE.md`를 따른다.
 
-DL2 pin: **`main` @ `7397c96677c06919f6602b6ea88ac1e82fd037a5`**. 리뷰된 `e46a44e`(R4c PASS-WITH-NOTES) 위에 `README.md`와 `docs/USAGE.md`만 추가한 커밋이다.
+DL2 pin: **`main` @ `ce98fd3dc835b7a605616bbc265c547ddc6e0cff`** (2026-10-18). 이전 pin `7397c96`(R4c PASS-WITH-NOTES + 문서) 위에 위치 평가·ZNCC 기준선(`43614d3`, 독립 리뷰 PASS-WITH-NOTES)과 그 리뷰 반영(`802bdb7`, 2차 리뷰 PASS-WITH-NOTES), 중복 예측 충돌 오류(`ce98fd3`, 미리뷰)를 더했다. `psdl2.eval_position`/`psdl2.baseline_ncc`는 수치 저장소의 `roi_correspondence_v1`을 읽는다([PLAN_v3](../plan/PLAN_v3_local_delta_ca.md)).
 
 build script의 python3는 >=3.11.4가 필요하다. 미지원 버전은 출력 생성 전에 오류로 중단한다.
 
@@ -20,7 +20,7 @@ Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행
 Windows CMD (미실행, Git Bash `bash` 필요):
 
 ```bat
-bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref dc9a0197f0d9dce127072cdbbca4c9697344aac3 --dl2-ref 7397c96677c06919f6602b6ea88ac1e82fd037a5
+bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref dc9a0197f0d9dce127072cdbbca4c9697344aac3 --dl2-ref ce98fd3dc835b7a605616bbc265c547ddc6e0cff
 bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
 

@@ -125,11 +125,13 @@ def test_review_roi_round_trip_attaches_ids_and_builds_dl_relations(tmp_path, de
     cfg, reference, target = demo
     source = payload()
     exports = {}
+    cfg['map']['min_count'] = 2  # user map settings must survive the derivation
     for side_name, key in (('reference', 'a'), ('target', 'b')):
         derived, report = to_review_roi_config(cfg, source, side_name)
         assert report['n_requests'] == 2 and report['pairs_without_endpoints'] == ['P2']
-        assert derived['map']['input']['product_id'] == side_name
-        assert Path(derived['reference']['data_dir']).is_absolute()
+        assert derived['map']['input']['product_id'] == side_name and derived['map']['min_count'] == 2
+        assert derived['map']['diameter_um'] == 5 and not any(k.startswith('_') for k in derived)
+        assert Path(derived['reference']['data_dir']).is_absolute() and Path(derived['output_dir']).is_absolute()
         assert derived['review_rois']['manual'][0]['endpoints'] == endpoints()
         path = tmp_path / f'{side_name}.yaml'
         path.write_text(yaml.safe_dump(derived, sort_keys=False, allow_unicode=True), encoding='utf-8')

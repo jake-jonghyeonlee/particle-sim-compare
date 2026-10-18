@@ -121,6 +121,7 @@ Windows CMD (전체 연동 미실행):
 
 ```bat
 set "PAIRS=USER_CORRESPONDENCE_JSON"
+REM 권장값(기본값 아님): WINDOW_SIZES=10 20 30, SORT_DIAMETER=5, jitter 0.5, DL2 hit 허용오차 = 선택 창의 반폭
 set "WINDOW_SIZES=USER_UM_1 USER_UM_2 USER_UM_3"
 set "SORT_DIAMETER=USER_DIAMETER_UM"
 set "PYTHONPATH=%BUNDLE%/particle-sim-compare/src"

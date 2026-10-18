@@ -40,7 +40,7 @@ CA / 2×2 면적  =  (면적당 구조 수)  ×  (구조 하나당 CA)
 - 밀도 가중 실자료 값 (G1 보류), 수율 환산 (보류), 2×2 → 한 unit 환산의 기본 /4 (G2).
 - CA 예측 모델, DL 점수의 CA·위험 수치 재투입, DL 결과로 ROI 자동 선택, 수정안 생성·제안.
 - 제품 간 픽셀 겹쳐 그리기. 창 안 정합은 별도 판정이며 이 계획에서는 면적 비교만 한다.
-- 반복 구조 수의 자동 계산. `repeats_per_unit`은 사용자가 준다.
+- 반복 구조 수의 자동 계산. `repeats_per_frame`은 사용자가 준다.
 - open 조각. 측정은 mapped short case(lateral / vertical)만 쓴다.
 
 ## 2. 교환 형식 `roi_correspondence_v1` (T1)
@@ -161,7 +161,7 @@ C가 소유하는 schema다. 수동 라벨, template matching, DL2 검색이 **�
 ### T3b `explained_fraction` 연결 항 — Normal, T2·T3 뒤
 
 - Target: `src/simcompare/local_delta.py`, 시험.
-- Change: §3.3. `repeats_per_unit`이 없으면 unavailable과 사유.
+- Change: §3.3. `repeats_per_frame`이 없으면 unavailable과 사유.
 - Acceptance: 합성에서 반복 구조 n개를 같은 창 Δ로 만들었을 때 `explained_fraction = delta_fraction_of_frame` 1e-9 이내. 겹치는 창은 합집합으로 처리, repeats 불일치는 unavailable.
 
 ### T4 창 크기 민감도 요약 — Normal
@@ -301,4 +301,6 @@ C 전체 suite: 신규 시험 포함 통과. 단 `tests/test_handoff.py::test_of
 | A7 실자료 운영 결과 | 문서화: real_hotspot의 case 목록·condition_assignment·pair 표가 확인되기 전에는 모든 창이 partial이고 Δ가 null이다 |
 
 A9의 endpoint 순서(review ROI export는 순서 비교, 창 측정은 무순서)는 문서에 적고 코드 동작은 유지했다. 수정 뒤 두 저장소 suite를 다시 통과시켰다. 이 수정 커밋 자체는 아직 독립 리뷰를 받지 않았다.
+
+2차 독립 리뷰(수정 커밋 C `d9efcc0`, DL2 `802bdb7`): **PASS-WITH-NOTES**, blocking 없음. 리뷰어 probe에서 frame 가장자리 창 3000건이 모두 올바르게 판정되었고(수정 전 76건 오판), 겹친 창의 중복 집계가 없어졌다. 남은 advisory를 후속 커밋에 반영했다: 안쪽 invalid 셀과 맞닿은 창 경계도 선언 십진수 셀 경계로 판정, group union을 넘는 named_pair는 unavailable로 fail-closed, 지름 전부 unavailable이면 `all_diameters_unavailable`, 양쪽 N/A일 때도 `below_height_vertical_short_<side>` 기록, config hash는 실제로 읽은 바이트로, DL2의 충돌하는 중복 예측은 `duplicate_query_prediction_conflict` 오류, 미시험 분기(named_pair 초과, below-height 코드, design_version 불일치, config hash, map 설정 보존)에 시험 추가. 이 세 번째 커밋은 독립 리뷰를 받지 않았다.
 
