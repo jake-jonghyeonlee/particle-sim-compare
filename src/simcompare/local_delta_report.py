@@ -11,6 +11,7 @@ as such. DL scores are shown as provenance text only.
 from __future__ import annotations
 
 import base64
+import hashlib
 from html import escape
 import io
 import json
@@ -30,6 +31,8 @@ INVALID_COLOUR = (200, 200, 200)
 WINDOW_OUTLINE = (220, 0, 0)
 CORE_OUTLINE = (0, 140, 0)
 DEFAULT_DISPLAY_DIAMETER_UM = 5.0  # same convention as the electrode-count map
+OVERVIEW_MAX_PX = 800
+THUMBS_SCHEMA = 'local_delta_thumbs_v1'
 
 
 def _crop_cells(frame, bounds, margin_um):
@@ -80,6 +83,46 @@ def _img(uri, title):
     if uri is None:
         return '<div class="missing">' + escape(title) + '</div>'
     return f'<img src="{uri}" alt="{escape(title)}" title="{escape(title)}">'
+
+
+def _png_file(out, prefix, uri_or_bytes):
+    """Writes PNG bytes (or a data URI's bytes) as <prefix>_<short sha>.png and returns the file name."""
+    data = base64.b64decode(uri_or_bytes.split(',', 1)[1]) if isinstance(uri_or_bytes, str) else uri_or_bytes
+    name = f'{prefix}_{hashlib.sha256(data).hexdigest()[:12]}.png'
+    (out / name).write_bytes(data)
+    return name
+
+
+def _crop_bounds_um(frame, crop):
+    r0, r1, c0, c1 = crop
+    ox, oy = frame.origin_xy_um
+    pitch = frame.pixel_pitch_um
+    return [ox + c0 * pitch, oy + r0 * pitch, ox + c1 * pitch, oy + r1 * pitch]
+
+
+def _block_any(array, step):
+    h, w = array.shape
+    ph, pw = -h % step, -w % step
+    padded = np.pad(array, ((0, ph), (0, pw)))
+    return padded.reshape((h + ph) // step, step, (w + pw) // step, step).any(axis=(1, 3))
+
+
+def _overview_png(frame, layouts):
+    """Whole-frame original layout (same colours as the crops), long side <= OVERVIEW_MAX_PX; returns (bytes, step)."""
+    h, w = frame.shape_yx
+    step = max(1, math.ceil(max(h, w) / OVERVIEW_MAX_PX))
+    valid = _block_any(np.asarray(frame.valid, dtype=bool), step)
+    rgb = np.full(valid.shape + (3,), 255, dtype=np.uint8)
+    rgb[~valid] = INVALID_COLOUR
+    painted = np.zeros(valid.shape, dtype=bool)
+    for mask, colour in zip(layouts, ELECTRODE_COLOURS):
+        sub = _block_any(np.asarray(mask, dtype=bool), step)
+        rgb[sub] = colour
+        rgb[sub & painted] = OVERLAP_COLOUR
+        painted |= sub
+    buffer = io.BytesIO()
+    Image.fromarray(rgb).save(buffer, format='PNG')
+    return buffer.getvalue(), step
 
 
 def _fmt(value, digits=6):
@@ -151,10 +194,11 @@ def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, labe
     core_bounds = None if core is None else core[label]
     margin = (bounds[2] - bounds[0]) / 2
     crop = _crop_cells(side.frame, bounds, margin)
-    out = {'layout': None, 'hotspot': None, 'layout_note': None, 'layout_masks': None}
+    out = {'layout': None, 'hotspot': None, 'layout_note': None, 'layout_masks': None, 'crop_bounds_um': None, 'hotspot_note': None}
     if crop is None:
         out['layout_note'] = 'window_outside_frame'
         return out
+    out['crop_bounds_um'] = _crop_bounds_um(side.frame, crop)
     rectangles = [(bounds, WINDOW_OUTLINE), (core_bounds, CORE_OUTLINE)]
     layouts = None
     if side.endpoints is None:
@@ -176,6 +220,8 @@ def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, labe
         base = [] if layouts is None else [(m, (225, 225, 225)) for m in layouts]
         pieces = [(group.failure_piece_masks[name], PIECE_COLOURS[name]) for name in PIECE_COLOURS]
         out['hotspot'], _ = _render(side.frame, crop, base + pieces, rectangles)
+    else:
+        out['hotspot_note'] = 'hotspot_group_not_found'
     return out
 
 
@@ -223,7 +269,7 @@ def _row_html(pair, size, rows_by_d, display_d, thumbs, iou):
 
 
 def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference=None, target=None, name='local_delta'):
-    """Writes <out>/<name>.html and returns its path in a list."""
+    """Writes <out>/<name>.html plus the crop / overview PNG files and <name>_thumbs.json; returns all paths."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     display_d = result.sort_diameter_um if result.sort_diameter_um is not None else DEFAULT_DISPLAY_DIAMETER_UM
@@ -236,6 +282,7 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
     for row in result.rows:
         by_pair_size.setdefault((row['pair_id'], row['window_size_um']), {})[row['diameter_um']] = row
     sections = ''
+    crop_files, window_records, overview_layouts = {}, [], {}
     for size in result.window_sizes_um:
         ranking = result.ranking.get('by_window_size', {}).get(str(size))
         order = [e['pair_id'] for e in ranking] if ranking else list(ready)
@@ -262,6 +309,21 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
                 iou = [_iou_cell_centres(ma, pair.a.frame, bounds['a'], mb, pair.b.frame, bounds['b'])
                        for ma, mb in zip(thumbs['a']['layout_masks'], thumbs['b']['layout_masks'])]
             rows_html += _row_html(pair, size, rows_by_d, display_d, thumbs, iou)
+            for label in ('a', 'b'):
+                side = pair.a if label == 'a' else pair.b
+                thumb = thumbs[label]
+                bounds = rows_by_d[display_d]['window']['bounds_um'][label]
+                core = rows_by_d[display_d]['attributable_core'].get('bounds_um')
+                window_records.append({'pair_id': pair_id, 'window_size_um': size, 'side': label, 'window_bounds_um': list(bounds),
+                                       'core_bounds_um': None if core is None else list(core[label])})
+                for kind in ('layout', 'hotspot'):
+                    note = thumb['layout_note'] if kind == 'layout' else (thumb.get('hotspot_note') or thumb['layout_note'])
+                    crop_files[(pair_id, size, label, kind)] = {
+                        'pair_id': pair_id, 'window_size_um': size, 'diameter_um': display_d, 'side': label, 'kind': kind,
+                        'file': None if thumb[kind] is None else _png_file(out, name + '_thumb', thumb[kind]),
+                        'crop_bounds_um': thumb.get('crop_bounds_um'), 'note': None if thumb[kind] is not None else note}
+                if thumb['layout_masks'] is not None:
+                    overview_layouts.setdefault((label, side.frame.frame_id), (pair, side, thumb['layout_masks']))
         order_note = ('|Δ_union| 내림차순 (정렬 지름 ' + _fmt(result.sort_diameter_um) + ' µm)') if ranking else '대응 파일 순서 (정렬 지름 미지정)'
         sections += ('<h2>창 ' + escape(_fmt(size)) + ' µm</h2><p>순서: ' + escape(order_note) + '</p>'
                      '<table class="pairs"><tr><th>쌍</th><th>a layout · a hotspot · b layout · b hotspot (빨간 사각형 = 창, 초록 = attributable core)</th><th>a / b / Δ (b − a) @ 표시 지름</th></tr>' +
@@ -293,4 +355,33 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
             '<h1>국부 ΔCA: 대응 위치의 같은 물리 창</h1>' + header + legend + sections + blocked_html + '</html>')
     path = out / (name + '.html')
     path.write_text(html, encoding='utf-8')
-    return [str(path)]
+    sides = []
+    for label, dataset in (('a', reference), ('b', target)):
+        seen = set()
+        for pair in ready.values():
+            side = pair.a if label == 'a' else pair.b
+            if side.frame.frame_id in seen:
+                continue
+            seen.add(side.frame.frame_id)
+            frame = side.frame
+            record = {'side': label, 'product_id': side.product_id, 'frame_id': frame.frame_id, 'origin_xy_um': list(frame.origin_xy_um),
+                      'pixel_pitch_um': frame.pixel_pitch_um, 'shape_yx': list(frame.shape_yx),
+                      'overview_file': None, 'overview_scale': None, 'overview_source_pair_id': None, 'note': None}
+            found = overview_layouts.get((label, frame.frame_id))
+            if found is None:
+                record['note'] = assets[label].reason or 'layout_unavailable'
+            else:
+                try:
+                    data, step = _overview_png(frame, found[2])
+                    record.update(overview_file=_png_file(out, f'{name}_overview_{label}', data), overview_scale=step,
+                                  overview_source_pair_id=found[0].pair_id)
+                except Exception as exc:  # the page and numbers are already written
+                    record['note'] = 'overview_failed:' + getattr(exc, 'code', type(exc).__name__)
+            sides.append(record)
+    thumbs_path = out / (name + '_thumbs.json')
+    thumbs_path.write_text(json.dumps({'schema_version': THUMBS_SCHEMA, 'display_diameter_um': display_d,
+                                       'crops': list(crop_files.values()), 'sides': sides, 'windows': window_records},
+                                      indent=2, ensure_ascii=False), encoding='utf-8')
+    files = sorted({str(out / r['file']) for r in crop_files.values() if r['file']} |
+                   {str(out / r['overview_file']) for r in sides if r['overview_file']})
+    return [str(path), str(thumbs_path)] + files

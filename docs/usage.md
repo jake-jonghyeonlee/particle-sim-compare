@@ -98,6 +98,30 @@ py -3.12 -m venv .venv-cmd
 
 endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`로 blocked가 된다. `to-dl2-relations`는 양쪽 roi_id가 있는 ready 쌍만 `similar`로 쓴다. `check_candidate_coverage.py`는 라벨 위치가 전극 수 지도 영역 안에 드는 비율을 threshold별로 보고하는 읽기 전용 점검이다.
 
+## 통합 HTML 보고서 (report)
+
+이미 만든 출력 폴더를 읽어 **HTML 한 파일**(PNG는 base64, 그래프는 inline SVG, 외부 URL·`<script src>` 없음, `file://`로 열림)을 만든다. 수치는 다시 계산하지 않고 수율·밀도 단위 환산(보류)도 넣지 않는다. 계획: [report_html_plan_v1](plan/report_html_plan_v1.md).
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare report --compare-dir "D:\data\numeric_outputs" --map-dir "D:\data\numeric_outputs" --windows-dir "D:\data\local" --rois-dir "D:\data\rois_a" --out "D:\data\report" --diameter-um 5 --rank-window-um 20 --top-n 10
+```
+
+| 인수 | 설명 |
+|---|---|
+| `--compare-dir` | 필수. `compare` 출력(`comparison.json`, `comparison_fractions/summary/failure_pieces.csv`) |
+| `--map-dir`, `--windows-dir`, `--rois-dir` | 선택. 각각 `electrode-map`, `compare-windows`(crop·전체 frame PNG가 있는 출력), `export-review-rois` 출력. 주지 않으면 해당 섹션에 "입력 없음"이 표시되고 종료 코드에는 영향이 없다 |
+| `--diameter-um` | 대표 지름(기본 5) |
+| `--rank-window-um` | 악화/개선 순위 기준 창(기본 20). **임시 기준값**이며 제품마다 다를 수 있다. `local_delta.json`의 `window_sizes_um` 중 하나여야 한다 |
+| `--top-n` | 악화/개선 각각 표시할 쌍 수(기본 10) |
+
+출력: `report.html`, `report.json`(보고서에 쓴 값과 입력 파일 SHA256), `execution.json`.
+
+- A: 표지, 핵심 지표 카드(쉬운 말 설명·출처, "지표 읽는 법"), 악화(Δ>0)·개선(Δ<0) 상위 쌍, 판정 조건. Δ = 0인 쌍은 개수만 센다. 색은 악화 빨강, 개선 파랑이고 그래프의 a는 회색, b는 보라다.
+- B: frame 면적 비율, line/pixel/조각, 대응 위치 상세(제품별 전체 frame 위치도와 쌍별 locator·crop), 창 민감도, 취약 위치 지도, 검토 ROI, 상태·누락, 출처.
+- 같은 제품·frame·layer에서 순위 기준 창이 겹치는 쌍은 겹침 면적(µm²)과 함께 표시한다. **겹친 쌍의 Δ를 단순 합산하지 마세요.** 값은 바꾸지 않는다.
+- 종료 코드: 0 = 완료, 3 = 입력이 partial이거나 값 없는 쌍·blocked 쌍·crop 누락이 있음, 2 = 입력 오류(폴더 사이 제품 불일치, `is_synthetic` 혼합, 순위 창·지름이 없음(사용 가능한 값을 메시지로 알림), 예상 밖 `schema_version`, 필수 파일 없음, `--out`이 입력 폴더). 2이면 `report.html`을 남기지 않고 `error.json`/`execution.json`만 둔다.
+- 데모처럼 frame이 작으면 창 20 µm가 clipping되므로 작은 창으로 `compare-windows`를 돌리고 같은 값을 `--rank-window-um`에 준다(`scripts/2_demo.sh` 참고).
+
 ## 종료 코드
 
 | 코드 | 의미 | 확인 |

@@ -75,3 +75,65 @@ def test_page_without_assets_or_sort_diameter_still_renders(tmp_path):
     assert result['exit_code'] == 0 and '대응 파일 순서 (정렬 지름 미지정)' in html
     assert 'source_shape_required' in html  # reference layouts unavailable, page still written
     assert len(re.findall(r'data:image/png;base64,', html)) == 3  # a hotspot, b layout, b hotspot
+
+
+def _png_ok(path):
+    with Image.open(path) as image:
+        image.verify()
+    return Image.open(path)
+
+
+def test_thumbs_json_and_png_files_match_the_embedded_page(tmp_path):
+    generate_numeric_demo(tmp_path / 'demo')
+    cfg = load_numeric_config(tmp_path / 'demo' / 'config.yaml')
+    correspondence_file(tmp_path / 'c.json')
+    result = run_numeric_local_delta(cfg, tmp_path / 'out', correspondence=tmp_path / 'c.json', window_sizes_um=[1.0],
+                                     sort_diameter_um=5)
+    out = tmp_path / 'out'
+    thumbs_path = out / 'local_delta_thumbs.json'
+    assert str(thumbs_path) in result['outputs']
+    payload = json.loads(thumbs_path.read_text(encoding='utf-8'))
+    assert payload['schema_version'] == 'local_delta_thumbs_v1'
+    assert len(payload['crops']) == 4 and {c['kind'] for c in payload['crops']} == {'layout', 'hotspot'}
+    html = (out / 'local_delta.html').read_text(encoding='utf-8')
+    embedded = [base64.b64decode(x) for x in re.findall(r'data:image/png;base64,([A-Za-z0-9+/=]+)', html)]
+    for crop in payload['crops']:
+        assert {'pair_id', 'window_size_um', 'diameter_um', 'side', 'kind', 'file', 'note', 'crop_bounds_um'} <= set(crop)
+        assert crop['file'].startswith('local_delta_thumb_') and str(out / crop['file']) in result['outputs']
+        assert (out / crop['file']).read_bytes() in embedded  # same bytes as the page, rendered once
+        _png_ok(out / crop['file'])
+        x0, y0, x1, y1 = crop['crop_bounds_um']
+        assert x1 > x0 and y1 > y0
+    assert len(payload['windows']) == 2 and all(w['window_bounds_um'] for w in payload['windows'])
+    assert {s['side'] for s in payload['sides']} == {'a', 'b'}
+    for side in payload['sides']:
+        assert {'product_id', 'frame_id', 'origin_xy_um', 'pixel_pitch_um', 'shape_yx', 'overview_file', 'overview_scale', 'note'} <= set(side)
+        image = _png_ok(out / side['overview_file'])
+        assert max(image.size) <= 800 and str(out / side['overview_file']) in result['outputs']
+        assert side['overview_scale'] >= 1 and side['note'] is None
+
+
+def test_overview_long_side_is_capped_and_keeps_thin_lines():
+    from simcompare.local_delta_report import _overview_png, ELECTRODE_COLOURS
+    frame = Frame('f', 0.1, (0, 0), (900, 2000), np.ones((900, 2000), bool))
+    mask = np.zeros((900, 2000), bool); mask[5, :] = True  # one-cell-thin line
+    data, step = _overview_png(frame, [mask, np.zeros_like(mask)])
+    image = Image.open(io.BytesIO(data))
+    assert step == 3 and max(image.size) <= 800
+    assert tuple(np.asarray(image)[1, 10]) == ELECTRODE_COLOURS[0]
+
+
+def test_without_asset_manifest_overview_is_null_with_reason(tmp_path):
+    generate_numeric_demo(tmp_path / 'demo')
+    cfg = load_numeric_config(tmp_path / 'demo' / 'config.yaml')
+    cfg['reference'].pop('asset_manifest')
+    cfg['target'].pop('asset_manifest')
+    correspondence_file(tmp_path / 'c.json')
+    result = run_numeric_local_delta(cfg, tmp_path / 'out', correspondence=tmp_path / 'c.json', window_sizes_um=[1.0])
+    assert result['exit_code'] == 0
+    payload = json.loads((tmp_path / 'out' / 'local_delta_thumbs.json').read_text(encoding='utf-8'))
+    for side in payload['sides']:
+        assert side['overview_file'] is None and side['overview_scale'] is None and side['note']
+    layouts = [c for c in payload['crops'] if c['kind'] == 'layout']
+    assert all(c['file'] is None and c['note'] for c in layouts)
+    assert not list((tmp_path / 'out').glob('local_delta_overview_*'))

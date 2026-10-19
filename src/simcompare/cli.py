@@ -68,6 +68,17 @@ def _parser() -> argparse.ArgumentParser:
         help="particle-sim export-simcompare 결과 여러 개(원안·변경본·다른 제품)를 data_dir 하나로 합침"))
     merge.add_argument("--out", required=True, help="비어 있는 출력 디렉터리")
     merge.add_argument("sources", nargs="+", help="export-simcompare 출력 디렉터리들")
+    report = _korean_help(sub.add_parser("report", add_help=False,
+                                         help="compare / electrode-map / compare-windows / export-review-rois 출력을 읽어 HTML 보고서 한 파일 생성"))
+    report.add_argument("--compare-dir", required=True, help="compare 출력 폴더(필수)")
+    report.add_argument("--map-dir", help="electrode-map 출력 폴더. 없으면 해당 섹션에 '입력 없음'")
+    report.add_argument("--windows-dir", help="compare-windows 출력 폴더. 없으면 해당 섹션에 '입력 없음'")
+    report.add_argument("--rois-dir", help="export-review-rois 출력 폴더. 없으면 해당 섹션에 '입력 없음'")
+    report.add_argument("--out", required=True, help="출력 디렉터리(입력 폴더와 달라야 함)")
+    report.add_argument("--diameter-um", type=float, default=5.0, help="대표 지름 µm (기본 5)")
+    report.add_argument("--rank-window-um", type=float, default=20.0,
+                        help="악화/개선 순위 기준 창 µm (기본 20, 임시 기준값. local_delta.json의 창 크기 중 하나여야 함)")
+    report.add_argument("--top-n", type=int, default=10, help="악화/개선 각각 표시할 쌍 수 (기본 10)")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -81,7 +92,7 @@ def _print(payload) -> None:
 
 def _remove_reports(folder):
     """Only this application's report files, never inputs/user assets."""
-    for prefix in ('comparison','electrode_map','validation','review_rois','local_delta','window_sensitivity'):
+    for prefix in ('comparison','electrode_map','validation','review_rois','local_delta','window_sensitivity','report'):
         for path in Path(folder).glob(prefix+'*'):
             if path.is_file() and path.suffix in ('.json','.csv','.html','.png','.npz'):
                 path.unlink()
@@ -111,6 +122,16 @@ def main(argv: list[str] | None = None) -> int:
                                      expected_cases=Path(args.expected_cases) if args.expected_cases else None)
             _print(result)
             return 0 if result['status'] == 'available' else 3
+        if args.command == "report":
+            from simcompare import final_report
+            result = final_report.run_report(args.compare_dir, args.out, map_dir=args.map_dir, windows_dir=args.windows_dir,
+                                             rois_dir=args.rois_dir, diameter_um=args.diameter_um,
+                                             rank_window_um=args.rank_window_um, top_n=args.top_n)
+            output = Path(args.out)
+            (output/"execution.json").write_text(json.dumps({"command":args.command,**result},ensure_ascii=False,indent=2),encoding="utf-8")
+            (output/"error.json").unlink(missing_ok=True)
+            _print(result)
+            return result["exit_code"]
         from simcompare import pipeline
         cfg = pipeline.load_numeric_config(args.config)
         if getattr(args, "min_count", None) is not None:
@@ -133,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
         # numeric 계약 오류에는 완성 리포트 대신 실패 marker만 쓴다.
-        if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots", "compare-windows"):
+        if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots", "compare-windows", "report"):
             error = {"status":"unavailable","reasons":[getattr(exc,"code","input_or_config_error")],
                      "detail":str(exc),"command":args.command,"outputs":[],"exit_code":2}
             output = getattr(args,"out",None)
@@ -142,6 +163,10 @@ def main(argv: list[str] | None = None) -> int:
                     output = pipeline._numeric_path(cfg,cfg["output_dir"])
                 except (ValueError,TypeError,KeyError):
                     output = None
+            if args.command == "report" and any(
+                    folder is not None and Path(folder).resolve() == Path(output).resolve()
+                    for folder in (args.compare_dir, args.map_dir, args.windows_dir, args.rois_dir)):
+                output = None  # --out이 입력 폴더면 입력 파일을 지우지 않는다
             if output is not None:
                 try:
                     folder = Path(output)

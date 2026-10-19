@@ -16,3 +16,20 @@ run_partial compare --config demo_data/config.yaml
 run_partial electrode-map --config demo_data/config.yaml
 run_partial export-review-rois --config demo_data/config.yaml --out demo_data/review_rois
 echo "수치 결과: demo_data/numeric_outputs/ · 위치: demo_data/review_rois/review_rois.json"
+# 통합 HTML 보고서: 데모 frame은 작아 창 20 µm가 clipping되므로 1 µm 창으로 대응 위치를 비교한다.
+cat > demo_data/pairs.json <<'JSON'
+{"schema_version": "roi_correspondence_v1",
+ "producer": {"kind": "manual", "version": "1", "commit": null, "created_at": "2026-10-19"},
+ "pairs": [{"pair_id": "P1",
+   "a": {"product_id": "reference", "design_version": "synthetic_design", "frame_id": "reference_frame", "center_xy_um": [102.5, 200.5],
+         "analysis_layer": "M2", "failure_type": "lateral_short",
+         "endpoints": [{"electrode_id": "A", "role": "gate", "actual_layer": "M2"}, {"electrode_id": "B", "role": "data", "actual_layer": "M2"}]},
+   "b": {"product_id": "target", "design_version": "synthetic_design", "frame_id": "target_frame", "center_xy_um": [101.5, 200.5],
+         "analysis_layer": "M2", "failure_type": "lateral_short",
+         "endpoints": [{"electrode_id": "A", "role": "gate", "actual_layer": "M2"}, {"electrode_id": "B", "role": "data", "actual_layer": "M2"}]},
+   "source": {"kind": "manual", "labelled_by": "designer", "labelled_at": "2026-10-19"}, "status": "ready", "reasons": []}]}
+JSON
+run_partial compare-windows --config demo_data/config.yaml --correspondence demo_data/pairs.json --window-sizes 1 --sort-diameter-um 5 --out demo_data/windows
+run_partial report --compare-dir demo_data/numeric_outputs --map-dir demo_data/numeric_outputs --windows-dir demo_data/windows \
+  --rois-dir demo_data/review_rois --out demo_data/report --rank-window-um 1
+echo "통합 보고서: demo_data/report/report.html"
