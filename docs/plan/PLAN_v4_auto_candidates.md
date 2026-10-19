@@ -80,6 +80,7 @@ T4  절대 CA 목록 + Δ 목록 + 교집합 (통합 report 증보)
 | T1a | C | **High**(원천 schema 경계) | DL1 PNG 폴더(+선택 stack-order) → `review_assets_v1` 어댑터(§6). T1보다 먼저 | 보고서 T2 |
 | T1b | C | **High**(pipeline·실자료 경로) | `export-review-rois`의 real_hotspot_v1 경로 연결: 지금 `pipeline.py:446-455`는 real_hotspot_v1 입력을 `electrode_polarity_unknown`/`source_layout_assets_unconfirmed`로 단락시키고 `asset_manifest`를 읽기 전에 반환한다. T1a가 만든 manifest를 실제 데이터에서 소비하도록 `configured_dataset`(compare-windows가 이미 사용)을 이 경로에 연결하고, 극성은 T1a의 출처별 계약을 근거로 한다. 합성 경로의 동작은 바뀌지 않아야 한다 | T1a |
 | T1 | C | Normal | `simcompare candidates`: 두 제품의 electrode-map 영역(`--min-count`, 양방향) → 질의 ROI 목록(`candidate_queries_v1` JSON), R3 병합, S1 깔때기 표, S8 상한 | T1b |
+| T1c | C | Normal | T1의 index 쪽 보완: 질의 export는 선택 case의 전극만 참조해 DL2 `role_layer_unions`가 부분 합집합이 된다(§4). 제품별로 **case마다 manual ROI 하나**를 내보내는 `*_index_export/`를 추가해 모든 전극이 합집합에 들어가게 하고, `execution.json`의 `match_inputs`에 방향별 (query, index) 쌍을 적는다. 깔때기에 `index_coverage` 단계 | T1 |
 | T3 | C | **High**(경계) | `simcompare confirm-pairs`: decisions CSV(`candidate_id, decision{accept,reject}, note`) + 매칭 결과 → `roi_correspondence_v1`(변환기 기존 규칙, schema 변경 없음) + 사이드카(후보 ID·점수·mutual/one_way). S5, S7. 확정되지 않은 후보는 대응 파일에 들어가지 않음 | T1, T2c |
 | T4 | C | Normal | 통합 report 증보: 절대 CA 상위 N, Δ 상위 N(worse/better), 교집합 표시, 출처·확정 표시, 깔때기 표 | 보고서 T2, T3 |
 | D1~D4 | DL2 (다른 세션 담당) | Normal | D1 `--device cuda\|cpu`·map_location·CUDA RNG, D2 디코딩 asset의 sha256 공유 캐시, D3 torch 고정 완화와 DL1 GPU venv 호환, D4 stderr JSON 진행 출력. **T2b 뒤**에 순서대로. D2는 실자료 학습 전 필수 | T2c |
