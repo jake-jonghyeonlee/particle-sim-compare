@@ -110,6 +110,7 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 |---|---|
 | `--compare-dir` | 필수. `compare` 출력(`comparison.json`, `comparison_fractions/summary/failure_pieces.csv`) |
 | `--map-dir`, `--windows-dir`, `--rois-dir` | 선택. 각각 `electrode-map`, `compare-windows`(crop·전체 frame PNG가 있는 출력), `export-review-rois` 출력. 주지 않으면 해당 섹션에 "입력 없음"이 표시되고 종료 코드에는 영향이 없다 |
+| `--candidates-dir`, `--confirm-dir` | 선택. 각각 `candidates`, `confirm-pairs` 출력. 주면 A2 다음에 "ROI 두 축 보기" 섹션이 생긴다(아래). 둘 다 `--out`과 달라야 하고 `--confirm-dir`은 `--windows-dir`가 필요하다 |
 | `--diameter-um` | 대표 지름(기본 5) |
 | `--rank-window-um` | 악화/개선 순위 기준 창(기본 20). **임시 기준값**이며 제품마다 다를 수 있다. `local_delta.json`의 `window_sizes_um` 중 하나여야 한다 |
 | `--top-n` | 악화/개선 각각 표시할 쌍 수(기본 10) |
@@ -120,6 +121,10 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 - B: frame 면적 비율, line/pixel/조각, 대응 위치 상세(제품별 전체 frame 위치도와 쌍별 locator·crop), 창 민감도, 취약 위치 지도, 검토 ROI, 상태·누락, 출처.
 - 같은 제품·frame·layer에서 순위 기준 창이 겹치는 쌍은 겹침 면적(µm²)과 함께 표시한다. **겹친 쌍의 Δ를 단순 합산하지 마세요.** 값은 바꾸지 않는다.
 - 종료 코드: 0 = 완료, 3 = 입력이 partial이거나 값 없는 쌍·blocked 쌍·crop 누락이 있음, 2 = 입력 오류(폴더 사이 제품 불일치, `is_synthetic` 혼합, 순위 창·지름이 없음(사용 가능한 값을 메시지로 알림), 예상 밖 `schema_version`, 필수 파일 없음, `--out`이 입력 폴더). 2이면 `report.html`을 남기지 않고 `error.json`/`execution.json`만 둔다.
+- **ROI 두 축 보기**(`--candidates-dir` 또는 `--confirm-dir`를 줄 때만 생긴다. 주지 않으면 보고서는 이전과 바이트 단위로 같다): `--rank-window-um`·`--diameter-um`의 window union 면적에서 (1) 절대 CA 상위 N(`max(a, b)` 내림차순, 같으면 쌍 이름 순), (2) CA 변화 큰 곳 = 기존 악화(Δ>0)·개선(Δ<0) 상위 N을 따로 보여 주고, 두 목록에 모두 든 쌍은 "절대·변화 모두 큼", 절대 목록에만 있으면 "절대 CA 큼 (변화 작음)", 변화 목록에만 있으면 "변화 큼 (절대 CA 작음)"으로 표시한다. 등수만 쓰고 임계값은 없으며 값이 없는(partial/unavailable) 쌍은 순위에 넣지 않는다. CA 변화가 크다는 것만으로 그 위치의 형상이 바뀌었다고 말할 수 없으므로(이웃 영역 영향) "변경부"라고 부르지 않는다.
+- `--confirm-dir`를 주면 쌍마다 방향, `mutual`/`one_way`, 출발 영역이 reference/target 쪽 취약 영역이었는지(`--candidates-dir`의 질의 `max_count`, 찾지 못하면 "알 수 없음"), `merged_from` 영역 수, 상호 병합 쌍 수, 그리고 마지막 열 "매칭 근거(표시용, 수치에 쓰지 않음)"에 NCC 점수·플래그를 보여 준다. 점수는 순위·색·판정에 쓰지 않는다.
+- 깔때기 표 세 개: 후보 생성(regions → merged → after_max_candidates → exported_ready, index 전극 덮임), 사용자 확정(후보 → 결정 → blocked 사유 → 출력 쌍), compare-windows(ready / 값 있음 / 값 없음 / blocked). 사유 코드와 개수는 `funnel.json`, `confirm_funnel.json`, `local_delta.json` 그대로다. 확정되지 않은 후보는 쌍으로 나열하지 않고 개수로만 나온다. `--confirm-dir`이 없으면 그 사실을 섹션에 적는다.
+- 추가 입력 오류(exit 2): `confirm_windows_correspondence_mismatch`(`roi_correspondence.json`의 sha256이 `local_delta.json`의 `provenance.correspondence_sha256`과 다름), `confirm_candidates_mismatch`(사이드카가 기록한 candidates sha256이 다름), `confirm_pair_set_mismatch`, `confirm_requires_windows_dir`, `candidates_funnel_mismatch`, 예상 밖 `schema_version`, 제품 불일치, 개수가 아닌 깔때기 값, `--out`이 입력 폴더. `report.json`의 `sections.A2b`는 화면에 보인 값을 그대로 담고 새 입력 파일 SHA256은 `inputs`에 들어간다.
 - 데모처럼 frame이 작으면 창 20 µm가 clipping되므로 작은 창으로 `compare-windows`를 돌리고 같은 값을 `--rank-window-um`에 준다(`scripts/2_demo.sh` 참고).
 
 ## 전극 PNG → review_assets_v1 (import-electrode-assets)

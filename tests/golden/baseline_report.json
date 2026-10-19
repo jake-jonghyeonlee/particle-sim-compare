@@ -1,0 +1,1908 @@
+{
+  "schema_version": "final_report_v1",
+  "generated_at": "<TS>",
+  "settings": {
+    "diameter_um": 5.0,
+    "rank_window_um": 1.0,
+    "top_n": 10
+  },
+  "is_synthetic": true,
+  "products": {
+    "a": "reference",
+    "b": "target"
+  },
+  "section_status": {
+    "B1": "available",
+    "B2": "available",
+    "A2": "available",
+    "B3": "available",
+    "B4": "available",
+    "B5": "available",
+    "B6": "available",
+    "B7": "available",
+    "A0": "available",
+    "A1": "available",
+    "A3": "available",
+    "B8": "available"
+  },
+  "reasons": [],
+  "inputs": {
+    "<ROOT>/demo/numeric_outputs/comparison.json": {
+      "role": "compare",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/numeric_outputs/comparison_failure_pieces.csv": {
+      "role": "compare",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/numeric_outputs/comparison_fractions.csv": {
+      "role": "compare",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/numeric_outputs/comparison_summary.csv": {
+      "role": "compare",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/numeric_outputs/electrode_map.json": {
+      "role": "map",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/numeric_outputs/electrode_map_layer_dad86b4780ba65ff2f07.png": {
+      "role": "map",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/numeric_outputs/electrode_map_summary_16134bada04ff34214c3.png": {
+      "role": "map",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/rois/review_rois.json": {
+      "role": "rois",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta.json": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_overview_a_6d70c81f6e27.png": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_overview_b_e8117bf50a4e.png": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_rows.csv": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_thumb_750e62909ad8.png": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_thumb_b6977e0339f8.png": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_thumb_ec88d67ff16e.png": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_thumb_ee63ec344861.png": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/local_delta_thumbs.json": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/window_sensitivity_rank_agreement.csv": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    },
+    "<ROOT>/demo/win/window_sensitivity_rows.csv": {
+      "role": "windows",
+      "sha256": "<SHA>"
+    }
+  },
+  "sections": {
+    "B1": [
+      {
+        "group": "M2",
+        "at_diameter": {
+          "line": {
+            "a": 0.6666666666666666,
+            "b": 0.5,
+            "delta": -0.16666666666666663,
+            "status": "available",
+            "reasons": []
+          },
+          "pixel_effective": {
+            "a": 0.3333333333333333,
+            "b": 0.5,
+            "delta": 0.16666666666666669,
+            "status": "available",
+            "reasons": []
+          },
+          "transfer": {
+            "a": 0.3333333333333333,
+            "b": 0.16666666666666666,
+            "delta": -0.16666666666666666,
+            "status": "available",
+            "reasons": []
+          },
+          "union": {
+            "a": 1.0,
+            "b": 1.0,
+            "delta": 0.0,
+            "status": "available",
+            "reasons": []
+          },
+          "lateral_only": {
+            "a": 0.8333333333333334,
+            "b": 0.8333333333333334,
+            "delta": 0.0,
+            "status": "available",
+            "reasons": []
+          },
+          "vertical_only": {
+            "a": 0.0,
+            "b": 0.0,
+            "delta": 0.0,
+            "status": "available",
+            "reasons": []
+          },
+          "simultaneous": {
+            "a": 0.16666666666666666,
+            "b": 0.16666666666666666,
+            "delta": 0.0,
+            "status": "available",
+            "reasons": []
+          }
+        },
+        "series": {
+          "line": [
+            {
+              "diameter_um": 1.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 2.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 0.6666666666666666,
+              "b": 0.5,
+              "delta": -0.16666666666666663
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ],
+          "pixel_effective": [
+            {
+              "diameter_um": 1.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 2.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 0.3333333333333333,
+              "b": 0.5,
+              "delta": 0.16666666666666669
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ],
+          "transfer": [
+            {
+              "diameter_um": 1.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 2.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 0.3333333333333333,
+              "b": 0.16666666666666666,
+              "delta": -0.16666666666666666
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ],
+          "union": [
+            {
+              "diameter_um": 1.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 2.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 1.0,
+              "b": 1.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ],
+          "lateral_only": [
+            {
+              "diameter_um": 1.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 2.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 0.8333333333333334,
+              "b": 0.8333333333333334,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ],
+          "vertical_only": [
+            {
+              "diameter_um": 1.0,
+              "a": null,
+              "b": null,
+              "delta": null
+            },
+            {
+              "diameter_um": 2.0,
+              "a": null,
+              "b": null,
+              "delta": null
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ],
+          "simultaneous": [
+            {
+              "diameter_um": 1.0,
+              "a": null,
+              "b": null,
+              "delta": null
+            },
+            {
+              "diameter_um": 2.0,
+              "a": null,
+              "b": null,
+              "delta": null
+            },
+            {
+              "diameter_um": 3.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 4.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 5.0,
+              "a": 0.16666666666666666,
+              "b": 0.16666666666666666,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 6.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 7.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 8.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 9.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 10.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 11.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 12.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 13.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 14.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 15.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 16.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 17.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 18.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 19.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 20.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 21.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 22.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 23.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 24.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 25.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 26.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 27.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 28.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 29.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 30.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 40.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            },
+            {
+              "diameter_um": 50.0,
+              "a": 0.0,
+              "b": 0.0,
+              "delta": 0.0
+            }
+          ]
+        }
+      }
+    ],
+    "B2": [
+      {
+        "group": "M2",
+        "layer": "M2",
+        "context": {
+          "process_step_id": "step_M2",
+          "source_id": "synthetic_source",
+          "exposure_id": "synthetic_exposure",
+          "density_process_layer": "step_M2",
+          "source_contract_version": "synthetic_v2"
+        },
+        "classes": {
+          "a": {
+            "line": 400.0,
+            "pixel": 200.0,
+            "transfer": 200.0
+          },
+          "b": {
+            "line": 150.0,
+            "pixel": 150.0,
+            "transfer": 50.0
+          }
+        },
+        "pieces": {
+          "a": {
+            "lateral_only": 500.0,
+            "vertical_only": 0.0,
+            "simultaneous": 100.0
+          },
+          "b": {
+            "lateral_only": 250.0,
+            "vertical_only": 0.0,
+            "simultaneous": 50.0
+          }
+        }
+      }
+    ],
+    "A2": {
+      "rank_window_um": 1.0,
+      "window_status": "임시 기준값",
+      "diameter_um": 5.0,
+      "top_n": 10,
+      "worse_total": 0,
+      "better_total": 0,
+      "zero_count": 1,
+      "worse": [],
+      "better": [],
+      "unresolved": [],
+      "blocked": [],
+      "overlaps": []
+    },
+    "B3": [
+      {
+        "pair_id": "P1",
+        "class": "Δ = 0",
+        "entry": {
+          "pair_id": "P1",
+          "a": 1.0,
+          "b": 1.0,
+          "delta": 0.0,
+          "fraction_delta": 0.0,
+          "status": "available",
+          "reasons": []
+        },
+        "overlaps": [],
+        "missing_crops": [],
+        "window_bounds_um": {
+          "a": [
+            102.0,
+            200.0,
+            103.0,
+            201.0
+          ],
+          "b": [
+            101.0,
+            200.0,
+            102.0,
+            201.0
+          ]
+        },
+        "bounds_source": {
+          "a": "local_delta_thumbs.json",
+          "b": "local_delta_thumbs.json"
+        },
+        "rows": {
+          "window/union": {
+            "a_value_um2": "1.0",
+            "b_value_um2": "1.0",
+            "delta_um2": "0.0",
+            "delta_fraction": "0.0",
+            "delta_status": "available"
+          },
+          "window/lateral_only": {
+            "a_value_um2": "1.0",
+            "b_value_um2": "1.0",
+            "delta_um2": "0.0",
+            "delta_fraction": "0.0",
+            "delta_status": "available"
+          },
+          "window/vertical_only": {
+            "a_value_um2": "0.0",
+            "b_value_um2": "0.0",
+            "delta_um2": "0.0",
+            "delta_fraction": "0.0",
+            "delta_status": "available"
+          },
+          "window/simultaneous": {
+            "a_value_um2": "0.0",
+            "b_value_um2": "0.0",
+            "delta_um2": "0.0",
+            "delta_fraction": "0.0",
+            "delta_status": "available"
+          },
+          "attributable_core/union": {
+            "a_value_um2": "null",
+            "b_value_um2": "null",
+            "delta_um2": "null",
+            "delta_fraction": "null",
+            "delta_status": "not_applicable"
+          },
+          "attributable_core/lateral_only": {
+            "a_value_um2": "null",
+            "b_value_um2": "null",
+            "delta_um2": "null",
+            "delta_fraction": "null",
+            "delta_status": "not_applicable"
+          },
+          "attributable_core/vertical_only": {
+            "a_value_um2": "null",
+            "b_value_um2": "null",
+            "delta_um2": "null",
+            "delta_fraction": "null",
+            "delta_status": "not_applicable"
+          },
+          "attributable_core/simultaneous": {
+            "a_value_um2": "null",
+            "b_value_um2": "null",
+            "delta_um2": "null",
+            "delta_fraction": "null",
+            "delta_status": "not_applicable"
+          },
+          "window/named_pair": {
+            "a_value_um2": "1.0",
+            "b_value_um2": "1.0",
+            "delta_um2": "0.0",
+            "delta_fraction": "0.0",
+            "delta_status": "available"
+          }
+        }
+      }
+    ],
+    "B4": {
+      "rows": [
+        {
+          "pair_id": "P1",
+          "diameter_um": "5.0",
+          "sign_consistent": "true",
+          "max_abs_delta": "0.0",
+          "min_abs_delta": "0.0",
+          "delta_union_1.0um": "0.0"
+        }
+      ]
+    },
+    "B5": {
+      "status": "available",
+      "reasons": [],
+      "histograms": [
+        {
+          "kind": "layer",
+          "key": {
+            "product_id": "reference",
+            "design_version": "synthetic_design",
+            "source_id": "synthetic_source",
+            "process_step_id": "step_M2",
+            "exposure_id": "synthetic_exposure",
+            "source_contract_version": "synthetic_v2",
+            "unit_id": "reference_unit",
+            "layer": "M2"
+          },
+          "status": "available",
+          "histogram": {
+            "2": 2,
+            "3": 2,
+            "4": 2
+          }
+        },
+        {
+          "kind": "summary",
+          "key": [
+            "reference",
+            "synthetic_design",
+            "reference_unit"
+          ],
+          "status": "available",
+          "histogram": {
+            "2": 2,
+            "3": 2,
+            "4": 2
+          }
+        }
+      ],
+      "images": [
+        {
+          "kind": "layer",
+          "png": "electrode_map_layer_dad86b4780ba65ff2f07.png"
+        },
+        {
+          "kind": "summary",
+          "png": "electrode_map_summary_16134bada04ff34214c3.png"
+        }
+      ]
+    },
+    "B6": {
+      "status": "available",
+      "producer_commit": "<COMMIT>",
+      "rois": [],
+      "excluded_records": []
+    },
+    "B7": {
+      "status_groups": [
+        [
+          "comparison_failure_pieces.csv",
+          "not_applicable",
+          "all_vertical_sources_not_applicable",
+          8
+        ],
+        [
+          "comparison_fractions.csv",
+          "not_applicable",
+          "all_vertical_sources_not_applicable",
+          8
+        ],
+        [
+          "comparison_fractions.csv",
+          "not_applicable",
+          "reference:all_vertical_sources_not_applicable, reference_not_applicable, target:all_vertical_sources_not_applicable, target_not_applicable",
+          4
+        ],
+        [
+          "local_delta_rows.csv",
+          "not_applicable",
+          "a_not_applicable, b_not_applicable, below_height_vertical_short_a, below_height_vertical_short_b",
+          4
+        ],
+        [
+          "local_delta_rows.csv",
+          "not_applicable",
+          "window_smaller_than_diameter",
+          128
+        ]
+      ],
+      "problem_rows": 0,
+      "top_level": {
+        "comparison.json": "available",
+        "electrode_map.json": "available",
+        "local_delta.json": "available",
+        "review_rois.json": "available"
+      }
+    },
+    "A0": {
+      "product_a": "reference",
+      "product_b": "target",
+      "is_synthetic": true,
+      "generated_at": "<TS>",
+      "producer_commit": "<COMMIT>",
+      "diameter_um": 5.0,
+      "rank_window_um": 1.0,
+      "rank_window_status": "임시 기준값",
+      "top_n": 10
+    },
+    "A1": {
+      "kpi": [
+        {
+          "group": "M2",
+          "diameter_um": 5.0,
+          "metric": "union",
+          "a": 1.0,
+          "b": 1.0,
+          "delta": 0.0,
+          "status": "available",
+          "reasons": []
+        },
+        {
+          "group": "M2",
+          "metric": "line",
+          "domain": "panel",
+          "delta": -250.0,
+          "status": "available",
+          "a": 400.0,
+          "b": 150.0
+        },
+        {
+          "group": "M2",
+          "metric": "pixel",
+          "domain": "panel",
+          "delta": -50.0,
+          "status": "available",
+          "a": 200.0,
+          "b": 150.0
+        }
+      ],
+      "pairs": 1,
+      "problem_rows": 0
+    },
+    "A3": {
+      "gates": {
+        "G1": {
+          "status": "pending",
+          "answer": null,
+          "reason": "density_contract_unconfirmed",
+          "answered_parts": {
+            "bin_semantics": "per_bin",
+            "meaning": "one_value_per_diameter",
+            "bin_width_required": false,
+            "decided_on": "2026-10-08"
+          }
+        },
+        "G2": {
+          "status": "pending",
+          "answer": null,
+          "reason": "unit_area_basis_unconfirmed",
+          "answered_parts": {
+            "same_pitch_across_products": true,
+            "same_layer_size_within_product": true,
+            "different_pixel_counts_across_products": true,
+            "approximate_2x2_um": 100,
+            "approximate_2x2_px": 2000,
+            "decided_on": "2026-10-08"
+          }
+        },
+        "G4": {
+          "status": "pending",
+          "answer": null,
+          "reason": "crop_recipe_unconfirmed"
+        },
+        "G7a": {
+          "status": "answered",
+          "answer": "implement_lateral_only_vertical_only_simultaneous",
+          "decided_on": "2026-10-08",
+          "implementation_status": "implemented"
+        },
+        "G7b": {
+          "status": "answered",
+          "answer": "short_only",
+          "authority": "user",
+          "decided_on": "2026-10-08"
+        }
+      },
+      "failure_piece_axis_note": "불량 유형 조각은 line / pixel과 다른 축입니다. 두 축의 값을 서로 더하거나 빼지 않습니다.",
+      "fraction_of_frame_note": "frame 면적 비율은 각 제품의 측정 2×2 frame 면적으로 나눈 단위 없는 값입니다. 유닛 크기가 달라도 비교할 수 있으며 G2의 한 unit 환산이 필요 없습니다. 밀도·unit·panel 가중값이나 확률·수율이 아니며 유한 2×2 경계 효과는 남아 있습니다."
+    },
+    "B8": {
+      "inputs": {
+        "<ROOT>/demo/numeric_outputs/comparison.json": "<SHA>",
+        "<ROOT>/demo/numeric_outputs/comparison_fractions.csv": "<SHA>",
+        "<ROOT>/demo/numeric_outputs/comparison_summary.csv": "<SHA>",
+        "<ROOT>/demo/numeric_outputs/comparison_failure_pieces.csv": "<SHA>",
+        "<ROOT>/demo/numeric_outputs/electrode_map.json": "<SHA>",
+        "<ROOT>/demo/rois/review_rois.json": "<SHA>",
+        "<ROOT>/demo/win/local_delta.json": "<SHA>",
+        "<ROOT>/demo/win/local_delta_rows.csv": "<SHA>",
+        "<ROOT>/demo/win/local_delta_thumbs.json": "<SHA>",
+        "<ROOT>/demo/win/window_sensitivity_rows.csv": "<SHA>",
+        "<ROOT>/demo/win/window_sensitivity_rank_agreement.csv": "<SHA>",
+        "<ROOT>/demo/win/local_delta_overview_a_6d70c81f6e27.png": "<SHA>",
+        "<ROOT>/demo/win/local_delta_overview_b_e8117bf50a4e.png": "<SHA>",
+        "<ROOT>/demo/win/local_delta_thumb_750e62909ad8.png": "<SHA>",
+        "<ROOT>/demo/win/local_delta_thumb_ec88d67ff16e.png": "<SHA>",
+        "<ROOT>/demo/win/local_delta_thumb_ee63ec344861.png": "<SHA>",
+        "<ROOT>/demo/win/local_delta_thumb_b6977e0339f8.png": "<SHA>",
+        "<ROOT>/demo/numeric_outputs/electrode_map_layer_dad86b4780ba65ff2f07.png": "<SHA>",
+        "<ROOT>/demo/numeric_outputs/electrode_map_summary_16134bada04ff34214c3.png": "<SHA>"
+      },
+      "identifiers": {
+        "config_sha256": "<SHA>",
+        "correspondence_sha256": "<SHA>",
+        "reference_input_hash": "<SHA>",
+        "target_input_hash": "<SHA>",
+        "source_manifest_hash (map)": "<SHA>",
+        "source_manifest_hash (rois)": "<SHA>",
+        "producer_commit (rois)": "23f7a7bc674cc39e93e1f72bc67b8335fc335d77"
+      }
+    }
+  }
+}

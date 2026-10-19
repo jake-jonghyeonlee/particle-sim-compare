@@ -26,6 +26,13 @@ UNION_METRICS = ('union', 'lateral_only', 'vertical_only', 'simultaneous')
 WORSE, BETTER, OTHER = '#c62828', '#1565c0', '#757575'
 SERIES_A, SERIES_B = '#8a8a8a', '#7b3fa0'
 PROVISIONAL = '임시 기준값'
+EXTRA_SCHEMAS = {'candidates': 'candidate_queries_v1', 'candidate_funnel': 'candidate_funnel_v1',
+                 'sidecar': 'confirmed_pairs_sidecar_v1', 'confirm_funnel': 'confirm_funnel_v1'}
+BADGE_BOTH, BADGE_ABSOLUTE, BADGE_CHANGE = '절대·변화 모두 큼', '절대 CA 큼 (변화 작음)', '변화 큼 (절대 CA 작음)'
+BADGE_STYLE = {BADGE_BOTH: 'background:#ffe0b2', BADGE_ABSOLUTE: 'background:#e0e0e0', BADGE_CHANGE: 'background:#d1c4e9'}
+UNKNOWN = '알 수 없음'
+PROVENANCE_HEAD = '매칭 근거(표시용, 수치에 쓰지 않음)'
+QUERY_SIDE = {'reference_to_target': 'reference', 'target_to_reference': 'target'}
 NO_SUM_NOTE = '겹친 쌍의 Δ를 단순 합산하지 마세요'
 CSS = (
     'body{font-family:system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;max-width:1400px;margin:1.5rem auto;padding:0 1rem;color:#222}'
@@ -401,6 +408,45 @@ def _load(inputs, compare_dir, map_dir, windows_dir, rois_dir, diameter_um, rank
         raise ReportInputError('mixed_is_synthetic', f'입력 폴더의 is_synthetic이 섞여 있습니다: {flags}')
     loaded['is_synthetic'] = next(iter(flags.values()), None)
     return loaded
+
+
+def _file_sha(inputs, folder, name):
+    return inputs.files[str((Path(folder) / name).resolve())]['sha256']
+
+
+def _load_extra(inputs, loaded, candidates_dir, confirm_dir, products):
+    """--candidates-dir / --confirm-dir를 읽고 sha256 사슬을 검사한다. 어긋나면 ReportInputError(exit 2)."""
+    for key in ('candidates', 'candidate_funnel', 'sidecar', 'confirm_funnel'):
+        loaded[key] = None
+    if confirm_dir is not None and loaded['windows'] is None:
+        raise ReportInputError('confirm_requires_windows_dir', '--confirm-dir는 --windows-dir와 함께 줘야 합니다(확정 대응 파일과 비교 결과를 대조하기 위해)')
+    if candidates_dir is not None:
+        payload = inputs.json(candidates_dir, 'candidate_queries_v1.json', 'candidates', EXTRA_SCHEMAS['candidates'])
+        funnel = inputs.json(candidates_dir, 'funnel.json', 'candidates', EXTRA_SCHEMAS['candidate_funnel'])
+        if payload.get('funnel') != funnel:
+            raise ReportInputError('candidates_funnel_mismatch', 'funnel.json이 candidate_queries_v1.json의 funnel과 다릅니다')
+        for name, side in (('reference', 'a'), ('target', 'b')):
+            ids = ((payload.get('inputs') or {}).get(name) or {}).get('product_ids')
+            if isinstance(ids, list) and ids and products[side] not in ids:
+                raise ReportInputError('product_id_mismatch', f'candidates-dir의 {name} 제품 {ids}가 compare-dir {products[side]!r}와 다릅니다')
+        loaded['candidates'], loaded['candidate_funnel'] = payload, funnel
+    if confirm_dir is not None:
+        sidecar = inputs.json(confirm_dir, 'confirmed_pairs_sidecar.json', 'confirm', EXTRA_SCHEMAS['sidecar'])
+        loaded['confirm_funnel'] = inputs.json(confirm_dir, 'confirm_funnel.json', 'confirm', EXTRA_SCHEMAS['confirm_funnel'])
+        inputs.path(confirm_dir, 'roi_correspondence.json', 'confirm')
+        actual = _file_sha(inputs, confirm_dir, 'roi_correspondence.json')
+        recorded = (loaded['windows'].get('provenance') or {}).get('correspondence_sha256')
+        if recorded != actual:
+            raise ReportInputError('confirm_windows_correspondence_mismatch',
+                                   f'confirm-dir의 roi_correspondence.json(sha256 {actual})이 windows-dir가 계산에 쓴 대응 파일(sha256 {recorded})과 다릅니다')
+        if candidates_dir is not None:
+            recorded = (sidecar.get('inputs') or {}).get('candidates_payload_sha256')
+            if recorded != _file_sha(inputs, candidates_dir, 'candidate_queries_v1.json'):
+                raise ReportInputError('confirm_candidates_mismatch', 'confirm-dir 사이드카가 기록한 candidates 파일 sha256이 --candidates-dir와 다릅니다')
+        side_pairs = sidecar.get('pairs')
+        if not isinstance(side_pairs, dict) or set(side_pairs) != {p['pair_id'] for p in loaded['windows'].get('pairs', [])}:
+            raise ReportInputError('confirm_pair_set_mismatch', '사이드카의 쌍 목록이 local_delta.json의 쌍 목록과 다릅니다')
+        loaded['sidecar'] = sidecar
 
 
 # ---- 섹션 조립 ---------------------------------------------------------------------------------------------------
@@ -1015,18 +1061,257 @@ def _build_a0_a1_a3(report, loaded, cls, generated, rank_window_um, diameter_um,
                                           'fraction_of_frame_note': comparison.get('fraction_of_frame_note')})
 
 
+# ---- ROI 두 축 보기 (절대 CA / CA 변화) -------------------------------------------------------------------------
+
+def _reason_text(reasons, what):
+    if not isinstance(reasons, dict):
+        raise ReportInputError('invalid_funnel_value', f'{what}: reasons가 객체가 아닙니다')
+    return '; '.join(f'{k}:{_need_count(v, what + " reasons")}' for k, v in sorted(reasons.items()))
+
+
+def _need_count(value, what):
+    if value is None:
+        raise ReportInputError('invalid_count_value', f'{what}: 개수가 없습니다')
+    return _count(value, what)
+
+
+def _stage_table(directions, what, *, dropped):
+    """깔때기 문서의 방향별 단계 → 표 행. 개수가 아닌 값이 있으면 exit 2."""
+    if not isinstance(directions, list):
+        raise ReportInputError('invalid_funnel_value', f'{what}: directions가 목록이 아닙니다')
+    rows = []
+    for item in directions:
+        if not isinstance(item, dict) or not isinstance(item.get('stages'), list):
+            raise ReportInputError('invalid_funnel_value', f'{what}: 방향 항목 형식이 맞지 않습니다')
+        for stage in item['stages']:
+            if not isinstance(stage, dict):
+                raise ReportInputError('invalid_funnel_value', f'{what}: 단계 항목 형식이 맞지 않습니다')
+            row = [item.get('direction', '합계'), stage.get('stage'), _need_count(stage.get('count'), what)]
+            if dropped:
+                row.append(_need_count(stage.get('dropped'), what))
+            rows.append(row + [_reason_text(stage.get('reasons') or {}, what)])
+    return rows
+
+
+def _absolute_ranking(cls):
+    """값이 있는 쌍(Δ available, a·b 모두 숫자)을 max(a, b) 내림차순, 같으면 pair_id 순으로 정렬한다. 순위(상위 N)만 쓰고 임계값은 없다."""
+    usable = [e for e in cls['worse'] + cls['better'] + cls['zero'] if e['a'] is not None and e['b'] is not None]
+    return sorted(usable, key=lambda e: (-max(e['a'], e['b']), e['pair_id']))
+
+
+def _larger(entry):
+    return 'a' if entry['a'] > entry['b'] else 'b' if entry['b'] > entry['a'] else '같음'
+
+
+def _larger_html(entry):
+    side = _larger(entry)
+    colour = {'a': SERIES_A, 'b': SERIES_B}.get(side)
+    return _Html(f'<b style="color:{colour}">{side}</b>' if colour else escape(side))
+
+
+def _badge_html(label):
+    return _Html(f'<span class="badge" style="{BADGE_STYLE[label]}">{escape(label)}</span>') if label else _Html('')
+
+
+def _origin(record, queries):
+    """사이드카 쌍 기록의 후보 출처 → {reference|target: {'max_count', 'merged_from'}}. candidates-dir가 없거나 찾지 못하면 None."""
+    found = {'reference': None, 'target': None}
+    for source in record.get('candidates') or []:
+        side = QUERY_SIDE.get(source.get('direction'))
+        query = queries.get((source.get('direction'), source.get('query_roi_id')))
+        if side is not None and query is not None and found[side] is None:
+            found[side] = {'max_count': _count(query.get('max_count'), 'candidate max_count'),
+                           'merged_from': len(query.get('merged_from') or [])}
+    return found
+
+
+def _candidate_queries(candidates):
+    out = {}
+    for direction in (candidates or {}).get('directions') or []:
+        for query in direction.get('queries') or []:
+            for roi_id in query.get('roi_ids') or []:
+                out[(direction.get('direction'), roi_id)] = query
+    return out
+
+
+def _evidence_text(record):
+    lines = []
+    for source in record.get('candidates') or []:
+        flags = source.get('flags') if isinstance(source.get('flags'), dict) else {}
+        score = source.get('score')
+        lines.append(f'{source.get("direction")} 순위 {source.get("rank")}: 점수 {_fmt(score) if isinstance(score, float) else score}; '
+                     + (', '.join(f'{k}={v}' for k, v in sorted(flags.items())) or '플래그 없음'))
+    return lines
+
+
+def _provenance_table(shown, sidecar, queries):
+    """표시된 쌍의 출처 표(pair_id 순서). 점수는 마지막 열에만 둔다."""
+    rows, data = [], {}
+    for pid in sorted(shown):
+        record = sidecar['pairs'][pid]
+        origin = _origin(record, queries)
+        mutual = record.get('mutual_status')
+        merged_with = record.get('merged_with') or []
+        evidence = _evidence_text(record)
+        data[pid] = {'direction': record.get('direction'), 'mutual_status': mutual, 'origin': origin,
+                     'merged_with': merged_with, 'evidence': evidence}
+
+        def count(side):
+            return origin[side]['max_count'] if origin[side] is not None else UNKNOWN
+        merged_from = ' / '.join(f'{side} {origin[side]["merged_from"]}' for side in ('reference', 'target') if origin[side] is not None) or UNKNOWN
+        rows.append([pid, record.get('direction'), mutual if mutual else '—', count('reference'), count('target'), merged_from, len(merged_with),
+                     _Html('<br>'.join(escape(line) for line in evidence))])
+    headers = ['쌍', '방향', 'mutual / one_way', 'reference 쪽 취약 max_count', 'target 쪽 취약 max_count', '병합된 영역 수 (merged_from)',
+               '상호 병합된 쌍 수 (merged_with)', PROVENANCE_HEAD]
+    return _cell(_table(headers, rows, left=(0, 1, 2, 5, 7))) if rows else _p('표시된 쌍이 없습니다.'), data
+
+
+def _windows_funnel(loaded, cls):
+    provenance = loaded['windows'].get('provenance') or {}
+    reasons = {}
+    for item in [*cls['unresolved'], *cls['blocked']]:
+        for code in item['reasons']:
+            reasons[str(code)] = reasons.get(str(code), 0) + 1
+    ready = len(cls['entries'])
+    data = {'n_ready': provenance.get('n_ready'), 'n_blocked': provenance.get('n_blocked'), 'pairs_ready': ready,
+            'pairs_with_values': ready - len(cls['unresolved']), 'pairs_partial': len(cls['unresolved']),
+            'pairs_blocked': len(cls['blocked']), 'reasons': dict(sorted(reasons.items()))}
+    table = _table(['단계', '쌍 수', '사유'], [
+        ['대응 파일의 쌍 (ready + blocked)', ready + len(cls['blocked']), ''],
+        ['ready (창 계산 대상)', ready, ''],
+        ['  값 있음 (Δ available)', data['pairs_with_values'], ''],
+        ['  값 없음 (partial / unavailable)', data['pairs_partial'], '; '.join(f'{k}:{v}' for k, v in sorted(reasons.items()))],
+        ['blocked', data['pairs_blocked'], '']], left=(0, 2))
+    return _cell(table), data
+
+
+def _build_axes(report, loaded, cls, anchors, rank_window_um, diameter_um):
+    top_n = report.settings['top_n']
+    html = '<h2 id="a2b">ROI 두 축 보기</h2>'
+    data = {'rank_window_um': rank_window_um, 'window_status': PROVISIONAL, 'diameter_um': diameter_um, 'top_n': top_n,
+            'candidates_dir_given': loaded['candidates'] is not None, 'confirm_dir_given': loaded['sidecar'] is not None}
+    status, note = 'available', None
+    shown = set()
+    if cls is None:
+        html += _p('입력 없음: --windows-dir를 주지 않아 절대 CA / CA 변화 목록을 만들 수 없습니다.', 'box')
+        status = 'no_input'
+    else:
+        absolute_all = _absolute_ranking(cls)
+        absolute = absolute_all[:top_n]
+        worse, better = cls['worse'][:top_n], cls['better'][:top_n]
+        abs_ids, change_ids = {e['pair_id'] for e in absolute}, {e['pair_id'] for e in worse + better}
+        badge = {pid: BADGE_BOTH if pid in abs_ids and pid in change_ids else BADGE_ABSOLUTE if pid in abs_ids else BADGE_CHANGE
+                 for pid in sorted(abs_ids | change_ids)}
+        shown = set(badge)
+        groups = {label: [pid for pid, b in badge.items() if b == label] for label in (BADGE_BOTH, BADGE_ABSOLUTE, BADGE_CHANGE)}
+        cards = [_kpi_card('절대 CA 큰 곳', _Html(str(len(absolute))), None, None,
+                           f'창 안 면적(CA)이 a와 b 중 큰 쪽 기준으로 큰 순서의 상위 {top_n}쌍. 변화(Δ)가 작아도 원래 면적이 큰 곳입니다.',
+                           'local_delta_rows.csv (window / union)'),
+                 _kpi_card('CA 변화 큰 곳', _Html(f'{len(worse)} + {len(better)}'), None, None,
+                           f'Δ = b − a가 + 로 큰 상위 {top_n}쌍(악화)과 − 로 큰 상위 {top_n}쌍(개선). 앞 숫자가 악화, 뒤 숫자가 개선 쌍 수.',
+                           'local_delta_rows.csv (window / union)'),
+                 _kpi_card('절대·변화 모두 큼', _Html(str(len(groups[BADGE_BOTH]))), None, None,
+                           '두 목록에 모두 든 쌍. 교집합일 뿐 서로의 대용으로 쓰지 않습니다.', '위 두 목록의 교집합')]
+        html += (_p(f'기준: 창 {rank_window_um:g} µm ({PROVISIONAL}), 지름 {diameter_um:g} µm, window union의 면적(µm²). 목록은 등수(상위 {top_n}쌍)로만 정하고 임계값은 쓰지 않습니다. '
+                    f'같은 값이면 쌍 이름 순입니다. 값이 있는 쌍만 순위에 넣습니다(절대 {len(absolute_all)}쌍).') +
+                 '<div class="cards">' + ''.join(_cell(c) for c in cards) + '</div>' +
+                 _p('읽는 법: 절대 CA는 그 위치 창 안에서 a 또는 b가 실제로 갖는 short 면적입니다. CA 변화는 그 면적이 b − a로 얼마나 달라졌는지입니다. '
+                    'CA 변화가 크다고 해서 그 위치의 형상이 바뀌었다는 뜻은 아닙니다(이웃 영역의 변화가 창 안 면적에 영향을 줄 수 있음). '
+                    '그래서 이 보고서는 "CA 변화 큰 곳"이라고만 부르고 변경 구역으로 단정하지 않습니다. a는 회색, b는 보라, Δ는 악화 빨강·개선 파랑입니다.', 'box'))
+
+        def link(e):
+            return _Html(f'<a href="#{anchors[e["pair_id"]]}">{escape(e["pair_id"])}</a>')
+
+        def row(rank, e):
+            pair = cls['pairs'][e['pair_id']]
+            return [rank, link(e), pair['a'].get('analysis_layer'), _Html(f'<span style="color:{SERIES_A}">{escape(_fmt(e["a"]))}</span>'),
+                    _Html(f'<span style="color:{SERIES_B}">{escape(_fmt(e["b"]))}</span>'), _larger_html(e), _delta_html(e['delta']),
+                    _badge_html(badge.get(e['pair_id']))]
+        headers = ['#', '쌍', 'layer', 'a µm²', 'b µm²', '큰 쪽', 'Δ µm² (b − a)', '표시']
+        html += (f'<h3>절대 CA 상위 {top_n} (max(a, b) 내림차순)</h3>' +
+                 (_cell(_table(headers, [row(i, e) for i, e in enumerate(absolute, 1)], left=(1, 2, 7))) if absolute else _p('순위에 넣을 쌍이 없습니다.')) +
+                 f'<h3 style="color:{WORSE}">CA 변화 큰 곳 — 악화 (Δ &gt; 0) 상위 {top_n}</h3>' +
+                 (_cell(_table(headers, [row(i, e) for i, e in enumerate(worse, 1)], left=(1, 2, 7))) if worse else _p('해당하는 쌍이 없습니다.')) +
+                 f'<h3 style="color:{BETTER}">CA 변화 큰 곳 — 개선 (Δ &lt; 0) 상위 {top_n}</h3>' +
+                 (_cell(_table(headers, [row(i, e) for i, e in enumerate(better, 1)], left=(1, 2, 7))) if better else _p('해당하는 쌍이 없습니다.')) +
+                 _p('Δ = 0인 쌍은 변화 목록에 넣지 않습니다(절대 목록에는 들어갈 수 있음).') +
+                 '<h3>교집합 표시</h3>' + _cell(_table(['표시', '쌍 수', '쌍'], [[label, len(pids), ', '.join(pids)] for label, pids in groups.items()], left=(0, 2))))
+        entry_data = lambda e: {**e, 'larger': _larger(e), 'badge': badge.get(e['pair_id'])}
+        data.update({'absolute_total': len(absolute_all), 'absolute': [entry_data(e) for e in absolute],
+                     'worse': [entry_data(e) for e in worse], 'better': [entry_data(e) for e in better], 'badges': badge,
+                     'intersection': {'both': groups[BADGE_BOTH], 'absolute_only': groups[BADGE_ABSOLUTE], 'change_only': groups[BADGE_CHANGE]}})
+
+    # 매칭 근거: 확정 사이드카가 있을 때만. 점수는 이 표의 마지막 열에만 나오고 순위·색에는 쓰지 않는다.
+    if loaded['sidecar'] is not None and cls is not None:
+        table, prov = _provenance_table(shown, loaded['sidecar'], _candidate_queries(loaded['candidates']))
+        html += ('<h3>확정 쌍의 출처</h3>' + _p('사용자가 확정한 후보만 쌍이 됩니다. 아래 점수·플래그는 사람이 근거를 확인하라고 보여 줄 뿐 순위·색·판정에 쓰지 않습니다. '
+                                              'reference/target 쪽 취약 max_count는 candidates 출력의 질의 영역 값이며, 후보가 놓인 쪽은 취약 영역이 아닐 수 있어 알 수 없음으로 둡니다.')
+                 + table)
+        data['provenance'] = prov
+    elif loaded['sidecar'] is None:
+        html += _p('--confirm-dir 없음: 쌍의 확정 출처(방향, mutual/one_way, 매칭 근거)를 알 수 없습니다. 확정되지 않은 후보는 쌍으로 나열하지 않습니다.', 'box')
+        data['provenance'] = None
+
+    # 깔때기 두 개와 compare-windows 개수
+    html += '<h3>깔때기 1: 후보 생성 (candidates)</h3>'
+    if loaded['candidate_funnel'] is None:
+        html += _p('--candidates-dir 없음: 후보 깔때기를 표시하지 않습니다.', 'box')
+        data['candidates_funnel'] = None
+    else:
+        funnel, candidates = loaded['candidate_funnel'], loaded['candidates']
+        html += _cell(_table(['방향', '단계', '개수', '탈락', '사유 코드'], _stage_table(funnel.get('directions'), 'funnel.json', dropped=True), left=(0, 1, 4)))
+        coverage = funnel.get('index_coverage') or {}
+        if not isinstance(coverage, dict):
+            raise ReportInputError('invalid_funnel_value', 'funnel.json index_coverage가 객체가 아닙니다')
+        rows = []
+        for name, item in sorted(coverage.items()):
+            if not isinstance(item, dict):
+                raise ReportInputError('invalid_funnel_value', 'funnel.json index_coverage 항목 형식이 맞지 않습니다')
+            rows.append([name, _need_count(item.get('index_rois_ready'), 'index_rois_ready'), _need_count(item.get('index_rois_blocked'), 'index_rois_blocked'),
+                         f'{_need_count(item.get("electrodes_covered"), "electrodes_covered")} / {_need_count(item.get("electrodes_total"), "electrodes_total")}',
+                         '예' if item.get('complete') is True else '아니오', _reason_text(item.get('blocked_reasons') or {}, 'blocked_reasons')])
+        html += ('<h3>index 전극 덮임 (index_coverage)</h3>' +
+                 (_cell(_table(['제품', 'index ROI ready', 'index ROI blocked', '덮은 전극 / 전체', '완전', '사유 코드'], rows, left=(0, 4, 5))) if rows else _p('index_coverage 기록이 없습니다.')) +
+                 _p(f'후보 수 상한(max_candidates) {funnel.get("max_candidates")}, 상한으로 잘린 수 {_need_count(funnel.get("cut_by_max_candidates"), "cut_by_max_candidates")}. '
+                    f'candidates 상태 {candidates.get("status")}.'))
+        data['candidates_funnel'] = funnel
+        if candidates.get('status') != 'available':
+            status, note = 'partial', f'candidates status={candidates.get("status")}'
+    html += '<h3>깔때기 2: 사용자 확정 (confirm-pairs)</h3>'
+    if loaded['confirm_funnel'] is None:
+        html += _p('--confirm-dir 없음: 확정 깔때기를 표시하지 않습니다.', 'box')
+        data['confirm_funnel'] = None
+    else:
+        funnel = loaded['confirm_funnel']
+        rows = _stage_table(funnel.get('directions'), 'confirm_funnel.json', dropped=False)
+        rows += _stage_table([{'direction': '합계', 'stages': (funnel.get('totals') or {}).get('stages')}], 'confirm_funnel.json totals', dropped=False)
+        html += (_cell(_table(['방향', '단계', '개수', '사유 코드'], rows, left=(0, 1, 3))) +
+                 _p('미결정·거절 후보는 쌍으로 나오지 않고 위 표의 개수로만 보입니다. blocked는 확정됐지만 검사에 걸린 쌍입니다.'))
+        data['confirm_funnel'] = funnel
+    html += '<h3>깔때기 3: 국부 ΔCA 계산 (compare-windows)</h3>'
+    if cls is None:
+        html += _p('--windows-dir 없음: 계산 개수를 표시하지 않습니다.', 'box')
+        data['windows_funnel'] = None
+    else:
+        table, data['windows_funnel'] = _windows_funnel(loaded, cls)
+        html += table
+    report.section('A2b', status, html, data, note)
+
+
 def _toc(report):
-    names = {'A1': '핵심 지표', 'A2': '악화·개선 상위', 'A3': '판정 조건', 'B1': 'frame 면적 비율', 'B2': 'line/pixel/조각', 'B3': '대응 위치 상세',
+    names = {'A1': '핵심 지표', 'A2': '악화·개선 상위', **({'A2b': 'ROI 두 축 보기'} if 'A2b' in report.status else {}), 'A3': '판정 조건', 'B1': 'frame 면적 비율', 'B2': 'line/pixel/조각', 'B3': '대응 위치 상세',
              'B4': '창 민감도', 'B5': '취약 위치 지도', 'B6': '검토 ROI', 'B7': '상태·누락', 'B8': '출처'}
     label = {'available': '', 'partial': ' ⚠', 'no_input': ' (입력 없음)', 'unavailable': ' ⚠'}
     return '<p class="note">' + ' · '.join(f'<a href="#{k.lower()}">{k} {n}{label[report.status[k]]}</a>' for k, n in names.items()) + '</p>'
 
 
-def build_report(compare_dir, *, map_dir=None, windows_dir=None, rois_dir=None, diameter_um=5.0, rank_window_um=20.0, top_n=10):
+def build_report(compare_dir, *, map_dir=None, windows_dir=None, rois_dir=None, diameter_um=5.0, rank_window_um=20.0, top_n=10,
+                 candidates_dir=None, confirm_dir=None):
     """입력을 읽어 (html, report.json용 dict, 부분 여부 사유 목록)를 만든다. 쓰기는 하지 않는다."""
     _check_args(diameter_um, rank_window_um, top_n)
     inputs = _Inputs()
     loaded = _load(inputs, compare_dir, map_dir, windows_dir, rois_dir, diameter_um, rank_window_um)
+    _load_extra(inputs, loaded, candidates_dir, confirm_dir, loaded['products'])
     report = _Report({'diameter_um': diameter_um, 'rank_window_um': rank_window_um, 'top_n': top_n})
     generated = datetime.now(timezone.utc).isoformat(timespec='seconds')
     _section_a1_b1_b2(report, loaded, diameter_um)
@@ -1037,6 +1322,8 @@ def build_report(compare_dir, *, map_dir=None, windows_dir=None, rois_dir=None, 
         bounds = _window_bounds(loaded, cls, rank_window_um)
         overlaps = _overlaps(cls, bounds)
         _build_a2(report, cls, overlaps, anchors, rank_window_um, diameter_um)
+        if candidates_dir is not None or confirm_dir is not None:
+            _build_axes(report, loaded, cls, anchors, rank_window_um, diameter_um)
         _build_b3(report, loaded, inputs, windows_dir, cls, bounds, overlaps, anchors, rank_window_um, diameter_um)
         _build_b4(report, loaded, diameter_um)
         windows_status = (loaded['windows'].get('status') or 'available')
@@ -1047,12 +1334,14 @@ def build_report(compare_dir, *, map_dir=None, windows_dir=None, rois_dir=None, 
     else:
         for key, title in (('A2', 'A2 악화 상위 / 개선 상위'), ('B3', 'B3 대응 위치 상세'), ('B4', 'B4 창 크기 민감도')):
             report.section(key, 'no_input', _no_input(title, '--windows-dir를 주지 않았습니다.'))
+    if loaded['windows'] is None and (candidates_dir is not None or confirm_dir is not None):
+        _build_axes(report, loaded, None, None, rank_window_um, diameter_um)
     _build_b5(report, loaded, inputs, map_dir)
     _build_b6(report, loaded)
     _build_b7(report, loaded, cls, overlaps or [])
     _build_a0_a1_a3(report, loaded, cls, generated, rank_window_um, diameter_um, top_n)
     _build_b8(report, loaded, inputs)
-    order = ('A0', 'A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8')
+    order = ('A0', 'A1', 'A2', *(('A2b',) if 'A2b' in report.html else ()), 'A3', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8')
     head = report.html['A0'] + _toc(report)
     body = head + ''.join(report.html[k] for k in order[1:])
     html = (f'<!doctype html><html lang="ko"><meta charset="utf-8"><title>제품 비교 보고서</title><style>{CSS}</style><body>' + body + '</body></html>')
@@ -1063,14 +1352,16 @@ def build_report(compare_dir, *, map_dir=None, windows_dir=None, rois_dir=None, 
     return html, payload, reasons
 
 
-def run_report(compare_dir, out, *, map_dir=None, windows_dir=None, rois_dir=None, diameter_um=5.0, rank_window_um=20.0, top_n=10):
+def run_report(compare_dir, out, *, map_dir=None, windows_dir=None, rois_dir=None, diameter_um=5.0, rank_window_um=20.0, top_n=10,
+               candidates_dir=None, confirm_dir=None):
     """report.html / report.json을 쓰고 execution 결과 dict를 돌려준다. 입력 오류는 쓰기 전에 ReportInputError."""
     out = Path(out)
-    given = [Path(p).resolve() for p in (compare_dir, map_dir, windows_dir, rois_dir) if p is not None]
+    given = [Path(p).resolve() for p in (compare_dir, map_dir, windows_dir, rois_dir, candidates_dir, confirm_dir) if p is not None]
     if out.resolve() in given:
         raise ReportInputError('output_is_input', '--out은 입력 폴더와 달라야 합니다')
     html, payload, reasons = build_report(compare_dir, map_dir=map_dir, windows_dir=windows_dir, rois_dir=rois_dir,
-                                          diameter_um=diameter_um, rank_window_um=rank_window_um, top_n=top_n)
+                                          diameter_um=diameter_um, rank_window_um=rank_window_um, top_n=top_n,
+                                          candidates_dir=candidates_dir, confirm_dir=confirm_dir)
     out.mkdir(parents=True, exist_ok=True)
     html_path, json_path = out / 'report.html', out / 'report.json'
     html_path.write_text(html, encoding='utf-8')

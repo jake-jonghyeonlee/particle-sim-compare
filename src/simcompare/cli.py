@@ -113,6 +113,8 @@ def _parser() -> argparse.ArgumentParser:
     report.add_argument("--map-dir", help="electrode-map 출력 폴더. 없으면 해당 섹션에 '입력 없음'")
     report.add_argument("--windows-dir", help="compare-windows 출력 폴더. 없으면 해당 섹션에 '입력 없음'")
     report.add_argument("--rois-dir", help="export-review-rois 출력 폴더. 없으면 해당 섹션에 '입력 없음'")
+    report.add_argument("--candidates-dir", help="candidates 출력 폴더. 있으면 'ROI 두 축 보기'에 후보 깔때기와 취약 max_count를 표시")
+    report.add_argument("--confirm-dir", help="confirm-pairs 출력 폴더(--windows-dir 필요). 있으면 쌍 출처·확정 깔때기를 표시하고 대응 파일 sha256을 대조")
     report.add_argument("--out", required=True, help="출력 디렉터리(입력 폴더와 달라야 함)")
     report.add_argument("--diameter-um", type=float, default=5.0, help="대표 지름 µm (기본 5)")
     report.add_argument("--rank-window-um", type=float, default=20.0,
@@ -211,7 +213,8 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare import final_report
             result = final_report.run_report(args.compare_dir, args.out, map_dir=args.map_dir, windows_dir=args.windows_dir,
                                              rois_dir=args.rois_dir, diameter_um=args.diameter_um,
-                                             rank_window_um=args.rank_window_um, top_n=args.top_n)
+                                             rank_window_um=args.rank_window_um, top_n=args.top_n,
+                                             candidates_dir=args.candidates_dir, confirm_dir=args.confirm_dir)
             output = Path(args.out)
             (output/"execution.json").write_text(json.dumps({"command":args.command,**result},ensure_ascii=False,indent=2),encoding="utf-8")
             (output/"error.json").unlink(missing_ok=True)
@@ -254,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
                     output = None
             if args.command == "report" and any(
                     folder is not None and Path(folder).resolve() == Path(output).resolve()
-                    for folder in (args.compare_dir, args.map_dir, args.windows_dir, args.rois_dir)):
+                    for folder in (args.compare_dir, args.map_dir, args.windows_dir, args.rois_dir, args.candidates_dir, args.confirm_dir)):
                 output = None  # --out이 입력 폴더면 입력 파일을 지우지 않는다
             if output is not None:
                 try:
