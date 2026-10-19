@@ -266,8 +266,7 @@ def run_numeric_compare(cfg, out=None):
     return {'status':payload['status'],'reasons':payload['reasons'],'outputs':paths,'exit_code':0 if payload['status']=='available' else 3}
 
 
-def _numeric_map(cfg):
-    from simcompare.electrode_map import compute_electrode_maps
+def _map_spec(cfg):
     from simcompare.numeric_schema import NumericContractError
     spec = cfg.get('map')
     if not isinstance(spec,dict) or set(spec)-{'input','diameter_um','min_count','per_cell_text'}:
@@ -277,6 +276,12 @@ def _numeric_map(cfg):
     from .numeric_schema import DIAMETERS_UM
     if spec.get('diameter_um',5) not in DIAMETERS_UM:
         raise NumericContractError('invalid_representative_diameter', '지름은 1..30, 40, 50 um 중 하나여야 합니다')
+    return spec
+
+
+def _numeric_map(cfg):
+    from simcompare.electrode_map import compute_electrode_maps
+    spec = _map_spec(cfg)
     root,dataset = _numeric_input(cfg,spec.get('input'))
     maps = compute_electrode_maps(dataset,diameter_um=spec.get('diameter_um',5),min_count=spec.get('min_count'))
     return root,dataset,maps
@@ -443,10 +448,103 @@ def run_numeric_validate(cfg, out=None):
     return {'status':'partial','reasons':sorted(reasons),'outputs':paths,'exit_code':3}
 
 
+_ELECTRODE_SEMANTICS = ('binary', 'binary_zero_is_marked')
+
+
+def _json_unique(path):
+    from simcompare.roi_export import _json_load
+    return _json_load(path)
+
+
+def _electrode_evidence(root, section):
+    """real_hotspot_v1 전극 asset 수용 증거를 검사한다. 극성은 추측하지 않는다.
+
+    반환: None(증거 없음 → 기존 unavailable 단락), ('blocked', reasons), 또는 ('accepted', manifest).
+    hash·binding 불일치는 NumericContractError(이름 있는 오류)다.
+    """
+    from simcompare.adapters.electrode_png import SOURCE_KIND_CONTRACT
+    from simcompare.numeric_images import check_hash, resolve_path
+    from simcompare.numeric_schema import NumericContractError
+    asset_ref, record_ref = section.get('asset_manifest'), section.get('electrode_import_record')
+    if asset_ref is None or record_ref is None or section.get('condition_assignment') is None:
+        return None
+    for name, ref in (('asset_manifest', asset_ref), ('electrode_import_record', record_ref)):
+        if (not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}
+                or not all(isinstance(ref[k], str) and ref[k] for k in ref)):
+            raise NumericContractError('invalid_numeric_config', name + '는 {path, sha256} 객체여야 합니다')
+    record_path = resolve_path(root, record_ref['path'])
+    check_hash(record_path, record_ref['sha256'])
+    manifest_path = resolve_path(root, asset_ref['path'])
+    check_hash(manifest_path, asset_ref['sha256'])
+    try:
+        record, manifest = _json_unique(record_path), _json_unique(manifest_path)
+    except (OSError, ValueError) as exc:
+        raise NumericContractError('malformed_asset_manifest', str(exc)) from exc
+    if (not isinstance(record, dict) or record.get('schema_version') != 'electrode_asset_import_record_v1'
+            or not isinstance(manifest, dict) or manifest.get('schema_version') != 'review_assets_v1'):
+        raise NumericContractError('electrode_import_record_invalid')
+    import_info = manifest.get('electrode_asset_import')
+    if not isinstance(import_info, dict):
+        return None
+    if record.get('polarity_basis') is None or import_info.get('polarity_basis') is None:
+        return None
+    if (record.get('manifest_sha256') != asset_ref['sha256'] or import_info.get('record') != record_path.name
+            or record.get('dataset_input_hash') != manifest.get('source_manifest_hash')
+            or record.get('source_kind') != import_info.get('source_kind')):
+        raise NumericContractError('electrode_import_record_mismatch')
+    contract = SOURCE_KIND_CONTRACT.get(record['source_kind']) if isinstance(record['source_kind'], str) else None
+    if contract is None or record['polarity_basis'] != contract['polarity_basis'] \
+            or import_info['polarity_basis'] != contract['polarity_basis']:
+        return 'blocked', ['electrode_polarity_unspecified']
+    refs = []
+    try:
+        for entry in manifest['cases']:
+            assets = entry['assets']
+            refs += [item['asset'] for item in assets['layouts']] + [assets['valid'], assets['cnt'], *assets.get('via', [])]
+    except (KeyError, TypeError):
+        raise NumericContractError('source_asset_manifest_invalid') from None
+    if not refs or any(not isinstance(r, dict) or r.get('value_semantics') not in _ELECTRODE_SEMANTICS for r in refs):
+        return 'blocked', ['electrode_polarity_unspecified']
+    return 'accepted', manifest
+
+
+def _real_roi_export(cfg, out, real, spec):
+    """실자료 export: configured_dataset과 electrode-map 영역, 수용된 review_assets_v1만 쓴다."""
+    from simcompare.electrode_map import compute_electrode_maps
+    from simcompare.numeric_schema import NumericContractError
+    from simcompare.roi_export import export_review_rois
+    evidence = _electrode_evidence(real[0], spec['input'])
+    if evidence is None:
+        return None
+    if evidence[0] == 'blocked':
+        payload = {'schema_version': 'review_roi_v1', 'producer_commit': None,
+                   'source_manifest_hash': real[1]['source_payload_hash'], 'assets_root': str(real[0]),
+                   'rois': [], 'excluded_records': [], 'status': 'blocked', 'reasons': evidence[1]}
+        paths = _write_inspection(Path(out), 'review_rois', payload, [])
+        return {'status': 'blocked', 'reasons': evidence[1], 'outputs': paths, 'exit_code': 3}
+    _map_spec(cfg)
+    root, dataset = _configured_real(cfg, spec['input'], real)
+    if evidence[1].get('source_manifest_hash') != dataset.provenance['input_hash']:
+        raise NumericContractError('source_asset_manifest_identity_mismatch')
+    if not dataset.cases:
+        payload = {'schema_version': 'review_roi_v1', 'producer_commit': None,
+                   'source_manifest_hash': dataset.provenance.get('source_payload_hash'), 'assets_root': str(root),
+                   'rois': [], 'excluded_records': [], 'status': 'unavailable',
+                   'reasons': ['same_name_endpoints_unresolved']}
+        paths = _write_inspection(Path(out), 'review_rois', payload, [])
+        return {'status': 'unavailable', 'reasons': payload['reasons'], 'outputs': paths, 'exit_code': 3}
+    maps = compute_electrode_maps(dataset, diameter_um=spec.get('diameter_um', 5), min_count=spec.get('min_count'))
+    return export_review_rois(dataset, root, out, maps=maps, selections=cfg.get('review_rois', {}),
+                              asset_manifest=spec['input'].get('asset_manifest'))
+
+
 def run_numeric_roi_export(cfg, out):
     if isinstance(cfg.get('map'), dict) and isinstance(cfg['map'].get('input'), dict):
         real = _real_source(cfg, cfg['map']['input'])
         if real is not None:
+            accepted = _real_roi_export(cfg, out, real, cfg['map'])
+            if accepted is not None:
+                return accepted
             from simcompare.numeric_schema import NumericContractError
             payload = {'schema_version': 'review_roi_v1', 'producer_commit': None,
                        'source_manifest_hash': real[1]['source_payload_hash'], 'assets_root': str(real[0]),

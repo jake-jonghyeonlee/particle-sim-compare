@@ -52,6 +52,10 @@ numeric input 설정의 `asset_manifest: {path, sha256}`는 data_dir 내부 상�
 
 위 축약 예제의 layouts에는 실제로 양 끝 endpoint 각각 한 행이 필요하다. layout endpoint binding과 identity/failure_type/frame은 원본 case와 정확히 같아야 한다. 모든 asset은 root 내부 상대경로·파일 hash·observed·binary 의미를 요구한다. valid는 T2 frame.valid와 같아야 한다. CNT가 관측된 0이면 0 배열 참조를 사용하며 미관측을 0으로 만들지 않는다. VIA가 존재하면 참조를 제공한다. 절대경로/`..`/symlink 탈출, hash/shape/valid 불일치는 해당 case를 blocked로 만든다. hotspot/CA/density/rate 종류의 asset은 허용하지 않는다.
 
+## 실자료(real_hotspot_v1) export 조건
+
+`export-review-rois`는 mode=real에서 `map.input`의 `condition_assignment`, `asset_manifest`, `electrode_import_record`(각각 `{path, sha256}`, 후자 둘은 data_dir 상대 경로)가 모두 있고 `electrode_asset_import_record_v1`과 `review_assets_v1`이 같은 `polarity_basis`(출처별 계약 표와 일치)를 기록하며 모든 asset의 `value_semantics`가 `binary`/`binary_zero_is_marked`일 때만 `configured_dataset`과 electrode-map 영역으로 ROI를 만든다. 극성은 실행 중 추측하지 않는다. 증거가 없으면 이전과 같은 `unavailable`(exit 3), 표 밖 출처·값이면 `blocked electrode_polarity_unspecified`(exit 3, ROI 없음), hash·dataset identity(`source_asset_manifest_identity_mismatch`)·기록 binding(`electrode_import_record_mismatch`) 불일치는 exit 2 오류다. ROI 행 스키마는 바뀌지 않으며 위치는 hotspot에서 온 영역, 레이아웃 asset은 PNG에서 온 것이다.
+
 ## review_roi_v1
 
 출력 envelope는 schema_version, producer_commit, source_manifest_hash, assets_root(원본 root), rois, excluded_records를 갖는다. 원본 asset 파일은 복사·수정하지 않으며 참조한 asset의 상대경로/hash를 그대로 전달한다. 이 참조 목록만 입력 패키지로 사용하며 원본 root의 다른 파일을 자동 수집하지 않는다.
