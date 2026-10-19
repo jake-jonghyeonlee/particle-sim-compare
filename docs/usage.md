@@ -122,6 +122,24 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 - 종료 코드: 0 = 완료, 3 = 입력이 partial이거나 값 없는 쌍·blocked 쌍·crop 누락이 있음, 2 = 입력 오류(폴더 사이 제품 불일치, `is_synthetic` 혼합, 순위 창·지름이 없음(사용 가능한 값을 메시지로 알림), 예상 밖 `schema_version`, 필수 파일 없음, `--out`이 입력 폴더). 2이면 `report.html`을 남기지 않고 `error.json`/`execution.json`만 둔다.
 - 데모처럼 frame이 작으면 창 20 µm가 clipping되므로 작은 창으로 `compare-windows`를 돌리고 같은 값을 `--rank-window-um`에 준다(`scripts/2_demo.sh` 참고).
 
+## 전극 PNG → review_assets_v1 (import-electrode-assets)
+
+실제 전극 PNG를 `export-review-rois`가 읽는 `review_assets_v1` manifest와 asset 파일로 바꾼다(새 스키마 아님). 출력 디렉터리는 새 경로여야 하고 입력은 수정하지 않는다.
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare import-electrode-assets --source-kind dl1_png_folder --root input/dl1 --numeric-data-dir imported/reference --source-version LAYOUT_V1 --max-asset-memory-mb 4096 --out assets/reference
+.venv-cmd\Scripts\python.exe -m simcompare import-electrode-assets --source-kind hotspot_case_electrode --root input/hotspot --numeric-data-dir imported/reference --condition-assignment assignment.json --cnt-from-dl1-root input/dl1 --source-version LAYOUT_V1 --max-asset-memory-mb 4096 --out assets/reference
+```
+
+- `--numeric-data-dir`(필수)는 case identity·endpoint·failure_type·frame·valid·input_hash의 유일한 출처다. numeric_v2(합성) 폴더이거나 real_hotspot_v1 폴더 + `--condition-assignment`다. 어댑터는 값을 만들지 않고 endpoint `(product_id, electrode_id, actual_layer)`를 이름이 정확히 같은 PNG에 묶는다. 대소문자만 다른 layer, PNG 없음, case 이름·endpoint 불일치는 그 case만 blocked(변환 기록의 `blocked_cases`, 종료 코드 3)이고 manifest에 넣지 않는다. 변환 가능한 case가 없으면 종료 코드 2다.
+- `dl1_png_folder`: `<root>/<model>/<electrode>/<n>-<layer>.png`, `<root>/<model>/cno/<n>_<layer>.png`. 모델 폴더 이름 = product_id. 파일 번호는 출처 기록일 뿐이다. CNT asset은 그 모델 cno 마스크들의 합집합이며 디코딩 마스크 hash로 식별한다. `--stack-order`(dl1_png_stack_order_v1)를 주면 모든 이름이 순서 파일에 있어야 하고 대소문자 충돌은 거부한다. 순서는 이 파일에서만 오고 추정하지 않는다.
+- `hotspot_case_electrode`: case 폴더(이름 = case_id)의 `1.png`는 endpoint 1, `2.png`는 endpoint 2다. 둘의 shape가 다르면 `electrode_shape_mismatch`다. 이 폴더에는 CNT가 없으므로 `--cnt-from-dl1-root`로 DL1 모델의 cno를 지정하지 않으면 case는 `cnt_not_provided`로 blocked다(0 배열로 채우지 않는다).
+- 극성은 출처별 계약 표다: 두 종류 모두 검정 = 형상, `binary_zero_is_marked`, `polarity_basis: user_answer_2026_10_19`. 표에 없는 종류는 blocked `electrode_polarity_unspecified`(종료 코드 3). 회색·유색·투명·16비트·EXIF 회전·애니메이션·손상 PNG는 파일 이름과 함께 거부하며 threshold가 없다. asset은 mode L PNG {0,255}(0 = 형상)다.
+- frame: PNG는 전체 frame(0.1 µm/pixel, 원점 (0,0))이고 dataset frame은 hotspot crop(원점 (50,50) µm, 축마다 1000 px 작음)이다. 어댑터는 dataset frame 원점·pitch와 `PNG shape = frame shape + 1000`을 검사하고(`layout_hotspot_frame_mismatch`, `electrode_frame_mismatch`) 중앙 500 px 테두리를 정확히 잘라낸 부분만 내보낸다. **알려진 한계**: 50 µm 테두리 문맥은 asset에 없어서 DL2의 near/wide 창이 그 바깥을 볼 수 없다.
+- 같은 마스크는 한 번만 디코딩·기록한다. `--max-asset-memory-mb`(필수)는 보수적 추정치(측정 아님)와 비교하며 초과하면 아무것도 쓰지 않고 추정치와 함께 종료 코드 2다.
+- 출력: `review_assets.json`, `assets/*.png`, `electrode_asset_import_record.json`(source_kind, polarity_basis, 파일별 hash, adapter 버전, input hash, 개수, 경고). 같은 입력은 바이트까지 같다.
+- **현재 한계(T1b 전)**: `export-review-rois`는 real_hotspot_v1 입력을 아직 소비하지 않는다(`pipeline.run_numeric_roi_export`가 unavailable로 반환). 실자료 route의 review_assets_v1은 합성 모드 numeric_v2 dataset으로만 소비된다.
+
 ## 종료 코드
 
 | 코드 | 의미 | 확인 |

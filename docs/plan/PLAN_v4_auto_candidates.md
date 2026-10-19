@@ -78,7 +78,8 @@ T4  절대 CA 목록 + Δ 목록 + 교집합 (통합 report 증보)
 | T2b | DL2 | Normal | T2의 메모리 상한(§6): layer별 순차 처리, `--max-memory-mb`(필수, 기본값 없음), 추정치 초과 시 exit 2 | T2 |
 | T2c | DL2 | Normal | T2b가 남긴 한계 해소: 다층 질의의 누적 점수 map(3400²×100이면 약 9 GB)을 `--max-memory-mb`에 맞춰 질의 chunk로 나눠 처리(chunk마다 FFT 재계산, 결과는 chunk 수와 무관하게 동일) | T2b |
 | T1a | C | **High**(원천 schema 경계) | DL1 PNG 폴더(+선택 stack-order) → `review_assets_v1` 어댑터(§6). T1보다 먼저 | 보고서 T2 |
-| T1 | C | Normal | `simcompare candidates`: 두 제품의 electrode-map 영역(`--min-count`, 양방향) → 질의 ROI 목록(`candidate_queries_v1` JSON), R3 병합, S1 깔때기 표, S8 상한 | 보고서 T2, T1a |
+| T1b | C | **High**(pipeline·실자료 경로) | `export-review-rois`의 real_hotspot_v1 경로 연결: 지금 `pipeline.py:446-455`는 real_hotspot_v1 입력을 `electrode_polarity_unknown`/`source_layout_assets_unconfirmed`로 단락시키고 `asset_manifest`를 읽기 전에 반환한다. T1a가 만든 manifest를 실제 데이터에서 소비하도록 `configured_dataset`(compare-windows가 이미 사용)을 이 경로에 연결하고, 극성은 T1a의 출처별 계약을 근거로 한다. 합성 경로의 동작은 바뀌지 않아야 한다 | T1a |
+| T1 | C | Normal | `simcompare candidates`: 두 제품의 electrode-map 영역(`--min-count`, 양방향) → 질의 ROI 목록(`candidate_queries_v1` JSON), R3 병합, S1 깔때기 표, S8 상한 | T1b |
 | T3 | C | **High**(경계) | `simcompare confirm-pairs`: decisions CSV(`candidate_id, decision{accept,reject}, note`) + 매칭 결과 → `roi_correspondence_v1`(변환기 기존 규칙, schema 변경 없음) + 사이드카(후보 ID·점수·mutual/one_way). S5, S7. 확정되지 않은 후보는 대응 파일에 들어가지 않음 | T1, T2c |
 | T4 | C | Normal | 통합 report 증보: 절대 CA 상위 N, Δ 상위 N(worse/better), 교집합 표시, 출처·확정 표시, 깔때기 표 | 보고서 T2, T3 |
 | D1~D4 | DL2 (다른 세션 담당) | Normal | D1 `--device cuda\|cpu`·map_location·CUDA RNG, D2 디코딩 asset의 sha256 공유 캐시, D3 torch 고정 완화와 DL1 GPU venv 호환, D4 stderr JSON 진행 출력. **T2b 뒤**에 순서대로. D2는 실자료 학습 전 필수 | T2c |
@@ -96,6 +97,7 @@ T3의 확정 출처: schema를 바꾸지 않기 위해 `source.kind=manual`, `la
 - `product_id`는 DL1 모델 폴더 이름과 같게 한다. DL2 search cohort가 DL1 product ID 목록이다(`psdl2/search.py:97`).
 - 전극 사이 layer와 CNT 관계는 사용자 기준 `particle-sim-dl1/configs/stack-order.json`(2026-10-13)을 근거로 한다. 순서는 추정하지 않는다.
 - frame 정합: 레이아웃 frame 원점은 `[0,0]`, hotspot frame은 `(50,50)` µm이고 hotspot이 각 축 1000 px 작다(중앙 crop). 어댑터가 두 frame의 물리 좌표 대응을 명시 검사한다.
+- **T1a 범위 확정(2026-10-19, worker 질문 답)**: 어댑터는 필수 `--numeric-data-dir`(numeric_v2 manifest 폴더, 또는 real_hotspot_v1 + `--condition-assignment`)에서 identity·endpoints·failure_type·frame·`frame.valid`·input_hash를 **가져온다**(값을 만들어 내지 않음, 별도 case table 없음). `roi_export.py:51-54,93-104`가 asset shape = 데이터셋 frame shape, manifest frame = 데이터셋 frame, valid asset = `frame.valid`를 요구하므로 전극 이미지는 중앙 500 px 경계를 제외한 **정확한 부분 배열**로 쓴다(layout shape = frame shape + 1000, origin (50,50), pitch 0.1). 경계 50 µm 바깥 맥락은 DL2가 볼 수 없다는 한계를 문서에 적는다. real_hotspot_v1 경로를 `export-review-rois`가 소비하게 만드는 일은 T1a 밖의 **T1b**다.
 - 같은 hash의 frame은 한 번만 디코딩해 공유하고 어댑터에도 메모리 상한을 둔다.
 - **입력 범위(2026-10-19, 사용자 결정을 particle-sim-dl2-68 세션이 전달)**: DL1 PNG 폴더와 hotspot case의 전극 영상 `1.png`/`2.png`를 **둘 다** 지원한다. `1.png`의 극성은 **흰색 배경, 패턴 = 검정(검정 = 형상)**이다(사용자 답, 2026-10-19). DL1 PNG 폴더와 같은 극성이므로 `value_semantics`는 `binary_zero_is_marked`다. DL2 `read_asset`이 받는 값은 `binary`와 `binary_zero_is_marked`뿐이다(`psdl2/data.py:60`). `2.png`도 같다(사용자 답, 2026-10-19: 흰 배경·검정 패턴). 두 파일 모두 `binary_zero_is_marked`다. 이 극성은 코드의 묵시적 기본값이 아니라 **출처별 계약**으로 고정한다: 어댑터는 출처 종류(`dl1_png_folder`, `hotspot_case_electrode`)마다 `value_semantics`를 계약 표에 명시하고, 변환 기록(provenance)에 `polarity_basis: user_answer_2026_10_19`를 남긴다. 계약 표에 없는 출처 종류는 blocked(`electrode_polarity_unspecified`)다. 회색·유색 픽셀은 DL1과 같이 거부하고 threshold를 쓰지 않는다. 극성 반전이 필요한 소비자(DL2)에는 어댑터가 `binary` 0/1(1 = 형상)로 정규화한 사본을 내보내고 원본 hash를 provenance에 남긴다.
 

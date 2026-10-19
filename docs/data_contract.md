@@ -207,6 +207,12 @@ asset 참조의 `value_semantics`는 두 값만 허용한다. `binary`는 0이 �
 non-synthetic asset reference는 value_semantics를 반드시 명시한다. 누락은 explicit_value_semantics_required이며 실제 hotspot(흰 패턴)은 binary다(2026-10-13 확인). binary_zero_is_marked는 검정이 표시인 자료를 위해 남아 있다. synthetic inline fixture는 기존 nonzero-is-marked 기본을 유지한다. 실제 adapter 승인은 여전히 G2 pending이다. C reader는 NPY 및 아래의 strict PNG 계약을 지원한다. DL1 importer의 layout/electrode·CNT PNG는 검정 패턴 / 흰 배경이고, compare의 실제 hotspot PNG는 흰 패턴 / 검정 배경 (`binary`)이다. 실제 mode/bit depth 실물 확인과 G2 adapter/unit 환산 승인은 별도다.
 
 
+### electrode asset import (review_assets_v1 source)
+
+`simcompare import-electrode-assets`(`adapters/electrode_png.py`, 2026-10-19, PLAN_v4 T1a)는 **새 schema가 아니다**. 기존 `review_assets_v1`을 실제 전극 PNG에서 만든다. case 문맥은 numeric dataset에서만 오고 어댑터는 endpoint를 이름이 정확히 같은 PNG에 묶는다. 출처 종류별 극성 계약 표(코드 `SOURCE_KIND_CONTRACT`): `dl1_png_folder`, `hotspot_case_electrode` 모두 `value_semantics=binary_zero_is_marked`(검정 = 형상), `polarity_basis=user_answer_2026_10_19`. 표에 없는 종류는 `electrode_polarity_unspecified`로 blocked다. asset은 mode L PNG {0,255}로 쓰며 DL2 `read_asset`이 받는 값(`binary`, `binary_zero_is_marked`)만 쓴다. PNG는 DL1 strict 규칙(정확한 검정/흰색, 불투명, 8비트, 항등 EXIF, threshold 없음)으로 디코딩한다.
+
+layout PNG는 전체 frame, dataset frame은 hotspot crop이므로 원점 (50,50) µm·pitch 0.1·`shape+1000 px`를 검사하고 중앙 500 px를 정확히 잘라 쓴다(crop offset·전체 shape·원본 SHA256은 provenance). 50 µm 테두리 문맥 손실은 알려진 한계다. 변환 기록에는 source_kind, polarity_basis, 파일별 hash, adapter 버전, input hash, 개수를 남긴다. manifest의 case 항목과 최상위에 선택 키 `electrode_asset_provenance`, `electrode_asset_import`를 더하지만 기존 reader(`roi_export.check_asset_manifest`)는 이를 무시한다(시험으로 확인). 실자료(real_hotspot_v1) dataset을 `export-review-rois`가 소비하는 경로는 별도 Task(T1b)이며 그 전에는 합성 모드 numeric_v2 dataset만 소비한다.
+
 ### Strict numeric PNG reader (2026-10-13)
 
 reader만 강화했으며 실제 non-synthetic manifest는 여전히 `real_input_requires_approved_adapter`로 load 단계에서 차단한다. 실자료 adapter를 열거나 unit 환산을 추측하지 않는다. 원본 byte buffer를 한 번 읽고 그 buffer의 SHA256을 확인한 뒤 구조를 검증하고 같은 buffer에서 decode한다. 경로 해석·NPY·`check_hash`의 계약과 기존 수치 계산은 유지한다.

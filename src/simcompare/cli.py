@@ -44,6 +44,22 @@ def _parser() -> argparse.ArgumentParser:
     importer.add_argument("--root", required=True, help="입력 hotspot root")
     importer.add_argument("--out", required=True, help="새 출력 디렉터리")
     importer.add_argument("--expected-cases", help="누락된 case 폴더 확인용 case 이름 목록")
+    electrode = _korean_help(sub.add_parser(
+        "import-electrode-assets", add_help=False,
+        help="실제 전극 PNG(DL1 폴더 또는 hotspot case의 1.png/2.png)를 review_assets_v1 manifest와 asset으로 변환"))
+    electrode.add_argument("--source-kind", required=True,
+                           help="출처 종류: dl1_png_folder 또는 hotspot_case_electrode (극성 계약 표에 있어야 함)")
+    electrode.add_argument("--root", required=True, help="입력 전극 PNG root")
+    electrode.add_argument("--numeric-data-dir", required=True,
+                           help="case·frame·valid·input_hash를 가져올 numeric_v2(합성) 또는 real_hotspot_v1 폴더")
+    electrode.add_argument("--manifest-path", default="manifest.json", help="numeric-data-dir 안의 manifest (기본 manifest.json)")
+    electrode.add_argument("--condition-assignment", help="real_hotspot_v1일 때 명시 조건 할당 JSON")
+    electrode.add_argument("--stack-order", help="dl1_png_stack_order_v1 JSON (layer 순서는 이 파일에서만 옴)")
+    electrode.add_argument("--cnt-from-dl1-root", help="hotspot_case_electrode의 CNT를 가져올 DL1 PNG root (없으면 CNT 없는 case는 blocked)")
+    electrode.add_argument("--source-version", required=True, help="원본 layout 버전 문자열 (기본값 없음)")
+    electrode.add_argument("--max-asset-memory-mb", required=True, type=float,
+                           help="asset 디코딩 메모리 추정 상한(MB, 기본값 없음). 초과하면 아무것도 쓰지 않고 종료 코드 2")
+    electrode.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     for name in ("compare", "electrode-map", "export-review-rois"):
         command = _korean_help(sub.add_parser(name, add_help=False, help="numeric_v2 수치/검토 위치 명령(학습 호출 없음)"))
         command.add_argument("--config", required=True, help="numeric_config_v1 YAML")
@@ -122,6 +138,15 @@ def main(argv: list[str] | None = None) -> int:
                                      expected_cases=Path(args.expected_cases) if args.expected_cases else None)
             _print(result)
             return 0 if result['status'] == 'available' else 3
+        if args.command == "import-electrode-assets":
+            from simcompare.adapters.electrode_png import import_electrode_assets
+            result = import_electrode_assets(
+                args.source_kind, Path(args.root), Path(args.out), numeric_data_dir=Path(args.numeric_data_dir),
+                manifest_path=args.manifest_path, condition_assignment=args.condition_assignment,
+                stack_order=args.stack_order, cnt_from_dl1_root=args.cnt_from_dl1_root,
+                source_version=args.source_version, max_asset_memory_mb=args.max_asset_memory_mb)
+            _print(result)
+            return result["exit_code"]
         if args.command == "report":
             from simcompare import final_report
             result = final_report.run_report(args.compare_dir, args.out, map_dir=args.map_dir, windows_dir=args.windows_dir,
@@ -153,6 +178,10 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
+        if args.command == "import-electrode-assets":
+            # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
+            print(f"오류: {exc}", file=sys.stderr)
+            return 2
         # numeric 계약 오류에는 완성 리포트 대신 실패 marker만 쓴다.
         if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots", "compare-windows", "report"):
             error = {"status":"unavailable","reasons":[getattr(exc,"code","input_or_config_error")],
