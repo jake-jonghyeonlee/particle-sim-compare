@@ -140,6 +140,23 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 - 출력: `review_assets.json`, `assets/*.png`, `electrode_asset_import_record.json`(source_kind, polarity_basis, 파일별 hash, adapter 버전, input hash, 개수, 경고). 같은 입력은 바이트까지 같다.
 - **실자료 export (T1b)**: `export-review-rois`는 mode=real에서 `map.input`에 `condition_assignment`, `asset_manifest`({path, sha256}), `electrode_import_record`({path, sha256}, 이 두 키만 허용)가 **모두** 있고 증거가 맞을 때만 real_hotspot_v1을 처리한다(`configured_dataset` → electrode-map 영역 → `review_roi_v1`; 영역은 `--min-count`/`map.min_count`가 있어야 생기고 hotspot 마스크 자체는 ROI가 되지 않는다). 두 파일은 `data_dir` 안에 있어야 한다(`import-electrode-assets` 출력을 data_dir로 복사). 수용 조건: 기록과 manifest가 `polarity_basis`를 가지며 계약 표의 출처 종류와 값이 같고, 모든 asset의 `value_semantics`가 `binary`/`binary_zero_is_marked`이며, manifest의 `source_manifest_hash`가 dataset input hash와 같고 기록의 `manifest_sha256`이 manifest 파일과 같다. 키가 하나라도 없거나 `polarity_basis`가 없으면 예전처럼 `unavailable`(`electrode_polarity_unknown`, `source_layout_assets_unconfirmed`, 종료 코드 3)이다. 출처 종류·`polarity_basis`가 표와 다르거나 지원하지 않는 `value_semantics`는 `blocked`(`electrode_polarity_unspecified`, 코드 3, ROI 없음), sha256·identity·기록 불일치는 이름 있는 오류(코드 2)다. 영역 coverage가 불완전하면(예: `import-hotspots --expected-cases` 없음) 그 ROI는 `map_coverage_incomplete`로 blocked다.
 
+## 취약 영역 후보 (candidates)
+
+두 제품(`config.reference`, `config.target`)의 electrode-map 영역을 **양방향**으로 뽑아 질의 ROI로 정리하고, 바로 매칭에 쓸 export와 깔때기 표를 만든다. 점수·CA·Δ·확정·`mutual/one_way`는 다루지 않는다(후속 Task).
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare candidates --config config.yaml --min-count 3 --window-um 20 --merge-overlap 0.5 --out candidates_k3
+```
+
+- `--min-count K`, `--window-um W`, `--merge-overlap R`은 **필수이며 기본값이 없다**. `--max-candidates N`은 선택이며 방향(제품)별 질의 수 상한이다. 대표 지름은 `map.diameter_um`(없으면 electrode-map 기본 5 µm)을 쓴다. 출력 폴더는 **새 경로**여야 하고 이미 있으면 아무것도 건드리지 않고 종료 코드 2다.
+- 설정: `reference`/`target` 각각 단일 제품(`product_id`, `data_dir`). numeric_v2(합성/데모)는 `asset_manifest`를, real_hotspot_v1은 `condition_assignment`, `asset_manifest`, `electrode_import_record`(export-review-rois와 같은 조건)를 쓴다. 새 설정 키는 없다. 둘은 같은 종류여야 한다(`mixed_real_and_numeric_source_formats`).
+- 병합(R3): 같은 제품·design·frame의 영역(layer 무관)을 region_id 순서로 union-find(전이적)한다. 각 영역의 창은 `centre_xy_um`을 중심으로 한 변 W의 정사각형이고, 두 창의 `intersection/min(area)`가 R 이상이면 합친다(모든 창이 같은 크기이므로 `intersection/W²`). 겹침은 frame으로 자르지 않은 공칭 창으로 판정한다. 대표 = `max_count`가 가장 큰 영역(동률은 면적 큰 쪽, 그다음 region_id). `merged_from`은 대표를 포함한 구성원 region_id 목록이고 병합이 없으면 자기 하나다. frame 경계를 넘는 창은 버리지 않고 `flags: window_clipped`로 표시한다(대표가 아니라 구성원만 넘으면 `merged_member_window_clipped`).
+- export: 대표 region만 `map_region_ids`로 기존 경로(numeric 또는 real T1b)에 넘겨 `reference_export/review_rois.json`, `target_export/review_rois.json`을 만든다. 한 제품의 export는 그 제품 질의 집합이면서 반대 방향 실행의 index 입력이다(`candidate_queries_v1.json`의 `directions[].query_export/index_export`). real인데 전극 증거가 없으면 export 없이 질의가 `electrode_polarity_unknown`, `source_layout_assets_unconfirmed`로 blocked된다.
+- **`index_union_partial` 경고**: `export_review_rois`는 선택한 영역의 case 전극 layout만 참조한다. 그 export를 DL2 index로 쓰면 `role_layer_unions`가 데이터셋 전극 전체를 덮지 못해 NCC hit rate가 왜곡될 수 있다. 덮이지 않은 전극이 있으면 이 경고(전극 수, role|layer별 누락 수)를 `warnings`에 남기고 종료 코드 3이다. 침묵하지 않으며 `roi_export.py`는 이 Task에서 바꾸지 않는다. 모든 case의 전극을 덮는 영역이 선택되었을 때만 사라진다.
+- 출력: `candidate_queries_v1.json`(schema_version, `inputs`의 config·manifest·asset_manifest·import record·export sha256, `args`, 방향별 `queries`[query_id, product_id, frame_id, center_xy_um, region_id, merged_from, max_count, area_um2(영역 면적, CA 아님), layers, flags, status, reasons, roi_ids], `funnel`, `warnings`), `funnel.json`/`funnel.csv`, `reference_export/`, `target_export/`, `execution.json`. 같은 입력·인수는 같은 바이트를 만든다(경로는 출력 폴더 상대).
+- 깔때기: 방향별 `regions` → `merged_queries`(탈락 사유 `merged_overlap`) → `after_max_candidates`(`cut_by_max_candidates`는 `--max-candidates`로 잘린 수, 인수가 없으면 0이고 침묵 절단은 없다) → `exported_ready`(탈락은 export 사유 코드별 질의 수; 한 질의가 여러 코드를 가질 수 있어 합이 `dropped`보다 클 수 있음). 질의는 ready ROI 행이 하나라도 있으면 `ready`, 일부 행만 blocked면 `roi_rows_partially_blocked` 플래그와 사유가 남는다.
+- 종료 코드: 0 = 모든 질의 ready이고 경고 없음, 3 = blocked/partial 질의, `index_union_partial`, 지도 coverage 불완전, 미해결 동명 case, side blocked, 2 = 입력·설정 오류(필수 인수 누락 포함). 실패하면 이 실행이 만든 파일과 폴더만 지우며 이미 있던 것은 지우지 않는다.
+
 ## 종료 코드
 
 | 코드 | 의미 | 확인 |

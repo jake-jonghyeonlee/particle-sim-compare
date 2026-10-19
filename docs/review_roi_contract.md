@@ -66,6 +66,10 @@ manual에는 product_id/design_version/frame_id/center_xy_um와 case_id 또는 �
 
 지도 대표 지름·threshold·4-neighbour connectivity·coverage·G7b는 선택 provenance에만 둔다. 수동 위치가 기본 출처다. 지도 행은 명시 threshold로 계산한 영역 중 사용자가 선택한 경우에만 내보내며 scope 미확정 때문에 차단하지 않는다. source coverage가 불완전하면 map_coverage_incomplete로 차단한다. 완전한 case/frame/원본 shape 문맥의 수동 위치와 명시 영역은 ready일 수 있다. threshold 없이 map_region_ids=all을 요구하면 map_threshold_required를 제외 기록에 남긴다. 지도는 취약 위치를 보여 주고 DL2는 사용자가 고른 위치와 유사한 구조를 검색한다. G4 pending은 `crop_recipe={status:pending,value:null,reasons:[crop_recipe_unconfirmed]}`로 기록하며 near/wide 크기를 만들지 않는다. 원본 endpoint/role/actual_layer/failure_type/source version을 유지하며 hotspot/CA/density/rate 및 지도 선택 provenance는 model tensor 입력이 아니다. DL2 소비와 왕복 검증은 T10/T12의 소유다.
 
+## candidates와 export (PLAN_v4 T1)
+
+`simcompare candidates`는 두 제품의 electrode-map 영역에서 대표 region만 골라 위 `map_region_ids`로 `export_review_rois`(numeric 또는 real T1b 경로)를 호출한다. `review_roi_v1` 스키마는 바뀌지 않는다. 한 영역의 case마다 ROI 행이 생기므로 질의 하나가 ROI 여러 개(`candidate_queries_v1`의 `roi_ids`)를 가질 수 있다. export는 선택한 case의 전극 layout만 참조하므로 index로 쓸 때는 `index_union_partial` 경고(데이터셋 전극 중 덮이지 않은 수)가 `candidate_queries_v1.json`에 남고 종료 코드가 3이다. 자세한 인수·병합·깔때기 규칙은 usage.md의 "취약 영역 후보" 절을 본다.
+
 ## heat-map 출력
 
 `electrode_map.json`은 layer와 product/design/unit summary의 작은 메타데이터이며 count·valid 압축 NPZ를 상대 경로·hash로 참조한다. shape, origin/pitch, histogram, 상태와 short-only 사용자 결정을 기록한다. 기본 셀별 텍스트는 없고 --per-cell-text는 4096 cells 이하에서만 가능하다. PNG와 sidecar는 그대로 제공하며 작은 grid는 정수 nearest 확대, 2000 px grid는 1:1이다. 순서형 색은 count가 증가하면 한 방향으로 진해지고 회색 invalid와 흰색 count 0은 구별된다. 2×2 domain을 그대로 표시하며 /4나 제품 간 overlay는 없다. 명시 threshold가 있어야 regions를 만들고 exporter는 API의 원 source/frame 연결을 사용한다.

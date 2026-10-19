@@ -508,8 +508,11 @@ def _electrode_evidence(root, section):
     return 'accepted', manifest
 
 
-def _real_roi_export(cfg, out, real, spec):
-    """실자료 export: configured_dataset과 electrode-map 영역, 수용된 review_assets_v1만 쓴다."""
+def _real_roi_export(cfg, out, real, spec, prepared=None):
+    """실자료 export: configured_dataset과 electrode-map 영역, 수용된 review_assets_v1만 쓴다.
+
+    prepared=(root, dataset, maps)이면 호출자(candidates)가 이미 계산한 값을 재사용한다.
+    """
     from simcompare.electrode_map import compute_electrode_maps
     from simcompare.numeric_schema import NumericContractError
     from simcompare.roi_export import export_review_rois
@@ -522,8 +525,11 @@ def _real_roi_export(cfg, out, real, spec):
                    'rois': [], 'excluded_records': [], 'status': 'blocked', 'reasons': evidence[1]}
         paths = _write_inspection(Path(out), 'review_rois', payload, [])
         return {'status': 'blocked', 'reasons': evidence[1], 'outputs': paths, 'exit_code': 3}
-    _map_spec(cfg)
-    root, dataset = _configured_real(cfg, spec['input'], real)
+    if prepared is None:
+        _map_spec(cfg)
+        root, dataset = _configured_real(cfg, spec['input'], real)
+    else:
+        root, dataset, prepared_maps = prepared
     if evidence[1].get('source_manifest_hash') != dataset.provenance['input_hash']:
         raise NumericContractError('source_asset_manifest_identity_mismatch')
     if not dataset.cases:
@@ -533,7 +539,8 @@ def _real_roi_export(cfg, out, real, spec):
                    'reasons': ['same_name_endpoints_unresolved']}
         paths = _write_inspection(Path(out), 'review_rois', payload, [])
         return {'status': 'unavailable', 'reasons': payload['reasons'], 'outputs': paths, 'exit_code': 3}
-    maps = compute_electrode_maps(dataset, diameter_um=spec.get('diameter_um', 5), min_count=spec.get('min_count'))
+    maps = prepared_maps if prepared is not None else compute_electrode_maps(
+        dataset, diameter_um=spec.get('diameter_um', 5), min_count=spec.get('min_count'))
     return export_review_rois(dataset, root, out, maps=maps, selections=cfg.get('review_rois', {}),
                               asset_manifest=spec['input'].get('asset_manifest'))
 

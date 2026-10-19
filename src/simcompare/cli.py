@@ -68,6 +68,17 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--per-cell-text", action="store_true", help="4096 cells 이하에서만 셀별 텍스트 출력")
         if name in ("electrode-map", "export-review-rois"):
             command.add_argument("--min-count", type=int, help="명시할 때만 4-neighbour 영역 계산")
+    cand = _korean_help(sub.add_parser(
+        "candidates", add_help=False,
+        help="두 제품의 취약 영역(양방향) → 병합된 질의 ROI와 바로 매칭할 export, 깔때기 표(점수·CA·확정 없음)"))
+    cand.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference·target 각각 단일 제품)")
+    cand.add_argument("--min-count", required=True, type=int, help="영역 최소 전극 수 k (기본값 없음)")
+    cand.add_argument("--window-um", required=True, type=float, help="질의 창 한 변(µm). 병합 판정에만 쓰임 (기본값 없음)")
+    cand.add_argument("--merge-overlap", required=True, type=float,
+                      help="두 창의 intersection/min(area) 병합 기준 (0,1] (기본값 없음)")
+    cand.add_argument("--max-candidates", type=int,
+                      help="방향(제품)별 질의 수 상한. 명시할 때만 적용하며 잘린 수를 funnel에 기록")
+    cand.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     windows = _korean_help(sub.add_parser("compare-windows", add_help=False,
                                           help="대응 위치의 같은 물리 창 안 ΔCA(b−a). 창 크기는 기본값 없음"))
     windows.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference=a, target=b)")
@@ -152,6 +163,15 @@ def main(argv: list[str] | None = None) -> int:
                 source_version=args.source_version, max_asset_memory_mb=args.max_asset_memory_mb)
             _print(result)
             return result["exit_code"]
+        if args.command == "candidates":
+            # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
+            # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.
+            from simcompare import candidates, pipeline
+            cfg = pipeline.load_numeric_config(args.config)
+            result = candidates.run_candidates(cfg, Path(args.out), min_count=args.min_count, window_um=args.window_um,
+                                               merge_overlap=args.merge_overlap, max_candidates=args.max_candidates)
+            _print(result)
+            return result["exit_code"]
         if args.command == "report":
             from simcompare import final_report
             result = final_report.run_report(args.compare_dir, args.out, map_dir=args.map_dir, windows_dir=args.windows_dir,
@@ -183,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
-        if args.command == "import-electrode-assets":
+        if args.command in ("import-electrode-assets", "candidates"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2
