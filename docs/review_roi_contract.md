@@ -68,7 +68,7 @@ manual에는 product_id/design_version/frame_id/center_xy_um와 case_id 또는 �
 
 ## candidates와 export (PLAN_v4 T1)
 
-`simcompare candidates`는 두 제품의 electrode-map 영역에서 대표 region만 골라 위 `map_region_ids`로 `export_review_rois`(numeric 또는 real T1b 경로)를 호출한다. `review_roi_v1` 스키마는 바뀌지 않는다. 한 영역의 case마다 ROI 행이 생기므로 질의 하나가 ROI 여러 개(`candidate_queries_v1`의 `roi_ids`)를 가질 수 있다. export는 선택한 case의 전극 layout만 참조하므로 index로 쓸 때는 `index_union_partial` 경고(데이터셋 전극 중 덮이지 않은 수)가 `candidate_queries_v1.json`에 남고 종료 코드가 3이다. 자세한 인수·병합·깔때기 규칙은 usage.md의 "취약 영역 후보" 절을 본다.
+`simcompare candidates`는 두 제품의 electrode-map 영역에서 대표 region만 골라 위 `map_region_ids`로 `export_review_rois`(numeric 또는 real T1b 경로)를 호출한다. `review_roi_v1` 스키마는 바뀌지 않는다. 한 영역의 case마다 ROI 행이 생기므로 질의 하나가 ROI 여러 개(`candidate_queries_v1`의 `roi_ids`)를 가질 수 있다. 질의 export는 선택한 case의 전극 layout만 참조하므로 DL2 index로 쓰면 안 된다(`candidate_queries_v1.json`의 `notes`에 정보 메모 `index_union_partial`). 대신 제품마다 `<product>_index_export/`를 함께 만든다: 데이터셋 case마다 명시 manual ROI 하나(위치는 valid 셀 안의 결정적 점)이며 모든 전극의 layout을 참조해 role/layer union이 제품 전체를 덮는다. 이 행들은 index 전용이며 질의가 아니고 region provenance가 없다. 전극을 덮지 못하거나 blocked ROI가 있으면 `index_coverage_incomplete`와 종료 코드 3이다. 자세한 인수·병합·깔때기 규칙은 usage.md의 "취약 영역 후보" 절을 본다.
 
 ## heat-map 출력
 

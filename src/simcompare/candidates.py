@@ -123,6 +123,7 @@ class _Side:
         self.export_path = None
         self.export_payload = None
         self.product_ids = []
+        self.index = None      # index export 상태(_export_index가 채운다)
 
 
 def _prepare(cfg, name, min_count, diameter_um):
@@ -174,16 +175,13 @@ def _prepare(cfg, name, min_count, diameter_um):
     return side
 
 
-def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track):
-    """선택한 대표 region만 기존 export 경로(numeric 또는 real T1b)로 내보낸다."""
+def _do_export(cfg, side, selections, folder, min_count, diameter_um, track):
+    """selections를 기존 export 경로(numeric 또는 real T1b)로 내보낸다. real인데 전극 증거가 없으면 None."""
     from simcompare import pipeline
     from simcompare.roi_export import export_review_rois
-    selections = {'map_region_ids': sorted(selected_ids)}
     if side.real is not None:
         if side.evidence is None:
-            side.status = 'blocked'
-            side.reasons = list(SHORT_CIRCUIT_REASONS)
-            return
+            return None
         folder.mkdir()
         track(folder, is_dir=True)
         for name in ('review_rois.json', 'review_rois.csv'):
@@ -198,9 +196,18 @@ def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track)
         track(folder/'review_rois.json')
         result = export_review_rois(side.dataset, side.root, folder, maps=side.maps, selections=selections,
                                     asset_manifest=side.section.get('asset_manifest'))
-    side.exported = result
-    side.export_path = folder/'review_rois.json'
-    payload = json.loads(side.export_path.read_text(encoding='utf-8'))
+    path = folder/'review_rois.json'
+    return result, path, json.loads(path.read_text(encoding='utf-8'))
+
+
+def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track):
+    """선택한 대표 region만 기존 export 경로(numeric 또는 real T1b)로 내보낸다."""
+    done = _do_export(cfg, side, {'map_region_ids': sorted(selected_ids)}, folder, min_count, diameter_um, track)
+    if done is None:
+        side.status = 'blocked'
+        side.reasons = list(SHORT_CIRCUIT_REASONS)
+        return
+    side.exported, side.export_path, payload = done
     side.rows = payload['rois']
     side.export_payload = payload
     if payload.get('status') in ('blocked', 'unavailable'):
@@ -208,20 +215,97 @@ def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track)
         side.reasons = list(payload.get('reasons', []))
 
 
-def _index_union_warning(side):
-    """DL2 role_layer_unions는 export가 참조한 전극만 덮는다. 데이터셋 전극 전체와 비교해 부족하면 알린다."""
+def _index_point(frame):
+    """index ROI 위치: frame 중심이 valid면 그것, 아니면 row-major 첫 valid 셀 중심. valid 셀이 없으면 None."""
+    x0, y0, x1, y1 = frame.bbox_um
+    pitch = frame.pixel_pitch_um
+    centre = [(x0+x1)/2.0, (y0+y1)/2.0]
+    col, row = int((centre[0]-x0)/pitch), int((centre[1]-y0)/pitch)
+    if 0 <= row < frame.shape_yx[0] and 0 <= col < frame.shape_yx[1] and frame.valid[row, col]:
+        return centre
+    cells = np.argwhere(frame.valid)
+    if not len(cells):
+        return None
+    row, col = cells[0]
+    return [float(x0+(int(col)+0.5)*pitch), float(y0+(int(row)+0.5)*pitch)]
+
+
+def _export_index(cfg, side, folder, min_count, diameter_um, track):
+    """데이터셋 case마다 명시 manual ROI 하나를 내보내 role/layer union이 제품 전체 전극을 덮게 한다(index 전용)."""
+    requests, own_blocked = [], {}
+    for case in sorted(side.dataset.cases, key=lambda c: tuple(str(v) for v in asdict(c.identity).values())):
+        identity = asdict(case.identity)
+        point = _index_point(side.dataset.frames[identity['frame_id']])
+        if point is None:
+            own_blocked[tuple(str(v) for v in identity.values())] = ['index_frame_has_no_valid_cell']
+            continue
+        requests.append({**identity, 'center_xy_um': point, 'endpoints': [asdict(e) for e in case.endpoints],
+                         'failure_type': case.failure_type})
+    state = {'status': 'available', 'reasons': [], 'rows': [], 'path': None, 'exported': None, 'payload': None,
+             'own_blocked': own_blocked, 'requested': len(requests)+len(own_blocked)}
+    side.index = state
+    if not requests:
+        state['status'] = 'blocked'
+        state['reasons'] = ['index_no_exportable_case']
+        return
+    done = _do_export(cfg, side, {'manual': requests}, folder, min_count, diameter_um, track)
+    if done is None:
+        state['status'] = 'blocked'
+        state['reasons'] = list(SHORT_CIRCUIT_REASONS)
+        return
+    state['exported'], state['path'], payload = done
+    state['rows'] = payload['rois']
+    state['payload'] = payload
+    if payload.get('status') in ('blocked', 'unavailable'):
+        state['status'] = payload['status']
+        state['reasons'] = list(payload.get('reasons', []))
+
+
+def _index_coverage(side):
+    """index export가 데이터셋 전극 전체를 (role, layer)별로 덮는지 센다."""
+    state = side.index
+    universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases for e in case.endpoints}
+    ready = [r for r in state['rows'] if r['status'] == 'ready']
+    covered = {_endpoint_key(item['endpoint']) for row in ready
+               for item in (row.get('source_assets') or {}).get('layouts', [])} & universe
+    reasons = {}
+    for row in state['rows']:
+        if row['status'] != 'ready':
+            for code in row['reasons']:
+                reasons[code] = reasons.get(code, 0)+1
+    for codes in state['own_blocked'].values():
+        for code in codes:
+            reasons[code] = reasons.get(code, 0)+1
+    if state['status'] != 'available':
+        for code in state['reasons']:
+            reasons[code] = reasons.get(code, 0)+1
+    totals, hits = _count_by(universe), _count_by(covered)
+    by_role_layer = {key: {'electrodes_covered': hits.get(key, 0), 'electrodes_total': total}
+                     for key, total in totals.items()}
+    n_blocked = len(state['rows'])-len(ready)+len(state['own_blocked'])
+    complete = (state['status'] == 'available' and n_blocked == 0 and covered == universe)
+    return {'stage': 'index_coverage', 'product': side.name, 'dataset_cases': len(side.dataset.cases),
+            'index_rois_ready': len(ready), 'index_rois_blocked': n_blocked,
+            'blocked_reasons': dict(sorted(reasons.items())),
+            'electrodes_covered': len(covered), 'electrodes_total': len(universe),
+            'by_role_layer': by_role_layer, 'complete': complete,
+            'missing_by_role_layer': _count_by(universe-covered)}
+
+
+def _query_export_note(side):
+    """질의 export는 선택한 영역의 case 전극 layout만 참조한다. 데이터셋 전극 전체와 비교해 부족하면 알린다(정보)."""
     universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases for e in case.endpoints}
     covered = {_endpoint_key(item['endpoint']) for row in side.rows if row['status'] == 'ready'
                for item in (row.get('source_assets') or {}).get('layouts', [])}
     missing = sorted(universe-covered, key=lambda k: tuple(str(v) for v in k))
     if not missing:
         return None
-    return {'code': 'index_union_partial', 'product': side.name,
+    return {'code': 'index_union_partial', 'product': side.name, 'severity': 'info',
             'electrodes_in_dataset': len(universe), 'electrodes_in_export': len(covered & universe),
             'electrodes_missing': len(missing),
             'missing_by_role_layer': _count_by(missing),
-            'detail': 'export는 선택한 영역의 case 전극 layout만 참조한다. 이 export를 DL2 index로 쓰면 '
-                      'role_layer_unions가 데이터셋 전극 전체를 덮지 못해 NCC hit rate가 왜곡될 수 있다.'}
+            'detail': f'{side.name}_export는 질의 전용이다. 선택한 영역의 case 전극 layout만 참조하므로 DL2 index로 쓰면 '
+                      f'role_layer_unions가 데이터셋 전극 전체를 덮지 못한다. index에는 {side.name}_index_export를 쓴다.'}
 
 
 def _count_by(missing):
@@ -273,7 +357,7 @@ def _validate_args(min_count, window_um, merge_overlap, max_candidates):
 
 
 def run_candidates(cfg, out, *, min_count, window_um, merge_overlap, max_candidates=None):
-    """새 출력 폴더에 candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/, execution.json을 쓴다.
+    """새 출력 폴더에 candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/, reference_index_export/, target_index_export/, execution.json을 쓴다.
 
     실패하면 이 실행이 만든 파일과 폴더만 지운다(접두 패턴·재귀 삭제 없음). 이미 있는 출력 경로는 거부하고 건드리지 않는다.
     """
@@ -331,8 +415,12 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
             continue
         ids = [m['representative'].region_id for m in plans[name]['kept']]
         _export_side(cfg, side, ids, out/f'{name}_export', min_count, diameter_um, track)
+    for name, side in sides.items():
+        if side.status == 'unavailable':
+            continue
+        _export_index(cfg, side, out/f'{name}_index_export', min_count, diameter_um, track)
 
-    warnings = []
+    warnings, notes = [], []
     directions, funnels = [], []
     for direction, query_name, index_name in DIRECTIONS:
         side = sides[query_name]
@@ -375,7 +463,8 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
         funnels.append(_funnel(direction, plan['n_regions'], plan['n_merged'], len(plan['cut']), queries, max_candidates))
         directions.append({'direction': direction, 'query_product': query_name, 'index_product': index_name,
                            'query_export': f'{query_name}_export/review_rois.json' if sides[query_name].export_path else None,
-                           'index_export': f'{index_name}_export/review_rois.json' if sides[index_name].export_path else None,
+                           'index_export': (f'{index_name}_index_export/review_rois.json'
+                                            if sides[index_name].index and sides[index_name].index['path'] else None),
                            'queries': queries})
     for name, side in sides.items():
         for code in side.warnings:
@@ -383,9 +472,21 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
         if side.status in ('blocked', 'unavailable'):
             warnings.append({'code': 'side_'+side.status, 'product': name, 'reasons': side.reasons})
         if side.export_path is not None:
-            partial = _index_union_warning(side)
+            partial = _query_export_note(side)
             if partial is not None:
-                warnings.append(partial)
+                notes.append(partial)
+    coverage = {}
+    for name, side in sides.items():
+        if side.index is None:
+            continue
+        coverage[name] = _index_coverage(side)
+        if not coverage[name]['complete']:
+            warnings.append({'code': 'index_coverage_incomplete', 'product': name,
+                             'electrodes_covered': coverage[name]['electrodes_covered'],
+                             'electrodes_total': coverage[name]['electrodes_total'],
+                             'index_rois_blocked': coverage[name]['index_rois_blocked'],
+                             'reasons': sorted(coverage[name]['blocked_reasons']),
+                             'missing_by_role_layer': coverage[name]['missing_by_role_layer']})
 
     inputs = {'config_sha256': cfg.get('_config_sha256'),
               'reference': {**sides['reference'].input_record, 'product_ids': sides['reference'].product_ids},
@@ -393,6 +494,8 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
     for name, side in sides.items():
         if side.export_path is not None:
             inputs[name]['export_sha256'] = _sha256_file(side.export_path)
+        if side.index is not None and side.index['path'] is not None:
+            inputs[name]['index_export_sha256'] = _sha256_file(side.index['path'])
     commit = next((s.export_payload.get('producer_commit') for s in sides.values() if s.export_payload), None)
     n_cut = sum(len(plans[n]['cut']) for n in plans)
     all_queries = [q for d in directions for q in d['queries']]
@@ -400,16 +503,20 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
                 and all(s.status == 'available' for s in sides.values()))
     funnel_doc = {'schema_version': 'candidate_funnel_v1', 'directions': funnels,
                   'cut_by_max_candidates': n_cut, 'max_candidates': max_candidates,
-                  'max_candidates_scope': 'per_direction'}
+                  'max_candidates_scope': 'per_direction', 'index_coverage': coverage}
+    match_inputs = {direction: {'query': f'{query_name}_export', 'index': f'{index_name}_index_export'}
+                    for direction, query_name, index_name in DIRECTIONS}
     payload = {'schema_version': SCHEMA_VERSION, 'producer_commit': commit,
                'args': {'min_count': min_count, 'window_um': window_um, 'merge_overlap': merge_overlap,
                         'max_candidates': max_candidates, 'representative_diameter_um': diameter_um},
-               'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'warnings': warnings,
+               'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'warnings': warnings, 'notes': notes,
+               'match_inputs': match_inputs,
                'status': 'available' if complete else 'partial',
                'policy': {'merge': 'window_overlap_intersection_over_min_area_union_find_region_id_order',
                           'window': 'square_centered_at_region_center_unclipped_for_overlap',
                           'representative': 'max_count_desc_area_desc_region_id_asc',
-                          'mutual_one_way': 'not_computed_here'}}
+                          'mutual_one_way': 'not_computed_here',
+                          'index_export': 'one_manual_roi_per_dataset_case_index_only_not_queries_no_region_provenance'}}
     outputs = []
 
     def emit(name, text):
@@ -427,15 +534,25 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
             for s in f['stages']:
                 writer.writerow([f['direction'], s['stage'], s['count'], s['dropped'],
                                  ';'.join(f'{k}:{v}' for k, v in s['reasons'].items())])
+        for name, item in coverage.items():
+            writer.writerow([f'index_{name}', 'index_coverage', item['index_rois_ready'], item['index_rois_blocked'],
+                             ';'.join(f'{k}:{v}' for k, v in item['blocked_reasons'].items())])
     outputs.append('funnel.csv')
     for name, side in sides.items():
         if side.export_path is not None:
             for item in sorted(Path(p).name for p in side.exported.get('outputs', [])):
                 outputs.append(f'{name}_export/{item}')
+        if side.index is not None and side.index['path'] is not None:
+            for item in sorted(Path(p).name for p in side.index['exported'].get('outputs', [])):
+                outputs.append(f'{name}_index_export/{item}')
     result = {'status': payload['status'], 'reasons': sorted({w['code'] for w in warnings}),
               'outputs': sorted(outputs), 'exit_code': 0 if complete else 3,
               'n_queries': {d['direction']: len(d['queries']) for d in directions},
-              'funnel': {f['direction']: {s['stage']: s['count'] for s in f['stages']} for f in funnels}}
+              'funnel': {f['direction']: {s['stage']: s['count'] for s in f['stages']} for f in funnels},
+              'index_coverage': {n: {k: c[k] for k in ('dataset_cases', 'index_rois_ready', 'index_rois_blocked',
+                                                      'electrodes_covered', 'electrodes_total')}
+                                 for n, c in coverage.items()},
+              'match_inputs': match_inputs}
     execution = {'command': 'candidates', **result}
     _write_text(out/'execution.json', json.dumps(execution, ensure_ascii=False, indent=2)+'\n', track)
     result['outputs'] = sorted(result['outputs']+['execution.json'])

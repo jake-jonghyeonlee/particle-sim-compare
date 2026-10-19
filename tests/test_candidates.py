@@ -52,7 +52,7 @@ def test_synthetic_two_products_exports_and_consistent_funnel(tmp_path, capsys):
     config = demo(tmp_path)/'config.yaml'
     out = tmp_path/'out'
     code = run(config, out, k=4, window=4, overlap=0.5)
-    assert code == 3  # index_union_partial (see test_index_union_partial)
+    assert code == 0  # query exports complete and index coverage complete
     payload = load(out)
     assert payload['schema_version'] == 'candidate_queries_v1'
     for side in ('reference', 'target'):
@@ -74,7 +74,7 @@ def test_synthetic_two_products_exports_and_consistent_funnel(tmp_path, capsys):
     exported = {r['source_region_id'] for r in load(out/'reference_export', 'review_rois.json')['rois']}
     assert exported == {q['region_id'] for q in queries(payload, 'reference_to_target')}
     assert (out/'funnel.csv').read_text(encoding='utf-8-sig').splitlines()[0] == 'direction,stage,count,dropped,reasons'
-    assert json.loads((out/'execution.json').read_text())['exit_code'] == 3
+    assert json.loads((out/'execution.json').read_text())['exit_code'] == 0
     assert payload['inputs']['config_sha256'] and payload['inputs']['reference']['manifest_sha256']
     assert payload['args'] == {'min_count': 4, 'window_um': 4, 'merge_overlap': 0.5, 'max_candidates': None,
                                'representative_diameter_um': 5}
@@ -136,6 +136,11 @@ def test_real_route_two_products(tmp_path):
     assert payload['inputs']['reference']['electrode_import_record']['sha256']
     rows = load(out/'reference_export', 'review_rois.json')['rois']
     assert rows and all(r['status'] == 'ready' for r in rows)
+    for side in ('reference', 'target'):  # (f) index exports use the same T1b real route
+        index = load(out/f'{side}_index_export', 'review_rois.json')
+        assert index['rois'] and all(r['status'] == 'ready' and r['source_kind'] == 'manual' for r in index['rois'])
+        cov = payload['funnel']['index_coverage'][side]
+        assert cov['complete'] and cov['electrodes_covered'] == cov['electrodes_total'] > 0
     assert all(e['asset']['value_semantics'] == 'binary_zero_is_marked' for r in rows for e in r['source_assets']['layouts'])
 
 
@@ -292,17 +297,161 @@ def test_rerun_is_byte_identical(tmp_path):
     assert snapshot(first) == snapshot(second) and snapshot(first)
 
 
-# (h) index union ---------------------------------------------------------------------------------------
+# (h) index exports (T1c) -------------------------------------------------------------------------------------
 
-def test_index_union_partial_is_named_warning_and_exit_3(tmp_path):
+def dataset_electrodes(demo_dir, side):
+    """Independent count straight from the manifest: {(role, layer): {electrode_id}}."""
+    manifest = json.loads((demo_dir/side/'manifest.json').read_text())
+    found = {}
+    for case in manifest['cases']:
+        for e in case['endpoints']:
+            found.setdefault(f"{e['role']}|{e['actual_layer']}", set()).add(e['electrode_id'])
+    return found, len(manifest['cases'])
+
+
+def test_query_export_alone_is_info_note_not_a_failure(tmp_path):
     config = demo(tmp_path)/'config.yaml'
+    out = tmp_path/'out'
+    assert run(config, out, k=4) == 0
+    payload = load(out)
+    note = next(n for n in payload['notes'] if n['code'] == 'index_union_partial' and n['product'] == 'reference')
+    assert note['severity'] == 'info' and note['electrodes_missing'] == note['electrodes_in_dataset']-note['electrodes_in_export'] > 0
+    assert payload['warnings'] == [] and payload['status'] == 'available'
+    assert 'index_union_partial' not in json.loads((out/'execution.json').read_text())['reasons']
+
+
+def test_index_coverage_counts_match_independent_dataset_count(tmp_path):
+    demo_dir = demo(tmp_path)
+    out = tmp_path/'out'
+    assert run(demo_dir/'config.yaml', out, k=4) == 0
+    payload = load(out)
+    for side in ('reference', 'target'):
+        expected, n_cases = dataset_electrodes(demo_dir, side)
+        cov = payload['funnel']['index_coverage'][side]
+        assert cov['stage'] == 'index_coverage' and cov['dataset_cases'] == n_cases == cov['index_rois_ready']
+        assert cov['index_rois_blocked'] == 0 and cov['complete']
+        assert {k: v['electrodes_total'] for k, v in cov['by_role_layer'].items()} == {k: len(v) for k, v in expected.items()}
+        assert all(v['electrodes_covered'] == v['electrodes_total'] for v in cov['by_role_layer'].values())
+        assert cov['electrodes_total'] == sum(len(v) for v in expected.values())
+        rows = load(out/f'{side}_index_export', 'review_rois.json')['rois']
+        assert len(rows) == n_cases  # (d) one ROI per ready dataset case
+        assert all(r['status'] == 'ready' and r['source_kind'] == 'manual' and r['source_region_id'] is None
+                   and r['provenance'] == {'position_policy': 'explicit_manual_point'} for r in rows)
+        csv_rows = [line for line in (out/'funnel.csv').read_text(encoding='utf-8-sig').splitlines() if 'index_coverage' in line]
+        assert len(csv_rows) == 2
+    assert payload['policy']['index_export'].startswith('one_manual_roi_per_dataset_case')
+
+
+def test_index_export_satisfies_dl2_union_preconditions(tmp_path):
+    """Mirrors psdl2 role_layer_unions without importing it: one frame per (role, layer), unique channels, full cover."""
+    demo_dir = demo(tmp_path)
+    out = tmp_path/'out'
+    assert run(demo_dir/'config.yaml', out, k=4) == 0
+    for side in ('reference', 'target'):
+        rows = [r for r in load(out/f'{side}_index_export', 'review_rois.json')['rois'] if r['status'] == 'ready']
+        frames, hashes, keys = {}, {}, set()
+        for row in rows:
+            for item in row['source_assets']['layouts']:
+                e = item['endpoint']
+                role_layer = (e['role'], e['actual_layer'])
+                frames.setdefault(role_layer, set()).add(row['frame_id'])
+                hashes.setdefault(role_layer+(e['electrode_id'],), set()).add(item['asset']['sha256'])
+                keys.add((e['electrode_id'],)+role_layer)
+        assert frames and all(len(v) == 1 for v in frames.values())
+        assert all(len(v) == 1 for v in hashes.values())  # each channel has exactly one asset hash
+        expected, _ = dataset_electrodes(demo_dir, side)
+        assert {f'{r}|{l}': {i for i, rr, ll in keys if (rr, ll) == (r, l)} for r, l in frames} == expected
+
+
+def test_match_inputs_name_query_and_index_per_direction(tmp_path):
+    config = demo(tmp_path)/'config.yaml'
+    out = tmp_path/'out'
+    assert run(config, out, k=4) == 0
+    expected = {'reference_to_target': {'query': 'reference_export', 'index': 'target_index_export'},
+                'target_to_reference': {'query': 'target_export', 'index': 'reference_index_export'}}
+    assert json.loads((out/'execution.json').read_text())['match_inputs'] == expected
+    assert load(out)['match_inputs'] == expected
+    d = {x['direction']: x for x in load(out)['directions']}
+    assert d['reference_to_target']['index_export'] == 'target_index_export/review_rois.json'
+    assert 'reference_index_export/review_rois.json' in json.loads((out/'execution.json').read_text())['outputs']
+
+
+def test_query_exports_unchanged_by_index_exports(tmp_path, monkeypatch):
+    config = demo(tmp_path)/'config.yaml'
+    with_index, without = tmp_path/'with', tmp_path/'without'
+    assert run(config, with_index) == 0
+    import simcompare.candidates as candidates
+    monkeypatch.setattr(candidates, '_export_index', lambda *a, **k: None)
+    run(config, without)
+    for side in ('reference', 'target'):
+        assert snapshot(with_index/f'{side}_export') == snapshot(without/f'{side}_export')
+
+
+def test_index_export_is_deterministic(tmp_path):
+    config = demo(tmp_path)/'config.yaml'
+    first, second = tmp_path/'one', tmp_path/'two'
+    run(config, first)
+    run(config, second)
+    for side in ('reference', 'target'):
+        assert snapshot(first/f'{side}_index_export') == snapshot(second/f'{side}_index_export') != {}
+
+
+def test_index_point_prefers_centre_then_first_valid_cell_row_major():
+    import numpy as np
+    from simcompare.candidates import _index_point
+    from simcompare.numeric_schema import Frame
+
+    def frame(valid):
+        valid = np.array(valid, dtype=bool)
+        return Frame('F', 2.0, (10.0, 20.0), valid.shape, valid)
+    assert _index_point(frame(np.ones((4, 4)))) == [14.0, 24.0]  # frame centre (cell edge) is valid
+    corner = np.zeros((4, 4))
+    corner[3, 3] = 1
+    assert _index_point(frame(corner)) == [10.0+3.5*2.0, 20.0+3.5*2.0]  # only a corner cell is valid
+    first = np.zeros((4, 4))
+    first[1, 2] = first[3, 0] = 1
+    assert _index_point(frame(first)) == [10.0+2.5*2.0, 20.0+1.5*2.0]  # row-major first
+    assert _index_point(frame(np.zeros((4, 4)))) is None
+
+
+def test_corner_only_valid_cell_gives_ready_index_roi_via_export(tmp_path, monkeypatch):
+    """The point returned for a corner-only frame must pass the exporter's own valid-domain check."""
+    import simcompare.candidates as candidates
+    config = demo(tmp_path)/'config.yaml'
+    monkeypatch.setattr(candidates, '_index_point', lambda frame: [frame.bbox_um[2]-0.5, frame.bbox_um[1]+0.5])
+    out = tmp_path/'out'
+    assert run(config, out) == 0
+    rows = load(out/'reference_index_export', 'review_rois.json')['rois']
+    assert rows and all(r['status'] == 'ready' for r in rows)
+    assert {tuple(r['center_xy_um']) for r in rows} == {(105.5, 200.5)}  # last cell of the 1x6 demo frame
+
+
+def test_frame_without_valid_cell_blocks_case_with_named_reason_exit_3(tmp_path, monkeypatch):
+    import simcompare.candidates as candidates
+    config = demo(tmp_path)/'config.yaml'
+    monkeypatch.setattr(candidates, '_index_point', lambda frame: None)
     out = tmp_path/'out'
     assert run(config, out, k=4) == 3
     payload = load(out)
-    warning = next(w for w in payload['warnings'] if w['code'] == 'index_union_partial' and w['product'] == 'reference')
-    assert warning['electrodes_missing'] == warning['electrodes_in_dataset']-warning['electrodes_in_export'] > 0
-    assert payload['status'] == 'partial'
-    assert 'index_union_partial' in json.loads((out/'execution.json').read_text())['reasons']
+    warning = next(w for w in payload['warnings'] if w['code'] == 'index_coverage_incomplete' and w['product'] == 'reference')
+    assert warning['reasons'] == ['index_frame_has_no_valid_cell'] or 'index_frame_has_no_valid_cell' in warning['reasons']
+    cov = payload['funnel']['index_coverage']['reference']
+    assert cov['index_rois_ready'] == 0 and cov['index_rois_blocked'] == cov['dataset_cases'] > 0
+    assert cov['blocked_reasons']['index_frame_has_no_valid_cell'] == cov['dataset_cases']
+    assert cov['electrodes_covered'] == 0 < cov['electrodes_total']
+    assert not (out/'reference_index_export').exists() or not load(out/'reference_index_export', 'review_rois.json')['rois']
+    assert json.loads((out/'execution.json').read_text())['exit_code'] == 3
+
+
+def test_missing_asset_manifest_blocks_index_coverage(tmp_path):
+    demo_dir = demo(tmp_path)
+    config = edit_config(demo_dir, lambda c: c['target'].pop('asset_manifest'))
+    out = tmp_path/'out'
+    assert run(config, out, k=4) == 3
+    cov = load(out)['funnel']['index_coverage']['target']
+    assert not cov['complete'] and cov['electrodes_covered'] == 0
+    assert 'source_asset_manifest_required' in cov['blocked_reasons']
+    assert load(out)['funnel']['index_coverage']['reference']['complete']
 
 
 # (i) frame-clipped windows ------------------------------------------------------------------------------
