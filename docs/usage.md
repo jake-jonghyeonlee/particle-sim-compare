@@ -159,6 +159,26 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 - 깔때기: 방향별 `regions` → `merged_queries`(탈락 사유 `merged_overlap`) → `after_max_candidates`(`cut_by_max_candidates`는 `--max-candidates`로 잘린 수, 인수가 없으면 0이고 침묵 절단은 없다) → `exported_ready`(탈락은 export 사유 코드별 질의 수; 한 질의가 여러 코드를 가질 수 있어 합이 `dropped`보다 클 수 있음). 질의는 ready ROI 행이 하나라도 있으면 `ready`, 일부 행만 blocked면 `roi_rows_partially_blocked` 플래그와 사유가 남는다.
 - 종료 코드: 0 = 모든 질의 ready이고 index coverage 완전(경고 없음), 3 = blocked/partial 질의, `index_coverage_incomplete`, 지도 coverage 불완전, 미해결 동명 case, side blocked, 2 = 입력·설정 오류(필수 인수 누락 포함). 실패하면 이 실행이 만든 파일과 폴더만 지우며 이미 있던 것은 지우지 않는다.
 
+## 확정 쌍 변환 (confirm-pairs)
+
+사용자가 **accept 로 적은 후보만** `roi_correspondence_v1`로 바꾼다. 흐름: `candidates` → DL2 `psdl2.baseline_ncc --all-ready`(방향별 한 번, 질의 = `<query>_export`, index = `<opposite>_index_export`) → 검토 시트(`sheet.html`) → `decisions.csv` → `confirm-pairs` → `compare-windows`.
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare confirm-pairs --list --config config.yaml --candidates candidates_k3 --match reference_to_target=ncc_r2t.json --match target_to_reference=ncc_t2r.json
+.venv-cmd\Scripts\python.exe -m simcompare confirm-pairs --config config.yaml --candidates candidates_k3 --match reference_to_target=ncc_r2t.json --match target_to_reference=ncc_t2r.json --decisions decisions.csv --labelled-by jdoe --mutual-tolerance-um 5 --out confirmed
+.venv-cmd\Scripts\python.exe -m simcompare compare-windows --config config.yaml --correspondence confirmed\roi_correspondence.json --window-sizes 10 20 30 --out local
+```
+
+- `candidate_id` = `<direction>:<query_roi_id>:r<rank>` (`direction` = `reference_to_target` 또는 `target_to_reference`, `rank`는 시트의 "순위 N"). `--list`가 목록(점수 없음)을 출력한다.
+- `decisions.csv`: UTF-8, 헤더 `candidate_id,decision,note` 정확히 이 세 열(다른 열은 거부), `decision` = `accept` 또는 `reject`. 적지 않은 후보는 **미결정**이며 어떤 출력의 쌍에도 들어가지 않는다. 같은 id 중복, accept·reject 충돌, 모르는 id, 결과가 `unavailable`인 질의의 id, match 파일을 주지 않은 방향의 id는 이름 있는 오류(코드 2)이고 문제를 모두 나열한 뒤 아무것도 쓰지 않는다.
+- `--labelled-by`, `--mutual-tolerance-um`은 **필수이며 기본값이 없다**. `--match`는 방향마다 선택이지만 하나 이상 필요하다. 출력 폴더는 새 경로여야 한다.
+- match 파일 검사(전부 코드 2): `schema_version == psdl2_baseline_ncc_v1`, `mode == all_ready`, `self_check`가 있으면 `passed: true`, `inputs.query_export_sha256`/`index_export_sha256`가 candidates 폴더의 해당 방향 질의 export·index export와 같음, `candidate_product_id`가 반대 제품과 같음, 모든 질의가 export의 ready ROI. 후보의 제품·design·frame이 config 데이터셋과 맞지 않으면 파일 단위 거부(코드 2). 후보 중심이 frame 밖, 반대 데이터셋에 analysis layer 없음, 두 frame의 pixel pitch 다름은 **그 쌍만** `status=blocked`(사유 코드)로 파일에 들어가 `compare-windows`가 보고한다. 같은 두 중심의 중복은 경고만 한다.
+- 방향: `target_to_reference` 후보는 **뒤집어서** 항상 a = reference, b = target 이다. 질의 쪽 side는 질의 export 행(endpoints·failure_type·roi_id 포함)에서 그대로 가져오고, 후보 쪽 side는 후보 중심·frame·반대 index export의 design_version·질의의 `analysis_layer`만 가진다(endpoints·roi_id·failure_type 없음).
+- `source = {kind: manual, labelled_by, labelled_at}`(UTC, 한 실행에서 한 번). `pair_id`는 방향·질의 roi_id·rank·후보 중심의 해시이며 `labelled_at`에는 의존하지 않는다.
+- `mutual`/`one_way`: 반대 방향에서 accept 된 쌍의 a·b 중심이 모두 `--mutual-tolerance-um` 이내면 `mutual`, 아니면 `one_way`(표시만 한다). 두 방향이 같은 대응을 accept 했으면 쌍은 **하나**만 내보내고(pair_id가 작은 쪽) 사이드카에 `merged_with`를 적는다. 반대 방향의 reject·미결정 후보는 `opposite_candidates_within_tolerance`에 정보로만 남는다.
+- 출력: `roi_correspondence.json`(`validate_correspondence` 통과, `load_correspondence`로 재적재), `confirmed_pairs_sidecar.json`(pair_id별 candidate_id·점수·순위·flags·score_gap·template_sha256·implementation_revision·결정 메모·mutual/one_way·입력 파일 sha256·blocked 사유), `confirm_funnel.json`/`.csv`(match 후보 → accept/reject/미결정 → blocked(사유) → 병합 → 출력), `execution.json`. **점수는 대응 파일에 없고 어떤 판정·정렬에도 쓰이지 않는다.**
+- 종료 코드: 0 = 쌍이 나갔고 blocked 없음, 3 = blocked 쌍이 있거나 accept 0건(출력은 씀), 2 = 입력·정합성 오류(출력 없음). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다.
+
 ## 종료 코드
 
 | 코드 | 의미 | 확인 |

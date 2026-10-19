@@ -79,6 +79,18 @@ def _parser() -> argparse.ArgumentParser:
     cand.add_argument("--max-candidates", type=int,
                       help="방향(제품)별 질의 수 상한. 명시할 때만 적용하며 잘린 수를 funnel에 기록")
     cand.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
+    confirm = _korean_help(sub.add_parser(
+        "confirm-pairs", add_help=False,
+        help="사용자가 decisions.csv 로 accept 한 NCC/DL2 후보만 roi_correspondence_v1 로 변환(점수는 사이드카에만)"))
+    confirm.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference=a, target=b)")
+    confirm.add_argument("--candidates", required=True, help="candidates 출력 폴더")
+    confirm.add_argument("--match", action="append", default=[], metavar="DIRECTION=JSON",
+                         help="reference_to_target=<ncc.json> 또는 target_to_reference=<ncc.json> (각각 선택, 하나 이상)")
+    confirm.add_argument("--list", action="store_true", help="candidate_id 목록(<direction>:<query_roi_id>:r<rank>)만 출력하고 종료")
+    confirm.add_argument("--decisions", help="decisions.csv (candidate_id,decision,note; decision=accept|reject, UTF-8, 헤더 필수)")
+    confirm.add_argument("--labelled-by", help="확정한 사용자 ID (기본값 없음)")
+    confirm.add_argument("--mutual-tolerance-um", type=float, help="mutual/one_way 판정 중심 허용 거리 µm (기본값 없음)")
+    confirm.add_argument("--out", help="새 출력 디렉터리(이미 있으면 거부)")
     windows = _korean_help(sub.add_parser("compare-windows", add_help=False,
                                           help="대응 위치의 같은 물리 창 안 ΔCA(b−a). 창 크기는 기본값 없음"))
     windows.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference=a, target=b)")
@@ -172,6 +184,29 @@ def main(argv: list[str] | None = None) -> int:
                                                merge_overlap=args.merge_overlap, max_candidates=args.max_candidates)
             _print(result)
             return result["exit_code"]
+        if args.command == "confirm-pairs":
+            # 출력 폴더는 새 것이어야 하며 run_confirm_pairs 가 이 실행이 만든 파일만 정리한다(공용 오류 핸들러 제외).
+            from simcompare import confirm_pairs, pipeline
+            from simcompare.numeric_schema import NumericContractError
+            matches = {}
+            for spec in args.match:
+                name, separator, path = spec.partition("=")
+                if not separator or not path or name in matches:
+                    raise NumericContractError("invalid_match_argument", f"--match {spec!r}: DIRECTION=JSON 형식, 방향당 하나")
+                matches[name] = path
+            cfg = pipeline.load_numeric_config(args.config)
+            if args.list:
+                _print(confirm_pairs.list_candidates(cfg, args.candidates, matches))
+                return 0
+            for flag, value in (("--decisions", args.decisions), ("--labelled-by", args.labelled_by),
+                                ("--mutual-tolerance-um", args.mutual_tolerance_um), ("--out", args.out)):
+                if value is None:
+                    raise NumericContractError("confirm_pairs_argument_required", flag + " 가 필요합니다(기본값 없음)")
+            result = confirm_pairs.run_confirm_pairs(cfg, Path(args.out), candidates_dir=args.candidates, matches=matches,
+                                                     decisions_path=args.decisions, labelled_by=args.labelled_by,
+                                                     mutual_tolerance_um=args.mutual_tolerance_um)
+            _print(result)
+            return result["exit_code"]
         if args.command == "report":
             from simcompare import final_report
             result = final_report.run_report(args.compare_dir, args.out, map_dir=args.map_dir, windows_dir=args.windows_dir,
@@ -203,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
-        if args.command in ("import-electrode-assets", "candidates"):
+        if args.command in ("import-electrode-assets", "candidates", "confirm-pairs"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2
