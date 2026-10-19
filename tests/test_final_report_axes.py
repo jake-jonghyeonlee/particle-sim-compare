@@ -412,3 +412,21 @@ def test_real_pipeline_outputs_end_to_end(env):
         assert info['origin'][side]['max_count'] == queries[source['query_roi_id']]['max_count']
     assert 'id="a2b"' in html and not re.search(r'https?:', html) and '<script' not in html
 
+
+
+def test_mutual_context_differs_is_shown_in_table_and_json_only_when_true(demo, tmp_path):
+    dirs = axes_windows(demo, tmp_path)
+    cand, _ = fake_candidates(tmp_path)
+    confirm, _ = fake_confirm(tmp_path, dirs['win'], cand, [0.5, 0.4])
+    side_path = confirm / 'confirmed_pairs_sidecar.json'
+    sidecar = json.loads(side_path.read_text(encoding='utf-8'))
+    sidecar['pairs']['P2']['mutual_context_differs'] = True
+    sidecar['pairs']['P3']['mutual_context_differs'] = False
+    side_path.write_text(json.dumps(sidecar), encoding='utf-8')
+    out = tmp_path / 'out'
+    run_cli(*axes_args(dirs, out, cand, confirm))
+    note = '상호 위치만 같고 측정 맥락(분석 layer/failure type)이 다름'
+    prov = a2b(out)['provenance']
+    assert prov['P2']['mutual_context_differs'] is True and prov['P2']['mutual_context_note'] == note
+    assert all('mutual_context_differs' not in prov[p] for p in prov if p != 'P2')
+    assert provenance_part((out / 'report.html').read_text(encoding='utf-8')).count(note) == 1

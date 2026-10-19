@@ -10,7 +10,7 @@ layout PNG는 전체 frame(0.1 µm/pixel)이고 dataset frame은 hotspot crop(�
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, fields, is_dataclass
 from io import BytesIO
 import hashlib
 import json
@@ -278,8 +278,34 @@ _WRITE_CROP_BPP = 2
 
 
 def _dataset_bytes(dataset):
-    """가드 이전에 이미 올라와 있는 숫자 데이터셋의 frame 배열 크기(그 밖의 메타데이터는 계상하지 못한다)."""
-    return sum(int(f.valid.nbytes) for f in dataset.frames.values())
+    """가드 이전에 이미 올라와 있는 숫자 데이터셋이 붙들고 있는 모든 ndarray 저장소의 바이트 합.
+
+    frame.valid뿐 아니라 관측된 case.records[d].mask(diameter마다 전체 원본 마스크)를 포함한다. 객체 그래프를 걸으며
+    같은 버퍼(view는 base 체인의 최상위 배열)는 한 번만 센다. 배열이 아닌 메타데이터(문자열·dict 등)는 계상하지 못한다.
+    """
+    seen, buffers, total = set(), set(), 0
+    stack = [dataset]
+    while stack:
+        obj = stack.pop()
+        if id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        if isinstance(obj, np.ndarray):
+            root = obj
+            while isinstance(root.base, np.ndarray):
+                root = root.base
+            if id(root) not in buffers:
+                buffers.add(id(root))
+                total += int(root.nbytes)
+        elif isinstance(obj, dict):
+            stack.extend(obj.values())
+        elif isinstance(obj, (list, tuple, set, frozenset)):
+            stack.extend(obj)
+        elif is_dataclass(obj) and not isinstance(obj, type):
+            stack.extend(getattr(obj, f.name, None) for f in fields(obj))
+        elif hasattr(obj, '__dict__') and not isinstance(obj, (str, bytes, type)):
+            stack.extend(vars(obj).values())
+    return total
 
 
 def _estimate_mb(headers, frame_px, dataset_bytes=0):

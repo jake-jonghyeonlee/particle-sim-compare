@@ -540,3 +540,101 @@ def test_memory_estimate_bounds_measured_peak_rss_of_color_decode_and_write(tmp_
     measured_mb = int(out.stdout.strip()) * unit / 2 ** 20
     estimate = electrode_png._estimate_mb([(n, n, path.stat().st_size, mode)], 2400 ** 2)
     assert measured_mb <= 1.25 * estimate, (mode, measured_mb, estimate)
+
+
+_FULL_IMPORT_PROBE = """
+import json, resource, sys
+from pathlib import Path
+from simcompare.adapters import electrode_png as e
+from simcompare.numeric_schema import NumericContractError
+root, limit = Path(sys.argv[1]), float(sys.argv[2])
+seen = []
+original = e._estimate_mb
+def spy(*args, **kwargs):
+    value = original(*args, **kwargs)
+    seen.append(value)
+    return value
+e._estimate_mb = spy
+before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+code = 0
+try:
+    e.import_electrode_assets('hotspot_case_electrode', root / 'source', root / 'adapter', numeric_data_dir=root / 'imported',
+                              condition_assignment=root / 'assignment.json', cnt_from_dl1_root=root / 'cnt',
+                              source_version='rss-test', max_asset_memory_mb=limit)
+except NumericContractError as exc:
+    code = 2 if 'asset_memory_limit_exceeded' in str(exc) else 1
+    print(exc, file=sys.stderr)
+after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(json.dumps({'estimate_mb': seen[-1], 'peak_bytes': after - before, 'code': code,
+                  'adapter_exists': (root / 'adapter').exists()}))
+"""
+
+
+def _full_size_fixture(tmp_path):
+    from simcompare.numeric_schema import DIAMETERS_UM
+    source = tmp_path / 'source'
+    case = 'lateral_short-A-L1-B-L1'
+    folder = source / 'images' / case
+    (folder / 'result').mkdir(parents=True)
+    image = Image.new('RGB', (3400, 3400), 0)
+    image.save(folder / '1.png')
+    image.save(folder / '2.png')
+    cnt = tmp_path / 'cnt' / 'PRODUCT' / 'cno'
+    cnt.mkdir(parents=True)
+    image.save(cnt / '1_CNT.png')
+    mask = np.zeros((2400, 2400), np.uint8)
+    mask[0, 0] = 255
+    for d in DIAMETERS_UM:
+        Image.fromarray(mask).save(folder / f'hotspot_lateral_short{d:02d}.png')
+    with (folder / 'result' / 'lateral_short.csv').open('w', newline='') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(['defect_size(um)', 'Area(um2)'])
+        writer.writerows([[d, '0.01'] for d in DIAMETERS_UM])
+    expected = tmp_path / 'expected.txt'
+    expected.write_text(case + '\n')
+    import_hotspots(source, tmp_path / 'imported', expected_cases=expected)
+    assignment = {'product_id': 'PRODUCT', 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
+                  'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT',
+                  'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
+    (tmp_path / 'assignment.json').write_text(json.dumps(assignment))
+
+
+def test_dataset_bytes_counts_every_retained_mask_without_double_counting_aliases(tmp_path):
+    root, imported, assignment_path, _ = real_data(tmp_path)
+    dataset = electrode_png._load_dataset(imported, 'manifest.json', assignment_path)
+    arrays = {}
+
+    def walk(obj, seen=set()):
+        if isinstance(obj, np.ndarray):
+            base = obj
+            while isinstance(base.base, np.ndarray):
+                base = base.base
+            arrays[id(base)] = base.nbytes
+    for frame in dataset.frames.values():
+        walk(frame.valid)
+    masks = [r.mask for c in dataset.cases for r in c.records.values() if r.mask is not None]
+    assert masks, 'fixture must retain observed masks'
+    for m in masks:
+        walk(m)
+    assert electrode_png._dataset_bytes(dataset) == sum(arrays.values())
+    assert electrode_png._dataset_bytes(dataset) > sum(int(f.valid.nbytes) for f in dataset.frames.values())
+
+
+@pytest.mark.skipif(resource is None, reason='resource.getrusage unavailable on this platform')
+def test_full_import_path_peak_rss_is_bounded_by_estimate_and_low_limit_fails_before_writing(tmp_path):
+    # R1: 실제 import_hotspots + import_electrode_assets, 32 지름 × 2400² 마스크, 3400² RGB PNG.
+    _full_size_fixture(tmp_path)
+    unit = 1 if sys.platform == 'darwin' else 1024          # ru_maxrss: macOS bytes, Linux KiB
+
+    def probe(limit):
+        run = subprocess.run([sys.executable, '-c', _FULL_IMPORT_PROBE, str(tmp_path), str(limit)],
+                             capture_output=True, text=True, check=True, cwd=tmp_path)
+        return json.loads(run.stdout.strip().splitlines()[-1])
+
+    ok = probe(2048)
+    assert ok['code'] == 0 and ok['adapter_exists']
+    measured_mb = ok['peak_bytes'] * unit / 2 ** 20
+    assert measured_mb <= 1.25 * ok['estimate_mb'], (measured_mb, ok['estimate_mb'])
+    shutil.rmtree(tmp_path / 'adapter')
+    low = probe(ok['estimate_mb'] * 0.9)       # 진짜 필요량 아래의 한도 → 쓰기 전에 거절
+    assert low['code'] == 2 and not low['adapter_exists']

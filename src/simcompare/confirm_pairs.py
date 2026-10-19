@@ -100,6 +100,15 @@ def _load_candidates(candidates_dir, cfg, problems):
         problems.add('config_changed_since_candidates', f'{recorded} != {cfg["_config_sha256"]}')
     info = {'dir': directory, 'payload': payload, 'payload_sha256': payload_sha, 'directions': {}}
     match_inputs = payload.get('match_inputs') or {}
+    if 'match_files' in payload:
+        files = payload['match_files']
+        for name, item in (match_inputs.items() if isinstance(match_inputs, dict) else []):
+            got = files.get(name) if isinstance(files, dict) else None
+            want = {key: f'{folder}/review_rois.json' for key, folder in item.items()} if isinstance(item, dict) else None
+            if got != want:
+                problems.add('candidates_match_files_inconsistent', f'{name}: match_files={got!r} match_inputs={item!r}')
+        if not isinstance(files, dict) or set(files) != set(match_inputs if isinstance(match_inputs, dict) else ()):
+            problems.add('candidates_match_files_inconsistent', f'directions {sorted(files) if isinstance(files, dict) else files!r}')
     for entry in payload.get('directions', []):
         name = entry.get('direction')
         if name not in DIRECTION_NAMES:

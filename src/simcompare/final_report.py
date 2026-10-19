@@ -1144,6 +1144,9 @@ def _evidence_text(record):
     return lines
 
 
+MUTUAL_CONTEXT_NOTE = '상호 위치만 같고 측정 맥락(분석 layer/failure type)이 다름'
+
+
 def _provenance_table(shown, sidecar, queries):
     """표시된 쌍의 출처 표(pair_id 순서). 점수는 마지막 열에만 둔다."""
     rows, data = [], {}
@@ -1153,13 +1156,18 @@ def _provenance_table(shown, sidecar, queries):
         mutual = record.get('mutual_status')
         merged_with = record.get('merged_with') or []
         evidence = _evidence_text(record)
+        context_differs = record.get('mutual_context_differs') is True
         data[pid] = {'direction': record.get('direction'), 'mutual_status': mutual, 'origin': origin,
                      'merged_with': merged_with, 'evidence': evidence}
+        if context_differs:
+            data[pid]['mutual_context_differs'] = True
+            data[pid]['mutual_context_note'] = MUTUAL_CONTEXT_NOTE
 
         def count(side):
             return origin[side]['max_count'] if origin[side] is not None else UNKNOWN
         merged_from = ' / '.join(f'{side} {origin[side]["merged_from"]}' for side in ('reference', 'target') if origin[side] is not None) or UNKNOWN
-        rows.append([pid, record.get('direction'), mutual if mutual else '—', count('reference'), count('target'), merged_from, len(merged_with),
+        rows.append([pid, record.get('direction'),
+                     (mutual if mutual else '—') + (f' ({MUTUAL_CONTEXT_NOTE})' if context_differs else ''), count('reference'), count('target'), merged_from, len(merged_with),
                      _Html('<br>'.join(escape(line) for line in evidence))])
     headers = ['쌍', '방향', 'mutual / one_way', 'reference 쪽 취약 max_count', 'target 쪽 취약 max_count', '병합된 영역 수 (merged_from)',
                '상호 병합된 쌍 수 (merged_with)', PROVENANCE_HEAD]

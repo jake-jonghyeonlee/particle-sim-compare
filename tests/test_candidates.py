@@ -1,4 +1,5 @@
 """PLAN_v4 T1: simcompare candidates (regions of both products -> merged queries -> exports + funnel)."""
+import hashlib
 import json
 from pathlib import Path
 
@@ -168,8 +169,20 @@ def test_real_input_without_electrode_roles_is_not_matcher_ready_exit_3(tmp_path
     payload = load(out)
     for side in ('reference', 'target'):      # 디스크의 export는 role null 행을 그대로 담고, DL2 규칙은 이를 거부한다
         for folder in (f'{side}_export', f'{side}_index_export'):
-            rows = load(out/folder, 'review_rois.json')['rois']
-            assert rows and not any(dl2_endpoint_ready(r) for r in rows if r['status'] == 'ready')
+            doc = load(out/folder, 'review_rois.json')
+            rows = doc['rois']
+            role_null = [r for r in rows if any(not (isinstance(e, dict) and e.get('role') and e.get('actual_layer'))
+                                                for e in r['endpoints'])]
+            assert role_null                                  # 공허하게 통과하지 못하게 한다
+            blocked = [r for r in rows if r['status'] == 'blocked']
+            assert len(blocked) == len(role_null)             # 디스크의 모든 role-null 행이 blocked다
+            assert all(r['status'] == 'blocked' and 'electrode_role_required_for_matching' in r['reasons'] for r in role_null)
+            assert not any(r['status'] == 'ready' for r in rows) and doc['status'] == 'partial'
+            assert not any(dl2_endpoint_ready(r) for r in rows if r['status'] == 'ready')
+        confirm_hashes = payload['inputs'][side]               # 재기록 이후의 최종 바이트가 해시로 기록된다
+        assert confirm_hashes['export_sha256'] == hashlib.sha256((out/f'{side}_export'/'review_rois.json').read_bytes()).hexdigest()
+        assert confirm_hashes['index_export_sha256'] == hashlib.sha256(
+            (out/f'{side}_index_export'/'review_rois.json').read_bytes()).hexdigest()
         cov = payload['funnel']['index_coverage'][side]            # candidates는 이를 준비된 것으로 세지 않는다
         assert not cov['complete'] and cov['electrodes_covered'] == 0 < cov['electrodes_total']
         assert cov['index_rois_ready'] == 0 and cov['index_rois_blocked'] >= 1
@@ -177,6 +190,10 @@ def test_real_input_without_electrode_roles_is_not_matcher_ready_exit_3(tmp_path
         warning = next(w for w in payload['warnings'] if w['code'] == 'electrode_role_required_for_matching'
                        and w['product'] == side)
         assert 'condition_assignment.electrode_roles' in warning['detail']
+    from simcompare import confirm_pairs                      # confirm-pairs는 재기록 이후의 해시를 그대로 검증한다
+    problems = confirm_pairs._Problems()
+    assert confirm_pairs._load_candidates(out, {'_config_sha256': None}, problems) is not None
+    assert problems.items == []
     for direction in payload['directions']:
         assert direction['queries'] and all(q['status'] == 'blocked' and q['n_rois_ready'] == 0 and
                                             'electrode_role_required_for_matching' in q['reasons']

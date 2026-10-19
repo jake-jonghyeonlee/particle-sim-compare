@@ -669,3 +669,28 @@ def test_same_context_still_merges_and_unit_layer_difference_blocks_merge(env):
     assert merged == {} and differs == {'p1', 'p2'} and near == {'p1': ['p2'], 'p2': ['p1']}
     near, merged, differs = confirm_pairs._mutual([entry('reference_to_target', 'M1', 'p1'), entry('target_to_reference', 'M1', 'p2')], 0)
     assert merged == {'p2': 'p1'} and differs == set()
+
+
+def test_match_files_inconsistent_with_match_inputs_is_rejected(env, capsys):
+    matches, path = accept_first(env)
+    cand = env['cand']/'candidate_queries_v1.json'
+    original = cand.read_text(encoding='utf-8')
+    payload = load(cand)
+    payload['match_files']['reference_to_target']['query'] = 'missing/review_rois.json'
+    cand.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+    assert_exit2_with(env, matches, path, 'candidates_match_files_inconsistent', capsys)
+    payload = load(cand)
+    del payload['match_files']['target_to_reference']                # direction missing
+    payload['match_files']['reference_to_target'] = json.loads(original)['match_files']['reference_to_target']
+    cand.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+    assert_exit2_with(env, matches, path, 'candidates_match_files_inconsistent', capsys)
+
+
+def test_missing_match_files_field_stays_accepted(env):
+    matches, path = accept_first(env)
+    cand = env['cand']/'candidate_queries_v1.json'
+    payload = load(cand)
+    assert 'match_files' in payload and payload['match_files']
+    del payload['match_files']
+    cand.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+    assert run(env, {'reference_to_target': matches}, path) == 0

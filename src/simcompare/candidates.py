@@ -154,6 +154,18 @@ def _role_gate(side, rows):
     return n
 
 
+def _persist_role_gate(path, payload, n_blocked):
+    """role gate가 막은 row를 export 파일 자체에 반영한다(DL2가 읽는 것은 디스크의 파일이다).
+
+    top-level status는 ready row가 하나도 남지 않거나 일부가 막혔으면 `partial`로 바꾸고, 해시는 이 이후 최종 바이트에서 계산한다.
+    """
+    if not n_blocked:
+        return
+    if payload.get('status') == 'available':
+        payload['status'] = 'partial'
+    Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)+'\n', encoding='utf-8')
+
+
 def _prepare(cfg, name, min_count, diameter_um):
     from simcompare import pipeline
     from simcompare.electrode_map import compute_electrode_maps
@@ -238,6 +250,7 @@ def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track)
     side.exported, side.export_path, payload = done
     side.rows = payload['rois']
     side.role_blocked = _role_gate(side, side.rows)
+    _persist_role_gate(side.export_path, payload, side.role_blocked)
     side.export_payload = payload
     if payload.get('status') in ('blocked', 'unavailable'):
         side.status = payload['status']
@@ -285,6 +298,7 @@ def _export_index(cfg, side, folder, min_count, diameter_um, track):
     state['exported'], state['path'], payload = done
     state['rows'] = payload['rois']
     side.role_blocked_index = _role_gate(side, state['rows'])
+    _persist_role_gate(state['path'], payload, side.role_blocked_index)
     state['payload'] = payload
     if payload.get('status') in ('blocked', 'unavailable'):
         state['status'] = payload['status']
