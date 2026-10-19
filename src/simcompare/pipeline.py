@@ -1,5 +1,6 @@
 """numeric_v2 실행 경로. 학습이나 legacy loader를 호출하지 않는다."""
 from __future__ import annotations
+import hashlib
 import json
 from pathlib import Path
 
@@ -451,9 +452,43 @@ def run_numeric_validate(cfg, out=None):
 _ELECTRODE_SEMANTICS = ('binary', 'binary_zero_is_marked')
 
 
-def _json_unique(path):
-    from simcompare.roi_export import _json_load
-    return _json_load(path)
+def _json_bytes_unique(data):
+    """roi_export._json_load와 같은 중복 key·비유한 수 검사로 이미 읽은 bytes를 파싱한다."""
+    from simcompare.numeric_schema import NumericContractError
+
+    def unique(pairs):
+        result = {}
+        for k, v in pairs:
+            if k in result:
+                raise NumericContractError('duplicate_asset_manifest_key', k)
+            result[k] = v
+        return result
+
+    def constant(value):
+        raise NumericContractError('nonfinite_asset_manifest_number', value)
+    return json.loads(data.decode('utf-8'), object_pairs_hook=unique, parse_constant=constant)
+
+
+def _read_verified(path, expected):
+    """파일을 한 번만 bytes로 읽어 config의 sha256과 대조하고 같은 bytes를 파싱한다. (파싱 결과, sha256)."""
+    from simcompare.numeric_schema import NumericContractError
+    data = Path(path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if not isinstance(expected, str) or digest != expected:
+        raise NumericContractError('input_hash_mismatch', Path(path).name)
+    return _json_bytes_unique(data), digest
+
+
+def _assert_evidence_unchanged(snapshot):
+    """검증한 증거 파일이 읽는 동안 바뀌지 않았는지 다시 해시한다."""
+    from simcompare.numeric_schema import NumericContractError
+    for path, digest in snapshot:
+        try:
+            now = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        except OSError as exc:
+            raise NumericContractError('evidence_changed_during_read', Path(path).name) from exc
+        if now != digest:
+            raise NumericContractError('evidence_changed_during_read', Path(path).name)
 
 
 def _electrode_evidence(root, section):
@@ -463,7 +498,7 @@ def _electrode_evidence(root, section):
     hash·binding 불일치는 NumericContractError(이름 있는 오류)다.
     """
     from simcompare.adapters.electrode_png import SOURCE_KIND_CONTRACT
-    from simcompare.numeric_images import check_hash, resolve_path
+    from simcompare.numeric_images import resolve_path
     from simcompare.numeric_schema import NumericContractError
     asset_ref, record_ref = section.get('asset_manifest'), section.get('electrode_import_record')
     if asset_ref is None or record_ref is None or section.get('condition_assignment') is None:
@@ -473,12 +508,13 @@ def _electrode_evidence(root, section):
                 or not all(isinstance(ref[k], str) and ref[k] for k in ref)):
             raise NumericContractError('invalid_numeric_config', name + '는 {path, sha256} 객체여야 합니다')
     record_path = resolve_path(root, record_ref['path'])
-    check_hash(record_path, record_ref['sha256'])
     manifest_path = resolve_path(root, asset_ref['path'])
-    check_hash(manifest_path, asset_ref['sha256'])
     try:
-        record, manifest = _json_unique(record_path), _json_unique(manifest_path)
+        record, record_digest = _read_verified(record_path, record_ref['sha256'])
+        manifest, manifest_digest = _read_verified(manifest_path, asset_ref['sha256'])
     except (OSError, ValueError) as exc:
+        if getattr(exc, 'code', None) == 'input_hash_mismatch':
+            raise
         raise NumericContractError('malformed_asset_manifest', str(exc)) from exc
     if (not isinstance(record, dict) or record.get('schema_version') != 'electrode_asset_import_record_v1'
             or not isinstance(manifest, dict) or manifest.get('schema_version') != 'review_assets_v1'):
@@ -505,7 +541,7 @@ def _electrode_evidence(root, section):
         raise NumericContractError('source_asset_manifest_invalid') from None
     if not refs or any(not isinstance(r, dict) or r.get('value_semantics') not in _ELECTRODE_SEMANTICS for r in refs):
         return 'blocked', ['electrode_polarity_unspecified']
-    return 'accepted', manifest
+    return 'accepted', manifest, ((record_path, record_digest), (manifest_path, manifest_digest))
 
 
 def _real_roi_export(cfg, out, real, spec, prepared=None):
@@ -541,8 +577,12 @@ def _real_roi_export(cfg, out, real, spec, prepared=None):
         return {'status': 'unavailable', 'reasons': payload['reasons'], 'outputs': paths, 'exit_code': 3}
     maps = prepared_maps if prepared is not None else compute_electrode_maps(
         dataset, diameter_um=spec.get('diameter_um', 5), min_count=spec.get('min_count'))
-    return export_review_rois(dataset, root, out, maps=maps, selections=cfg.get('review_rois', {}),
-                              asset_manifest=spec['input'].get('asset_manifest'))
+    # export_review_rois는 manifest를 경로로 다시 읽는다. 검증한 bytes와 같은지 읽기 전후로 확인한다.
+    _assert_evidence_unchanged(evidence[2])
+    result = export_review_rois(dataset, root, out, maps=maps, selections=cfg.get('review_rois', {}),
+                                asset_manifest=spec['input'].get('asset_manifest'))
+    _assert_evidence_unchanged(evidence[2])
+    return result
 
 
 def run_numeric_roi_export(cfg, out):

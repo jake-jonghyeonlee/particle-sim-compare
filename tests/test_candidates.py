@@ -104,12 +104,15 @@ def test_blocked_query_reasons_in_funnel(tmp_path):
 
 # (b) real_hotspot_v1 route ----------------------------------------------------------------
 
-def real_config(tmp_path, *, record=True):
+ROLES = {'A': 'gate', 'B': 'data'}
+
+
+def real_config(tmp_path, *, record=True, roles=ROLES):
     sections = {}
     for name in ('reference', 'target'):
         base = tmp_path/name
         base.mkdir()
-        data, assignment = build(base)
+        data, assignment = build(base, roles=roles)
         spec = {'data_dir': str(data), 'product_id': 'PRODUCT', 'condition_assignment': assignment,
                 'asset_manifest': {'path': 'review_assets.json', 'sha256': sha(data/'review_assets.json')}}
         if record:
@@ -142,6 +145,73 @@ def test_real_route_two_products(tmp_path):
         cov = payload['funnel']['index_coverage'][side]
         assert cov['complete'] and cov['electrodes_covered'] == cov['electrodes_total'] > 0
     assert all(e['asset']['value_semantics'] == 'binary_zero_is_marked' for r in rows for e in r['source_assets']['layouts'])
+
+
+def dl2_endpoint_ready(row):
+    """DL2의 ready 행 endpoint 규칙을 psdl2 import 없이 옮겼다.
+
+    출처: particle-sim-dl2/src/psdl2/data.py:131-135(_endpoint: 키 집합 {electrode_id, role, actual_layer},
+    값마다 schema.text = 비어 있지 않은 문자열이 아니면 nonempty_identifier_required)와 :188(행의 endpoints 2개를 모두 바인딩).
+    """
+    def text(value):
+        return isinstance(value, str) and bool(value.strip())
+    endpoints = row['endpoints']
+    return (isinstance(endpoints, list) and len(endpoints) == 2
+            and all(isinstance(e, dict) and set(e) == {'electrode_id', 'role', 'actual_layer'}
+                    and all(text(e[k]) for k in e) for e in endpoints))
+
+
+def test_real_input_without_electrode_roles_is_not_matcher_ready_exit_3(tmp_path):
+    config = real_config(tmp_path, roles=None)
+    out = tmp_path/'out'
+    assert run(config, out, k=1, window=10, overlap=0.5) == 3
+    payload = load(out)
+    for side in ('reference', 'target'):      # 디스크의 export는 role null 행을 그대로 담고, DL2 규칙은 이를 거부한다
+        for folder in (f'{side}_export', f'{side}_index_export'):
+            rows = load(out/folder, 'review_rois.json')['rois']
+            assert rows and not any(dl2_endpoint_ready(r) for r in rows if r['status'] == 'ready')
+        cov = payload['funnel']['index_coverage'][side]            # candidates는 이를 준비된 것으로 세지 않는다
+        assert not cov['complete'] and cov['electrodes_covered'] == 0 < cov['electrodes_total']
+        assert cov['index_rois_ready'] == 0 and cov['index_rois_blocked'] >= 1
+        assert cov['blocked_reasons']['electrode_role_required_for_matching'] >= 1
+        warning = next(w for w in payload['warnings'] if w['code'] == 'electrode_role_required_for_matching'
+                       and w['product'] == side)
+        assert 'condition_assignment.electrode_roles' in warning['detail']
+    for direction in payload['directions']:
+        assert direction['queries'] and all(q['status'] == 'blocked' and q['n_rois_ready'] == 0 and
+                                            'electrode_role_required_for_matching' in q['reasons']
+                                            for q in direction['queries'])
+    assert payload['status'] == 'partial'
+
+
+def test_real_input_with_electrode_roles_passes_the_dl2_endpoint_rule_exit_0(tmp_path):
+    config = real_config(tmp_path)
+    out = tmp_path/'out'
+    assert run(config, out, k=1, window=10, overlap=0.5) == 0
+    for side in ('reference', 'target'):
+        for folder in (f'{side}_export', f'{side}_index_export'):
+            ready = [r for r in load(out/folder, 'review_rois.json')['rois'] if r['status'] == 'ready']
+            assert ready and all(dl2_endpoint_ready(r) for r in ready)
+            assert all(r['endpoints'] and {e['role'] for e in r['endpoints']} <= {'gate', 'data'} for r in ready)
+        assert payload_cov(out, side)['complete']
+    assert 'electrode_role_required_for_matching' not in json.dumps(load(out)['warnings'])
+
+
+def payload_cov(out, side):
+    return load(out)['funnel']['index_coverage'][side]
+
+
+def test_match_files_name_review_rois_json_files_not_directories(tmp_path):
+    config = real_config(tmp_path)
+    out = tmp_path/'out'
+    assert run(config, out, k=1, window=10, overlap=0.5) == 0
+    expected = {'reference_to_target': {'query': 'reference_export/review_rois.json',
+                                        'index': 'target_index_export/review_rois.json'},
+                'target_to_reference': {'query': 'target_export/review_rois.json',
+                                        'index': 'reference_index_export/review_rois.json'}}
+    assert load(out)['match_files'] == expected
+    assert json.loads((out/'execution.json').read_text())['match_files'] == expected
+    assert all((out/path).is_file() for item in expected.values() for path in item.values())
 
 
 def test_real_route_without_evidence_is_blocked_not_exported(tmp_path):

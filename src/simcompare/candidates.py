@@ -17,6 +17,9 @@ import numpy as np
 SCHEMA_VERSION = 'candidate_queries_v1'
 OVERLAP_EPS = 1e-12
 DIRECTIONS = (('reference_to_target', 'reference', 'target'), ('target_to_reference', 'target', 'reference'))
+ROLE_REQUIRED_REASON = 'electrode_role_required_for_matching'
+ROLE_REQUIRED_MESSAGE = ('DL2 매처는 모든 endpoint의 비어 있지 않은 role과 actual_layer를 요구한다. 역할을 추측하지 않는다. '
+                         'config의 condition_assignment.electrode_roles에 전극별 role을 명시하라.')
 SHORT_CIRCUIT_REASONS = ['electrode_polarity_unknown', 'source_layout_assets_unconfirmed']
 
 
@@ -123,7 +126,32 @@ class _Side:
         self.export_path = None
         self.export_payload = None
         self.product_ids = []
+        self.role_blocked = 0
+        self.role_blocked_index = 0
         self.index = None      # index export 상태(_export_index가 채운다)
+
+
+def _role_gate(side, rows):
+    """실자료 ROI row 중 role/actual_layer가 비어 있는 endpoint가 있는 ready row를 매처 비대상(blocked)으로 돌린다.
+
+    역할을 만들어 채우지 않는다. 반환은 막은 row 수. numeric_v2 합성 경로(side.real is None)는 건드리지 않는다.
+    """
+    if side.real is None:
+        return 0
+
+    def bad(ep):
+        return not (isinstance(ep, dict) and all(isinstance(ep.get(k), str) and ep[k] for k in ('role', 'actual_layer')))
+    n = 0
+    for row in rows:
+        if row['status'] != 'ready':
+            continue
+        endpoints = list(row.get('endpoints') or []) + [item.get('endpoint') for item in
+                                                         (row.get('source_assets') or {}).get('layouts', [])]
+        if any(bad(ep) for ep in endpoints):
+            row['status'] = 'blocked'
+            row['reasons'] = sorted(set(row['reasons']) | {ROLE_REQUIRED_REASON})
+            n += 1
+    return n
 
 
 def _prepare(cfg, name, min_count, diameter_um):
@@ -209,6 +237,7 @@ def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track)
         return
     side.exported, side.export_path, payload = done
     side.rows = payload['rois']
+    side.role_blocked = _role_gate(side, side.rows)
     side.export_payload = payload
     if payload.get('status') in ('blocked', 'unavailable'):
         side.status = payload['status']
@@ -255,6 +284,7 @@ def _export_index(cfg, side, folder, min_count, diameter_um, track):
         return
     state['exported'], state['path'], payload = done
     state['rows'] = payload['rois']
+    side.role_blocked_index = _role_gate(side, state['rows'])
     state['payload'] = payload
     if payload.get('status') in ('blocked', 'unavailable'):
         state['status'] = payload['status']
@@ -469,6 +499,10 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
     for name, side in sides.items():
         for code in side.warnings:
             warnings.append({'code': code, 'product': name})
+        if side.role_blocked or side.role_blocked_index:
+            warnings.append({'code': ROLE_REQUIRED_REASON, 'product': name, 'detail': ROLE_REQUIRED_MESSAGE,
+                             'query_rows_blocked': side.role_blocked,
+                             'index_rows_blocked': side.role_blocked_index})
         if side.status in ('blocked', 'unavailable'):
             warnings.append({'code': 'side_'+side.status, 'product': name, 'reasons': side.reasons})
         if side.export_path is not None:
@@ -511,6 +545,8 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
                         'max_candidates': max_candidates, 'representative_diameter_um': diameter_um},
                'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'warnings': warnings, 'notes': notes,
                'match_inputs': match_inputs,
+               'match_files': {d: {k: f'{v}/review_rois.json' for k, v in item.items()}
+                               for d, item in match_inputs.items()},
                'status': 'available' if complete else 'partial',
                'policy': {'merge': 'window_overlap_intersection_over_min_area_union_find_region_id_order',
                           'window': 'square_centered_at_region_center_unclipped_for_overlap',
@@ -552,7 +588,7 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
               'index_coverage': {n: {k: c[k] for k in ('dataset_cases', 'index_rois_ready', 'index_rois_blocked',
                                                       'electrodes_covered', 'electrodes_total')}
                                  for n, c in coverage.items()},
-              'match_inputs': match_inputs}
+              'match_inputs': match_inputs, 'match_files': payload['match_files']}
     execution = {'command': 'candidates', **result}
     _write_text(out/'execution.json', json.dumps(execution, ensure_ascii=False, indent=2)+'\n', track)
     result['outputs'] = sorted(result['outputs']+['execution.json'])

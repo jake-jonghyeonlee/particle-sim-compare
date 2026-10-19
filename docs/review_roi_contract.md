@@ -84,3 +84,5 @@ simcompare export-review-rois --config demo_data/config.yaml --min-count 3 --out
 ## producer revision 출처
 
 producer_commit은 이 패키지 자체의 git checkout root에 .git이 있을 때만 HEAD를 읽는다. 설치 패키지/사본이 다른 git 저장소 아래에 있어도 부모 저장소 HEAD를 기록하지 않는다. git checkout 밖에서는 producer_commit=null, producer_commit_reason=producer_not_in_git_checkout이다. 명시 producer_commit을 전달할 수 있으며 producer source가 해당 root에 tracked되지 않으면 producer_source_not_tracked이고, git 실패는 producer_git_revision_unavailable 또는 producer_git_unavailable로 기록한다.
+
+real_hotspot_v1 입력에서 `condition_assignment.electrode_roles`가 없으면 endpoint의 `role`이 null이라 DL2가 거부한다(`nonempty_identifier_required`). `candidates`는 이런 행을 매칭 불가로 취급해 `electrode_role_required_for_matching`으로 blocked 처리하고 종료 코드 3으로 알린다. 역할은 만들지 않으며 사용자가 명시해야 한다. DL2에 넘기는 인수 `--query-export`/`--index-export`는 폴더가 아니라 `review_rois.json` 파일이다(`candidate_queries_v1.json`의 `match_files`).

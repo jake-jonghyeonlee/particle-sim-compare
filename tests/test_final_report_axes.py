@@ -214,7 +214,8 @@ def test_provenance_columns_and_scores_only_in_the_provenance_column(demo, tmp_p
         assert first[key] == second[key], key
     assert first['provenance'] != second['provenance']
     # 출처 표 앞의 본문(순위·색·교집합 표시)은 점수 순열과 무관하게 같다
-    cut = lambda text: text[:text.index('<h3>확정 쌍의 출처</h3>')]
+    # 생성 시각만 고정한다(초 경계를 넘는 두 실행이 달라지지 않게). 나머지는 그대로 비교한다
+    cut = lambda text: re.sub(r'\d{4}-\d\d-\d\dT[\d:.]+\+00:00', '<TS>', text[:text.index('<h3>확정 쌍의 출처</h3>')])
     assert cut(html) == cut((out2 / 'report.html').read_text(encoding='utf-8'))
 
 

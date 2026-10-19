@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 
 import numpy as np
 from PIL import Image
@@ -493,3 +495,48 @@ def test_hotspot_case_name_must_match_dataset_endpoints(tmp_path):
         import_electrode_assets('hotspot_case_electrode', renamed, tmp_path / 'out', numeric_data_dir=imported,
                                 condition_assignment=assignment_path, cnt_from_dl1_root=cnt_root(tmp_path),
                                 source_version='v', max_asset_memory_mb=256)
+
+
+try:
+    import resource
+except ImportError:      # Windows: no getrusage
+    resource = None
+
+_RSS_PROBE = """
+import resource, sys, tempfile
+from pathlib import Path
+from simcompare.adapters.electrode_png import _Writer, _crop, _decode
+data = Path(sys.argv[1]).read_bytes()
+folder = Path(tempfile.mkdtemp())
+(folder / 'assets').mkdir()
+before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+marked, _ = _decode(data, 'probe')
+_Writer(folder).put(_crop(marked, (2400, 2400), 'probe'), 'binary_zero_is_marked')
+after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(after - before)
+"""
+
+
+def test_memory_estimate_is_realistic_for_color_modes_not_just_gray():
+    # B5: 3400x3400 RGB/RGBA와 회색조의 추정이 다르고, 옛 추정(104.7 MiB)보다 충분히 크다.
+    size = 1 << 20
+    gray = electrode_png._estimate_mb([(3400, 3400, size, 'L')], 2400 ** 2)
+    for mode in ('RGB', 'RGBA'):
+        assert electrode_png._estimate_mb([(3400, 3400, size, mode)], 2400 ** 2) > 200
+    assert gray < electrode_png._estimate_mb([(3400, 3400, size, 'RGB')], 2400 ** 2)
+    assert electrode_png._estimate_mb([(10, 10, 1, 'RGB')], 100, dataset_bytes=50 * 2 ** 20) > 50   # 데이터셋 선적재 계상
+
+
+@pytest.mark.skipif(resource is None, reason='resource.getrusage unavailable on this platform')
+@pytest.mark.parametrize('mode', ['RGB', 'RGBA'])
+def test_memory_estimate_bounds_measured_peak_rss_of_color_decode_and_write(tmp_path, mode):
+    n = 3400
+    pixels = np.zeros((n, n), np.uint8)
+    pixels[100:200, :] = 255
+    path = tmp_path / f'{mode}.png'
+    Image.fromarray(pixels).convert(mode).save(path)
+    out = subprocess.run([sys.executable, '-c', _RSS_PROBE, str(path)], capture_output=True, text=True, check=True)
+    unit = 1 if sys.platform == 'darwin' else 1024          # ru_maxrss: macOS bytes, Linux KiB
+    measured_mb = int(out.stdout.strip()) * unit / 2 ** 20
+    estimate = electrode_png._estimate_mb([(n, n, path.stat().st_size, mode)], 2400 ** 2)
+    assert measured_mb <= 1.25 * estimate, (mode, measured_mb, estimate)

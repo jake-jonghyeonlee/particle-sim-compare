@@ -18,7 +18,7 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def build(tmp_path):
+def build(tmp_path, roles=None):
     """hotspot import + import-electrode-assets output merged into one data_dir (export reads assets under data_dir)."""
     root = real_source(tmp_path)
     expected = tmp_path / 'expected.txt'
@@ -29,6 +29,8 @@ def build(tmp_path):
     assignment = {'product_id': 'PRODUCT', 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
                   'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'pairs.csv',
                   'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
+    if roles is not None:
+        assignment['electrode_roles'] = dict(roles)
     assignment_path = tmp_path / 'assignment.json'
     assignment_path.write_text(json.dumps(assignment))
     adapter = tmp_path / 'adapter'
@@ -219,3 +221,64 @@ def test_record_reference_must_be_path_and_sha_only(tmp_path):
     code, out = export(tmp_path, cfg_path, '--min-count', '1')
     assert code == 2 and json.loads((out / 'error.json').read_text())['reasons'] == ['invalid_numeric_config']
 
+
+
+def test_evidence_swapped_after_hash_check_is_not_accepted(tmp_path, monkeypatch):
+    """B4: 해시를 검증한 바이트와 파싱한 바이트가 같아야 한다. 해시 읽기 직후 파일을 유효한 기록으로 바꿔 끼운다."""
+    from simcompare import pipeline
+    data, assignment = build(tmp_path)
+    _, cfg = config(tmp_path, data, assignment)
+    record = data / 'electrode_asset_import_record.json'
+    good = record.read_bytes()
+    bad = json.loads(good)
+    bad['polarity_basis'] = None
+    record.write_text(json.dumps(bad))
+    section = cfg['map']['input']
+    section['electrode_import_record']['sha256'] = sha(record)
+    assert pipeline._electrode_evidence(data, section) is None          # 고정된 기록은 증거 없음(기존 단락)
+    original, swapped = Path.read_bytes, []
+
+    def read_then_swap(self):
+        content = original(self)
+        if self.resolve() == record.resolve() and not swapped:
+            swapped.append(True)
+            record.write_bytes(good)
+        return content
+    record.write_text(json.dumps(bad))
+    monkeypatch.setattr(Path, 'read_bytes', read_then_swap)
+    result = pipeline._electrode_evidence(data, section)
+    monkeypatch.undo()
+    assert swapped and sha(record) != section['electrode_import_record']['sha256']
+    assert result is None, result                                          # 'accepted' 이면 안 된다
+
+
+def test_manifest_changed_during_export_read_is_named_error(tmp_path, monkeypatch):
+    from simcompare import pipeline, roi_export
+    from simcompare.numeric_schema import NumericContractError
+    data, assignment = build(tmp_path)
+    _, cfg = config(tmp_path, data, assignment)
+    real_export = roi_export.export_review_rois
+
+    def swapping(*args, **kwargs):
+        result = real_export(*args, **kwargs)
+        with (data / 'review_assets.json').open('a', encoding='utf-8') as handle:
+            handle.write(' ')                                              # export가 읽은 뒤 manifest 바이트가 바뀐다
+        return result
+    monkeypatch.setattr(roi_export, 'export_review_rois', swapping)
+    with pytest.raises(NumericContractError) as caught:
+        pipeline.run_numeric_roi_export(cfg, tmp_path / 'roi')
+    assert caught.value.code == 'evidence_changed_during_read'
+
+
+def test_duplicate_key_in_evidence_is_still_rejected_from_the_hashed_bytes(tmp_path):
+    from simcompare import pipeline
+    from simcompare.numeric_schema import NumericContractError
+    data, assignment = build(tmp_path)
+    _, cfg = config(tmp_path, data, assignment)
+    manifest = data / 'review_assets.json'
+    manifest.write_text(manifest.read_text().rstrip()[:-1] + ', "schema_version": "review_assets_v1"}')
+    section = cfg['map']['input']
+    section['asset_manifest']['sha256'] = sha(manifest)
+    with pytest.raises(NumericContractError) as caught:
+        pipeline._electrode_evidence(data, section)
+    assert caught.value.code == 'malformed_asset_manifest' and 'duplicate_asset_manifest_key' in str(caught.value)

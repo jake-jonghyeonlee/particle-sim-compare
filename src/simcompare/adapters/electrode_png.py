@@ -225,9 +225,9 @@ class _Writer:
         key = (semantics, _mask_hash(marked))
         if key not in self.written:
             if semantics == 'binary_zero_is_marked':
-                pixels = np.where(marked, 0, 255).astype(np.uint8)
+                pixels = np.where(marked, np.uint8(0), np.uint8(255))
             else:
-                pixels = np.where(marked, 255, 0).astype(np.uint8)
+                pixels = np.where(marked, np.uint8(255), np.uint8(0))
             relative = f'assets/{SEMANTICS_TAG[semantics]}_{key[1]}.png'
             Image.fromarray(pixels).save(self.folder / relative, format='PNG', compress_level=9)
             data = (self.folder / relative).read_bytes()
@@ -266,13 +266,39 @@ def _load_dataset(numeric_data_dir, manifest_path, condition_assignment):
     return load_dataset(root, manifest_path=manifest_path, mode='synthetic')
 
 
-def _estimate_mb(headers, frame_px):
-    """보수적 추정(측정 아님): 파일 하나씩 처리하므로 최대 한 파일 + 상시 배열 3개.
+# 픽셀당 바이트 모델(측정으로 검증: tests/test_electrode_png.py의 RSS 테스트).
+# Pillow는 RGB/RGBA/LA를 픽셀당 4바이트, 1/L/P를 1바이트로 디코드한다.
+_PILLOW_BPP = {'1': 1, 'L': 1, 'P': 1, 'LA': 4, 'RGB': 4, 'RGBA': 4}
+# 회색조: np.asarray 1 + 비교 임시 bool 3 + astype(bool) 1 + 반전 1.
+_GRAY_EXTRA_BPP = 6
+# 컬러: convert('RGBA') 4 + np.asarray 4 + (rgb==0) 3 + black 1 + (rgb==255) 3 + all/or 임시 2.
+_COLOR_EXTRA_BPP = 17
+# 쓰기: np.where uint8 임시 1 + PNG 인코더 버퍼 최대 1(+ 인코딩 결과 읽기는 파일 크기로 계상).
+_WRITE_CROP_BPP = 2
 
-    파일 하나 = 파일 바이트 + 픽셀 × (RGBA 확장 4 + 임시 bool/잘라낸 사본/인코딩 4).
+
+def _dataset_bytes(dataset):
+    """가드 이전에 이미 올라와 있는 숫자 데이터셋의 frame 배열 크기(그 밖의 메타데이터는 계상하지 못한다)."""
+    return sum(int(f.valid.nbytes) for f in dataset.frames.values())
+
+
+def _estimate_mb(headers, frame_px, dataset_bytes=0):
+    """보수적 추정(측정 아님): 파일 하나씩 처리하므로 최대 한 파일 + 상시 배열 3개 + 이미 올라온 데이터셋.
+
+    headers는 (width, height, file_bytes[, mode]) 목록. 모드를 모르면 RGBA로 본다.
+    디코드 단계는 파일 바이트 + 픽셀 × (Pillow 디코드 버퍼 + 변환본 + NumPy 임시들),
+    쓰기 단계는 파일 바이트 + 전체 프레임 bool 1 + 잘라낸 프레임 × (np.where 임시 + 인코더 버퍼)다.
+    둘 중 큰 쪽에 상시 배열 3개(frame_px 바이트씩)와 데이터셋을 더한다.
     """
-    worst = max((size + w * h * 8 for w, h, size in headers), default=0)
-    return (worst + 3 * frame_px) / (1024 * 1024)
+    worst = 0
+    for header in headers:
+        w, h, size = header[:3]
+        mode = header[3] if len(header) > 3 else 'RGBA'
+        gray = mode in ('1', 'L')
+        decode = w * h * (_PILLOW_BPP.get(mode, 4) + (_GRAY_EXTRA_BPP if gray else _COLOR_EXTRA_BPP))
+        write = w * h + frame_px * _WRITE_CROP_BPP
+        worst = max(worst, size + max(decode, write))
+    return (worst + 3 * frame_px + dataset_bytes) / (1024 * 1024)
 
 
 def import_electrode_assets(source_kind, root, out, *, numeric_data_dir, source_version, max_asset_memory_mb,
@@ -318,7 +344,7 @@ def import_electrode_assets(source_kind, root, out, *, numeric_data_dir, source_
                              f"{first['relative_path']} {headers[first['relative_path']][:2]} vs "
                              f"{second['relative_path']} {headers[second['relative_path']][:2]} (width, height)")
     frame_px = max(f.shape_yx[0] * f.shape_yx[1] for f in dataset.frames.values())
-    estimate = _estimate_mb([(w, h, size) for w, h, size, _ in headers.values()], frame_px)
+    estimate = _estimate_mb(list(headers.values()), frame_px, _dataset_bytes(dataset))
     if estimate > max_asset_memory_mb:
         raise _error('asset_memory_limit_exceeded',
                      f'estimated {estimate:.1f} MB > --max-asset-memory-mb {max_asset_memory_mb} '
