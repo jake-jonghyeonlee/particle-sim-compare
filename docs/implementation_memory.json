@@ -551,7 +551,10 @@
         "T1c": "83de5a3",
         "T3": "23f7a7b",
         "T4": "a8409dc",
-        "report_FIX1": "d4c234e"
+        "report_FIX1": "d4c234e",
+        "astra_fix1": "43bca5b",
+        "astra_fix2": "4bf030e",
+        "astra_fix3": "724e1b6"
       },
       "DL2": {
         "T2": "d72e839",
@@ -569,11 +572,14 @@
       "electrode assets are the exact central crop of the dataset frame; 50 um border context is lost"
     ],
     "pending": [
-      "C-side Astra high review (one time)",
       "real-data run on closed network (Windows)",
       "T2d --max-asset-memory-mb if needed",
       "DL2 doc/comment notes",
       "DL2 vs NCC promotion judgement on confirmed pairs"
-    ]
+    ],
+    "independent_review": {
+      "C": "Astra high: FAIL (7088080) -> FAIL (4bf030e) -> PASS-WITH-NOTES (724e1b6); documented limitation R2 (swap-and-restore inside export read; single-writer closed network)",
+      "DL2": "Astra high: FAIL x3 -> PASS-WITH-NOTES (f41d427), pushed"
+    }
   }
 }
