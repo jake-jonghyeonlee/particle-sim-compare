@@ -106,9 +106,14 @@ def _print(payload) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
-def _remove_reports(folder):
+def _remove_reports(folder, command=None):
     """Only this application's report files, never inputs/user assets."""
-    for prefix in ('comparison','electrode_map','validation','review_rois','local_delta','window_sensitivity','report'):
+    if command == "report":
+        # report는 자기 출력 이름만 지운다. report* 같은 접두 패턴은 사용자 파일(report_notes.json 등)까지 지운다.
+        for name in ("report.html", "report.json"):
+            (Path(folder)/name).unlink(missing_ok=True)
+        return
+    for prefix in ('comparison','electrode_map','validation','review_rois','local_delta','window_sensitivity'):
         for path in Path(folder).glob(prefix+'*'):
             if path.is_file() and path.suffix in ('.json','.csv','.html','.png','.npz'):
                 path.unlink()
@@ -200,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     folder = Path(output)
                     folder.mkdir(parents=True,exist_ok=True)
-                    _remove_reports(folder)
+                    _remove_reports(folder,args.command)
                     encoded_error = json.dumps(error,ensure_ascii=False,indent=2)
                     (folder/"error.json").write_text(encoded_error,encoding="utf-8")
                     (folder/"execution.json").write_text(encoded_error,encoding="utf-8")

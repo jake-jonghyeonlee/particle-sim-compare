@@ -108,18 +108,24 @@ def _block_any(array, step):
 
 
 def _overview_png(frame, layouts):
-    """Whole-frame original layout (same colours as the crops), long side <= OVERVIEW_MAX_PX; returns (bytes, step)."""
+    """Whole-frame original layout (same colours as the crops), long side <= OVERVIEW_MAX_PX; returns (bytes, step).
+
+    Convention for a block of step x step cells: electrode occupancy is counted only on valid cells (layout shapes outside
+    the observed domain never colour a block); a block is gray only if none of its cells is valid; a mixed block is
+    treated as valid, so it shows an electrode colour when any of its valid cells holds that electrode, else white.
+    """
     h, w = frame.shape_yx
     step = max(1, math.ceil(max(h, w) / OVERVIEW_MAX_PX))
-    valid = _block_any(np.asarray(frame.valid, dtype=bool), step)
+    cell_valid = np.asarray(frame.valid, dtype=bool)
+    valid = _block_any(cell_valid, step)
     rgb = np.full(valid.shape + (3,), 255, dtype=np.uint8)
-    rgb[~valid] = INVALID_COLOUR
     painted = np.zeros(valid.shape, dtype=bool)
     for mask, colour in zip(layouts, ELECTRODE_COLOURS):
-        sub = _block_any(np.asarray(mask, dtype=bool), step)
+        sub = _block_any(np.asarray(mask, dtype=bool) & cell_valid, step)
         rgb[sub] = colour
         rgb[sub & painted] = OVERLAP_COLOUR
         painted |= sub
+    rgb[~valid] = INVALID_COLOUR  # applied last: the invalid domain is always gray
     buffer = io.BytesIO()
     Image.fromarray(rgb).save(buffer, format='PNG')
     return buffer.getvalue(), step
@@ -323,6 +329,8 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
                         'file': None if thumb[kind] is None else _png_file(out, name + '_thumb', thumb[kind]),
                         'crop_bounds_um': thumb.get('crop_bounds_um'), 'note': None if thumb[kind] is not None else note}
                 if thumb['layout_masks'] is not None:
+                    # The overview background shows only this first pair's two electrodes; the report names the pair
+                    # (overview_source_pair_id) and says so. No full-layout composite is attempted.
                     overview_layouts.setdefault((label, side.frame.frame_id), (pair, side, thumb['layout_masks']))
         order_note = ('|Δ_union| 내림차순 (정렬 지름 ' + _fmt(result.sort_diameter_um) + ' µm)') if ranking else '대응 파일 순서 (정렬 지름 미지정)'
         sections += ('<h2>창 ' + escape(_fmt(size)) + ' µm</h2><p>순서: ' + escape(order_note) + '</p>'

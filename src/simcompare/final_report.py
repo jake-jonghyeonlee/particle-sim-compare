@@ -72,6 +72,22 @@ def _num(text):
         return None
 
 
+def _finite(value, what):
+    """HTML/SVG 속성에 그대로 들어가는 기하 값: 유한한 숫자만 허용하고 float로 돌려준다. 아니면 exit 2."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or value in (float('inf'), float('-inf')):
+        raise ReportInputError('invalid_geometry_value', f'{what}: 유한한 숫자가 아닙니다 ({str(value)[:40]!r})')
+    return float(value)
+
+
+def _count(value, what):
+    """개수 값: 0 이상의 정수만 허용(None은 값 없음). 아니면 exit 2."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReportInputError('invalid_count_value', f'{what}: 0 이상의 정수가 아닙니다 ({str(value)[:40]!r})')
+    return value
+
+
 def _fmt(value, digits=6):
     if value is None:
         return '—'
@@ -256,8 +272,8 @@ class _FrameMaps:
     def __init__(self):
         self.frames = {}   # (side, frame_id) → {'origin', 'pitch', 'shape', 'png', 'note', 'index'}
 
-    def add(self, side, frame_id, geometry, png, note):
-        self.frames[(side, frame_id)] = {**geometry, 'png': png, 'note': note, 'index': len(self.frames)}
+    def add(self, side, frame_id, geometry, png, note, source=None):
+        self.frames[(side, frame_id)] = {**geometry, 'png': png, 'note': note, 'source': source, 'index': len(self.frames)}
 
     def defs(self):
         images = ''
@@ -270,8 +286,8 @@ class _FrameMaps:
                        f'preserveAspectRatio="none" href="{_png_uri(info["png"])}" style="image-rendering:pixelated"/>')
         return f'<svg width="0" height="0" style="position:absolute"><defs>{images}</defs></svg>'
 
-    def svg(self, side, frame_id, rects, *, highlight=None, labels=True, max_width=560):
-        """rects: [(pair_id, [x0,y0,x1,y1], 색)]. highlight가 있으면 그 쌍만 진하게 그린다."""
+    def svg(self, side, frame_id, rects, *, labels=True, max_width=560):
+        """rects: [(pair_id, [x0,y0,x1,y1], 색)]. 전체 위치도는 모든 쌍을, 카드의 작은 위치도는 그 쌍 하나만 넘긴다(HTML 크기가 쌍 수에 비례)."""
         info = self.frames.get((side, frame_id))
         if info is None:
             return _Html('<div class="missing">frame 정보 없음</div>')
@@ -284,10 +300,6 @@ class _FrameMaps:
         body += (f'<rect x="{ox}" y="{oy}" width="{width}" height="{height}" fill="none" stroke="#444" '
                  'stroke-width="1" vector-effect="non-scaling-stroke"/>')
         for pair_id, bounds, colour in rects:
-            if highlight is not None and pair_id != highlight:
-                body += (f'<rect x="{bounds[0]}" y="{bounds[1]}" width="{bounds[2] - bounds[0]}" height="{bounds[3] - bounds[1]}" '
-                         'fill="none" stroke="#999" stroke-width="1" vector-effect="non-scaling-stroke" opacity=".6"/>')
-                continue
             cx, cy = (bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2
             body += (f'<rect x="{bounds[0]}" y="{bounds[1]}" width="{bounds[2] - bounds[0]}" height="{bounds[3] - bounds[1]}" '
                      f'fill="{colour}" fill-opacity=".18" stroke="{colour}" stroke-width="2" vector-effect="non-scaling-stroke"/>'
@@ -375,8 +387,12 @@ def _load(inputs, compare_dir, map_dir, windows_dir, rois_dir, diameter_um, rank
             raise ReportInputError('rank_window_not_available',
                                    f'--rank-window-um {rank_window_um:g}은 local_delta.json의 window_sizes_um에 없습니다. '
                                    f'사용 가능한 창(µm): {", ".join(f"{s:g}" for s in sizes)}')
+        provenance = delta.get('provenance') or {}
+        for name in ('n_ready', 'n_blocked'):
+            _count(provenance.get(name), f'local_delta.json provenance.{name}')
         diameters = sorted({_num(r.get('diameter_um')) for r in loaded['window_rows'] if _num(r.get('diameter_um')) is not None})
-        if not any(_same_float(d, diameter_um) for d in diameters):
+        # 행이 하나도 없는 결과(모든 쌍이 blocked)는 정당한 결과다. 지름 검사는 행이 있는데 그 지름이 없을 때만 한다.
+        if loaded['window_rows'] and not any(_same_float(d, diameter_um) for d in diameters):
             raise ReportInputError('diameter_not_available',
                                    f'--diameter-um {diameter_um:g}은 local_delta_rows.csv에 없습니다. '
                                    f'사용 가능한 지름(µm): {", ".join(f"{d:g}" for d in diameters)}')
@@ -412,30 +428,63 @@ def _no_input(title, hint):
     return f'<h2>{escape(title)}</h2>' + _p(f'입력 없음: {hint}', 'box')
 
 
-def _group_label(key_text, layer, many):
+CONTEXT_FIELDS = ('process_step_id', 'source_id', 'exposure_id', 'density_process_layer', 'source_contract_version')
+
+
+def _context_key(text, layer):
+    """CSV의 comparison_key / context JSON → 비교 문맥 키 (layer, CONTEXT_FIELDS 값). 한쪽 제품 행의 context에서도 같은 키가 나온다."""
     try:
-        key = json.loads(key_text) if key_text else {}
+        data = json.loads(text) if text else {}
     except ValueError:
-        key = {}
-    if not many or not isinstance(key, dict):
-        return layer
-    return f'{layer} · {key.get("process_step_id", "?")}/{key.get("exposure_id", "?")}'
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return (layer, tuple(str(data.get(name, '')) for name in CONTEXT_FIELDS))
+
+
+def _context_labels(keys):
+    """문맥 키 → 읽을 수 있는 이름. layer에 문맥이 하나면 layer, 여럿이면 layer · process_step/exposure.
+    그 둘이 같은 문맥이 있으면 서로 다른 나머지 값(source_id 등)도 덧붙인다."""
+    by_layer = {}
+    for key in set(keys):
+        by_layer.setdefault(key[0], []).append(key)
+    labels = {}
+    for layer, group in by_layer.items():
+        if len(group) == 1:
+            labels[group[0]] = layer
+            continue
+        varying = {i for i in range(len(CONTEXT_FIELDS)) if len({k[1][i] for k in group}) > 1}
+        shown = sorted({0, 2} | varying)   # process_step_id, exposure_id는 항상
+        for key in group:
+            labels[key] = f'{layer} · ' + '/'.join(key[1][i] or '?' for i in shown)
+    return labels
 
 
 def _fraction_groups(rows):
-    """delta 행에서 (layer, comparison_key) 그룹별 지름 → 지표 → {a, b, delta, status}."""
+    """delta 행에서 (layer, 비교 문맥) 그룹별 지름 → 지표 → {a, b, delta, status}."""
     groups = {}
     for row in rows:
         if row.get('side') != 'delta':
             continue
-        key = (row.get('layer', ''), row.get('comparison_key', ''))
+        key = _context_key(row.get('comparison_key', ''), row.get('layer', ''))
         groups.setdefault(key, {}).setdefault(_num(row.get('diameter_um')), {})[row.get('metric')] = {
             'a': _num(row.get('reference_value')), 'b': _num(row.get('target_value')), 'delta': _num(row.get('value')),
             'status': row.get('status'), 'reasons': _json_list(row.get('reasons'))}
-    layer_counts = {}
-    for layer, _ in groups:
-        layer_counts[layer] = layer_counts.get(layer, 0) + 1
-    return groups, layer_counts
+    return groups
+
+
+def _panel_values(rows, extra=lambda row: True):
+    """(side, 문맥 키, 항목) → 행. 같은 키가 두 번 나오면 조용히 덮어쓰지 않고 exit 2."""
+    out = {}
+    for row in rows:
+        if row.get('domain') != 'panel' or not extra(row):
+            continue
+        name = row.get('piece') if row.get('axis') == 'failure_type' else row.get('class')
+        key = (row.get('side'), _context_key(row.get('context', ''), row.get('layer', '')), name)
+        if key in out:
+            raise ReportInputError('duplicate_context', f'{key[0]} {key[1][0]} {name}: 같은 비교 문맥의 행이 둘 이상입니다')
+        out[key] = row
+    return out
 
 
 def _gate_badge(comparison, gate):
@@ -461,10 +510,13 @@ READING_GUIDE = (
 
 def _section_a1_b1_b2(report, loaded, diameter_um):
     comparison, fractions = loaded['comparison'], loaded['fractions']
-    groups, layer_counts = _fraction_groups(fractions)
+    groups = _fraction_groups(fractions)
+    summary = _panel_values(loaded['summary'])
+    pieces = _panel_values(loaded['pieces'], lambda r: r.get('axis') == 'failure_type')
+    labels = _context_labels([*groups, *(k[1] for k in summary), *(k[1] for k in pieces)])
     cards, kpi, partial = [], [], []
-    for (layer, key_text), by_d in sorted(groups.items()):
-        label = _group_label(key_text, layer, layer_counts[layer] > 1)
+    for key, by_d in sorted(groups.items()):
+        label = labels[key]
         entry = next((m for d, m in by_d.items() if d is not None and _same_float(d, diameter_um)), {}).get('union')
         if entry is None or entry['delta'] is None:
             partial.append(f'{label}: 지름 {diameter_um:g} µm의 union Δ 없음')
@@ -476,18 +528,22 @@ def _section_a1_b1_b2(report, loaded, diameter_um):
                                    f'지름 {diameter_um:g} µm 이물의 short 위치가 frame 면적에서 차지하는 비율의 b − a. +이면 b가 더 나쁨(빨강), −이면 b가 더 좋음(파랑).',
                                    'comparison_fractions.csv (side=delta, metric=union)'))
         kpi.append({'group': label, 'diameter_um': diameter_um, 'metric': 'union', **(entry or {})})
-    summary = {(r['layer'], r['class']): r for r in loaded['summary'] if r.get('side') == 'delta' and r.get('domain') == 'panel'}
-    by_side = {(r['side'], r['layer'], r['class']): _num(r['value']) for r in loaded['summary'] if r.get('domain') == 'panel'}
-    for (layer, name), row in sorted(summary.items()):
-        if name not in ('line', 'pixel'):
+
+    def side_value(side, key, name):
+        row = summary.get((side, key, name))
+        return _num(row['value']) if row else None
+    for (side, key, name), row in sorted(summary.items()):
+        if side != 'delta' or name not in ('line', 'pixel'):
             continue
+        label = labels[key]
         value = _num(row['value'])
         gate = _gate_badge(comparison, 'G1')
-        cards.append(_kpi_card(f'{layer} · {name} Δ (panel)', _delta_html(value), by_side.get(('reference', layer, name)),
-                               by_side.get(('target', layer, name)),
+        cards.append(_kpi_card(f'{label} · {name} Δ (panel)', _delta_html(value), side_value('reference', key, name),
+                               side_value('target', key, name),
                                f'panel 기준 {name} 가중 short 지수의 b − a. +이면 b가 더 나쁨(빨강). 밀도 계약이 미확정이면 참고용.',
                                'comparison_summary.csv (side=delta, domain=panel)', _Html(gate)))
-        kpi.append({'group': layer, 'metric': name, 'domain': 'panel', 'delta': value, 'status': row.get('status')})
+        kpi.append({'group': label, 'metric': name, 'domain': 'panel', 'delta': value, 'status': row.get('status'),
+                    'a': side_value('reference', key, name), 'b': side_value('target', key, name)})
     report.kpi_cards = cards
     report.kpi = kpi
     report.fraction_partial = partial
@@ -495,8 +551,8 @@ def _section_a1_b1_b2(report, loaded, diameter_um):
     # B1: 지표별 지름 꺾은선과 지정 지름 표
     b1 = '<h2 id="b1">B1 frame 면적 비율</h2>' + _p(comparison.get('fraction_of_frame_note', ''))
     b1_data = []
-    for (layer, key_text), by_d in sorted(groups.items()):
-        label = _group_label(key_text, layer, layer_counts[layer] > 1)
+    for key, by_d in sorted(groups.items()):
+        label = labels[key]
         diameters = sorted(d for d in by_d if d is not None)
         charts = ''.join(_cell(_line_chart(
             f'{label} · {metric}', diameters,
@@ -514,23 +570,27 @@ def _section_a1_b1_b2(report, loaded, diameter_um):
     report.section('B1', status, b1 if groups else _no_input('B1 frame 면적 비율', 'delta 행이 없습니다'), b1_data,
                    '; '.join(partial) or f'comparison.json status={comparison.get("status")}')
 
-    # B2: line/pixel/transfer 와 불량 유형 조각 (서로 다른 축, 더하지 않는다)
-    layers = sorted({r['layer'] for r in loaded['summary'] if r.get('domain') == 'panel'})
+    # B2: line/pixel/transfer 와 불량 유형 조각 (서로 다른 축, 더하지 않는다). 비교 문맥마다 따로 그린다.
+    contexts = sorted({k[1] for k in (*summary, *pieces)})
     b2 = ('<h2 id="b2">B2 line / pixel / transfer와 불량 유형 조각</h2>' +
           _p(comparison.get('failure_piece_axis_note', '불량 유형 조각은 line / pixel과 다른 축입니다. 두 축의 값을 서로 더하거나 빼지 않습니다.')) +
           _p('panel 환산값입니다. 밀도 계약(G1)과 unit 면적(G2)이 미확정이면 참고용입니다.'))
     b2_data = []
-    piece_values = {(r['side'], r['layer'], r['piece']): _num(r['value']) for r in loaded['pieces']
-                    if r.get('axis') == 'failure_type' and r.get('domain') == 'panel'}
-    for layer in layers:
+
+    def piece_value(side, key, name):
+        row = pieces.get((side, key, name))
+        return _num(row['value']) if row else None
+    for key in contexts:
+        label = labels[key]
         classes = ('line', 'pixel', 'transfer')
-        class_series = [(n, c, [by_side.get((s, layer, k)) for k in classes]) for n, s, c in (('a', 'reference', SERIES_A), ('b', 'target', SERIES_B))]
-        piece_series = [(n, c, [piece_values.get((s, layer, k)) for k in PIECES]) for n, s, c in (('a', 'reference', SERIES_A), ('b', 'target', SERIES_B))]
-        b2 += (f'<h3>{escape(layer)}</h3><div class="charts">{_cell(_bar_chart(f"{layer} · line / pixel / transfer (panel)", classes, class_series))}'
-               f'{_cell(_bar_chart(f"{layer} · 불량 유형 조각 (panel)", PIECES, piece_series))}</div>')
-        b2_data.append({'layer': layer, 'classes': {n: dict(zip(classes, ys)) for n, _, ys in class_series},
+        class_series = [(n, c, [side_value(s, key, k) for k in classes]) for n, s, c in (('a', 'reference', SERIES_A), ('b', 'target', SERIES_B))]
+        piece_series = [(n, c, [piece_value(s, key, k) for k in PIECES]) for n, s, c in (('a', 'reference', SERIES_A), ('b', 'target', SERIES_B))]
+        b2 += (f'<h3>{escape(label)}</h3><div class="charts">{_cell(_bar_chart(f"{label} · line / pixel / transfer (panel)", classes, class_series))}'
+               f'{_cell(_bar_chart(f"{label} · 불량 유형 조각 (panel)", PIECES, piece_series))}</div>')
+        b2_data.append({'group': label, 'layer': key[0], 'context': dict(zip(CONTEXT_FIELDS, key[1])),
+                        'classes': {n: dict(zip(classes, ys)) for n, _, ys in class_series},
                         'pieces': {n: dict(zip(PIECES, ys)) for n, _, ys in piece_series}})
-    report.section('B2', 'available' if layers else 'partial', b2, b2_data, 'panel 행이 없습니다')
+    report.section('B2', 'available' if contexts else 'partial', b2, b2_data, 'panel 행이 없습니다')
 
 
 def _pair_rows(loaded, rank_window_um, diameter_um):
@@ -580,14 +640,24 @@ def _window_bounds(loaded, cls, rank_window_um):
     thumbs = loaded.get('thumbs')
     for record in (thumbs or {}).get('windows', []):
         if _same_float(record['window_size_um'], rank_window_um):
-            bounds[(record['pair_id'], record['side'])] = (list(record['window_bounds_um']), 'local_delta_thumbs.json')
+            bounds[(record['pair_id'], record['side'])] = (_bounds4(record['window_bounds_um'], 'local_delta_thumbs.json window_bounds_um'),
+                                                           'local_delta_thumbs.json')
     half = rank_window_um / 2
     for pid in cls['entries']:
         for side in ('a', 'b'):
             if (pid, side) not in bounds:
-                cx, cy = cls['pairs'][pid][side]['center_xy_um']
+                centre = cls['pairs'][pid][side]['center_xy_um']
+                if not isinstance(centre, (list, tuple)) or len(centre) != 2:
+                    raise ReportInputError('invalid_geometry_value', f'local_delta.json {pid}/{side} center_xy_um 형식이 맞지 않습니다')
+                cx, cy = _finite(centre[0], f'{pid}/{side} center_xy_um'), _finite(centre[1], f'{pid}/{side} center_xy_um')
                 bounds[(pid, side)] = ([cx - half, cy - half, cx + half, cy + half], '중심 ± 창/2 (clipping 미반영)')
     return bounds
+
+
+def _bounds4(value, what):
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ReportInputError('invalid_geometry_value', f'{what}: 숫자 4개 목록이 아닙니다')
+    return [_finite(v, what) for v in value]
 
 
 def _overlaps(cls, bounds):
@@ -611,7 +681,7 @@ def _overlaps(cls, bounds):
 
 def _centre(pair, side):
     x, y = pair[side]['center_xy_um']
-    return f'({_fmt(float(x), 8)}, {_fmt(float(y), 8)})'
+    return f'({_fmt(_finite(x, "center_xy_um"), 8)}, {_fmt(_finite(y, "center_xy_um"), 8)})'
 
 
 def _build_a2(report, cls, overlaps, anchors, rank_window_um, diameter_um):
@@ -655,7 +725,14 @@ def _frame_geometry(loaded, side, frame_id):
     info = frames.get(frame_id)
     if info is None:
         return None
-    return {'origin': tuple(info['origin_xy_um']), 'pitch': info['pixel_pitch_um'], 'shape': tuple(info['shape_yx'])}
+    what = f'local_delta.json frames {side}/{frame_id}'
+    origin, shape = info['origin_xy_um'], info['shape_yx']
+    if not isinstance(origin, (list, tuple)) or len(origin) != 2 or not isinstance(shape, (list, tuple)) or len(shape) != 2:
+        raise ReportInputError('invalid_geometry_value', f'{what}: origin_xy_um / shape_yx 형식이 맞지 않습니다')
+    pitch = _finite(info['pixel_pitch_um'], what + ' pixel_pitch_um')
+    if pitch <= 0 or any(isinstance(n, bool) or not isinstance(n, int) or n < 1 for n in shape):
+        raise ReportInputError('invalid_geometry_value', f'{what}: pixel_pitch_um > 0, shape_yx 양의 정수여야 합니다')
+    return {'origin': (_finite(origin[0], what), _finite(origin[1], what)), 'pitch': pitch, 'shape': (shape[0], shape[1])}
 
 
 def _build_maps(loaded, inputs, windows_dir):
@@ -665,14 +742,15 @@ def _build_maps(loaded, inputs, windows_dir):
         for frame_id in (loaded['windows']['products'].get(side) or {}).get('frames', {}):
             geometry = _frame_geometry(loaded, side, frame_id)
             record = thumb_sides.get((side, frame_id))
-            png, note = None, None
+            png, note, source = None, None, None
             if record is None:
                 note = 'local_delta_thumbs.json 없음'
             elif record.get('overview_file') is None:
                 note = record.get('note') or 'overview 없음'
             else:
                 png = inputs.png(windows_dir, record['overview_file'], 'windows')
-            maps.add(side, frame_id, geometry, png, note)
+                source = record.get('overview_source_pair_id')
+            maps.add(side, frame_id, geometry, png, note, source)
     return maps
 
 
@@ -709,9 +787,12 @@ def _build_b3(report, loaded, inputs, windows_dir, cls, bounds, overlaps, anchor
         figure = _cell(maps.svg(side, frame_id, rects)) + f'<figcaption class="note">{escape(caption)}'
         if info['note']:
             figure += escape(f' — 전체 layout 그림 없음({info["note"]}), frame 윤곽만 표시')
+        elif info['png'] is not None:
+            figure += (f'<br>배경 그림: 쌍 {escape(str(info["source"]) if info["source"] else "—")}의 두 전극만 그린 것입니다. '
+                       '다른 쌍의 전극은 배경에 나오지 않을 수 있으며, 창 사각형의 위치는 정확합니다.')
         html += f'<figure>{figure}</figcaption></figure>'
     html += '</div>'
-    cards, card_data = '', []
+    cards, card_data, missing_crops = '', [], []
     for pid in cls['order']:
         entry, pair = cls['entries'][pid], cls['pairs'][pid]
         label, css = kind_label.get(pid, ('그 밖', ''))
@@ -720,19 +801,23 @@ def _build_b3(report, loaded, inputs, windows_dir, cls, bounds, overlaps, anchor
         badges = f'<span class="badge {css}">{escape(label)}</span>'
         if pid in by_pair_overlap:
             badges += '<span class="badge warn">창 겹침: ' + escape(', '.join(f'{other}(겹침 {_fmt(area)} µm²)' for other, area in sorted(by_pair_overlap[pid]))) + '</span>'
-        panes = ''
+        panes, pair_missing = '', []
         for side in ('a', 'b'):
             for kind in ('layout', 'hotspot'):
                 crop = crops.get((pid, side, kind))
                 if crop and crop.get('file'):
+                    # 파일 이름이 있는데 파일이 없으면 입력이 서로 맞지 않는 것이므로 inputs.png가 exit 2로 알린다.
                     img = f'<img alt="{side} {kind}" src="{_png_uri(inputs.png(windows_dir, crop["file"], "windows"))}">'
                 else:
-                    img = f'<div class="missing">{escape((crop or {}).get("note") or "crop 없음")}</div>'
+                    reason = str((crop or {}).get('note') or ('crop 기록 없음' if thumbs is not None else 'crop 없음'))
+                    img = f'<div class="missing">{escape(reason)}</div>'
+                    if thumbs is not None:
+                        pair_missing.append(f'{pid}/{side}/{kind}: {reason}')
                 panes += f'<div class="pane"><span>{side} {kind}</span>{img}</div>'
+        missing_crops += pair_missing
         locators = ''.join(f'<div class="pane"><span>{side} 위치</span>' +
-                           _cell(maps.svg(side, pair[side].get('frame_id'), [(p, bounds[(p, side)][0], colour.get(p, OTHER))
-                                                                         for p in cls['order'] if cls['pairs'][p][side].get('frame_id') == pair[side].get('frame_id')],
-                                          highlight=pid, labels=False, max_width=170)) + '</div>' for side in ('a', 'b'))
+                           _cell(maps.svg(side, pair[side].get('frame_id'), [(pid, bounds[(pid, side)][0], colour.get(pid, OTHER))],
+                                          labels=False, max_width=170)) + '</div>' for side in ('a', 'b'))
         rows = []
         for kind in ('window', 'attributable_core'):
             for metric in UNION_METRICS:
@@ -747,13 +832,18 @@ def _build_b3(report, loaded, inputs, windows_dir, cls, bounds, overlaps, anchor
                   f'a 중심 {escape(_centre(pair, "a"))} · b 중심 {escape(_centre(pair, "b"))}</div>{table}</div>'
                   f'<div class="crops">{panes}</div><div>{locators}</div></div>')
         card_data.append({'pair_id': pid, 'class': label, 'entry': entry, 'overlaps': by_pair_overlap.get(pid, []),
+                          'missing_crops': pair_missing,
                           'window_bounds_um': {s: bounds[(pid, s)][0] for s in ('a', 'b')},
                           'bounds_source': {s: bounds[(pid, s)][1] for s in ('a', 'b')},
                           'rows': {f'{k}/{m}': {key: row[key] for key in ('a_value_um2', 'b_value_um2', 'delta_um2', 'delta_fraction', 'delta_status')}
                                    for (k, m), row in cls['rows'].get(pid, {}).items()}})
-    partial = thumbs is None or any(info['png'] is None for info in maps.frames.values())
-    report.section('B3', 'partial' if partial else 'available', maps.defs() + html + (cards or _p('ready 쌍이 없습니다.')),
-                   card_data, 'crop 또는 전체 frame 그림이 없습니다')
+    reasons = []
+    if thumbs is None or any(info['png'] is None for info in maps.frames.values()):
+        reasons.append('전체 frame 그림이 없습니다')
+    if missing_crops:
+        reasons.append(f'crop 이미지 {len(missing_crops)}개 없음 (' + ', '.join(missing_crops[:6]) + (' …' if len(missing_crops) > 6 else '') + ')')
+    report.section('B3', 'partial' if reasons else 'available', maps.defs() + html + (cards or _p('ready 쌍이 없습니다.')),
+                   card_data, '; '.join(reasons))
 
 
 def _build_b4(report, loaded, diameter_um):
@@ -905,7 +995,8 @@ def _build_a0_a1_a3(report, loaded, cls, generated, rank_window_um, diameter_um,
         cards.append(_kpi_card('대응 쌍', _Html('입력 없음'), None, None, '--windows-dir를 주지 않았습니다.', 'local_delta.json'))
     else:
         provenance = loaded['windows'].get('provenance') or {}
-        cards.append(_kpi_card('대응 쌍 ready / blocked', _Html(f'{provenance.get("n_ready", "—")} / {provenance.get("n_blocked", "—")}'), None, None,
+        counts = ' / '.join(escape(str(_count(provenance.get(name), name) if provenance.get(name) is not None else '—')) for name in ('n_ready', 'n_blocked'))
+        cards.append(_kpi_card('대응 쌍 ready / blocked', _Html(counts), None, None,
                                '설계자가 짝지은 위치 중 계산 가능한 쌍과 막힌 쌍의 수.', 'local_delta.json provenance'))
     cards.append(_kpi_card('문제 행 수', _Html(str(report.problem_rows)), None, None,
                            'status가 available도 not_applicable도 아닌 입력 행의 수. 0이 아니면 B7 확인.', '모든 입력의 status 열'))

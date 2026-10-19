@@ -137,3 +137,27 @@ def test_without_asset_manifest_overview_is_null_with_reason(tmp_path):
     layouts = [c for c in payload['crops'] if c['kind'] == 'layout']
     assert all(c['file'] is None and c['note'] for c in layouts)
     assert not list((tmp_path / 'out').glob('local_delta_overview_*'))
+
+
+def test_overview_masks_electrodes_by_valid_before_block_reduction():
+    """FIX1 item 6: layout shapes outside frame.valid never colour the overview; invalid gray is applied last."""
+    from simcompare.local_delta_report import _overview_png, ELECTRODE_COLOURS, INVALID_COLOUR
+    # step 1: a layout cell outside the valid domain stays gray
+    valid = np.ones((2, 2), bool); valid[0, 0] = False
+    mask = np.zeros((2, 2), bool); mask[0, 0] = True; mask[1, 1] = True
+    data, step = _overview_png(Frame('f', 1.0, (0, 0), (2, 2), valid), [mask, np.zeros_like(mask)])
+    pixels = np.asarray(Image.open(io.BytesIO(data)))
+    assert step == 1 and tuple(pixels[0, 0]) == INVALID_COLOUR and tuple(pixels[1, 1]) == ELECTRODE_COLOURS[0]
+    # step 2: wholly invalid block stays gray, mixed block is coloured only by electrodes on its valid cells
+    valid = np.ones((2, 1600), bool)
+    valid[0, 0:2] = False        # block 0: mixed, electrode only on the invalid cell
+    valid[:, 2:4] = False        # block 1: wholly invalid, electrode everywhere
+    valid[0, 4:6] = False        # block 2: mixed, electrode on a valid cell
+    mask = np.zeros((2, 1600), bool); mask[0, 0] = True; mask[:, 2:4] = True; mask[1, 4] = True
+    data, step = _overview_png(Frame('f', 1.0, (0, 0), (2, 1600), valid), [mask, np.zeros_like(mask)])
+    row = np.asarray(Image.open(io.BytesIO(data)))[0]
+    assert step == 2
+    assert tuple(row[0]) == (255, 255, 255)           # mixed block, electrode only outside valid → not coloured
+    assert tuple(row[1]) == INVALID_COLOUR            # wholly invalid block → gray, never electrode colour
+    assert tuple(row[2]) == ELECTRODE_COLOURS[0]      # mixed block, electrode on a valid cell → coloured
+    assert tuple(row[3]) == (255, 255, 255)           # ordinary valid empty block
