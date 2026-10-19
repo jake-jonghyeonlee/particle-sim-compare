@@ -74,3 +74,23 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 창 크기 G4 값 | 보류 (2026-10-18) | 폐쇄망에서 `window_sensitivity` 표를 본 뒤 정한다. 코드 기본값 없음 | 실자료 실행 뒤 |
 | `rewrite/line-pixel-rate` → `main` 병합 | 보류 (2026-10-18) | PLAN_v3 구현(`a060a0b`까지)은 branch와 origin에만 있다. handoff DL2 pin은 `ce98fd3` | 사용자가 다시 꺼낼 때 |
 | 실자료에서 창 Δ가 나오는 조건 | 기록 | real_hotspot 입력은 확인된 case 목록(`--expected-cases`), `condition_assignment`, pair 표가 있어야 group이 available이 되고 그때 창 Δ도 available이다. 그 전에는 모든 창이 partial이고 Δ는 null이다(독립 리뷰 A7) | 실자료 준비 |
+
+## 2026-10-19 답변 (취약 영역 자동 후보 → 대응 매칭 → 확정, [PLAN_v4](plan/PLAN_v4_auto_candidates.md))
+
+| 항목 | 상태 | 내용 | 남은 것 |
+|---|---|---|---|
+| 후보 출처 | answered | 취약부는 `electrode-map`(5 µm) 영역에서 뽑는다. 수동 라벨링은 기본 경로가 아니다(E1) | 실자료에서 `k=2,3,4` 영역 수 확인 |
+| 변경부 대응 | answered | NCC(template matching)로 먼저 매칭하고 DL2 검색을 최종 메인으로 올린다. 승격 조건은 확정 쌍에서 DL2 위치 오차 < NCC 오차(E2) | 폐쇄망에서 확정 쌍 수십 개로 비교 |
+| ROI 두 축 | answered | 절대 CA가 큰 곳과 CA 변화가 큰 곳을 구분해 본다. "변경부"로 이름 붙이지 않고 "CA 변화 큰 곳"과 형상 대응 후보의 교집합만 표시한다(E3) | 실자료 검토 |
+| 영역 수 | answered(방침) | 개수를 목표로 두고 k를 맞춘다. 제품당 50~100개가 출발점. 코드에 기본 k 없음(E4) | 사용자가 k 결정 |
+| 양방향 | answered | A→B와 B→A 모두 매칭한다(E5) | 없음 |
+| 대응 없음 | answered | NCC 점수가 낮거나 모호하면 "대응 없음". threshold 없이 점수순 후보와 이미지를 사용자가 보고 쌍을 확정한다(E6) | 폐쇄망 검토 |
+| 유닛 크기 | answered | 일반적으로 50~120 µm. 측정 창 10/20/30 µm 유지, NCC 템플릿 창은 별도 인수(30/40 µm 후보)(E7) | 실자료 |
+| 중복 비용·안전장치 | answered | R1~R4, S1~S8을 PLAN_v4 §3에 기록 | 구현됨(T1, T1c, T3) |
+| 검수 | answered | 이번만 Codex Astra high. DL2 T2는 지금 분리해 네 번 검수했고(FAIL 3회 뒤 PASS-WITH-NOTES, `f41d427`), C 쪽은 마지막 1회(E9) | C 쪽 검수 |
+| 전극 영상 입력 | answered | DL1 PNG 폴더와 hotspot case의 `1.png`/`2.png` 둘 다 지원. 둘 다 흰 배경·검정 패턴(검정 = 형상), `binary_zero_is_marked`. 출처별 계약 표와 provenance `polarity_basis: user_answer_2026_10_19` | 없음 |
+| 경계 50 µm 맥락 | 기록 | 전극 이미지는 데이터셋 frame에 맞춰 중앙 부분만 정확히 잘라 쓰므로(경계 500 px 제외) DL2 near/wide 창이 경계 바깥 맥락을 볼 수 없다 | 문제가 되면 `roi_export` frame 규칙 변경(High) 검토 |
+| asset RAM 상한(T2d) | 보류 | `baseline_ncc`는 `load_export` 기본 호출. 실자료 규모(3400², ROI 100개 × 제품 2개)에서 필요하면 `--max-asset-memory-mb` 전달을 추가 | 실자료 규모 확인 뒤 |
+| DL2 노트 | 보류 | A3 문서 한정 문구(origin ≥1e12), 시험 주석 오류, chunking 문단의 validity 저장 언급 | 사용자 결정 |
+| 2.png 극성 | answered | 1.png와 같다 | 없음 |
+

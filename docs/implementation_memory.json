@@ -531,5 +531,49 @@
     ],
     "status": "Implemented and committed 2026-10-18 on branch rewrite/line-pixel-rate (C) and main (DL2); synthetic validation only.",
     "independent_review_2026_10_18": "PASS-WITH-NOTES, no blocking finding; advisory items fixed in a follow-up commit (see PLAN_v3 §11). The fix commit itself is not yet independently reviewed."
+  },
+  "auto_candidates_2026_10_19": {
+    "authority": "docs/plan/PLAN_v4_auto_candidates.md; user decisions 2026-10-19 (E1-E9, polarity, Q6)",
+    "flow": [
+      "electrode-map regions (both directions)",
+      "simcompare candidates (merge, query exports, *_index_export, funnel)",
+      "psdl2.baseline_ncc --all-ready --max-memory-mb (query_export, opposite index_export) + sheet",
+      "user decides accept/reject in decisions.csv",
+      "simcompare confirm-pairs (only accepted -> roi_correspondence_v1 + sidecar)",
+      "simcompare compare-windows",
+      "simcompare report --candidates-dir --confirm-dir"
+    ],
+    "commits": {
+      "C": {
+        "T1a": "c6c3081",
+        "T1b": "fbdc025",
+        "T1": "20320d2",
+        "T1c": "83de5a3",
+        "T3": "23f7a7b",
+        "T4": "a8409dc",
+        "report_FIX1": "d4c234e"
+      },
+      "DL2": {
+        "T2": "d72e839",
+        "D1-D4": "08ed566",
+        "fix1": "440d329",
+        "fix2": "c297774",
+        "fix3": "f41d427 (pushed, Astra PASS-WITH-NOTES)"
+      }
+    },
+    "rules": [
+      "scores never enter numbers or rankings",
+      "unconfirmed candidates never reach correspondence or local_delta",
+      "polarity from per-source-kind contract table (dl1_png_folder, hotspot_case_electrode: binary_zero_is_marked)",
+      "no default k/window/merge overlap/mutual tolerance",
+      "electrode assets are the exact central crop of the dataset frame; 50 um border context is lost"
+    ],
+    "pending": [
+      "C-side Astra high review (one time)",
+      "real-data run on closed network (Windows)",
+      "T2d --max-asset-memory-mb if needed",
+      "DL2 doc/comment notes",
+      "DL2 vs NCC promotion judgement on confirmed pairs"
+    ]
   }
 }
