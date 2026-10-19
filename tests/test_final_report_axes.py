@@ -18,8 +18,10 @@ def normalise(text, *roots):
     text = re.sub(r'data:image/png;base64,[A-Za-z0-9+/=]+', 'data:image/png;base64,<PNG>', text)
     text = re.sub(r'\b[0-9a-f]{64}\b', '<SHA>', text)
     text = re.sub(r'\d{4}-\d\d-\d\dT[\d:]+\+00:00', '<TS>', text)
-    text = re.sub(r'("producer_commit": )"[^"]*"', r'\1"<COMMIT>"', text)
-    return re.sub(r'(producer_commit )[0-9a-f]{7,40}', r'\1<COMMIT>', text)
+    text = re.sub(r'("producer_commit[^"]*": )(?:"[^"]*"|null)', r'\1"<COMMIT>"', text)
+    text = re.sub(r'(producer_commit[^<]*</td><td class="l">)[^<]*', r'\1<COMMIT>', text)
+    text = re.sub(r'(producer_commit )[^\s<·]+', r'\1<COMMIT>', text)
+    return re.sub(r'\b[0-9a-f]{40}\b', '<COMMIT>', text)
 
 
 def test_without_new_options_report_is_byte_identical_to_golden(demo, tmp_path):
@@ -31,7 +33,8 @@ def test_without_new_options_report_is_byte_identical_to_golden(demo, tmp_path):
         golden = GOLDEN / ('baseline_' + name)
         if os.environ.get('WRITE_GOLDEN'):
             golden.write_text(text, encoding='utf-8', newline='\n')
-        assert golden.read_text(encoding='utf-8') == text, name
+        # 골든에 남은 옛 producer commit 도 같은 규칙으로 고정한다(커밋마다 골든을 다시 만들지 않는다)
+        assert normalise(golden.read_text(encoding='utf-8')) == text, name
 
 
 # ---- 합성 입력: 6쌍 + 값 없는 쌍 -------------------------------------------------------------------------------

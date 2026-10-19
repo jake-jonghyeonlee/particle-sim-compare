@@ -119,7 +119,7 @@ C가 소유하는 형식이다. 수동 라벨, template matching, DL2 검색이 
 
 ### 사용자 확정 쌍 (`confirm-pairs`) — PLAN_v4 T3
 
-`roi_correspondence_v1`은 바뀌지 않는다. 확정 쌍은 `producer.kind=manual`, `source={kind: manual, labelled_by, labelled_at}`로 쓰고, NCC/DL2 출처는 계약에 필드가 없으므로 사이드카 `confirmed_pairs_sidecar_v1`(pair_id 키: candidate_id=`<direction>:<query_roi_id>:r<rank>`, 점수·순위·flags·score_gap·template_sha256·implementation_revision·입력 sha256·결정 메모·`mutual_status`·`merged_with`·blocked 사유)에만 둔다. 점수는 표시·출처 기록용이며 쌍 선택·정렬·병합·차단에 쓰이지 않는다(S4). `decisions.csv`에서 accept 되지 않은 후보(reject·미결정)는 대응 파일에도 `local_delta`에도 들어가지 않는다. side a는 항상 reference, b는 target이며 `target_to_reference` 후보는 뒤집어 쓴다. `labelled_at`은 파일에 쓰되 `pair_id`에 들어가지 않는다. 사용법과 검사 목록은 `docs/usage.md`의 "확정 쌍 변환"에 있다.
+`roi_correspondence_v1`은 바뀌지 않는다. 확정 쌍은 `producer.kind=manual`, `source={kind: manual, labelled_by, labelled_at}`로 쓰고, NCC/DL2 출처는 계약에 필드가 없으므로 사이드카 `confirmed_pairs_sidecar_v1`(pair_id 키: candidate_id=`<direction>:<query_roi_id>:r<rank>`, 점수·순위·flags·score_gap·template_sha256·implementation_revision·입력 sha256·결정 메모·`mutual_status`·`merged_with`·blocked 사유)에만 둔다. 점수는 표시·출처 기록용이며 쌍 선택·정렬·병합·차단에 쓰이지 않는다(S4). `decisions.csv`에서 accept 되지 않은 후보(reject·미결정)는 대응 파일에도 `local_delta`에도 들어가지 않는다. side a는 항상 reference, b는 target이며 `target_to_reference` 후보는 뒤집어 쓴다. `labelled_at`은 파일에 쓰되 `pair_id`에 들어가지 않는다. 변환 전에 candidates → export → 매칭 → **현재** 데이터셋 사슬(manifest·입력 해시, export 바이트 해시, export 행 frame 서술, roi_id 유일성)을 검사하고 어긋나면 `confirm_*_changed_since_candidates`/`duplicate_roi_id_in_export`로 종료 코드 2이다. 상호 병합은 분석층·failure_type이 맞을 때만 하며 다르면 두 쌍을 모두 내보내고 사이드카에 `mutual_context_differs`를 적는다. 사용법과 검사 목록은 `docs/usage.md`의 "확정 쌍 변환"에 있다.
 
 ### 국부 ΔCA (`local_delta_v1`) — PLAN_v3 T2/T4
 

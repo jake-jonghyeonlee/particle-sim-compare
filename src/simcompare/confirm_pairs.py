@@ -114,7 +114,13 @@ def _load_candidates(candidates_dir, cfg, problems):
                 continue
             path = directory/relative
             export, sha = _read_json_bytes(path, problems, f'{name}_{key}_export')
-            paths[key] = {'path': str(path), 'sha256': sha, 'export': export}
+            side_name = next((q if key == 'query' else i) for d, q, i in DIRECTIONS if d == name)
+            recorded_sha = ((payload.get('inputs') or {}).get(side_name) or {}).get('export_sha256' if key == 'query' else 'index_export_sha256')
+            if sha is not None and sha != recorded_sha:
+                problems.add('confirm_export_changed_since_candidates',
+                             f'{name} {key} export {relative}: on disk {sha} != candidates record {recorded_sha!r}')
+            rows = _rows_by_id(export, problems, f'{name} {key} export') if export is not None else {}
+            paths[key] = {'path': str(path), 'sha256': sha, 'export': export, 'rows': rows, 'dataset_name': side_name}
         info['directions'][name] = {'query_product': entry.get('query_product'), 'index_product': entry.get('index_product'), **paths}
     for name in DIRECTION_NAMES:
         if name not in info['directions']:
@@ -129,6 +135,9 @@ def _rows_by_id(export, problems, label):
         return rows
     for row in export['rois']:
         if isinstance(row, dict) and isinstance(row.get('roi_id'), str):
+            if row['roi_id'] in rows:
+                problems.add('duplicate_roi_id_in_export', f'{label}: {row["roi_id"]}')
+                continue
             rows[row['roi_id']] = row
     return rows
 
@@ -163,8 +172,8 @@ def _load_match(direction, path, cands, datasets, problems):
     index_product = datasets[index_name]['product']
     if result.get('candidate_product_id') != index_product:
         problems.add('match_candidate_product_mismatch', f'{label}: {result.get("candidate_product_id")!r} != {index_product!r}')
-    query_rows = _rows_by_id((side['query'] or {}).get('export'), problems, f'{direction} query export')
-    index_rows = _rows_by_id((side['index'] or {}).get('export'), problems, f'{direction} index export')
+    query_rows = (side['query'] or {}).get('rows', {})
+    index_rows = (side['index'] or {}).get('rows', {})
     table, unusable, seen_queries = {}, {}, set()
     for position, row in enumerate(result['results']):
         where = f'{label} results[{position}]'
@@ -352,6 +361,16 @@ def _closeness(first, second, tolerance):
     return near if near <= tolerance else None
 
 
+def _context_compatible(first_pair, second_pair):
+    """같은 분석층(a·b 양쪽), 양쪽 쌍이 failure_type 을 갖고 있으면 같은 failure_type 일 때만 같은 측정으로 본다.
+    후보 쪽은 failure_type 이 없으므로(질의 행만 가짐) 쌍마다 a·b 에 적힌 값을 모아 비교한다."""
+    for side in ('a', 'b'):
+        if first_pair[side]['analysis_layer'] != second_pair[side]['analysis_layer']:
+            return False
+    failure = [{pair[side].get('failure_type') for side in ('a', 'b')} - {None} for pair in (first_pair, second_pair)]
+    return not (failure[0] and failure[1] and failure[0] != failure[1])
+
+
 def _mutual(entries, tolerance):
     """entries: [(item, pair)] 중 ready 인 것. mutual 표시와 1:1 병합 짝을 정한다(쌍을 더하거나 버리지 않는다)."""
     ready = [(item, pair) for item, pair in entries if pair['status'] == 'ready']
@@ -370,12 +389,18 @@ def _mutual(entries, tolerance):
             near[second_pair['pair_id']].append(first_pair['pair_id'])
             candidates.append((gap, *sorted((first_pair['pair_id'], second_pair['pair_id']))))
     taken, merged = set(), {}
+    differs = set()
+    by_pair = {pair['pair_id']: pair for _, pair in ready}
+    for gap, low, high in list(candidates):
+        if not _context_compatible(by_pair[low], by_pair[high]):
+            candidates.remove((gap, low, high))
+            differs.update((low, high))
     for gap, low, high in sorted(candidates):
         if low in taken or high in taken:
             continue
         taken.update((low, high))
         merged[high] = low
-    return {k: sorted(v) for k, v in near.items()}, merged
+    return {k: sorted(v) for k, v in near.items()}, merged, differs
 
 
 def _provenance(item, decision, matches):
@@ -408,9 +433,54 @@ def _load_datasets(cfg):
     for name in ('reference', 'target'):
         if not isinstance(cfg.get(name), dict):
             raise NumericContractError('numeric_input_required', name)
-        dataset = pipeline._dataset_for(cfg, cfg[name], name)
-        datasets[name] = {'dataset': dataset, 'product': _dataset_product(dataset, name)}
+        section = cfg[name]
+        real_source = pipeline._real_source(cfg, section)
+        if real_source is not None:
+            configured = pipeline._configured_real(cfg, section, real_source)
+            if configured is None:
+                raise NumericContractError('explicit_condition_assignments_required', name)
+            root, dataset = configured
+        else:
+            root, dataset = pipeline._numeric_input(cfg, section)
+        datasets[name] = {'dataset': dataset, 'product': _dataset_product(dataset, name), 'root': root,
+                          'manifest_path': section.get('manifest_path', 'manifest.json')}
     return datasets
+
+
+def _check_chain(cands, datasets, problems):
+    """candidates -> export -> 현재 데이터셋 사슬: 원본 지문과 export 행의 frame 서술이 candidates 때와 같아야 한다."""
+    from .numeric_images import resolve_path
+    from .roi_export import _frame_payload
+    recorded_inputs = cands['payload'].get('inputs') or {}
+    for name in ('reference', 'target'):
+        recorded = recorded_inputs.get(name) or {}
+        info = datasets[name]
+        try:
+            manifest_sha = _sha256_bytes(resolve_path(Path(info['root']), info['manifest_path']).read_bytes())
+        except (OSError, NumericContractError) as exc:
+            problems.add('confirm_source_changed_since_candidates', f'{name} manifest unreadable: {exc}')
+            continue
+        current_hash = info['dataset'].provenance.get('input_hash')
+        for field, current in (('manifest_sha256', manifest_sha), ('dataset_input_hash', current_hash)):
+            if not isinstance(current, str) or recorded.get(field) != current:
+                problems.add('confirm_source_changed_since_candidates',
+                             f'{name}.{field}: current {current!r} != candidates record {recorded.get(field)!r}')
+    seen = set()
+    for direction, side in cands['directions'].items():
+        for key in ('query', 'index'):
+            part = side.get(key)
+            if not part or part.get('export') is None or (part['path'] in seen):
+                continue
+            seen.add(part['path'])
+            frames = datasets[part['dataset_name']]['dataset'].frames
+            for roi_id, row in sorted(part['rows'].items()):
+                descriptor = row.get('frame')
+                if descriptor is None and row.get('status') != 'ready':
+                    continue
+                current = frames.get(row.get('frame_id'))
+                if current is None or descriptor != _frame_payload(current):
+                    problems.add('confirm_frame_changed_since_candidates',
+                                 f'{direction} {key} export {roi_id}: frame {row.get("frame_id")!r} differs from the current {part["dataset_name"]} dataset')
 
 
 def _check_args(labelled_by, tolerance):
@@ -430,6 +500,7 @@ def _prepare(cfg, candidates_dir, matches, problems):
     cands = _load_candidates(candidates_dir, cfg, problems)
     loaded = {}
     if cands is not None:
+        _check_chain(cands, datasets, problems)
         for direction, path in matches.items():
             if (cands['directions'][direction]['query'] is None or cands['directions'][direction]['index'] is None):
                 continue
@@ -483,7 +554,7 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
                        for m in [ID_PATTERN.match(cid)]), key=lambda item: item['candidate_id'])
     entries = _build_pairs(accepted, matches_loaded, datasets, labelled_by, labelled_at, problems)
     problems.raise_if_any()
-    near, merged = _mutual(entries, mutual_tolerance_um)
+    near, merged, differs = _mutual(entries, mutual_tolerance_um)
     kept = [(item, pair) for item, pair in entries if pair['pair_id'] not in merged]
     kept.sort(key=lambda entry: entry[1]['pair_id'])
     by_id = {pair['pair_id']: item for item, pair in entries}
@@ -506,6 +577,7 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
         if pair['status'] == 'ready':
             record['mutual_status'] = 'mutual' if near.get(pid) else 'one_way'
             record['mutual_with'] = sorted(near.get(pid, []))
+            record['mutual_context_differs'] = pid in differs
             record['opposite_match_given'] = any(name != item['direction'] for name in matches_loaded)
             opposite = []
             for name, table in opposite_all.items():
@@ -528,7 +600,7 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
     sidecar = {'schema_version': SIDECAR_SCHEMA, 'labelled_by': labelled_by, 'labelled_at': labelled_at,
                'mutual_tolerance_um': float(mutual_tolerance_um),
                'policy': {'scores': 'display_and_provenance_only_never_used_for_selection_ordering_or_merging',
-                          'mutual_one_way': 'marking_only_merge_keeps_lower_pair_id_and_drops_nothing_else',
+                          'mutual_one_way': 'marking_only_merge_keeps_lower_pair_id_only_for_same_analysis_layer_and_failure_type_otherwise_both_kept_with_mutual_context_differs',
                           'undecided_and_rejected': 'never_in_correspondence'},
                'inputs': {'config_sha256': cfg.get('_config_sha256'),
                           'candidates_payload_sha256': cands['payload_sha256'], 'decisions_sha256': decisions['sha256'],

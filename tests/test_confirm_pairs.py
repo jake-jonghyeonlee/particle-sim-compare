@@ -75,6 +75,16 @@ def fake_match(env, direction, name=None, *, centres=None, per_roi=None, scores=
     return path
 
 
+def resync_candidates(env):
+    """Pretend candidates had been run on the exports as they are now on disk."""
+    path = env['cand']/'candidate_queries_v1.json'
+    payload = load(path)
+    for name in ('reference', 'target'):
+        payload['inputs'][name]['export_sha256'] = sha(env['cand']/f'{name}_export'/'review_rois.json')
+        payload['inputs'][name]['index_export_sha256'] = sha(env['cand']/f'{name}_index_export'/'review_rois.json')
+    path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+
+
 def decisions(env, rows, name='decisions.csv', header=('candidate_id', 'decision', 'note')):
     path = env['tmp']/name
     with path.open('w', encoding='utf-8', newline='') as handle:
@@ -364,6 +374,7 @@ def test_missing_analysis_layer_blocks_pair(env):
         for row in payload['rois']:
             row['analysis_layer'] = 'M9'
         export.write_text(json.dumps(payload), encoding='utf-8')
+    resync_candidates(env)
     matches = fake_match(env, 'reference_to_target')
     path = decisions(env, [[cid(env, 'reference_to_target', 1), 'accept', '']])
     assert run(env, {'reference_to_target': matches}, path) == 3
@@ -383,6 +394,7 @@ def test_pixel_pitch_mismatch_blocks_pair(env, monkeypatch):
             getattr(dataset, f) for f in dataset.__dataclass_fields__ if f not in ('cases', 'pairs', 'frames')])
         return datasets
     monkeypatch.setattr(confirm_pairs, '_load_datasets', patched)
+    monkeypatch.setattr(confirm_pairs, '_check_chain', lambda *args: None)  # the exports still describe the unpatched pitch
     matches = fake_match(env, 'reference_to_target')
     path = decisions(env, [[cid(env, 'reference_to_target', 1), 'accept', '']])
     assert run(env, {'reference_to_target': matches}, path) == 3
@@ -535,3 +547,125 @@ def test_failure_after_output_dir_creation_removes_only_own_files(env, monkeypat
     assert run(env, {'reference_to_target': matches}, path) == 2
     assert not (env['tmp']/'out').exists()
     assert 'disk went away' in capsys.readouterr().err
+
+
+# B1: the whole chain candidates -> exports -> matcher -> current datasets ---------------------------------------------------
+
+def accept_first(env, direction='reference_to_target'):
+    return fake_match(env, direction), decisions(env, [[cid(env, direction, 1), 'accept', '']])
+
+
+def assert_exit2_with(env, matches, path, code, capsys, direction='reference_to_target'):
+    capsys.readouterr()
+    assert run(env, {direction: matches}, path) == 2
+    assert code in capsys.readouterr().err
+    assert not (env['tmp']/'out').exists()
+
+
+def edit_numeric_manifests(env, edit):
+    from simcompare.adapters.numeric import source_payload_hash
+    for path in (env['config'].parent).rglob('manifest.json'):
+        doc = load(path)
+        if doc.get('schema_version') != 'numeric_v2':
+            continue
+        edit(doc)
+        doc['input_hash'] = doc['source_manifest_hash'] = source_payload_hash(doc)
+        path.write_text(json.dumps(doc), encoding='utf-8')
+
+
+def test_stale_geometry_with_rehashed_manifests_is_rejected(env, capsys):
+    matches, path = accept_first(env)
+
+    def move(doc):
+        doc['frames'][0]['origin_xy_um'] = [doc['frames'][0]['origin_xy_um'][0]-0.1, doc['frames'][0]['origin_xy_um'][1]-0.1]
+    edit_numeric_manifests(env, move)
+    assert_exit2_with(env, matches, path, 'confirm_source_changed_since_candidates', capsys)
+
+
+def test_manifest_bytes_changed_is_rejected_even_if_content_hash_is_equal(env, capsys):
+    matches, path = accept_first(env)
+    manifest = env['config'].parent/'reference'/'manifest.json'
+    manifest.write_text(json.dumps(load(manifest), indent=4), encoding='utf-8')
+    assert_exit2_with(env, matches, path, 'confirm_source_changed_since_candidates', capsys)
+
+
+def test_export_changed_after_candidates_is_rejected_for_query_and_index(env, capsys):
+    for export in ('reference_export', 'target_index_export'):
+        file = env['cand']/export/'review_rois.json'
+        original = file.read_text(encoding='utf-8')
+        file.write_text(original.replace('"status"', '"status" ', 1), encoding='utf-8')
+        matches, path = accept_first(env)  # the DL2 hashes follow the changed bytes, so only the candidates record can object
+        assert_exit2_with(env, matches, path, 'confirm_export_changed_since_candidates', capsys)
+        file.write_text(original, encoding='utf-8')
+
+
+def test_export_frame_descriptor_changed_is_rejected(env, capsys):
+    file = env['cand']/'target_index_export'/'review_rois.json'
+    payload = load(file)
+    for row in payload['rois']:
+        if row.get('frame'):
+            row['frame']['origin_xy_um'] = [row['frame']['origin_xy_um'][0]+0.1, row['frame']['origin_xy_um'][1]]
+    file.write_text(json.dumps(payload), encoding='utf-8')
+    resync_candidates(env)
+    matches, path = accept_first(env)
+    assert_exit2_with(env, matches, path, 'confirm_frame_changed_since_candidates', capsys)
+
+
+def test_duplicate_roi_id_in_export_is_rejected(env, capsys):
+    file = env['cand']/'target_index_export'/'review_rois.json'
+    payload = load(file)
+    twin = json.loads(json.dumps(payload['rois'][0]))
+    twin['center_xy_um'] = [twin['center_xy_um'][0]+0.1, twin['center_xy_um'][1]]
+    payload['rois'].append(twin)
+    file.write_text(json.dumps(payload), encoding='utf-8')
+    resync_candidates(env)
+    matches, path = accept_first(env)
+    assert_exit2_with(env, matches, path, 'duplicate_roi_id_in_export', capsys)
+    assert_exit2_with_list = main(['confirm-pairs', '--list', '--config', str(env['config']), '--candidates', str(env['cand']),
+                                   '--match', f'reference_to_target={matches}'])
+    assert assert_exit2_with_list == 2
+
+
+def test_rows_by_id_never_overwrites():
+    problems = confirm_pairs._Problems()
+    rows = confirm_pairs._rows_by_id({'rois': [{'roi_id': 'x', 'v': 1}, {'roi_id': 'x', 'v': 2}]}, problems, 'e')
+    assert rows == {'x': {'roi_id': 'x', 'v': 1}} and 'duplicate_roi_id_in_export' in problems.items[0]
+
+
+# B2: mutual merge needs compatible measurement contexts --------------------------------------------------------------------
+
+def test_reciprocal_pairs_with_different_failure_type_are_both_kept(env):
+    ref = query_rows(env, 'reference_to_target')
+    tgt = query_rows(env, 'target_to_reference')
+    qr = next(r for r in ref if r['failure_type'] == 'lateral_short')
+    qt = next(r for r in tgt if r['failure_type'] == 'vertical_short')
+    matches = {'reference_to_target': fake_match(env, 'reference_to_target', per_roi={qr['roi_id']: [tuple(qt['center_xy_um'])]*3}),
+               'target_to_reference': fake_match(env, 'target_to_reference', per_roi={qt['roi_id']: [tuple(qr['center_xy_um'])]*3})}
+    path = decisions(env, [[candidate_id('reference_to_target', qr['roi_id'], 1), 'accept', ''],
+                           [candidate_id('target_to_reference', qt['roi_id'], 1), 'accept', '']])
+    assert run(env, matches, path, tolerance=0) == 0
+    out = env['tmp']/'out'
+    assert len(pairs_of(out)) == 2 and all(p['status'] == 'ready' for p in pairs_of(out))
+    assert load(out/'confirm_funnel.json')['totals']['counts']['merged_away'] == 0
+    sidecar = load(out/'confirmed_pairs_sidecar.json')
+    assert sidecar['merged_away'] == {}
+    assert all(r['mutual_status'] == 'mutual' and r['mutual_context_differs'] is True for r in sidecar['pairs'].values())
+
+
+def test_same_context_still_merges_and_unit_layer_difference_blocks_merge(env):
+    matches, path = mutual_env(env, 0.3)
+    assert run(env, matches, path) == 0
+    sidecar = load(env['tmp']/'out'/'confirmed_pairs_sidecar.json')
+    assert all(r['mutual_context_differs'] is False for r in sidecar['pairs'].values()) and len(sidecar['merged_away']) == 1
+
+    def entry(direction, layer, pid):
+        centre = [1.0, 1.0]
+        item = {'direction': direction, 'query_center_xy_um': centre, 'center_xy_um': centre,
+                'query_frame_id': 'FA' if direction == 'reference_to_target' else 'FB',
+                'frame_id': 'FB' if direction == 'reference_to_target' else 'FA'}
+        side = {'analysis_layer': layer, 'failure_type': None}
+        return item, {'pair_id': pid, 'status': 'ready', 'a': dict(side), 'b': dict(side)}
+    near, merged, differs = confirm_pairs._mutual([entry('reference_to_target', 'M1', 'p1'), entry('target_to_reference', 'M2', 'p2')], 0)
+    assert merged == {} and differs == {'p1', 'p2'} and near == {'p1': ['p2'], 'p2': ['p1']}
+    near, merged, differs = confirm_pairs._mutual([entry('reference_to_target', 'M1', 'p1'), entry('target_to_reference', 'M1', 'p2')], 0)
+    assert merged == {'p2': 'p1'} and differs == set()
