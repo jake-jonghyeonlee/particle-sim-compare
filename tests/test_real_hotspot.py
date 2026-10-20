@@ -514,6 +514,10 @@ def test_real_csv_header_variant_is_accepted_and_others_rejected(tmp_path):
     csv_record = load_real_manifest(imported)['cases'][0]['csv']
     assert csv_record['status'] == 'observed'
     assert csv_record['rows'], csv_record
+    path.write_text('DefectSize(um), Area(um^2)\n1.00, 0.01\n2.00, 0.00\n', encoding='utf-8')
+    import_hotspots(root, tmp_path/'imported3')
+    csv_record = load_real_manifest(tmp_path/'imported3')['cases'][0]['csv']
+    assert csv_record['status'] == 'observed'
     path.write_text('Size,Area\n1,0.01\n', encoding='utf-8')
     with pytest.raises(NumericContractError, match='invalid_real_csv_header'):
         import_hotspots(root, tmp_path/'imported2')

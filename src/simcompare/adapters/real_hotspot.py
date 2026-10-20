@@ -32,7 +32,8 @@ DEFECT_ALIASES = {'lateralshort': 'lateral_short', 'verticalshort': 'vertical_sh
                   'lateralopen': 'lateral_open', 'verticalopen': 'vertical_open'}
 IMAGES_DIRNAME = 'images'
 # 허용하는 case-local CSV 헤더(공백만 무시): 계약 이름과 실자료 이름. 열 순서는 (지름, 면적) 고정이다.
-CSV_HEADERS = (['defect_size(um)', 'Area(um2)'], ['DefectSize (um)', 'Area(um^2)'])
+CSV_HEADERS = (['defect_size(um)', 'Area(um2)'], ['DefectSize (um)', 'Area(um^2)'],
+               ['DefectSize(um)', 'Area(um^2)'])
 CASE_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$')
 HOTSPOT_RE = re.compile(r'^hotspot_([a-z_]+?)(\d+)\.png$', re.IGNORECASE)
 
