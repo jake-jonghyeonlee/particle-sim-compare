@@ -72,7 +72,7 @@ G7a와 G7b는 독립 질문이며 2026-10-08 답변을 각각 반영한다. 지�
 | 작업 순서 | answered | DL 없이 수동 라벨 + C 창 측정으로 가치 확인 → 창 크기 실험 → DL2와 비DL 기준선 평가 → DL2 확장 | PLAN_v3 T0~T8 |
 | `repeats_per_frame`(측정 2×2 frame 안의 반복 수; per-unit 아님), jitter 폭, 정렬 지름, 위치 hit 허용오차, 기본 표시 수준, 라벨 입력 형식 | 보류 (2026-10-18) | PLAN_v3 §8 Q1~Q6. 사용자가 "남은건 보류"로 지정. 권장 운용값(정렬 5 µm, 창 10/20/30 µm, jitter 0.5 µm, hit 허용오차 = 창 반폭)은 usage.md에 기본값 아닌 권장값으로만 적혀 있음 | 사용자가 다시 꺼낼 때. 모두 인수라 답 없이 실행 가능 |
 | 창 크기 G4 값 | 보류 (2026-10-18) | 폐쇄망에서 `window_sensitivity` 표를 본 뒤 정한다. 코드 기본값 없음 | 실자료 실행 뒤 |
-| `rewrite/line-pixel-rate` → `main` 병합 | 보류 (2026-10-18) | PLAN_v3 구현(`a060a0b`까지)은 branch와 origin에만 있다. handoff DL2 pin은 `ce98fd3` | 사용자가 다시 꺼낼 때 |
+| `rewrite/line-pixel-rate` → `main` 병합 | 보류 (2026-10-18) | PLAN_v3 구현(`a060a0b`까지)은 branch와 origin에만 있다. handoff DL2 pin은 `f41d427`(2026-10-20 갱신, 이전 `ce98fd3`) | 사용자가 다시 꺼낼 때 |
 | 실자료에서 창 Δ가 나오는 조건 | 기록 | real_hotspot 입력은 확인된 case 목록(`--expected-cases`), `condition_assignment`, pair 표가 있어야 group이 available이 되고 그때 창 Δ도 available이다. 그 전에는 모든 창이 partial이고 Δ는 null이다(독립 리뷰 A7) | 실자료 준비 |
 
 ## 2026-10-19 답변 (취약 영역 자동 후보 → 대응 매칭 → 확정, [PLAN_v4](plan/PLAN_v4_auto_candidates.md))
