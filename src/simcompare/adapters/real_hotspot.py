@@ -31,6 +31,8 @@ DEFECTS = ('lateral_short', 'vertical_short', 'lateral_open', 'vertical_open')
 DEFECT_ALIASES = {'lateralshort': 'lateral_short', 'verticalshort': 'vertical_short',
                   'lateralopen': 'lateral_open', 'verticalopen': 'vertical_open'}
 IMAGES_DIRNAME = 'images'
+# 허용하는 case-local CSV 헤더(공백만 무시): 계약 이름과 실자료 이름. 열 순서는 (지름, 면적) 고정이다.
+CSV_HEADERS = (['defect_size(um)', 'Area(um2)'], ['DefectSize (um)', 'Area(um^2)'])
 CASE_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$')
 HOTSPOT_RE = re.compile(r'^hotspot_([a-z_]+?)(\d+)\.png$', re.IGNORECASE)
 
@@ -60,11 +62,12 @@ def _csv_areas(root: Path, case_dir: Path, defect: str):
     try:
         with path.open(encoding='utf-8-sig', newline='') as handle:
             reader = csv.DictReader(handle)
-            if reader.fieldnames != ['defect_size(um)', 'Area(um2)']:
+            if [(name or '').strip() for name in reader.fieldnames or ()] not in CSV_HEADERS:
                 raise NumericContractError('invalid_real_csv_header', str(path))
+            size_key, area_key = reader.fieldnames
             rows = {}
             for row in reader:
-                d_raw, area_raw = row['defect_size(um)'], row['Area(um2)']
+                d_raw, area_raw = (row[size_key] or '').strip(), (row[area_key] or '').strip()
                 d, area = float(d_raw), float(area_raw)
                 if not math.isfinite(d) or d <= 0 or not math.isfinite(area) or area < 0:
                     raise NumericContractError('invalid_real_csv_value', str(path))

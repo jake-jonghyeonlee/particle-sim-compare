@@ -502,3 +502,18 @@ def test_case_with_pngs_in_both_case_and_images_folder_is_ambiguous(tmp_path):
     Image.new('L', (2270, 2270), 0).save(folder / '1.png')
     with pytest.raises(NumericContractError, match='ambiguous_real_images_location'):
         import_hotspots(tmp_path / 'src', tmp_path / 'out')
+
+
+def test_real_csv_header_variant_is_accepted_and_others_rejected(tmp_path):
+    root = tmp_path/'src'
+    folder = _source(root)
+    path = folder/'result/lateral_short.csv'
+    path.write_text('DefectSize (um), Area(um^2)\n1.00, 0.01\n2.00, 0.00\n', encoding='utf-8')
+    imported = tmp_path/'imported'
+    import_hotspots(root, imported)
+    csv_record = load_real_manifest(imported)['cases'][0]['csv']
+    assert csv_record['status'] == 'observed'
+    assert csv_record['rows'], csv_record
+    path.write_text('Size,Area\n1,0.01\n', encoding='utf-8')
+    with pytest.raises(NumericContractError, match='invalid_real_csv_header'):
+        import_hotspots(root, tmp_path/'imported2')
