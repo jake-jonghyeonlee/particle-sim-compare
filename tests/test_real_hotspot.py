@@ -466,3 +466,39 @@ def test_map_inventory_uncertainty_is_partial_but_pair_table_is_not_required(tmp
     mapped=compute_electrode_maps(configured_dataset(confirmed,load_real_manifest(confirmed),
         _assignment(pair_table=False)),diameter_um=1).layers[0]
     assert mapped.status=='available' and mapped.coverage['source_coverage_status']=='available'
+
+
+def _nest_images(folder):
+    images = folder / 'images'
+    images.mkdir()
+    for path in list(folder.glob('*.png')):
+        path.rename(images / path.name)
+    return images
+
+
+def test_case_images_subfolder_and_unspaced_defect_alias(tmp_path):
+    flat, nested = tmp_path / 'flat', tmp_path / 'nested'
+    _source(flat)
+    folder = _source(nested, case='lateralshort-A-L1-B-L1')
+    _nest_images(folder)
+    out_flat, out_nested = tmp_path / 'flat_out', tmp_path / 'nested_out'
+    import_hotspots(flat, out_flat)
+    result = import_hotspots(nested, out_nested)
+    assert result['cases'] == 1
+    case = json.loads((out_nested / 'manifest.json').read_text(encoding='utf-8'))['cases'][0]
+    assert case['case_name'] == 'lateralshort-A-L1-B-L1' and case['failure_type'] == 'lateral_short'
+    assert case['image_subdir'] == 'images' and case['csv']['status'] == 'observed'
+    assert [r['input_status'] for r in case['records'][:2]] == ['observed', 'observed']
+    assert case['records'][0]['source_path'].endswith('/images/hotspot_lateral_short01.png')
+    assert case['geometry_status'] == 'confirmed' and case['crop_shape_yx'] == [1270, 1270]
+    assert 'image_subdir' not in json.loads((out_flat / 'manifest.json').read_text(encoding='utf-8'))['cases'][0]
+    loaded = load_real_manifest(out_nested)
+    assert loaded is not None
+
+
+def test_case_with_pngs_in_both_case_and_images_folder_is_ambiguous(tmp_path):
+    folder = _source(tmp_path / 'src')
+    _nest_images(folder)
+    Image.new('L', (2270, 2270), 0).save(folder / '1.png')
+    with pytest.raises(NumericContractError, match='ambiguous_real_images_location'):
+        import_hotspots(tmp_path / 'src', tmp_path / 'out')

@@ -638,3 +638,38 @@ def test_full_import_path_peak_rss_is_bounded_by_estimate_and_low_limit_fails_be
     shutil.rmtree(tmp_path / 'adapter')
     low = probe(ok['estimate_mb'] * 0.9)       # 진짜 필요량 아래의 한도 → 쓰기 전에 거절
     assert low['code'] == 2 and not low['adapter_exists']
+
+
+def test_hotspot_case_electrode_with_case_images_subfolder_and_defect_alias(tmp_path, capsys):
+    src = tmp_path / 'hotspot_src'
+    case = 'lateralshort-A-L1-B-L1'
+    folder = src / case
+    (folder / 'result').mkdir(parents=True)
+    (folder / 'images').mkdir()
+    save(folder / 'images/1.png', pattern(1, REAL_SHAPE))
+    save(folder / 'images/2.png', pattern(2, REAL_SHAPE))
+    crop = np.zeros((REAL_SHAPE[0] - 1000, REAL_SHAPE[1] - 1000), dtype=np.uint8)
+    crop[0, 0] = 255
+    Image.fromarray(crop).save(folder / 'images/hotspot_lateral_short01.png')
+    with (folder / 'result/lateral_short.csv').open('w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.writer(f)
+        writer.writerow(['defect_size(um)', 'Area(um2)'])
+        writer.writerow(['1', '0.01'])
+    imported = tmp_path / 'imported'
+    import_hotspots(src, imported)
+    (imported / 'pairs.csv').write_text('pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\n')
+    assignment = {'product_id': 'PRODUCT', 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
+                  'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'pairs.csv',
+                  'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
+    path = tmp_path / 'assignment.json'
+    path.write_text(json.dumps(assignment))
+    out = tmp_path / 'out'
+    code = main(['import-electrode-assets', '--source-kind', 'hotspot_case_electrode', '--root', str(src),
+                 '--numeric-data-dir', str(imported), '--condition-assignment', str(path),
+                 '--cnt-from-dl1-root', str(cnt_root(tmp_path)), '--source-version', 'layout_v1',
+                 '--max-asset-memory-mb', '256', '--out', str(out)])
+    assert code == 0, capsys.readouterr().err
+    entry = json.loads((out / 'review_assets.json').read_text())['cases'][0]
+    assert entry['identity']['case_id'] == case
+    prov = entry['electrode_asset_provenance']
+    assert [(p['electrode_slot'], p['original_filename']) for p in prov['layouts']] == [(1, '1.png'), (2, '2.png')]

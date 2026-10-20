@@ -591,7 +591,10 @@ def _plan(source_kind, root, cnt_root, cases, order, warnings, blocked):
     folders = {}
     for directory, _, files in os.walk(root):
         if '1.png' in files or '2.png' in files:
-            folders.setdefault(Path(directory).name, []).append(Path(directory))
+            folder = Path(directory)
+            if folder.name.lower() == 'images' and folder != root:
+                folder = folder.parent  # <case>/images/ 배치: 이름은 case 폴더 것이고 PNG는 images/ 안에 있다
+            folders.setdefault(folder.name, []).append(Path(directory))
     for name, paths in folders.items():
         if len(paths) > 1:
             raise _error('duplicate_real_case_name', name)

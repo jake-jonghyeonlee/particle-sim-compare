@@ -27,6 +27,10 @@ from ..png_strict import read_gray_hotspot
 
 CONTRACT_VERSION = 'real_hotspot_v1'
 DEFECTS = ('lateral_short', 'vertical_short', 'lateral_open', 'vertical_open')
+# 실자료 폴더 이름의 붙여 쓴 표기(lateralshort)를 정식 이름으로 받는다. 파일·CSV 이름은 정식 이름만 쓴다.
+DEFECT_ALIASES = {'lateralshort': 'lateral_short', 'verticalshort': 'vertical_short',
+                  'lateralopen': 'lateral_open', 'verticalopen': 'vertical_open'}
+IMAGES_DIRNAME = 'images'
 CASE_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$')
 HOTSPOT_RE = re.compile(r'^hotspot_([a-z_]+?)(\d+)\.png$', re.IGNORECASE)
 
@@ -42,6 +46,7 @@ def _case_name(name: str):
     defect, electrode_a, layer_a, electrode_b, layer_b = match.groups()
     if not all((electrode_a, layer_a, electrode_b, layer_b)):
         raise NumericContractError('invalid_real_case_name', name)
+    defect = DEFECT_ALIASES.get(defect, defect)
     if defect not in DEFECTS:
         raise NumericContractError('unsupported_real_defect', defect)
     return defect, electrode_a, layer_a, electrode_b, layer_b
@@ -129,11 +134,21 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
             raise NumericContractError('duplicate_expected_case')
         for name in expected:
             _case_name(name)
-    found = []
+    found, images_dirs = [], {}
     for directory, dirs, files in os.walk(root):
         if ('1.png' in files or '2.png' in files
                 or any(HOTSPOT_RE.fullmatch(filename) for filename in files)):
-            found.append(Path(directory))
+            path = Path(directory)
+            if path.name.lower() == IMAGES_DIRNAME and path != root:
+                # <case>/images/ 배치: case 폴더는 그 상위이고 result/는 case 폴더 바로 아래에 있다.
+                images_dirs[path.parent] = path
+                path = path.parent
+            found.append(path)
+    for case_path in images_dirs:
+        if any(child.is_file() and (child.name in ('1.png', '2.png') or HOTSPOT_RE.fullmatch(child.name))
+               for child in case_path.iterdir()):
+            raise NumericContractError('ambiguous_real_images_location', str(case_path))
+    found = list(dict.fromkeys(found))
     if not found:
         raise NumericContractError('no_real_hotspot_cases_found')
     found.sort(key=lambda p: p.relative_to(root).as_posix())
@@ -154,6 +169,7 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
         for index, case_dir in enumerate(found):
             defect, ea, la, eb, lb = _case_name(case_dir.name)
             rel_case = case_dir.relative_to(root).as_posix()
+            image_dir = images_dirs.get(case_dir, case_dir)
             entry = {'case_name': case_dir.name, 'source_relative_path': rel_case,
                      'failure_type': defect, 'endpoints': [
                          {'electrode_id': ea, 'actual_layer': la, 'role': None},
@@ -165,6 +181,8 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                      'csv': _csv_areas(root, case_dir, defect), 'records': [],
                      'geometry_status': 'unconfirmed', 'electrode_shapes_yx': None,
                      'crop_shape_yx': None, 'geometry_reasons': []}
+            if image_dir != case_dir:
+                entry['image_subdir'] = IMAGES_DIRNAME
             if entry['csv']['status'] == 'observed':
                 csv_source = case_dir / 'result' / f'{defect}.csv'
                 csv_key = csv_source.relative_to(root).as_posix()
@@ -178,7 +196,7 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                 diagnostics.append({'case': case_dir.name, 'diameter_um': extra_diameter,
                                     'status': 'unexpected_csv_diameter'})
             image_names = {}
-            for filename in os.listdir(case_dir):
+            for filename in os.listdir(image_dir):
                 m = HOTSPOT_RE.fullmatch(filename)
                 if not m:
                     continue
@@ -189,15 +207,15 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                 diameter = int(suffix)
                 if diameter in image_names:
                     raise NumericContractError('duplicate_real_hotspot_diameter', f'{case_dir.name}:{diameter}')
-                image_names[diameter] = case_dir / filename
+                image_names[diameter] = image_dir / filename
             for electrode_file in ('1.png', '2.png'):
-                p = case_dir / electrode_file
+                p = image_dir / electrode_file
                 if p.exists():
-                    p = resolve_path(root, p.relative_to(root).as_posix())
-                    source_key = (Path(rel_case) / electrode_file).as_posix()
+                    source_key = p.relative_to(root).as_posix()
+                    p = resolve_path(root, source_key)
                     file_index[source_key] = {'sha256': _sha(p), 'path': source_key}
-            if (case_dir / '1.png').exists() and (case_dir / '2.png').exists():
-                with Image.open(case_dir / '1.png') as i1, Image.open(case_dir / '2.png') as i2:
+            if (image_dir / '1.png').exists() and (image_dir / '2.png').exists():
+                with Image.open(image_dir / '1.png') as i1, Image.open(image_dir / '2.png') as i2:
                     shape1, shape2 = (i1.height, i1.width), (i2.height, i2.width)
                 if shape1 != shape2 or min(shape1) <= 1000:
                     raise NumericContractError('electrode_shape_mismatch_or_too_small', case_dir.name)
@@ -371,6 +389,10 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
         if (source_path is None or source_path.is_absolute() or '..' in source_path.parts
                 or source_path.name != name):
             raise NumericContractError('invalid_real_case_source_binding', name)
+        image_subdir = case.get('image_subdir')
+        if image_subdir not in (None, IMAGES_DIRNAME):
+            raise NumericContractError('invalid_real_case_source_binding', name)
+        image_base = source_relative_path if image_subdir is None else f'{source_relative_path}/{image_subdir}'
         case_identity = (case.get('source_relative_path'), case.get('case_name'))
         if case_identity in identities:
             raise NumericContractError('duplicate_real_case_identity', name)
@@ -408,7 +430,7 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
                 source_path = record.get('source_path')
                 source_rel = PurePosixPath(source_path) if isinstance(source_path, str) else None
                 if (source_rel is None or source_rel.is_absolute() or '..' in source_rel.parts
-                        or source_rel.parent.as_posix() != case.get('source_relative_path')
+                        or source_rel.parent.as_posix() != image_base
                         or source_path not in source_files or
                         source_files[source_path].get('sha256') != record.get('source_sha256')):
                     raise NumericContractError('real_record_source_coverage_mismatch', name)
@@ -447,7 +469,7 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
                 raise NumericContractError('real_csv_source_coverage_mismatch', name)
             used_source_files.add(csv_path)
         for image_name in ('1.png', '2.png'):
-            key = f"{case.get('source_relative_path')}/{image_name}"
+            key = f"{image_base}/{image_name}"
             if key in source_files:
                 used_source_files.add(key)
             elif geometry_ok:

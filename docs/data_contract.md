@@ -4,7 +4,7 @@
 
 ### real_hotspot_v1 관측 import
 
-`simcompare import-hotspots --root <hotspot-root> --out <new-directory> [--expected-cases <text-file>]`는 사용자가 확인한 실제 폴더 레이아웃을 별도 `real_hotspot_v1` manifest로 변환한다. 입력 root는 바깥 `images` 폴더 유무와 무관하며 하위 case 디렉터리에서 찾는다. case 이름은 `불량명-전극1-layer1-전극2-layer2` 다섯 필드이고 `1.png`, `2.png`, `hotspot_<불량명><지름>.png`, case 내부 `result/<불량명>.csv`를 사용한다. case-local CSV가 없으면 다른 위치에서 찾아 대체하지 않는다.
+`simcompare import-hotspots --root <hotspot-root> --out <new-directory> [--expected-cases <text-file>]`는 사용자가 확인한 실제 폴더 레이아웃을 별도 `real_hotspot_v1` manifest로 변환한다. 입력 root는 바깥 `images` 폴더 유무와 무관하며 하위 case 디렉터리에서 찾는다. case 폴더 안의 PNG를 `<case>/images/`에 둔 배치(`<case>/images/1.png`, `2.png`, `hotspot_*.png` + `<case>/result/<불량명>.csv`)도 받는다. 같은 case에 PNG가 case 폴더와 `images/` 양쪽에 있으면 `ambiguous_real_images_location`이다. 이 배치의 case는 manifest에 `image_subdir: "images"`가 기록되고(평면 배치는 필드 없음) source 경로는 `<case>/images/...`다. case 이름의 불량명은 붙여 쓴 표기(`lateralshort`, `verticalshort`, `lateralopen`, `verticalopen`)도 정식 이름으로 받으며, `failure_type`과 CSV·hotspot 파일명은 정식 이름(`lateral_short` 등)만 쓴다. case 이름은 `불량명-전극1-layer1-전극2-layer2` 다섯 필드이고 `1.png`, `2.png`, `hotspot_<불량명><지름>.png`, case 내부 `result/<불량명>.csv`를 사용한다. case-local CSV가 없으면 다른 위치에서 찾아 대체하지 않는다.
 
 Hotspot PNG는 엄격한 기존 PNG chunk/CRC/zlib/orientation/pixel-limit 검증 뒤 grayscale로만 받는다. 검정은 0, 회색 nonzero는 occupied다. RGB는 세 channel이 pixel마다 동일할 때 grayscale로 허용한다. palette, alpha, 유색, 손상 파일은 거부하며 기존 numeric_v2 binary reader의 의미는 바뀌지 않는다. 전극 image 크기는 서로 같아야 하고 hotspot은 전극의 각 축보다 정확히 1000 px 작아야 한다. importer는 중앙 crop mask를 저장하고 frame origin `(50,50)` µm, pitch `0.1` µm/px, 공통 crop frame을 기록한다. 원본 이미지와 hotspot hash도 보존한다.
 
