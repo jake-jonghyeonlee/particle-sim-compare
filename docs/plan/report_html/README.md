@@ -17,9 +17,10 @@
 | T2 `task_c6442f8d5c21`: `simcompare report` 명령 | **완료·검증됨** (2026-10-19 22:30). Sonnet 5.5 medium, dispatch `ctx_41b0fff5cd3d`, release됨. 전체 pytest rc=0, 데모 report exit 0, 기준 창 없음 → exit 2 확인. 추가 수정: `cli.py`, `docs/usage.md`, `scripts/2_demo.sh`, `tests/test_retired_paths.py`, 신규 `final_report.py`, `tests/test_final_report.py` |
 | 커밋 | `801c8da` (T1+T2, 다른 세션이 사용자 승인으로 커밋, push 없음) |
 | Astra high 리뷰 `task_4f57b4361a73` | **FAIL** (2026-10-19 22:42). 수정 필요 6건 + 메모 2건. 전문: `astra_review_801c8da.md` |
-| FIX1 `task_0c9e516cd11c` | **완료·검증됨** (2026-10-19 23:05). Sonnet 5.5 high, dispatch `ctx_00b16275a6a6`, release됨. 8건 모두 수정, 회귀 시험 14개 추가. 미커밋. 후보 diff(`git diff -- src tests`) sha256 `e9b36af8…61f5a4cd` |
+| FIX1 `task_0c9e516cd11c` | **완료·검증됨** (2026-10-19 23:05). Sonnet 5.5 high, dispatch `ctx_00b16275a6a6`, release됨. 8건 모두 수정, 회귀 시험 14개 추가. 커밋 `d4c234e`(문서 `8f3c96a`). 후보 diff(`git diff -- src tests`) sha256 `e9b36af8…61f5a4cd` |
 | Opus high 리뷰 `task_391c198646c8` | **PASS-WITH-NOTES** (같은 sha256 기준). 전문: `opus_review_fix1.md`. 남은 비차단 메모 N1~N5(기존 명령의 접두 정리, AttributeError exit 1, fraction 중복 행, usage.md exit 코드, crop 파일 누락 exit 2) |
-| 다음 | 사용자 확인 후 FIX1 커밋 → particle-sim-compare-37 세션에 알림(그쪽 T1b 대기 중) |
+| 상태 | **완료** (2026-10-20). `d4c234e`의 src/tests diff(c6c3081 대비) sha256이 리뷰 후보와 같음. Run의 Task 5개 모두 completed, 정리할 worker 없음. 이후 다른 세션 커밋 `a8409dc`, `724e1b6`이 `final_report.py`를 다시 바꿨으며 이 리뷰 범위 밖이다 |
+| 다음 (선택) | 비차단 메모 N1~N5 처리, 실자료에서 순위 기준 창 20 µm 확인 |
 | Git | branch `rewrite/line-pixel-rate`, base `1ac6441`. **커밋 안 됨.** 수정: `src/simcompare/local_delta_report.py`, `tests/test_local_delta_report.py`. 새 파일: `docs/plan/report_html_plan_v1.md`, `docs/plan/report_html/` |
 
 사용자 결정 요약:
