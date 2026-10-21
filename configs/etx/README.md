@@ -8,6 +8,9 @@
 | 2 | `simcompare_job_2_validate_compare.py` | `real.stage2.example.yaml` → `real.yaml` | 오류 메시지의 추정치로 `max_operation_bytes` 결정 |
 | 3 | `simcompare_job_3_import_electrode_assets.py` | `assignment_reference.example.json`, `assignment_target.example.json` → `assignment_<side>.json` | 출력 파일을 각 `data_dir`로 복사, sha256 기록 |
 | 4 | `simcompare_job_4_candidates.py` | `real.stage4.example.yaml` → `real.yaml` | `*_export`, `*_index_export`의 `review_rois.json`을 DL2로 |
+| DL2 | DL2 저장소 `bundles/etx/psdl2_job_baseline_ncc.py` | 없음 | `data/dl2/*_sheet/sheet.html`을 보고 `data/dl2/decisions.csv` 작성 |
+| 5 | `simcompare_job_5_confirm_pairs.py` | `real.yaml`(4회차와 같음), `decisions.csv` | `--labelled-by CHANGE_ME`를 실제 ID로 |
+| 6 | `simcompare_job_6_compare_windows.py` | `real.yaml` | `data/local/local_delta.html`에서 쌍별 ΔCA 확인 |
 
 - 실행 파일은 맨 위 EDIT 블록(`JOBS`, `LOG_FILE`, `WORK_DIR`)만 고친다. 네 파일의 묶인 코드는 같고 `JOBS`만 다르다.
 - `assignment_<side>.json`은 `real.yaml`의 해당 `condition_assignment`와 똑같은 내용이다. JSON에는 주석을 쓸 수 없다.
@@ -15,3 +18,4 @@
 - `UNSPECIFIED`는 "정해지지 않음" 이름표다. 실제 값을 알면 바꾼다. 빈 값은 오류다.
 - layer 순서는 번호가 클수록 위층(PXL 최상단)으로 가정했다. 반대면 `stack_order`를 뒤집는다.
 - 소스를 고친 뒤에는 `uv run python scripts/build_etx_stage_runners.py --overwrite`로 네 파일을 다시 만든다.
+- 통합 `report`는 아직 실자료 compare 출력을 읽지 못해 회차에 넣지 않았다(`docs/usage.md` ETX 절).

@@ -53,6 +53,26 @@ STAGES = {
          "결과의 *_export/review_rois.json, *_index_export/review_rois.json이 DL2 입력이고 dl2_model_roles가 DL2 model.roles 목록이다."],
         [("candidates", ["--config", CONFIG, "--min-count", "3", "--window-um", "20", "--merge-overlap", "0.5",
                          "--out", f"{DATA}/candidates_k3"], None)]),
+    "5_confirm_pairs": (
+        ["5회차(DL2 뒤): 확정 쌍 변환. DL2 baseline_ncc 결과(ncc_r2t.json, ncc_t2r.json)와 sheet.html을 보고 쓴",
+         "decisions.csv(헤더 candidate_id,decision,note; decision=accept|reject)가 필요하다.",
+         "첫 작업(--list)은 candidate_id 목록을 로그에 찍는다. decisions.csv가 없으면 둘째 작업이 종료 코드 2로 멈춘다.",
+         "--labelled-by(확정한 사용자 ID)와 --mutual-tolerance-um은 필수이며 기본값이 없다. 값은 예시다."],
+        [("confirm-pairs", ["--list", "--config", CONFIG, "--candidates", f"{DATA}/candidates_k3",
+                            "--match", f"reference_to_target={DATA}/dl2/ncc_r2t.json",
+                            "--match", f"target_to_reference={DATA}/dl2/ncc_t2r.json"], "candidate_id 목록만 출력"),
+         ("confirm-pairs", ["--config", CONFIG, "--candidates", f"{DATA}/candidates_k3",
+                            "--match", f"reference_to_target={DATA}/dl2/ncc_r2t.json",
+                            "--match", f"target_to_reference={DATA}/dl2/ncc_t2r.json",
+                            "--decisions", f"{DATA}/dl2/decisions.csv", "--labelled-by", "CHANGE_ME",
+                            "--mutual-tolerance-um", "5", "--out", f"{DATA}/confirmed"],
+          "accept 후보만 roi_correspondence.json으로. --labelled-by CHANGE_ME를 실제 ID로 바꾼다")]),
+    "6_compare_windows": (
+        ["6회차: 확정 쌍 위치의 창별 국부 ΔCA. 창 10/20/30 µm, jitter 0.5 µm, 정렬 지름 5 µm는 권장 운용값(코드 기본값 아님)이다.",
+         "결과 local_delta.html이 쌍별 ΔCA 보기다. 통합 report는 아직 실자료(real_hotspot) compare 출력을 읽지 못해 회차에서 뺐다."],
+        [("compare-windows", ["--config", CONFIG, "--correspondence", f"{DATA}/confirmed/roi_correspondence.json",
+                              "--window-sizes", "10", "20", "30", "--jitter-um", "0.5", "--sort-diameter-um", "5",
+                              "--out", f"{DATA}/local"], None)]),
 }
 
 

@@ -292,6 +292,14 @@ JOBS = [("candidates", ["--config", "real.yaml", "--min-count", "3", "--window-u
 
 `--min-count`, `--window-um`, `--merge-overlap`은 필수이며 값은 예시다. 결과의 `*_export/review_rois.json`, `*_index_export/review_rois.json`이 DL2 입력이다. `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 role 목록이다.
 
+DL2 — 위치 매칭(DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job_baseline_ncc.py`, 같은 `BASE_DIR`에서 실행): 4회차 결과로 두 방향 `baseline_ncc --all-ready`를 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 검토 시트 `data/dl2/*_sheet/sheet.html`을 만든다. torch는 필요 없다. ETX 실행기로 만든 export에는 `producer_commit`이 없으므로(git checkout이 아님, 사유는 export에 기록) DL2 실행기는 `--allow-unversioned-producer`를 쓴다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`=`accept`|`reject`)를 쓴다. `candidate_id` 목록은 5회차 첫 작업(`confirm-pairs --list`)이 로그에 찍는다.
+
+5회차 — 확정 쌍 변환(`simcompare_job_5_confirm_pairs.py`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
+
+6회차 — 국부 ΔCA(`simcompare_job_6_compare_windows.py`): 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
+
+통합 보고서(`report`)는 아직 실자료 경로를 지원하지 않는다: 실자료 `compare`는 `comparison.json`/`comparison.csv`(`real_hotspot_comparison_v1`)만 쓰고, `report`는 합성 numeric_v2의 `comparison_fractions.csv` 등을 요구해 `missing_input_file`(종료 코드 2)로 멈춘다. 그래서 ETX 회차에 넣지 않았다. 쌍별 결과는 6회차 `local_delta.html`에서 본다.
+
 ## 실제 자료
 
 확인된 실제 폴더 구조는 먼저 별도 `real_hotspot_v1` 관측 manifest로 변환한다. 출력 디렉터리는 새 경로여야 한다.
