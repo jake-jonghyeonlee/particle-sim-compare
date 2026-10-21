@@ -21,3 +21,4 @@
   npz decompressed before shape check (forged-but-hash-consistent asset can allocate big memory); masks decompressed twice per stage;
   data_contract.md lacks mask_encoding; KeyboardInterrupt/SIGTERM leaves <out>.tmp-* (pre-existing); failed import leaves
   error.json/execution.json in <out>, so rerun needs <out> deleted (pre-existing). Not verified: numpy 1.16-1.20, real ETX Linux.
+- 2026-10-22: data_contract.md documented (coordinator, no review per user); pushed 05794e2 (template-export) + 7a43d30 (mask storage) to origin/feat/template-export. OOM-misdiagnosis advisory left open.
