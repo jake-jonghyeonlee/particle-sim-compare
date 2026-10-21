@@ -225,6 +225,7 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
 uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --overwrite   # 소스를 고친 뒤 다시 만든다
 ```
 
+- 상대 경로: 실행기는 시작할 때 작업 폴더를 `BASE_DIR`(없으면 실행기 `.py`가 있는 폴더)로 바꾸므로 `JOBS`·`LOG_FILE`의 상대 경로는 그 폴더 기준이다. wrapper가 `.py`를 다른 곳에 복사해 실행하면 기준이 바뀌므로 상대 경로를 쓸 때는 `BASE_DIR`에 절대 경로를 적는다. 로그 첫 줄 `relative paths resolve from ...`에 실제 기준 폴더가 나온다. config 파일 **안**의 상대 경로는 이와 별개로 config 파일 위치 기준이고, `pair_table_path`·`asset_manifest.path` 등은 `data_dir` 기준이다.
 - 파일 맨 위 `EDIT BELOW` ~ `EDIT ABOVE` 블록만 고친다. `JOBS`는 `(명령, [인자...])` 목록이며 `python -m simcompare <명령> <인자...>`와 같다. 종료 코드 0·3이면 다음 작업으로, 그 밖이면 멈춘다. `LOG_FILE`에 진행 줄과 출력이 남는다.
 - 실행하면 `.simcompare_pkg_<해시>/`에 패키지를 바이트 그대로 풀고 그 복사본을 먼저 import한다(서버에 다른 simcompare·yaml이 있으면 오류로 알린다).
 - 큰 실자료는 `condition_assignment`의 `max_materialized_source_cells`, `max_group_mask_cells`, `max_operation_bytes`를 명시해 올린다. 필요한 메모리를 정확히 알고 싶으면 앞의 두 값만 크게 두고 `max_operation_bytes`는 기본값으로 한 번 실행한다. 추정이 넘치면 `oversized_real_operation: estimated N bytes exceed ...`에 추정치 N이 나온다. 이 값은 보수적 추정이며 실측이 아니므로(배열이 아닌 메타데이터는 계상하지 않음) 물리 메모리에 여유를 둔다.

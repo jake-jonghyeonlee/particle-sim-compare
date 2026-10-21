@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """src/simcompare 전체와 순수 Python PyYAML을 .py 파일 하나로 묶는다. 명령줄 옵션을 넘길 수 없고 .py만 올릴 수 있는 서버용.
 
-만들어진 파일 맨 위의 EDIT 블록(JOBS, LOG_FILE, WORK_DIR)만 고치면 된다. 실행하면 패키지를 실제 폴더에 풀고(바이트 그대로)
+만들어진 파일 맨 위의 EDIT 블록(JOBS, LOG_FILE, WORK_DIR, BASE_DIR)만 고치면 된다. 실행하면 패키지를 실제 폴더에 풀고(바이트 그대로)
 simcompare.cli.main(인자)을 순서대로 호출한다. 서버에는 numpy와 Pillow만 있으면 된다(PyYAML은 묶음에 들어 있다)."""
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ TEMPLATE = '''#!/usr/bin/env python3
 # ============================== EDIT BELOW: 이 블록만 고치세요 ==============================
 # 각 작업은 `python -m simcompare <명령> <인자...>`와 같다. 명령 이름은 import-hotspots, validate-data, compare,
 # electrode-map, import-electrode-assets, export-review-rois, candidates, confirm-pairs, compare-windows, report 등이다.
-# 인자는 명령줄에서 쓰던 그대로 문자열 리스트로 적는다. 경로는 서버 기준 절대 경로를 권장한다.
+# 인자는 명령줄에서 쓰던 그대로 문자열 리스트로 적는다. 상대 경로는 BASE_DIR 기준이다(아래). wrapper가 이 파일을 다른 곳에
+# 복사해 실행하면 "이 .py가 있는 폴더"가 달라지므로, 상대 경로를 쓸 때는 BASE_DIR를 절대 경로로 적는 것이 안전하다.
 # 작업은 위에서부터 차례로 실행된다. 종료 코드 0(완료)과 3(부분 결과)은 다음 작업으로 넘어가고, 그 밖의 코드는 멈춘다.
 JOBS = [
     ("import-hotspots", ["--root", "/data/input/hotspot/QA4_R00", "--out", "/data/imported/reference"]),
@@ -32,6 +33,7 @@ JOBS = [
 ]
 LOG_FILE = "/data/runs/simcompare_job.log"   # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None
 WORK_DIR = None                               # 패키지를 풀 폴더. None이면 이 파일 옆, 쓸 수 없으면 임시 폴더
+BASE_DIR = None                               # JOBS·LOG_FILE·WORK_DIR의 상대 경로 기준 폴더(절대 경로). None이면 이 .py가 있는 폴더
 # ============================== EDIT ABOVE ==============================================
 
 import base64
@@ -129,12 +131,27 @@ def run_jobs(jobs):
             raise SystemExit(code)
 
 
+def _base_dir():
+    """상대 경로 기준 폴더: BASE_DIR, 없으면 이 파일의 폴더, __file__도 없으면 현재 작업 폴더."""
+    if BASE_DIR:
+        return Path(BASE_DIR).expanduser().resolve(), "BASE_DIR"
+    here = globals().get("__file__")
+    if here:
+        return Path(here).resolve().parent, "runner file folder"
+    return Path.cwd(), "current working directory (__file__ unavailable)"
+
+
 def _main():
+    base, source = _base_dir()
+    launched_cwd = os.getcwd()
+    os.chdir(base)
     log = None
     if LOG_FILE:
         Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
         log = open(LOG_FILE, "a", buffering=1, encoding="utf-8")
         sys.stdout, sys.stderr = _Tee(sys.__stdout__, log), _Tee(sys.__stderr__, log)
+    print(f"[simcompare_job] relative paths resolve from {base} ({source}); launched in {launched_cwd};"
+          f" runner {globals().get('__file__')}", file=sys.stderr, flush=True)
     try:
         run_jobs(JOBS)
     except SystemExit:

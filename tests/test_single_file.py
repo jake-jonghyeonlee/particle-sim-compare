@@ -33,3 +33,29 @@ def test_single_file_runs_jobs_continues_on_partial_and_stops_on_error(tmp_path)
     assert 'validate-data exit 3' in log and 'validate-data exit 2' in log
     assert 'start compare' not in log
     assert '.simcompare_pkg_' in log
+
+
+def test_relative_paths_resolve_from_runner_folder_not_launch_cwd(tmp_path):
+    work = tmp_path / 'runner'
+    work.mkdir()
+    script = _build(work, [('demo-data', ['--out', 'demo']), ('validate-data', ['--config', 'demo/config.yaml'])])
+    text = script.read_text(encoding='utf-8').replace(repr(str(work / 'job.log')), "'logs/job.log'")
+    script.write_text(text, encoding='utf-8')
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=elsewhere)
+    assert result.returncode == 0, result.stderr
+    assert (work / 'demo' / 'config.yaml').is_file() and not (elsewhere / 'demo').exists()
+    log = (work / 'logs' / 'job.log').read_text(encoding='utf-8')
+    assert f'relative paths resolve from {work.resolve()}' in log
+
+
+def test_base_dir_overrides_runner_folder(tmp_path):
+    work, base = tmp_path / 'runner', tmp_path / 'base'
+    work.mkdir(); base.mkdir()
+    script = _build(work, [('demo-data', ['--out', 'demo'])])
+    text = script.read_text(encoding='utf-8').replace('BASE_DIR = None', f'BASE_DIR = {str(base)!r}', 1)
+    script.write_text(text, encoding='utf-8')
+    result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert (base / 'demo' / 'config.yaml').is_file() and not (work / 'demo').exists()
