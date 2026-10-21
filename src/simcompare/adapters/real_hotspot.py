@@ -38,6 +38,15 @@ CASE_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$')
 HOTSPOT_RE = re.compile(r'^hotspot_([a-z_]+?)(\d+)\.png$', re.IGNORECASE)
 
 
+def _physical_memory_bytes():
+    """물리 메모리 바이트(POSIX sysconf). 알 수 없으면 None이며 그때는 상한 비교를 하지 않는다."""
+    try:
+        pages, page_size = os.sysconf('SC_PHYS_PAGES'), os.sysconf('SC_PAGE_SIZE')
+    except (AttributeError, ValueError, OSError):
+        return None
+    return pages * page_size if pages > 0 and page_size > 0 else None
+
+
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -557,8 +566,13 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
     max_operation_bytes = assignment.get('max_operation_bytes', 8 * 1024**3)
     if type(max_group_cells) is not int or max_group_cells <= 0 or type(max_source_cells) is not int or max_source_cells <= 0:
         raise NumericContractError('invalid_resource_limit')
-    if type(max_operation_bytes) is not int or max_operation_bytes <= 0 or max_operation_bytes > 8 * 1024**3:
-        raise NumericContractError('invalid_resource_limit', 'max_operation_bytes must be in (0, 8 GiB]')
+    physical = _physical_memory_bytes()
+    if type(max_operation_bytes) is not int or max_operation_bytes <= 0:
+        raise NumericContractError('invalid_resource_limit', 'max_operation_bytes must be a positive integer')
+    # 기본은 8 GiB다. 큰 메모리 서버에서는 명시적으로 올릴 수 있지만, 물리 메모리를 알 수 있으면 그 값을 넘길 수 없다.
+    if physical is not None and max_operation_bytes > physical:
+        raise NumericContractError('invalid_resource_limit',
+                                   f'max_operation_bytes {max_operation_bytes} exceeds physical memory {physical}')
     group_counts, observed_count = {}, 0
     for raw_case in manifest['cases']:
         a, b = raw_case['endpoints']

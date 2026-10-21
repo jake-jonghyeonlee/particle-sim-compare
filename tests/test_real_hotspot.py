@@ -441,9 +441,21 @@ def test_missing_inventory_groups_are_guarded_before_materialization(tmp_path):
     assignment['max_operation_bytes']=2000
     with pytest.raises(NumericContractError,match='oversized_real_operation'):
         configured_dataset(out,load_real_manifest(out),assignment)
-    assignment['max_operation_bytes']=16*1024**3+1
-    with pytest.raises(NumericContractError,match='invalid_resource_limit'):
+    import simcompare.adapters.real_hotspot as real_hotspot
+    real_hotspot_memory = real_hotspot._physical_memory_bytes
+    try:
+        real_hotspot._physical_memory_bytes = lambda: 64*1024**3
+        assignment['max_operation_bytes']=64*1024**3+1
+        with pytest.raises(NumericContractError,match='invalid_resource_limit'):
+            configured_dataset(out,load_real_manifest(out),assignment)
+        assignment['max_operation_bytes']=0
+        with pytest.raises(NumericContractError,match='invalid_resource_limit'):
+            configured_dataset(out,load_real_manifest(out),assignment)
+        # 8 GiB를 넘는 명시 값도 물리 메모리 안이면 받는다.
+        assignment['max_operation_bytes']=16*1024**3
         configured_dataset(out,load_real_manifest(out),assignment)
+    finally:
+        real_hotspot._physical_memory_bytes = real_hotspot_memory
 
 
 def test_map_inventory_uncertainty_is_partial_but_pair_table_is_not_required(tmp_path):

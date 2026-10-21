@@ -217,6 +217,18 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
 
 `review_rois.json`의 기본 출처는 review_rois.manual이다. product/design/source/step/exposure/case/frame/version과 원 shape 문맥을 모두 지정해야 ready다. 문맥이 부족하면 blocked 이유를 보존한다. 지도 영역을 쓰려면 threshold와 review_rois.map_region_ids를 명시한다. crop 크기는 정하지 않으며 DL2가 선택한 위치와 유사 구조를 찾는 별도 역할을 담당한다. [ROI 교환 계약](review_roi_contract.md)을 따른다.
 
+## Linux 서버 단일 파일 실행 (`bundles/simcompare_job.py`)
+
+서버에 `.py` 파일만 올릴 수 있고 명령줄 인자를 넘길 수 없을 때 쓴다. `scripts/build_single_file.py`가 `src/simcompare` 전체와 순수 Python PyYAML을 `.py` 하나로 묶은 것이며, 서버에는 numpy와 Pillow만 있으면 된다(pandas·pyarrow·zarr는 legacy 경로 전용이라 필요 없다).
+
+```bash
+uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --overwrite   # 소스를 고친 뒤 다시 만든다
+```
+
+- 파일 맨 위 `EDIT BELOW` ~ `EDIT ABOVE` 블록만 고친다. `JOBS`는 `(명령, [인자...])` 목록이며 `python -m simcompare <명령> <인자...>`와 같다. 종료 코드 0·3이면 다음 작업으로, 그 밖이면 멈춘다. `LOG_FILE`에 진행 줄과 출력이 남는다.
+- 실행하면 `.simcompare_pkg_<해시>/`에 패키지를 바이트 그대로 풀고 그 복사본을 먼저 import한다(서버에 다른 simcompare·yaml이 있으면 오류로 알린다).
+- 큰 실자료는 `condition_assignment`의 `max_materialized_source_cells`, `max_group_mask_cells`, `max_operation_bytes`를 명시해 올린다. 필요한 메모리를 정확히 알고 싶으면 앞의 두 값만 크게 두고 `max_operation_bytes`는 기본값으로 한 번 실행한다. 추정이 넘치면 `oversized_real_operation: estimated N bytes exceed ...`에 추정치 N이 나온다. 이 값은 보수적 추정이며 실측이 아니므로(배열이 아닌 메타데이터는 계상하지 않음) 물리 메모리에 여유를 둔다.
+
 ## 실제 자료
 
 확인된 실제 폴더 구조는 먼저 별도 `real_hotspot_v1` 관측 manifest로 변환한다. 출력 디렉터리는 새 경로여야 한다.
@@ -229,7 +241,7 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
 
 `--expected-cases`는 case 이름을 줄마다 적은 선택 파일이며, 없으면 발견되지 않은 case folder coverage는 unconfirmed로 남는다. 입력 hotspot은 opaque grayscale PNG여야 한다. 검정=0, 모든 회색 nonzero=occupied다. 변환기는 1/2 electrode image shape와 hotspot shape의 정확한 1000 px 축 차이를 검사하고 중앙 frame `(50,50)` µm로 기록한다. case-local `result/<불량명>.csv`의 원 숫자/정밀도와 PNG 면적 차이를 보존한다. 누락 image는 missing, 검정 image는 observed area 0이다.
 
-`validate-data`는 관측 면적과 missing/CSV 진단을 출력하고 `compare`는 raw 면적과 상태를 출력한다. config에 확인된 `condition_assignment`와 선택 pair table을 제공하면 기존 line/pixel 면적 집계와 electrode map을 연결한다. assignment에는 `product_id`, `design_version`, `source_id`, `process_step_id`, `exposure_id`, `unit_id`, `layer_stack`을 넣고 pair table은 기존 `pairs.csv` 열을 사용한다. 값이 없으면 null로 남기고 grouping을 요구하는 결과는 unavailable이다. pair table이 없는 pair를 pixel로 자동 배정하지 않는다. density 단위/조사면적 및 한 unit 환산이 없으면 weighted rate, panel, delta는 unavailable이며 electrode image polarity가 확인되지 않은 경우 review ROI만 blocked다. Electrode map은 hotspot mask와 explicit case assignment를 사용하며 polarity를 요구하지 않는다. configured mask materialization은 group 500,000,000 cells, 전체 source 6,000,000,000 cells, 보수적 whole-operation 추정 8 GiB로 제한한다. 마지막 제한은 모든 source mask, diameter별 retained output, per-case transient margin을 추정하며 streaming 보장은 아니다. `max_operation_bytes`는 낮출 수 있고 8 GiB보다 높일 수 없다. 초과 입력은 명시 오류로 중단된다. Windows 설치·pip check·도움말 실행은 사용자 성공 확인이 있으며, 실자료 수치·메모리 검증은 별도 수행해야 한다.
+`validate-data`는 관측 면적과 missing/CSV 진단을 출력하고 `compare`는 raw 면적과 상태를 출력한다. config에 확인된 `condition_assignment`와 선택 pair table을 제공하면 기존 line/pixel 면적 집계와 electrode map을 연결한다. assignment에는 `product_id`, `design_version`, `source_id`, `process_step_id`, `exposure_id`, `unit_id`, `layer_stack`을 넣고 pair table은 기존 `pairs.csv` 열을 사용한다. 값이 없으면 null로 남기고 grouping을 요구하는 결과는 unavailable이다. pair table이 없는 pair를 pixel로 자동 배정하지 않는다. density 단위/조사면적 및 한 unit 환산이 없으면 weighted rate, panel, delta는 unavailable이며 electrode image polarity가 확인되지 않은 경우 review ROI만 blocked다. Electrode map은 hotspot mask와 explicit case assignment를 사용하며 polarity를 요구하지 않는다. configured mask materialization은 group 500,000,000 cells, 전체 source 6,000,000,000 cells, 보수적 whole-operation 추정 8 GiB로 제한한다. 마지막 제한은 모든 source mask, diameter별 retained output, per-case transient margin을 추정하며 streaming 보장은 아니다. `max_operation_bytes`의 기본값은 8 GiB이며, 큰 메모리 서버에서는 명시해서 올릴 수 있지만 물리 메모리(POSIX에서 확인 가능할 때)를 넘길 수 없다. 초과 입력은 명시 오류로 중단된다. Windows 설치·pip check·도움말 실행은 사용자 성공 확인이 있으며, 실자료 수치·메모리 검증은 별도 수행해야 한다.
 
 실제 adapter가 미확정이면 명시 오류가 정상이며 임의 synthetic 표시로 우회하지 않는다. [데이터 계약](data_contract.md), [질문 상태](open_questions.md)를 확인한다.
 
