@@ -229,6 +229,66 @@ uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --ove
 - 실행하면 `.simcompare_pkg_<해시>/`에 패키지를 바이트 그대로 풀고 그 복사본을 먼저 import한다(서버에 다른 simcompare·yaml이 있으면 오류로 알린다).
 - 큰 실자료는 `condition_assignment`의 `max_materialized_source_cells`, `max_group_mask_cells`, `max_operation_bytes`를 명시해 올린다. 필요한 메모리를 정확히 알고 싶으면 앞의 두 값만 크게 두고 `max_operation_bytes`는 기본값으로 한 번 실행한다. 추정이 넘치면 `oversized_real_operation: estimated N bytes exceed ...`에 추정치 N이 나온다. 이 값은 보수적 추정이며 실측이 아니므로(배열이 아닌 메타데이터는 계상하지 않음) 물리 메모리에 여유를 둔다.
 
+## ETX(Linux GPU 서버) 실행 순서
+
+ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU 계산이라 GPU를 쓰지 않으며, 큰 RAM 때문에 이 서버를 쓴다. 패키지를 설치하지 않고 위의 `bundles/simcompare_job.py` 하나만 올려 실행한다(서버에 numpy·Pillow 필요, DL1 환경에 있음). 실행기는 명령만 실행하고 파일 복사·config 수정은 하지 않으므로, 아래처럼 회차를 나눠 각 회차 사이에 사람이 준비 작업을 한다. 경로는 예시이며 서버 기준 절대 경로로 바꾼다. 실제 데이터 전체 흐름은 ETX에서 아직 검증되지 않았다.
+
+준비: hotspot 입력 폴더(모델 폴더 `QA4_R00`, `QA4_T00` 아래 `<case>/images/...`, `<case>/result/<불량명>.csv`)와 DL1 PNG 폴더를 서버에 둔다. `git pull` 후 `bundles/simcompare_job.py`를 복사해 `JOBS`, `LOG_FILE`을 고친다. 회차마다 `JOBS`만 바꿔 다시 실행한다. 출력 폴더(`--out`)는 매번 새 경로여야 한다.
+
+1회차 — hotspot import (마스크를 한 장씩 처리하므로 메모리 문제 없음):
+
+```python
+JOBS = [
+    ("import-hotspots", ["--root", "/data/input/hotspot/QA4_R00", "--out", "/data/imported/reference"]),
+    ("import-hotspots", ["--root", "/data/input/hotspot/QA4_T00", "--out", "/data/imported/target"]),
+]
+```
+
+1회차 뒤: `pairs.csv`를 `/data/imported/reference/`와 `/data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시 거부). `real.yaml`의 `data_dir`를 서버 절대 경로로 바꾸고, reference·target `condition_assignment`에 큰 자료용 한도를 넣는다:
+
+```yaml
+    max_materialized_source_cells: 20000000000
+    max_group_mask_cells: 5000000000
+    # max_operation_bytes: 처음에는 빼고 실행해 추정치를 확인한 뒤 여유를 더해 넣는다
+```
+
+2회차 — 검사·비교:
+
+```python
+JOBS = [
+    ("validate-data", ["--config", "/data/real.yaml"]),
+    ("compare", ["--config", "/data/real.yaml"]),
+]
+```
+
+`max_operation_bytes`를 빼고 실행하면 기본 8 GiB를 넘을 때 `oversized_real_operation: estimated N bytes exceed ...`로 멈추며 N이 필요 메모리 추정치다. N에 여유를 더한 값(물리 메모리 이하)을 넣고 다시 실행한다. 종료 코드 3은 partial 항목이 있다는 뜻이며 `reasons`를 확인한다.
+
+3회차 — 전극 PNG import (`electrode_roles`가 들어간 assignment JSON 필요, `--max-asset-memory-mb`는 기본값 없음):
+
+```python
+JOBS = [
+    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "/data/input/hotspot/QA4_R00",
+        "--numeric-data-dir", "/data/imported/reference", "--condition-assignment", "/data/assignment_reference.json",
+        "--cnt-from-dl1-root", "/data/input/dl1", "--source-version", "LAYOUT_V1",
+        "--max-asset-memory-mb", "<MB>", "--out", "/data/assets/reference"]),
+    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "/data/input/hotspot/QA4_T00",
+        "--numeric-data-dir", "/data/imported/target", "--condition-assignment", "/data/assignment_target.json",
+        "--cnt-from-dl1-root", "/data/input/dl1", "--source-version", "LAYOUT_V1",
+        "--max-asset-memory-mb", "<MB>", "--out", "/data/assets/target"]),
+]
+```
+
+3회차 뒤: 각 출력의 `review_assets.json`, `electrode_asset_import_record.json`, `assets/`를 해당 `data_dir`로 복사하고 `real.yaml`의 reference·target에 `asset_manifest`, `electrode_import_record`({path, sha256})를 넣는다(위 "전극 PNG → review_assets_v1" 절).
+
+4회차 — 후보(DL2 직전):
+
+```python
+JOBS = [("candidates", ["--config", "/data/real.yaml", "--min-count", "3", "--window-um", "20",
+                        "--merge-overlap", "0.5", "--out", "/data/candidates_k3"])]
+```
+
+`--min-count`, `--window-um`, `--merge-overlap`은 필수이며 값은 예시다. 결과의 `*_export/review_rois.json`, `*_index_export/review_rois.json`이 DL2 입력이다.
+
 ## 실제 자료
 
 확인된 실제 폴더 구조는 먼저 별도 `real_hotspot_v1` 관측 manifest로 변환한다. 출력 디렉터리는 새 경로여야 한다.
