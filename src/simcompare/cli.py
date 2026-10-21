@@ -68,6 +68,11 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--per-cell-text", action="store_true", help="4096 cells 이하에서만 셀별 텍스트 출력")
         if name in ("electrode-map", "export-review-rois"):
             command.add_argument("--min-count", type=int, help="명시할 때만 4-neighbour 영역 계산")
+    template = _korean_help(sub.add_parser(
+        "export-template-rois", add_help=False,
+        help="한 제품의 template ROI와 mask_derivation을 hotspot·CA를 열지 않고 내보냄(1.png/2.png만 있는 트리)"))
+    template.add_argument("--config", required=True, help="template_export_config_v1 YAML")
+    template.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     cand = _korean_help(sub.add_parser(
         "candidates", add_help=False,
         help="두 제품의 취약 영역(양방향) → 병합된 질의 ROI와 바로 매칭할 export, 깔때기 표(점수·CA·확정 없음)"))
@@ -175,6 +180,12 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_path=args.manifest_path, condition_assignment=args.condition_assignment,
                 stack_order=args.stack_order, cnt_from_dl1_root=args.cnt_from_dl1_root,
                 source_version=args.source_version, max_asset_memory_mb=args.max_asset_memory_mb)
+            _print(result)
+            return result["exit_code"]
+        if args.command == "export-template-rois":
+            # 출력 폴더는 새 것이어야 하며 run_template_export가 이 실행이 만든 것만 정리한다(공용 오류 핸들러 제외).
+            from simcompare import template_export
+            result = template_export.run_template_export(args.config, Path(args.out))
             _print(result)
             return result["exit_code"]
         if args.command == "candidates":
