@@ -108,12 +108,12 @@ def test_blocked_query_reasons_in_funnel(tmp_path):
 ROLES = {'A': 'gate', 'B': 'data'}
 
 
-def real_config(tmp_path, *, record=True, roles=ROLES):
+def real_config(tmp_path, *, record=True, roles=ROLES, role_policy=None):
     sections = {}
     for name in ('reference', 'target'):
         base = tmp_path/name
         base.mkdir()
-        data, assignment = build(base, roles=roles)
+        data, assignment = build(base, roles=roles, role_policy=role_policy)
         spec = {'data_dir': str(data), 'product_id': 'PRODUCT', 'condition_assignment': assignment,
                 'asset_manifest': {'path': 'review_assets.json', 'sha256': sha(data/'review_assets.json')}}
         if record:
@@ -607,3 +607,23 @@ def test_failure_removes_only_files_created_by_this_run(tmp_path, monkeypatch, c
     assert run(config, out, k=4) == 2
     assert len(calls) == 2 and not out.exists()
     assert bystander.read_text() == 'keep' and 'boom' in capsys.readouterr().err
+
+
+def test_role_policy_electrode_id_makes_every_pair_table_electrode_its_own_role(tmp_path):
+    config = real_config(tmp_path, roles=None, role_policy='electrode_id')
+    out = tmp_path/'out'
+    assert run(config, out, k=1, window=10, overlap=0.5) == 0
+    for side in ('reference', 'target'):
+        for folder in (f'{side}_export', f'{side}_index_export'):
+            ready = [r for r in load(out/folder, 'review_rois.json')['rois'] if r['status'] == 'ready']
+            assert ready and all(dl2_endpoint_ready(r) for r in ready)
+            assert all(e['role'] == e['electrode_id'] for r in ready for e in r['endpoints'])
+    assert load(out)['dl2_model_roles'] == ['A', 'B']
+    assert json.loads((out/'execution.json').read_text())['dl2_model_roles'] == ['A', 'B']
+
+
+def test_explicit_roles_are_listed_for_dl2(tmp_path):
+    config = real_config(tmp_path)
+    out = tmp_path/'out'
+    assert run(config, out, k=1, window=10, overlap=0.5) == 0
+    assert load(out)['dl2_model_roles'] == ['data', 'gate']

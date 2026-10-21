@@ -555,11 +555,20 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
                   'max_candidates_scope': 'per_direction', 'index_coverage': coverage}
     match_inputs = {direction: {'query': f'{query_name}_export', 'index': f'{index_name}_index_export'}
                     for direction, query_name, index_name in DIRECTIONS}
+    roles = set()
+    for side in sides.values():
+        dataset = getattr(side, 'dataset', None)
+        if dataset is None:
+            continue
+        # DL2 model.roles에 넣을 목록: 설정된 role 전체(pair 표 기준 정책이면 표의 모든 전극)와 실제 endpoint role.
+        roles.update((dataset.provenance or {}).get('electrode_roles_effective', {}).values())
+        roles.update(ep.role for case in dataset.cases for ep in case.endpoints if ep.role)
+    dl2_model_roles = sorted(roles)
     payload = {'schema_version': SCHEMA_VERSION, 'producer_commit': commit,
                'args': {'min_count': min_count, 'window_um': window_um, 'merge_overlap': merge_overlap,
                         'max_candidates': max_candidates, 'representative_diameter_um': diameter_um},
                'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'warnings': warnings, 'notes': notes,
-               'match_inputs': match_inputs,
+               'match_inputs': match_inputs, 'dl2_model_roles': dl2_model_roles,
                'match_files': {d: {k: f'{v}/review_rois.json' for k, v in item.items()}
                                for d, item in match_inputs.items()},
                'status': 'available' if complete else 'partial',
@@ -603,7 +612,7 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
               'index_coverage': {n: {k: c[k] for k in ('dataset_cases', 'index_rois_ready', 'index_rois_blocked',
                                                       'electrodes_covered', 'electrodes_total')}
                                  for n, c in coverage.items()},
-              'match_inputs': match_inputs, 'match_files': payload['match_files']}
+              'match_inputs': match_inputs, 'match_files': payload['match_files'], 'dl2_model_roles': dl2_model_roles}
     execution = {'command': 'candidates', **result}
     _write_text(out/'execution.json', json.dumps(execution, ensure_ascii=False, indent=2)+'\n', track)
     result['outputs'] = sorted(result['outputs']+['execution.json'])

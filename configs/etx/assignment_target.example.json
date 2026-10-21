@@ -63,9 +63,7 @@
     }
   ],
   "pair_table_path": "pairs.csv",
+  "electrode_role_policy": "electrode_id",
   "max_materialized_source_cells": 20000000000,
-  "max_group_mask_cells": 5000000000,
-  "electrode_roles": {
-    "<ELECTRODE_ID>": "<ROLE>"
-  }
+  "max_group_mask_cells": 5000000000
 }

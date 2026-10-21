@@ -18,7 +18,7 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def build(tmp_path, roles=None):
+def build(tmp_path, roles=None, role_policy=None):
     """hotspot import + import-electrode-assets output merged into one data_dir (export reads assets under data_dir)."""
     root = real_source(tmp_path)
     expected = tmp_path / 'expected.txt'
@@ -31,6 +31,8 @@ def build(tmp_path, roles=None):
                   'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
     if roles is not None:
         assignment['electrode_roles'] = dict(roles)
+    if role_policy is not None:
+        assignment['electrode_role_policy'] = role_policy
     assignment_path = tmp_path / 'assignment.json'
     assignment_path.write_text(json.dumps(assignment))
     adapter = tmp_path / 'adapter'

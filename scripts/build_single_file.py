@@ -26,12 +26,12 @@ TEMPLATE = '''#!/usr/bin/env python3
 # 복사해 실행하면 "이 .py가 있는 폴더"가 달라지므로, 상대 경로를 쓸 때는 BASE_DIR를 절대 경로로 적는 것이 안전하다.
 # 작업은 위에서부터 차례로 실행된다. 종료 코드 0(완료)과 3(부분 결과)은 다음 작업으로 넘어가고, 그 밖의 코드는 멈춘다.
 JOBS = [
-    ("import-hotspots", ["--root", "/data/input/hotspot/QA4_R00", "--out", "/data/imported/reference"]),
-    ("import-hotspots", ["--root", "/data/input/hotspot/QA4_T00", "--out", "/data/imported/target"]),
-    # ("validate-data", ["--config", "/data/real.yaml"]),
-    # ("compare", ["--config", "/data/real.yaml"]),
+    ("import-hotspots", ["--root", "data/input/hotspot/QA4_R00", "--out", "data/imported/reference"]),
+    ("import-hotspots", ["--root", "data/input/hotspot/QA4_T00", "--out", "data/imported/target"]),
+    # ("validate-data", ["--config", "real.yaml"]),
+    # ("compare", ["--config", "real.yaml"]),
 ]
-LOG_FILE = "/data/runs/simcompare_job.log"   # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None
+LOG_FILE = "runs/simcompare_job.log"          # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None
 WORK_DIR = None                               # 패키지를 풀 폴더. None이면 이 파일 옆, 쓸 수 없으면 임시 폴더
 BASE_DIR = None                               # JOBS·LOG_FILE·WORK_DIR의 상대 경로 기준 폴더(절대 경로). None이면 이 .py가 있는 폴더
 # ============================== EDIT ABOVE ==============================================

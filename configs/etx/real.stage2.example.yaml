@@ -1,12 +1,13 @@
 # ETX 2회차(validate-data, compare)용 예시. 1회차 import 뒤 pairs.csv를 각 data_dir 안에 복사한 상태를 가정한다.
-# 경로는 서버 절대 경로 예시다. pair_table_path만은 data_dir 기준 상대 경로여야 한다(절대 경로·..·백슬래시 거부).
+# 이 파일을 실행기 BASE_DIR(작업 폴더)에 real.yaml로 둔다고 가정한다. data_dir·output_dir 상대 경로는 이 파일 위치 기준이다.
+# pair_table_path·asset_manifest.path·electrode_import_record.path는 data_dir 기준 상대 경로여야 한다(절대 경로·..·백슬래시 거부).
 # product_id/source_id 외의 UNSPECIFIED는 "정해지지 않음" 이름표다. 실제 값을 알면 바꾼다(비워 두면 오류).
 schema_version: numeric_config_v1
 mode: real
-output_dir: /data/outputs/numeric_real
+output_dir: outputs/numeric_real
 reference: &reference_side
   product_id: QA4_R00
-  data_dir: /data/imported/reference
+  data_dir: data/imported/reference
   condition_assignment:
     product_id: QA4_R00
     design_version: UNSPECIFIED
@@ -28,13 +29,15 @@ reference: &reference_side
       - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
       - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
     pair_table_path: pairs.csv
+    # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
+    electrode_role_policy: electrode_id
     # 큰 자료용 한도. max_operation_bytes는 처음에는 빼고 실행해 오류 메시지의 추정치를 본 뒤 여유를 더해 넣는다.
     max_materialized_source_cells: 20000000000
     max_group_mask_cells: 5000000000
     # max_operation_bytes: 34359738368   # 예: 32 GiB. 물리 메모리를 넘기면 거부된다
 target:
   product_id: QA4_T00
-  data_dir: /data/imported/target
+  data_dir: data/imported/target
   condition_assignment:
     product_id: QA4_T00
     design_version: UNSPECIFIED
@@ -44,6 +47,8 @@ target:
     unit_id: UNSPECIFIED
     layer_stack: *layer_stack
     pair_table_path: pairs.csv
+    # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
+    electrode_role_policy: electrode_id
     max_materialized_source_cells: 20000000000
     max_group_mask_cells: 5000000000
     # max_operation_bytes: 34359738368

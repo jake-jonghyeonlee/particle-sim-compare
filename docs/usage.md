@@ -158,7 +158,7 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 - 병합(R3): 같은 제품·design·frame의 영역(layer 무관)을 region_id 순서로 union-find(전이적)한다. 각 영역의 창은 `centre_xy_um`을 중심으로 한 변 W의 정사각형이고, 두 창의 `intersection/min(area)`가 R 이상이면 합친다(모든 창이 같은 크기이므로 `intersection/W²`). 겹침은 frame으로 자르지 않은 공칭 창으로 판정한다. 대표 = `max_count`가 가장 큰 영역(동률은 면적 큰 쪽, 그다음 region_id). `merged_from`은 대표를 포함한 구성원 region_id 목록이고 병합이 없으면 자기 하나다. frame 경계를 넘는 창은 버리지 않고 `flags: window_clipped`로 표시한다(대표가 아니라 구성원만 넘으면 `merged_member_window_clipped`).
 - export: 대표 region만 `map_region_ids`로 기존 경로(numeric 또는 real T1b)에 넘겨 `reference_export/review_rois.json`, `target_export/review_rois.json`을 만든다. 이 export는 질의 전용이며 반대 방향의 index로 쓰지 않는다(index는 아래 `*_index_export`). 방향별 파일은 `candidate_queries_v1.json`의 `directions[].query_export/index_export`에 있다. real인데 전극 증거가 없으면 export 없이 질의가 `electrode_polarity_unknown`, `source_layout_assets_unconfirmed`로 blocked된다.
 - **index export(T1c)**: 질의 export는 선택한 영역의 case 전극 layout만 참조하므로 DL2 `role_layer_unions`(ready ROI 행의 layout 채널 합집합)가 부분적이다. 그래서 제품마다 `reference_index_export/`, `target_index_export/`를 추가로 만든다. 데이터셋 case마다 명시 manual ROI 하나(identity·endpoints·failure_type은 데이터셋 그대로, `center_xy_um` = frame 중심이 valid면 그것, 아니면 row-major 첫 valid 셀 중심, valid 셀이 없으면 그 case는 `index_frame_has_no_valid_cell`로 blocked)를 같은 경로(numeric 또는 real T1b)로 내보낸다. **index 전용이다: 이 행들은 질의가 아니고 region provenance가 없다**(`source_kind: manual`, `position_policy: explicit_manual_point`). 매칭 입력은 `execution.json`/`candidate_queries_v1.json`의 `match_inputs`(폴더 이름; confirm-pairs가 읽는다)와 `match_files`(DL2에 넘길 **`review_rois.json` 파일 경로**, 출력 폴더 기준 상대): `reference_to_target = {query: reference_export/review_rois.json, index: target_index_export/review_rois.json}`, `target_to_reference = {query: target_export/review_rois.json, index: reference_index_export/review_rois.json}`.
-- **전극 role 전제(real_hotspot_v1)**: DL2는 ready 행의 모든 endpoint에 비어 있지 않은 `role`과 `actual_layer`를 요구한다. 역할은 추측하지 않으므로 `condition_assignment.electrode_roles`(전극 id → role)를 명시해야 한다. 없으면 role이 null인 행은 매칭 불가로 취급해 질의·index 행이 `electrode_role_required_for_matching`으로 blocked, index coverage는 그 전극을 덮지 못한 것으로 세고 종료 코드 3이다(`warnings`에 같은 코드와 안내). 역할을 추가한 뒤에는 import-electrode-assets를 다시 실행해 증거(sha256)를 새로 만들고 config에 반영한다. numeric_v2(합성)는 영향이 없다.
+- **전극 role 전제(real_hotspot_v1)**: DL2는 ready 행의 모든 endpoint에 비어 있지 않은 `role`과 `actual_layer`를 요구한다. 역할은 추측하지 않으므로 `condition_assignment.electrode_roles`(전극 id → role)를 명시해야 한다. 전극 이름을 그대로 role로 쓰려면 `electrode_roles` 대신 `electrode_role_policy: electrode_id`를 적는다. 이때 pair 표(`pair_table_path`, 필수)에 나오는 모든 전극이 자기 이름을 role로 받고(case에 안 나온 전극도 포함), pair 표에 없는 전극은 role이 없다. `electrode_roles`와 함께 쓰면 `electrode_roles_conflict_with_role_policy`다. 쓰인 role 목록은 `candidates` 출력의 `dl2_model_roles`에 있다. 없으면 role이 null인 행은 매칭 불가로 취급해 질의·index 행이 `electrode_role_required_for_matching`으로 blocked, index coverage는 그 전극을 덮지 못한 것으로 세고 종료 코드 3이다(`warnings`에 같은 코드와 안내). 역할을 추가한 뒤에는 import-electrode-assets를 다시 실행해 증거(sha256)를 새로 만들고 config에 반영한다. numeric_v2(합성)는 영향이 없다.
 - **`index_union_partial`**: 질의 export를 index로 쓰면 안 된다는 정보 메모(`notes`, `severity: info`)일 뿐이며 종료 코드에 영향이 없다.
 - **index coverage 깔때기**: 제품별 `funnel.index_coverage`(= `funnel.json`, funnel.csv의 `index_<product>` 행): `dataset_cases`, `index_rois_ready`, `index_rois_blocked`와 사유(`blocked_reasons`), `electrodes_covered/electrodes_total`(전체 및 `by_role_layer`의 `role|layer`별). 하나라도 덮이지 않았거나 blocked ROI가 있으면 `index_coverage_incomplete` 경고와 종료 코드 3이다.
 - 출력: `candidate_queries_v1.json`(schema_version, `inputs`의 config·manifest·asset_manifest·import record·export sha256, `args`, 방향별 `queries`[query_id, product_id, frame_id, center_xy_um, region_id, merged_from, max_count, area_um2(영역 면적, CA 아님), layers, flags, status, reasons, roi_ids], `funnel`, `warnings`, `notes`, `match_inputs`), `funnel.json`/`funnel.csv`, `reference_export/`, `target_export/`, `reference_index_export/`, `target_index_export/`, `execution.json`. 같은 입력·인수는 같은 바이트를 만든다(경로는 출력 폴더 상대).
@@ -232,7 +232,7 @@ uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --ove
 
 ## ETX(Linux GPU 서버) 실행 순서
 
-ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU 계산이라 GPU를 쓰지 않으며, 큰 RAM 때문에 이 서버를 쓴다. 패키지를 설치하지 않고 위의 `bundles/simcompare_job.py` 하나만 올려 실행한다(서버에 numpy·Pillow 필요, DL1 환경에 있음). 실행기는 명령만 실행하고 파일 복사·config 수정은 하지 않으므로, 아래처럼 회차를 나눠 각 회차 사이에 사람이 준비 작업을 한다. 경로는 예시이며 서버 기준 절대 경로로 바꾼다. 실제 데이터 전체 흐름은 ETX에서 아직 검증되지 않았다.
+ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU 계산이라 GPU를 쓰지 않으며, 큰 RAM 때문에 이 서버를 쓴다. 패키지를 설치하지 않고 위의 `bundles/simcompare_job.py` 하나만 올려 실행한다(서버에 numpy·Pillow 필요, DL1 환경에 있음). 실행기는 명령만 실행하고 파일 복사·config 수정은 하지 않으므로, 아래처럼 회차를 나눠 각 회차 사이에 사람이 준비 작업을 한다. 경로는 실행기 `BASE_DIR`(작업 폴더) 기준 상대 경로 예시다. `/data`처럼 `/`로 시작하면 루트 아래 절대 경로가 되어 권한 오류가 날 수 있으니 `data/...`로 쓴다. 실제 데이터 전체 흐름은 ETX에서 아직 검증되지 않았다.
 
 회차별 실행 파일은 `bundles/etx/simcompare_job_<회차>_*.py`, 회차별 설정 예시는 `configs/etx/`(`real.stage2.example.yaml`, `real.stage4.example.yaml`, `assignment_<side>.example.json`)에 있다. 대응표는 [`configs/etx/README.md`](../configs/etx/README.md). 소스를 고치면 `uv run python scripts/build_etx_stage_runners.py --overwrite`로 다시 만든다.
 
@@ -242,12 +242,12 @@ ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU �
 
 ```python
 JOBS = [
-    ("import-hotspots", ["--root", "/data/input/hotspot/QA4_R00", "--out", "/data/imported/reference"]),
-    ("import-hotspots", ["--root", "/data/input/hotspot/QA4_T00", "--out", "/data/imported/target"]),
+    ("import-hotspots", ["--root", "data/input/hotspot/QA4_R00", "--out", "data/imported/reference"]),
+    ("import-hotspots", ["--root", "data/input/hotspot/QA4_T00", "--out", "data/imported/target"]),
 ]
 ```
 
-1회차 뒤: `pairs.csv`를 `/data/imported/reference/`와 `/data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시 거부). `real.yaml`의 `data_dir`를 서버 절대 경로로 바꾸고, reference·target `condition_assignment`에 큰 자료용 한도를 넣는다:
+1회차 뒤: `pairs.csv`를 `data/imported/reference/`와 `data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시 거부). `real.yaml`의 `data_dir`를 서버 절대 경로로 바꾸고, reference·target `condition_assignment`에 큰 자료용 한도를 넣는다:
 
 ```yaml
     max_materialized_source_cells: 20000000000
@@ -259,25 +259,25 @@ JOBS = [
 
 ```python
 JOBS = [
-    ("validate-data", ["--config", "/data/real.yaml"]),
-    ("compare", ["--config", "/data/real.yaml"]),
+    ("validate-data", ["--config", "real.yaml"]),
+    ("compare", ["--config", "real.yaml"]),
 ]
 ```
 
 `max_operation_bytes`를 빼고 실행하면 기본 8 GiB를 넘을 때 `oversized_real_operation: estimated N bytes exceed ...`로 멈추며 N이 필요 메모리 추정치다. N에 여유를 더한 값(물리 메모리 이하)을 넣고 다시 실행한다. 종료 코드 3은 partial 항목이 있다는 뜻이며 `reasons`를 확인한다.
 
-3회차 — 전극 PNG import (`electrode_roles`가 들어간 assignment JSON 필요, `--max-asset-memory-mb`는 기본값 없음):
+3회차 — 전극 PNG import (`real.yaml`의 `condition_assignment`와 같은 내용의 assignment JSON 필요, `--max-asset-memory-mb`는 기본값 없음). role은 `electrode_role_policy: electrode_id`로 자동이다(pair 표의 모든 전극 = 자기 이름):
 
 ```python
 JOBS = [
-    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "/data/input/hotspot/QA4_R00",
-        "--numeric-data-dir", "/data/imported/reference", "--condition-assignment", "/data/assignment_reference.json",
-        "--cnt-from-dl1-root", "/data/input/dl1", "--source-version", "LAYOUT_V1",
-        "--max-asset-memory-mb", "<MB>", "--out", "/data/assets/reference"]),
-    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "/data/input/hotspot/QA4_T00",
-        "--numeric-data-dir", "/data/imported/target", "--condition-assignment", "/data/assignment_target.json",
-        "--cnt-from-dl1-root", "/data/input/dl1", "--source-version", "LAYOUT_V1",
-        "--max-asset-memory-mb", "<MB>", "--out", "/data/assets/target"]),
+    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "data/input/hotspot/QA4_R00",
+        "--numeric-data-dir", "data/imported/reference", "--condition-assignment", "assignment_reference.json",
+        "--cnt-from-dl1-root", "data/input/dl1", "--source-version", "LAYOUT_V1",
+        "--max-asset-memory-mb", "<MB>", "--out", "data/assets/reference"]),
+    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "data/input/hotspot/QA4_T00",
+        "--numeric-data-dir", "data/imported/target", "--condition-assignment", "assignment_target.json",
+        "--cnt-from-dl1-root", "data/input/dl1", "--source-version", "LAYOUT_V1",
+        "--max-asset-memory-mb", "<MB>", "--out", "data/assets/target"]),
 ]
 ```
 
@@ -286,11 +286,11 @@ JOBS = [
 4회차 — 후보(DL2 직전):
 
 ```python
-JOBS = [("candidates", ["--config", "/data/real.yaml", "--min-count", "3", "--window-um", "20",
-                        "--merge-overlap", "0.5", "--out", "/data/candidates_k3"])]
+JOBS = [("candidates", ["--config", "real.yaml", "--min-count", "3", "--window-um", "20",
+                        "--merge-overlap", "0.5", "--out", "data/candidates_k3"])]
 ```
 
-`--min-count`, `--window-um`, `--merge-overlap`은 필수이며 값은 예시다. 결과의 `*_export/review_rois.json`, `*_index_export/review_rois.json`이 DL2 입력이다.
+`--min-count`, `--window-um`, `--merge-overlap`은 필수이며 값은 예시다. 결과의 `*_export/review_rois.json`, `*_index_export/review_rois.json`이 DL2 입력이다. `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 role 목록이다.
 
 ## 실제 자료
 

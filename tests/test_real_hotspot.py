@@ -553,3 +553,25 @@ def test_reversed_pair_with_same_class_is_collapsed_and_conflicts_are_rejected(t
                        ('id', ['AB,A,B,pixel,v1\n', 'AB,C,D,pixel,v1\n'])):
         with pytest.raises(NumericContractError, match='duplicate_or_conflicting_pair'):
             _pair_rows(tmp_path/name, rows)
+
+
+def test_role_policy_covers_pair_table_electrodes_not_seen_in_cases(tmp_path):
+    rows = ['AB,A,B,line,v1\n', 'CD,C,D,pixel,v1\n']
+    from simcompare.adapters.real_hotspot import configured_dataset
+    root, imported = tmp_path/'src', tmp_path/'imp'
+    _source(root)
+    import_hotspots(root, imported)
+    (imported/'pairs.csv').write_text('pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\n' + ''.join(rows),
+                                      encoding='utf-8')
+    assignment = {**_assignment(), 'electrode_role_policy': 'electrode_id'}
+    dataset = configured_dataset(imported, load_real_manifest(imported), assignment)
+    assert {(e.electrode_id, e.role) for c in dataset.cases for e in c.endpoints} == {('A', 'A'), ('B', 'B')}
+    assert dataset.provenance['electrode_roles_effective'] == {'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D'}
+    for bad, code in (({'electrode_role_policy': 'guess'}, 'invalid_real_electrode_role_policy'),
+                      ({'electrode_role_policy': 'electrode_id', 'electrode_roles': {'A': 'x'}},
+                       'electrode_roles_conflict_with_role_policy')):
+        with pytest.raises(NumericContractError, match=code):
+            configured_dataset(imported, load_real_manifest(imported), {**_assignment(), **bad})
+    no_table = {k: v for k, v in assignment.items() if k != 'pair_table_path'}
+    with pytest.raises(NumericContractError, match='electrode_role_policy_requires_pair_table'):
+        configured_dataset(imported, load_real_manifest(imported), no_table)

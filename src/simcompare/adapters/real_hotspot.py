@@ -508,10 +508,19 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                 'layer_stack')
     if not isinstance(assignment, dict) or any(not assignment.get(k) for k in required):
         raise NumericContractError('real_grouping_assignment_required')
-    allowed = set(required) | {'pair_table_path', 'electrode_roles', 'max_group_mask_cells',
+    allowed = set(required) | {'pair_table_path', 'electrode_roles', 'electrode_role_policy', 'max_group_mask_cells',
                                'max_materialized_source_cells', 'max_operation_bytes'}
     if set(assignment) - allowed:
         raise NumericContractError('unknown_real_grouping_assignment_field')
+    role_policy = assignment.get('electrode_role_policy')
+    if role_policy is not None:
+        # electrode_id: pair 표에 나오는 모든 전극이 자기 이름을 role로 받는다(아래 pair 표를 읽은 뒤 채운다).
+        if role_policy != 'electrode_id':
+            raise NumericContractError('invalid_real_electrode_role_policy', str(role_policy))
+        if 'electrode_roles' in assignment:
+            raise NumericContractError('electrode_roles_conflict_with_role_policy')
+        if not assignment.get('pair_table_path'):
+            raise NumericContractError('electrode_role_policy_requires_pair_table')
     role_map = assignment.get('electrode_roles', {})
     if (not isinstance(role_map, dict) or
             any(not isinstance(k, str) or not isinstance(v, str) or not v.strip() for k, v in role_map.items())):
@@ -553,6 +562,8 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                     raise NumericContractError('duplicate_or_conflicting_pair')
                 pairs[pair.electrode_ids] = pair
                 ids.add(pair.pair_id)
+    if role_policy == 'electrode_id':
+        role_map = {electrode: electrode for pair in pairs.values() for electrode in pair.electrode_ids}
     frame_spec = manifest['frame']
     if frame_spec.get('shape_yx') is None:
         raise NumericContractError('real_common_frame_shape_required')
@@ -733,6 +744,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),
                   'configured_assignment_hash': assignment_hash, 'input_hash': configured_hash,
                   'unresolved_same_name_cases': unresolved,
+                  'electrode_roles_effective': dict(sorted(role_map.items())),
                   'resource_estimate': {'estimated_peak_bytes': estimated_peak_bytes,
                     'max_operation_bytes': max_operation_bytes,
                     'method': 'retained_source + 14 masks per layer/diameter + 20 masks per case transient; eager, conservative'}}
