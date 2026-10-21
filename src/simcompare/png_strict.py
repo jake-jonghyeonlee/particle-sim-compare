@@ -9,6 +9,8 @@ modes require opaque exact black/white pixels, with no threshold.
 Modes I and I;16 from 16-bit PNG are deliberately no longer supported: depth
 16 is rejected before Pillow can downconvert. NPY integer support is unchanged.
 """
+from __future__ import annotations
+
 from contextlib import contextmanager
 from io import BytesIO
 import hashlib

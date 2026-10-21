@@ -4,6 +4,8 @@ PNG supports opaque exact 1/L/RGB/LA/RGBA/P after structural validation; 8-bit
 L keeps exact 0/1 as well as 0/255. I/I;16 (16-bit PNG) support is intentionally
 removed: png_strict rejects depth 16 before decoding. NPY reading is unchanged.
 """
+from __future__ import annotations
+
 from pathlib import Path, PureWindowsPath
 import hashlib
 

@@ -3,6 +3,8 @@
 Cells have constant nominal occupancy. Fractional window clipping is physical
 integration, not resizing, probability union, registration or causal attribution.
 """
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import replace
 

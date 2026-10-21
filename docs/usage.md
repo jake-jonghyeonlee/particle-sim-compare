@@ -219,7 +219,7 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
 
 ## Linux 서버 단일 파일 실행 (`bundles/simcompare_job.py`)
 
-서버에 `.py` 파일만 올릴 수 있고 명령줄 인자를 넘길 수 없을 때 쓴다. `scripts/build_single_file.py`가 `src/simcompare` 전체와 순수 Python PyYAML을 `.py` 하나로 묶은 것이며, 서버에는 numpy와 Pillow만 있으면 된다(pandas·pyarrow·zarr는 legacy 경로 전용이라 필요 없다).
+서버에 `.py` 파일만 올릴 수 있고 명령줄 인자를 넘길 수 없을 때 쓴다. `scripts/build_single_file.py`가 `src/simcompare` 전체와 순수 Python PyYAML을 `.py` 하나로 묶은 것이며, 서버에는 numpy와 Pillow만 있으면 된다(pandas·pyarrow·zarr는 legacy 경로 전용이라 필요 없다). 서버 Python은 3.8 이상이면 된다(3.8·3.9에서 테스트, 개발 기준은 3.11). 3.8의 오래된 Pillow에서는 보고서 PNG 바이트가 golden과 달라질 수 있다.
 
 ```bash
 uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --overwrite   # 소스를 고친 뒤 다시 만든다

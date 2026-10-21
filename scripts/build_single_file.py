@@ -208,7 +208,8 @@ def build(out, *, overwrite=False, jobs=None, log_file=None, header=None):
         text = text.replace(marker, "".join(f"# {line}\n" for line in header) + marker, 1)
     compile(text, str(out), "exec")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(text, encoding="utf-8", newline="\n")
+    with open(out, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
     return {"out": str(out), "bytes": out.stat().st_size, "modules": len(files), "yaml_version": yaml.__version__,
             "source_sha256": sha}
 

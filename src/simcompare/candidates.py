@@ -443,7 +443,8 @@ def run_candidates(cfg, out, *, min_count, window_um, merge_overlap, max_candida
 
 def _write_text(path, text, track):
     track(path)
-    Path(path).write_text(text, encoding='utf-8', newline='\n')
+    with open(path, 'w', encoding='utf-8', newline='\n') as handle:  # Path.write_text(newline=) is 3.10+
+        handle.write(text)
 
 
 def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, diameter_um):

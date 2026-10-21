@@ -308,7 +308,11 @@ def _replaced_map_directory(out):
         return None
     root = out.parent.resolve()
     candidate = root/directory
-    if candidate.is_symlink() or candidate.parent.is_symlink() or not candidate.resolve().is_relative_to(root):
+    if candidate.is_symlink() or candidate.parent.is_symlink():
+        return None
+    try:
+        candidate.resolve().relative_to(root)  # Path.is_relative_to는 3.9+
+    except ValueError:
         return None
     return candidate
 

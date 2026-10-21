@@ -425,7 +425,8 @@ def _provenance(item, decision, matches):
 
 def _write_text(path, text, track):
     track(path)
-    Path(path).write_text(text, encoding='utf-8', newline='\n')
+    with open(path, 'w', encoding='utf-8', newline='\n') as handle:  # Path.write_text(newline=) is 3.10+
+        handle.write(text)
 
 
 def _json_text(value):
