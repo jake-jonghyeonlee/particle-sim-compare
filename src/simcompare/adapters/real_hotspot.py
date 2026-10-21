@@ -13,6 +13,7 @@ import math
 import os
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import PurePosixPath
 from decimal import Decimal, InvalidOperation
@@ -125,6 +126,32 @@ def _csv_row_contract(row, diameter, mask_area, tolerance_value=None, difference
     return tolerance, difference, ('consistent' if abs(difference) <= tolerance else 'mismatch') if difference is not None else None
 
 
+MASK_ENCODING = 'npz_deflate_bool_v1'
+
+
+def _load_mask(asset: Path, record: dict, mmap: bool = False):
+    """Load one stored hotspot mask. Legacy imports (no mask_encoding) are .npy; new ones are one-member .npz."""
+    encoding, mask_path = record.get('mask_encoding'), str(record.get('mask_path'))
+    if encoding is None and 'mask_encoding' not in record:
+        if not mask_path.endswith('.npy'):
+            raise NumericContractError('real_mask_encoding_invalid', mask_path)
+        return np.load(asset, mmap_mode='r' if mmap else None, allow_pickle=False)
+    if encoding != MASK_ENCODING or not mask_path.endswith('.npz'):
+        raise NumericContractError('real_mask_encoding_invalid', mask_path)
+    try:
+        with np.load(asset, allow_pickle=False) as archive:
+            if list(archive.files) != ['mask']:
+                raise NumericContractError('real_mask_encoding_invalid', mask_path)
+            value = archive['mask']
+            if not isinstance(value, np.ndarray):
+                raise NumericContractError('real_mask_encoding_invalid', mask_path)
+            return value
+    except NumericContractError:
+        raise
+    except Exception as exc:
+        raise NumericContractError('real_mask_encoding_invalid', mask_path) from exc
+
+
 def _read_gray(path: Path, relative_path: str):
     return read_gray_hotspot(path, relative_path, return_sha256=True)
 
@@ -177,6 +204,7 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
         assets = staging / 'assets'
         assets.mkdir()
         cases, diagnostics, file_index = [], [], {}
+        asset_bytes = 0
         common_crop_shape = None
         expected_set = set(expected or [])
         for index, case_dir in enumerate(found):
@@ -263,11 +291,12 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                     mask, source_sha256 = _read_gray(image_path, raw_rel)
                     if case_crop_shape is not None and mask.shape != case_crop_shape:
                         raise NumericContractError('hotspot_crop_shape_mismatch', f'{raw_rel}:{mask.shape}!={case_crop_shape}')
-                    mask_path = Path('assets') / f'{index:05d}_{diameter:02d}.npy'
-                    np.save(staging / mask_path, mask)
+                    mask_path = Path('assets') / f'{index:05d}_{diameter:02d}.npz'
+                    np.savez_compressed(staging / mask_path, mask=mask)
+                    asset_bytes += (staging / mask_path).stat().st_size
                     count = int(np.count_nonzero(mask))
                     area = count * 0.01
-                    record.update(input_status='observed', mask_path=mask_path.as_posix(),
+                    record.update(input_status='observed', mask_path=mask_path.as_posix(), mask_encoding=MASK_ENCODING,
                                   mask_sha256=_sha(staging / mask_path), source_path=raw_rel,
                                   source_sha256=source_sha256, occupied_pixels=count, png_area_um2=area,
                                   mask_shape_yx=list(mask.shape),
@@ -321,6 +350,7 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
         manifest['manifest_hash_recipe'] = 'sha256(canonical JSON before source_payload_hash; sort_keys, compact separators, UTF-8)'
         (staging / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
         os.replace(staging, out)
+        print(f'import-hotspots: wrote {asset_bytes} bytes of compressed mask assets ({MASK_ENCODING})', file=sys.stderr)
         return {'status': 'partial', 'manifest': str(out/'manifest.json'), 'cases': len(cases),
                 'diagnostics': len(diagnostics), 'is_synthetic': False, 'source_payload_hash': manifest['source_payload_hash']}
     except Exception:
@@ -454,7 +484,8 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
                 assets.add(record['mask_path'])
                 if _sha(asset) != record.get('mask_sha256'):
                     raise NumericContractError('real_mask_hash_mismatch', record['mask_path'])
-                mask = np.load(asset, allow_pickle=False, mmap_mode='r')
+                mask = None  # at most one mask alive at a time
+                mask = _load_mask(asset, record, mmap=True)
                 if mask.dtype != np.dtype(bool) or mask.ndim != 2 or (geometry_ok and list(mask.shape) != frame_shape):
                     raise NumericContractError('real_mask_binary_contract_mismatch', record['mask_path'])
                 if record.get('mask_shape_yx') != list(mask.shape):
@@ -462,13 +493,15 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
                 area = int(np.count_nonzero(mask)) * 0.01
                 if not isinstance(record.get('png_area_um2'), (int, float)) or not math.isfinite(record['png_area_um2']) or not math.isclose(area, record['png_area_um2'], rel_tol=0, abs_tol=1e-12):
                     raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
+                del mask
                 expected_csv_status = 'missing_diameter' if csv_row is None else derived_status
                 if csv_row is not None:
                     _csv_row_contract(csv_row, record['diameter_um'], area,
                                       record.get('area_tolerance_um2'), record.get('area_difference_um2'))
                 if record.get('csv_status') != expected_csv_status:
                     raise NumericContractError('real_csv_status_invariant_mismatch', record['mask_path'])
-            elif record.get('mask_path') is not None or record.get('mask_sha256') is not None:
+            elif (record.get('mask_path') is not None or record.get('mask_sha256') is not None
+                  or record.get('mask_encoding') is not None):
                 raise NumericContractError('invalid_missing_real_record', name)
             else:
                 expected_status = 'csv_only' if csv_row is not None else 'missing_both'
@@ -663,7 +696,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
             geometry_confirmed = raw_case.get('geometry_status') == 'confirmed'
             if source_record['input_status'] == 'observed' and geometry_confirmed:
                 asset = resolve_path(folder, source_record['mask_path'])
-                mask = np.load(asset, allow_pickle=False)
+                mask = _load_mask(asset, source_record)
                 if mask.dtype != np.dtype(bool) or mask.shape != shape:
                     raise NumericContractError('real_mask_shape_mismatch', raw_case['case_name'])
                 csv_area = source_record.get('csv_area')

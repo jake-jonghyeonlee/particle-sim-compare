@@ -115,7 +115,8 @@ def test_crop_frame_corner_and_non_square_shape(tmp_path):
     assert manifest['frame']['shape_yx'] == [1270, 1280]
     assert manifest['frame']['origin_xy_um'] == [50.0, 50.0]
     record = manifest['cases'][0]['records'][0]
-    mask = np.load(out/record['mask_path'])
+    with np.load(out/record['mask_path']) as arc:
+        mask = arc['mask']
     assert mask.shape == (1270, 1280) and mask[0, 0]
     assert record['png_area_um2'] == 0.01
 
@@ -275,7 +276,7 @@ def test_resealed_source_semantics_and_nonbinary_assets_rejected(tmp_path):
     manifest = json.loads(manifest_path.read_text())
     record = manifest['cases'][0]['records'][0]
     asset = valid/record['mask_path']
-    np.save(asset, np.array([[-7., 0.], [0., 0.]]))
+    np.savez_compressed(asset, mask=np.array([[-7., 0.], [0., 0.]]))
     record['mask_sha256'] = hashlib.sha256(asset.read_bytes()).hexdigest()
     payload = {k:v for k,v in manifest.items() if k not in ('source_payload_hash','manifest_hash_recipe')}
     manifest['source_payload_hash'] = hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
@@ -575,3 +576,230 @@ def test_role_policy_covers_pair_table_electrodes_not_seen_in_cases(tmp_path):
     no_table = {k: v for k, v in assignment.items() if k != 'pair_table_path'}
     with pytest.raises(NumericContractError, match='electrode_role_policy_requires_pair_table'):
         configured_dataset(imported, load_real_manifest(imported), no_table)
+
+
+def _first_record(manifest):
+    return next(r for c in manifest['cases'] for r in c['records'] if r['input_status'] == 'observed')
+
+
+def _lateral_import(tmp_path, name='imp'):
+    root = tmp_path/'source'
+    if not root.exists():
+        _source(root, shape=(1002, 1002))
+    out = tmp_path/name
+    import_hotspots(root, out)
+    return root, out
+
+
+def test_import_writes_compressed_npz_and_roundtrips(tmp_path):
+    root, out = _lateral_import(tmp_path)
+    assert not list((out/'assets').glob('*.npy'))
+    manifest = json.loads((out/'manifest.json').read_text())
+    observed = [r for c in manifest['cases'] for r in c['records'] if r['input_status'] == 'observed']
+    assert observed and all(r['mask_encoding'] == 'npz_deflate_bool_v1' and r['mask_path'].endswith('.npz') for r in observed)
+    assert all('mask_encoding' not in r for c in manifest['cases'] for r in c['records'] if r['input_status'] == 'missing')
+    loaded = load_real_manifest(out)
+    assert loaded['cases'][0]['records'][0]['png_area_um2'] == observed[0]['png_area_um2']
+    rec = _first_record(manifest)
+    with np.load(out/rec['mask_path'], allow_pickle=False) as arc:
+        stored = arc['mask']
+    assert stored.dtype == bool and stored.shape == (2, 2) and stored[0, 0] and np.count_nonzero(stored) == 1
+
+
+def test_legacy_npy_manifest_still_validates(tmp_path):
+    import hashlib
+    _, out = _lateral_import(tmp_path)
+    manifest = json.loads((out/'manifest.json').read_text())
+    for case in manifest['cases']:
+        for rec in case['records']:
+            if rec['input_status'] != 'observed':
+                continue
+            with np.load(out/rec['mask_path']) as arc:
+                mask = arc['mask']
+            old = out/rec['mask_path']
+            new = old.with_suffix('.npy')
+            np.save(new, mask)
+            old.unlink()
+            rec['mask_path'] = new.relative_to(out).as_posix()
+            rec['mask_sha256'] = hashlib.sha256(new.read_bytes()).hexdigest()
+            del rec['mask_encoding']
+    (out/'manifest.json').write_text(json.dumps(manifest))
+    _reseal_real_manifest(out, lambda m: None)
+    from simcompare.adapters.real_hotspot import configured_dataset
+    pairs_csv = 'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,v1\nCD,C,D,pixel,v1\n'
+    (out/'pairs.csv').write_text(pairs_csv, encoding='utf-8')
+    legacy = configured_dataset(out, load_real_manifest(out), _assignment())
+    assert legacy.cases
+    fresh = tmp_path/'fresh'
+    import_hotspots(tmp_path/'source', fresh)
+    (fresh/'pairs.csv').write_text(pairs_csv, encoding='utf-8')
+    current = configured_dataset(fresh, load_real_manifest(fresh), _assignment())
+    pairs = 0
+    for case_old, case_new in zip(legacy.cases, current.cases):
+        assert set(case_old.records) == set(case_new.records)
+        for diameter, rec_old in case_old.records.items():
+            old_mask, new_mask = rec_old.mask, case_new.records[diameter].mask
+            assert (old_mask is None) == (new_mask is None)
+            if old_mask is not None:
+                assert np.array_equal(old_mask, new_mask)
+                pairs += 1
+    assert pairs
+
+
+def _tamper_asset(tmp_path, mutate_asset=None, mutate_record=None, rename_to=None):
+    import hashlib
+    _, out = _lateral_import(tmp_path)
+    holder = {}
+
+    def change(manifest):
+        rec = _first_record(manifest)
+        asset = out/rec['mask_path']
+        if mutate_asset:
+            mutate_asset(asset)
+        if rename_to:
+            new = asset.with_suffix(rename_to)
+            asset.rename(new)
+            asset = new
+            rec['mask_path'] = new.relative_to(out).as_posix()
+        if mutate_record:
+            mutate_record(rec)
+        rec['mask_sha256'] = hashlib.sha256(asset.read_bytes()).hexdigest()
+    _reseal_real_manifest(out, change)
+    return out
+
+
+@pytest.mark.parametrize('kind,code', [
+    ('bad_encoding', 'real_mask_encoding_invalid'),
+    ('null_encoding', 'real_mask_encoding_invalid'),
+    ('suffix_mismatch', 'real_mask_encoding_invalid'),
+    ('extra_member', 'real_mask_encoding_invalid'),
+    ('missing_member', 'real_mask_encoding_invalid'),
+    ('non_bool', 'real_mask_binary_contract_mismatch'),
+])
+def test_tampered_mask_assets_rejected(tmp_path, kind, code):
+    if kind == 'bad_encoding':
+        out = _tamper_asset(tmp_path, mutate_record=lambda r: r.update(mask_encoding='gzip'))
+    elif kind == 'null_encoding':
+        out = _tamper_asset(tmp_path, mutate_record=lambda r: r.update(mask_encoding=None))
+    elif kind == 'suffix_mismatch':
+        out = _tamper_asset(tmp_path, rename_to='.npy')
+    elif kind == 'extra_member':
+        def extra(asset):
+            with np.load(asset) as arc:
+                mask = arc['mask']
+            np.savez_compressed(asset, mask=mask, other=mask)
+        out = _tamper_asset(tmp_path, mutate_asset=extra)
+    elif kind == 'missing_member':
+        def wrong(asset):
+            with np.load(asset) as arc:
+                mask = arc['mask']
+            np.savez_compressed(asset, notmask=mask)
+        out = _tamper_asset(tmp_path, mutate_asset=wrong)
+    else:
+        out = _tamper_asset(tmp_path, mutate_asset=lambda a: np.savez_compressed(a, mask=np.ones((2, 2), dtype=np.uint8)))
+    with pytest.raises(NumericContractError, match=code):
+        load_real_manifest(out)
+
+
+def test_npz_member_with_non_npy_bytes_rejected(tmp_path):
+    import zipfile
+    def corrupt(asset):
+        with zipfile.ZipFile(asset, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('mask.npy', b'this is not an npy payload')
+    out = _tamper_asset(tmp_path, mutate_asset=corrupt)
+    with pytest.raises(NumericContractError, match='real_mask_encoding_invalid'):
+        load_real_manifest(out)
+
+
+def test_npz_hash_mismatch_rejected(tmp_path):
+    _, out = _lateral_import(tmp_path)
+    rec = _first_record(json.loads((out/'manifest.json').read_text()))
+    with (out/rec['mask_path']).open('ab') as f:
+        f.write(b'x')
+    with pytest.raises(NumericContractError, match='real_mask_hash_mismatch'):
+        load_real_manifest(out)
+
+
+def test_missing_record_must_not_carry_mask_encoding(tmp_path):
+    _, out = _lateral_import(tmp_path)
+    def change(m):
+        rec = next(r for c in m['cases'] for r in c['records'] if r['input_status'] == 'missing')
+        rec['mask_encoding'] = 'npz_deflate_bool_v1'
+    _reseal_real_manifest(out, change)
+    with pytest.raises(NumericContractError, match='invalid_missing_real_record'):
+        load_real_manifest(out)
+
+
+def test_large_sparse_mask_compresses_below_one_percent(tmp_path):
+    root = tmp_path/'source'
+    folder = _source(root, shape=(5000, 5000))
+    big = np.zeros((4000, 4000), dtype=np.uint8)
+    big[1000:1100, 2000:2100] = 255
+    Image.fromarray(big).save(folder/'hotspot_lateral_short01.png')
+    out = tmp_path/'imp'
+    import_hotspots(root, out)
+    sizes = [p.stat().st_size for p in (out/'assets').glob('*.npz')]
+    assert sizes and max(sizes) < 0.01 * 16_000_000
+
+
+def test_enospc_during_save_cleans_staging_and_surfaces_error(tmp_path, monkeypatch):
+    import errno
+    root = tmp_path/'source'
+    _source(root, shape=(1002, 1002))
+    def boom(*args, **kwargs):
+        raise OSError(errno.ENOSPC, 'No space left on device')
+    monkeypatch.setattr(np, 'savez_compressed', boom)
+    out = tmp_path/'imp'
+    with pytest.raises(OSError) as info:
+        import_hotspots(root, out)
+    assert info.value.errno == errno.ENOSPC
+    assert not out.exists()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith('imp.tmp-')]
+
+
+def test_enospc_after_partial_second_asset_cleans_staging(tmp_path, monkeypatch):
+    import errno
+    root = tmp_path/'source'
+    _source(root, shape=(1002, 1002))
+    real, calls = np.savez_compressed, []
+
+    def flaky(file, *args, **kwargs):
+        calls.append(str(file))
+        if len(calls) == 1:
+            return real(file, *args, **kwargs)
+        Path(file).write_bytes(b'PK partial')
+        raise OSError(errno.ENOSPC, 'No space left on device')
+    monkeypatch.setattr(np, 'savez_compressed', flaky)
+    out = tmp_path/'imp'
+    with pytest.raises(OSError) as info:
+        import_hotspots(root, out)
+    assert info.value.errno == errno.ENOSPC
+    assert len(calls) == 2
+    assert not out.exists()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith('imp.tmp-')]
+
+
+def test_stage1_runner_logs_import_error(tmp_path):
+    runner_src = Path(__file__).resolve().parents[1]/'bundles/etx/simcompare_job_1_import_hotspots.py'
+    text = runner_src.read_text(encoding='utf-8')
+    root = tmp_path/'work'/'src'
+    _source(root, shape=(1002, 1002))
+    work = tmp_path/'work'
+    start, end = text.index('JOBS = ['), text.index('LOG_FILE = ')
+    jobs = "JOBS = [('import-hotspots', ['--root', 'src', '--out', 'imp'])]\n"
+    runner = work/'runner.py'
+    runner.write_text(text[:start] + jobs + text[end:], encoding='utf-8')
+    hook = tmp_path/'hook'
+    hook.mkdir()
+    (hook/'sitecustomize.py').write_text(
+        "import errno, numpy as np\n"
+        "def boom(*a, **k):\n    raise OSError(errno.ENOSPC, 'No space left on device')\n"
+        "np.savez_compressed = boom\n", encoding='utf-8')
+    import os
+    env = {**os.environ, 'PYTHONPATH': str(hook)}
+    result = subprocess.run([sys.executable, str(runner)], capture_output=True, text=True, env=env, cwd=str(tmp_path))
+    assert result.returncode != 0
+    log = (work/'runs/simcompare_1_import_hotspots.log').read_text(encoding='utf-8')
+    assert 'No space left on device' in log and 'No space left on device' in result.stderr
+    assert not (work/'imp'/'manifest.json').exists() and not (work/'imp'/'assets').exists()
+    assert not [p for p in work.iterdir() if p.name.startswith('imp.tmp-')]
