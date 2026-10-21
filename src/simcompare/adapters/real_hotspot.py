@@ -531,7 +531,16 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                 if not all(names) or names[0] == names[1]:
                     raise NumericContractError('invalid_pair_table_row')
                 pair = Pair(row['pair_id'], frozenset(names), row['class'], row['pair_table_version'])
-                if pair.electrode_ids in pairs or pair.pair_id in ids:
+                earlier = pairs.get(pair.electrode_ids)
+                if earlier is not None:
+                    # A-B와 B-A처럼 같은 조합이 다시 나오면 분류와 표 버전이 같을 때만 첫 행을 유지한다.
+                    if (earlier.classification, earlier.table_version) != (pair.classification, pair.table_version):
+                        raise NumericContractError('duplicate_or_conflicting_pair')
+                    if pair.pair_id in ids and pair.pair_id != earlier.pair_id:
+                        raise NumericContractError('duplicate_or_conflicting_pair')
+                    ids.add(pair.pair_id)
+                    continue
+                if pair.pair_id in ids:
                     raise NumericContractError('duplicate_or_conflicting_pair')
                 pairs[pair.electrode_ids] = pair
                 ids.add(pair.pair_id)

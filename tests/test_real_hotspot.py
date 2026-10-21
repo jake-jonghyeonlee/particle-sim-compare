@@ -521,3 +521,23 @@ def test_real_csv_header_variant_is_accepted_and_others_rejected(tmp_path):
     path.write_text('Size,Area\n1,0.01\n', encoding='utf-8')
     with pytest.raises(NumericContractError, match='invalid_real_csv_header'):
         import_hotspots(root, tmp_path/'imported2')
+
+
+def _pair_rows(tmp_path, rows):
+    from simcompare.adapters.real_hotspot import configured_dataset
+    root, imported = tmp_path/'src', tmp_path/'imp'
+    _source(root)
+    import_hotspots(root, imported)
+    header = 'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\n'
+    (imported/'pairs.csv').write_text(header + ''.join(rows), encoding='utf-8')
+    return configured_dataset(imported, load_real_manifest(imported), _assignment())
+
+
+def test_reversed_pair_with_same_class_is_collapsed_and_conflicts_are_rejected(tmp_path):
+    ok = ['AB,A,B,pixel,v1\n', 'BA,B,A,pixel,v1\n']
+    _pair_rows(tmp_path/'ok', ok)
+    for name, rows in (('class', ['AB,A,B,pixel,v1\n', 'BA,B,A,line,v1\n']),
+                       ('version', ['AB,A,B,pixel,v1\n', 'BA,B,A,pixel,v2\n']),
+                       ('id', ['AB,A,B,pixel,v1\n', 'AB,C,D,pixel,v1\n'])):
+        with pytest.raises(NumericContractError, match='duplicate_or_conflicting_pair'):
+            _pair_rows(tmp_path/name, rows)
