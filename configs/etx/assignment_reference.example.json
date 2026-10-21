@@ -1,0 +1,71 @@
+{
+  "product_id": "QA4_R00",
+  "design_version": "UNSPECIFIED",
+  "source_id": "QA4_R00_hotspot",
+  "process_step_id": "UNSPECIFIED",
+  "exposure_id": "UNSPECIFIED",
+  "unit_id": "UNSPECIFIED",
+  "layer_stack": [
+    {
+      "actual_layer": "BML",
+      "stack_order": 1,
+      "density_process_layer": "BML"
+    },
+    {
+      "actual_layer": "ACT",
+      "stack_order": 2,
+      "density_process_layer": "ACT"
+    },
+    {
+      "actual_layer": "GAT1",
+      "stack_order": 3,
+      "density_process_layer": "GAT1"
+    },
+    {
+      "actual_layer": "GATC",
+      "stack_order": 4,
+      "density_process_layer": "GATC"
+    },
+    {
+      "actual_layer": "GAT2",
+      "stack_order": 5,
+      "density_process_layer": "GAT2"
+    },
+    {
+      "actual_layer": "OACT",
+      "stack_order": 6,
+      "density_process_layer": "OACT"
+    },
+    {
+      "actual_layer": "GAT3",
+      "stack_order": 7,
+      "density_process_layer": "GAT3"
+    },
+    {
+      "actual_layer": "SD1",
+      "stack_order": 8,
+      "density_process_layer": "SD1"
+    },
+    {
+      "actual_layer": "SD2",
+      "stack_order": 9,
+      "density_process_layer": "SD2"
+    },
+    {
+      "actual_layer": "SD3",
+      "stack_order": 10,
+      "density_process_layer": "SD3"
+    },
+    {
+      "actual_layer": "PXL",
+      "stack_order": 11,
+      "density_process_layer": "PXL"
+    }
+  ],
+  "pair_table_path": "pairs.csv",
+  "max_materialized_source_cells": 20000000000,
+  "max_group_mask_cells": 5000000000,
+  "electrode_roles": {
+    "<ELECTRODE_ID>": "<ROLE>"
+  }
+}

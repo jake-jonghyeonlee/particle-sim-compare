@@ -164,7 +164,26 @@ def _sources():
     return files
 
 
-def build(out, *, overwrite=False):
+def _jobs_block(jobs):
+    """JOBS 리스트를 EDIT 블록에 넣을 파이썬 소스로 만든다. jobs는 (명령, [인자...], 주석 또는 None) 목록이다."""
+    lines = ["JOBS = ["]
+    for name, args, comment in jobs:
+        if comment:
+            lines.append(f"    # {comment}")
+        lines.append(f"    ({name!r}, [")
+        index = 0
+        while index < len(args):
+            # "--옵션 값"은 한 줄에 둔다.
+            pair = (args[index].startswith("--") and index + 1 < len(args) and not args[index + 1].startswith("--"))
+            chunk = args[index:index + 2] if pair else args[index:index + 1]
+            lines.append("        " + " ".join(f"{a!r}," for a in chunk))
+            index += len(chunk)
+        lines.append("    ]),")
+    lines.append("]")
+    return "\n".join(lines) + "\n"
+
+
+def build(out, *, overwrite=False, jobs=None, log_file=None, header=None):
     out = Path(out)
     if out.exists() and not overwrite:
         raise FileExistsError(f"refusing to overwrite {out}; pass --overwrite or choose a new path")
@@ -177,6 +196,16 @@ def build(out, *, overwrite=False):
     sha = hashlib.sha256(json.dumps({n: e["sha256"] for n, e in files.items()}, sort_keys=True).encode()).hexdigest()
     lines = "\n".join(f'    "{packed[i:i + 100]}"' for i in range(0, len(packed), 100))
     text = TEMPLATE.replace("@@SHA@@", sha).replace("@@PAYLOAD@@", lines)
+    if jobs is not None:
+        start, end = text.index("JOBS = ["), text.index("LOG_FILE = ")
+        text = text[:start] + _jobs_block(jobs) + text[end:]
+    if log_file is not None:
+        start = text.index("LOG_FILE = ")
+        end = text.index("\n", start)
+        text = text[:start] + f"LOG_FILE = {log_file!r}   # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None" + text[end:]
+    if header:
+        marker = "# ============================== EDIT BELOW"
+        text = text.replace(marker, "".join(f"# {line}\n" for line in header) + marker, 1)
     compile(text, str(out), "exec")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8", newline="\n")

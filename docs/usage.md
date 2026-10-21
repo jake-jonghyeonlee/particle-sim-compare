@@ -233,6 +233,8 @@ uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --ove
 
 ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU 계산이라 GPU를 쓰지 않으며, 큰 RAM 때문에 이 서버를 쓴다. 패키지를 설치하지 않고 위의 `bundles/simcompare_job.py` 하나만 올려 실행한다(서버에 numpy·Pillow 필요, DL1 환경에 있음). 실행기는 명령만 실행하고 파일 복사·config 수정은 하지 않으므로, 아래처럼 회차를 나눠 각 회차 사이에 사람이 준비 작업을 한다. 경로는 예시이며 서버 기준 절대 경로로 바꾼다. 실제 데이터 전체 흐름은 ETX에서 아직 검증되지 않았다.
 
+회차별 실행 파일은 `bundles/etx/simcompare_job_<회차>_*.py`, 회차별 설정 예시는 `configs/etx/`(`real.stage2.example.yaml`, `real.stage4.example.yaml`, `assignment_<side>.example.json`)에 있다. 대응표는 [`configs/etx/README.md`](../configs/etx/README.md). 소스를 고치면 `uv run python scripts/build_etx_stage_runners.py --overwrite`로 다시 만든다.
+
 준비: hotspot 입력 폴더(모델 폴더 `QA4_R00`, `QA4_T00` 아래 `<case>/images/...`, `<case>/result/<불량명>.csv`)와 DL1 PNG 폴더를 서버에 둔다. `git pull` 후 `bundles/simcompare_job.py`를 복사해 `JOBS`, `LOG_FILE`을 고친다. 회차마다 `JOBS`만 바꿔 다시 실행한다. 출력 폴더(`--out`)는 매번 새 경로여야 한다.
 
 1회차 — hotspot import (마스크를 한 장씩 처리하므로 메모리 문제 없음):
