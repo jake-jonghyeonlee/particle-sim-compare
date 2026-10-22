@@ -293,41 +293,55 @@ def test_label_pattern_budget_enters_the_estimate():
 # ---- stage 4 / stage 6 admission guards ------------------------------------------------------------
 
 def _stage4_estimate(dataset):
+    """The admission estimate (scan + accumulation of the most populated layer; packed representatives, counts kept)."""
     cells = next(iter(dataset.frames.values())).valid.size
     layers = {}
     for case in dataset.cases:
-        layers.setdefault(case.analysis_layer, []).append(case)
-    peak = 0
-    for cases in layers.values():
-        electrodes = {ep.electrode_id for c in cases for ep in c.endpoints}
-        peak = max(peak, (len(cases) + 2 * len(electrodes)) * cells + 16 * cells)
-    return peak + 2 * len(layers) * 8 * cells
+        layers[case.analysis_layer] = layers.get(case.analysis_layer, 0) + 1
+    return real_hotspot.estimate_stage_map_admission(cells, list(layers.values()), len(layers))
+
+
+def _traced(func):
+    import tracemalloc
+    tracemalloc.start()
+    try:
+        outcome = func()
+        return outcome, tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
 
 
 def test_stage4_guard_fails_fast_before_masks_are_loaded(crowded, monkeypatch):
-    area = _dataset(crowded, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
-    limit = area.provenance['resource_estimate']['estimated_peak_bytes']
-    dataset = _dataset(crowded, max_operation_bytes=limit, max_bucket_output_entries=100, max_label_pattern_entries=100)   # stage 2 fits exactly
+    dataset = _dataset(crowded, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
     expected = _stage4_estimate(dataset)
-    assert expected > limit            # 16 cases x 160,000 cells: the map needs more than compare
+    limit = expected - 1                                                  # one byte below the admission estimate
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = limit   # stage 2 was admitted with a larger limit
     monkeypatch.setattr(real_hotspot, '_load_mask', lambda *a, **k: pytest.fail('stage 4 guard must precede loading'))
     with pytest.raises(NumericContractError) as caught:
         compute_electrode_maps(dataset, diameter_um=5)
     assert caught.value.code == 'oversized_real_operation'
     assert str(caught.value) == (f'oversized_real_operation: electrode-map: estimated {expected} bytes exceed limit '
-                                 f'{limit}; {real_hotspot.OPERATION_REMEDY}')
-    assert 'streaming support for this stage is pending' in str(caught.value)
+                                 f'{limit}; {real_hotspot.STAGE4_REMEDY}')
+    assert 'streaming support' not in str(caught.value)
 
 
-def test_stage4_guard_passes_within_limit(crowded):
-    dataset = _dataset(crowded, max_operation_bytes=_stage4_estimate(_dataset(crowded)) , max_bucket_output_entries=100, max_label_pattern_entries=100)
+def test_stage4_guard_passes_at_the_estimate_and_bounds_the_traced_peak(crowded):
+    dataset = _dataset(crowded, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
+    expected = _stage4_estimate(dataset)
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = expected
     guard_stage_map('electrode-map', dataset)
-    assert compute_electrode_maps(dataset, diameter_um=5).layers
+    maps, peak = _traced(lambda: compute_electrode_maps(dataset, diameter_um=5))
+    assert maps.layers and peak <= expected                                # exactly the estimate is enough, and a true bound
+    assert peak < 0.8 * expected                                           # ... without being absurdly loose
 
 
 def _stage6_parts(dataset):
     profile = real_hotspot._dataset_profile(dataset)
-    return estimate_area_bytes(profile[0], profile[1], profile[2], profile[4], real_hotspot.STAGE6_TOP_BUCKETS, profile[6])
+    parts = estimate_area_bytes(profile[0], profile[1], profile[2], profile[4], real_hotspot.STAGE6_TOP_BUCKETS, profile[6])
+    # what stage 6 holds per model while it works: the AreaResult (masks + output + result share of the records) and the dataset
+    parts['held'] = (parts['retained'] + profile[2] * (real_hotspot.STAGE6_RESULT_RECORD_BYTES + real_hotspot.STAGE6_DATASET_RECORD_BYTES)
+                     + real_hotspot.STAGE6_FIXED_BYTES)
+    return parts
 
 
 def test_stage6_guard_counts_both_models(wide, monkeypatch):
@@ -335,32 +349,38 @@ def test_stage6_guard_counts_both_models(wide, monkeypatch):
     limit = one.provenance['resource_estimate']['components']['total']     # one model (stage 2) fits exactly ...
     dataset = _dataset(wide, max_operation_bytes=limit, max_bucket_output_entries=100, max_label_pattern_entries=100)
     single = _stage6_parts(dataset)
-    expected = 2 * (single['retained'] + single['payload']) + single['transient']
+    expected = 2 * single['held'] + single['transient']
     assert expected > limit                                       # ... two models together do not
     monkeypatch.setattr(real_hotspot, '_load_mask', lambda *a, **k: pytest.fail('stage 6 guard must precede loading'))
     with pytest.raises(NumericContractError) as caught:
         compute_local_delta([], dataset, dataset, window_sizes_um=[10])
     assert str(caught.value) == (f'oversized_real_operation: compare-windows: estimated {expected} bytes exceed '
-                                 f'limit {limit}; {real_hotspot.OPERATION_REMEDY}')
+                                 f'limit {limit} (0 ready and 0 blocked pairs x 1 window sizes x 32 diameters); '
+                                 f'{real_hotspot.STAGE6_REMEDY}')
 
 
-def test_stage6_guard_includes_layout_masks(wide):
+def test_stage6_guard_layout_term_is_bounded_not_per_case(wide):
+    """B3: the page keeps a bounded layout cache, so the layout charge no longer grows with the number of cases."""
     probe = _dataset(wide, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
     parts = _stage6_parts(probe)
-    areas_only = 2 * (parts['retained'] + parts['payload']) + parts['transient']
+    areas_only = 2 * parts['held'] + parts['transient']
     dataset = _dataset(wide, max_operation_bytes=areas_only, max_bucket_output_entries=100, max_label_pattern_entries=100)
     guard_stage_compare_windows('compare-windows', dataset, dataset)                         # areas alone fit
     cfg = {'reference': {'asset_manifest': {'path': 'x'}}, 'target': {'asset_manifest': {'path': 'x'}}}
-    layouts = len(dataset.cases) * 2 * 1400 * 1400 * 2
-    with pytest.raises(NumericContractError) as caught:
-        guard_stage_compare_windows('compare-windows', dataset, dataset, layouts_cfg=cfg)
-    message = str(caught.value)
-    assert message.startswith('oversized_real_operation: compare-windows: estimated ')
-    assert f'exceed limit {areas_only};' in message
-    estimated = int(message.split('estimated ')[1].split(' bytes')[0])
-    held = 2 * (parts['retained'] + parts['payload'])
-    assert estimated == held + layouts + 20 * 1400 * 1400
+    cells = 400 * 400
+    held = 2 * parts['held']
+    refs = 2 * len(dataset.cases) * real_hotspot.MAP_ASSET_ENTRY_BYTES
+    decode = (real_hotspot.LAYOUT_TRANSIENT_BYTES_PER_CELL + 4) * cells
+    found, _ = real_hotspot.stage_compare_windows_estimate(dataset, dataset, layouts_cfg=cfg, phase='report')
+    assert found['report'] == held + refs + decode and found['rows'] == 0       # no pairs: no cache, no pinned overview
+    with pytest.raises(NumericContractError) as caught:                         # a limit below that refuses ...
+        dataset.provenance['resource_estimate']['max_operation_bytes'] = held + refs + decode - 1
+        guard_stage_compare_windows('compare-windows report', dataset, dataset, layouts_cfg=cfg, phase='report')
+    assert f"estimated {held + refs + decode} bytes exceed limit {held + refs + decode - 1}" in str(caught.value)
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = held + refs + decode      # ... exactly it passes
+    guard_stage_compare_windows('compare-windows report', dataset, dataset, layouts_cfg=cfg, phase='report')
     # sides without an asset_manifest hold no layouts
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = areas_only
     guard_stage_compare_windows('compare-windows', dataset, dataset, layouts_cfg={'reference': {}, 'target': {}})
 
 
@@ -430,19 +450,35 @@ def fragmented(tmp_path_factory):
     return _fixture(tmp_path_factory.mktemp('guard_fragmented'), cases=40, size=100, seed=4, shared=1)
 
 
-def _components_count(dataset):
-    maps = compute_electrode_maps(dataset, diameter_um=5, min_count=1)
-    return sum(len(layer.regions) for layer in maps.layers)
+def _phase_estimates(config, monkeypatch, mask=None, min_count=1):
+    """Run the map with a huge limit and return {guard name: max estimate it computed} for the exact arguments the
+    run passed, plus the result: the tests below then place the limit relative to these true figures."""
+    seen = {}
+    dataset = _dataset(config, max_operation_bytes=1 << 34, max_bucket_output_entries=100, max_label_pattern_entries=100)
+    with monkeypatch.context() as patch:    # the spies and the substituted mask live only for this run
+        for name, estimate in (('guard_stage_map_counting', real_hotspot.estimate_stage_map_counting),
+                               ('guard_stage_map_regions', real_hotspot.estimate_stage_map_regions),
+                               ('guard_stage_map_links', real_hotspot.estimate_stage_map_regions)):
+            def spy(stage, dataset, _name=name, _estimate=estimate, _original=getattr(real_hotspot, name), **kwargs):
+                seen[_name] = max(seen.get(_name, 0), _estimate(real_hotspot._dataset_profile(dataset)[0], **kwargs))
+                return _original(stage, dataset, **kwargs)
+            patch.setattr(real_hotspot, name, spy)
+        if mask is not None:
+            patch.setattr(real_hotspot, '_load_mask', lambda *a, **k: mask.copy())
+        maps = compute_electrode_maps(dataset, diameter_um=5, min_count=min_count)
+    seen['admission'] = _stage4_estimate(dataset)
+    return seen, maps
 
 
 def test_stage4_region_count_is_bounded_by_what_is_allocated(fragmented, monkeypatch):
-    big = _dataset(fragmented, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
-    regions = _components_count(big)
+    seen, maps = _phase_estimates(fragmented, monkeypatch)
+    regions = sum(len(layer.regions) for layer in maps.layers)
     assert regions > 32                                       # the old fixed allowance of 32 regions is exceeded
-    cells = next(iter(big.frames.values())).valid.size
-    admission = _stage4_estimate(big)                         # what the admission guard prices (no region guess)
+    cells = next(iter(maps.layers[0].frame.valid.shape)) * maps.layers[0].frame.valid.shape[1]
+    limit = seen['guard_stage_map_regions'] - 1               # admission and the count prepass fit, the regions do not
+    assert max(seen['admission'], seen['guard_stage_map_counting']) <= limit
     dataset = _dataset(fragmented, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
-    dataset.provenance['resource_estimate']['max_operation_bytes'] = admission   # stage 2 was admitted with a larger limit
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = limit
     guard_stage_map('electrode-map', dataset)                 # admission passes ...
     import simcompare.electrode_map as electrode_map
     monkeypatch.setattr(electrode_map, '_components',
@@ -452,17 +488,22 @@ def test_stage4_region_count_is_bounded_by_what_is_allocated(fragmented, monkeyp
     assert caught.value.code == 'oversized_real_operation'
     message = str(caught.value)
     assert 'stage-4 regions' in message and f'{regions} regions' in message and f'of {cells} cells' in message
-    assert f'exceed limit {admission};' in message
+    assert f'exceed limit {limit};' in message and f'estimated {limit + 1} bytes' in message
     # without region selection (min_count=None) nothing is allocated and the map still computes
     assert compute_electrode_maps(dataset, diameter_um=5).layers
 
 
-def test_stage4_region_bound_passes_when_the_regions_fit(fragmented):
+def test_stage4_region_bound_passes_when_the_regions_fit(fragmented, monkeypatch):
+    seen, maps = _phase_estimates(fragmented, monkeypatch)
+    assert sum(len(layer.regions) for layer in maps.layers) > 32
+    limit = max(seen.values())
     dataset = _dataset(fragmented, max_operation_bytes=1 << 30, max_bucket_output_entries=100, max_label_pattern_entries=100)
-    assert _components_count(dataset) > 32
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = limit      # exactly the largest estimate is enough
+    result, peak = _traced(lambda: compute_electrode_maps(dataset, diameter_um=5, min_count=1))
+    assert sum(len(layer.regions) for layer in result.layers) > 32 and peak <= limit
 
 
-# ---- B2: the component count and the region construction are priced before they allocate -----------------
+# ---- B2: the component count, the region construction and every region's links are priced before they allocate ----
 @pytest.fixture(scope='module')
 def dense(tmp_path_factory):
     # 1 case x 2 electrodes on a 400 x 400 frame, every cell set at 5 um: one region of 160,000 cells at count >= 1.
@@ -489,43 +530,58 @@ def _dense_run(config, limit, monkeypatch, mask=None):
         tracemalloc.stop()
 
 
-def _dense_estimates(cells=160_000):
-    kwargs = dict(layers_done=1, layer_cases=1, layer_electrodes=2)
-    counting = real_hotspot.estimate_stage_map_counting(cells, regions_done=0, runs=400, **kwargs)
-    regions = real_hotspot.estimate_stage_map_regions(cells, regions=1, runs=400, largest_area=cells, largest_runs=400, **kwargs)
-    return counting, regions
-
-
 def test_stage4_dense_region_fails_fast_below_the_true_peak(dense, monkeypatch):
-    counting, regions = _dense_estimates()
-    admission = _stage4_estimate(_dataset(dense, max_operation_bytes=1 << 30))
-    assert admission < counting < regions                      # the old admission (5.9 MB) knew nothing of the region build
+    seen, _ = _phase_estimates(dense, monkeypatch, np.ones((400, 400), bool))
+    regions = seen['guard_stage_map_regions']
     limit = 16 * 1024 * 1024                                   # reviewer's budget: old code peaked at 39.8 MB before failing
-    assert admission < limit < regions
+    assert max(seen['admission'], seen['guard_stage_map_counting']) < limit < regions
+    import simcompare.electrode_map as electrode_map
+    monkeypatch.setattr(electrode_map, '_components',
+                        lambda *a, **k: pytest.fail('region mask / id payload built before the bound'))
     outcome, peak = _dense_run(dense, limit, monkeypatch)
     assert isinstance(outcome, NumericContractError) and outcome.code == 'oversized_real_operation'
     assert 'stage-4 regions: 1 regions of 160000 cells' in str(outcome) and f'estimated {regions} bytes' in str(outcome)
     assert peak <= limit                                       # the 22 MB id payload / region mask was never allocated
 
 
-def test_stage4_count_prepass_is_priced_before_the_labels_exist(dense, monkeypatch):
-    counting, regions = _dense_estimates()
-    limit = counting - 1                                       # admission and the id payload are not the reason to refuse
-    assert _stage4_estimate(_dataset(dense, max_operation_bytes=1 << 30)) <= limit
+def test_stage4_links_are_priced_before_any_window_or_measurement(dense, monkeypatch):
+    seen, _ = _phase_estimates(dense, monkeypatch, np.ones((400, 400), bool))
+    links = seen['guard_stage_map_links']
+    assert links > seen['guard_stage_map_regions']             # one link is charged on top of the region figure
     import simcompare.electrode_map as electrode_map
-    monkeypatch.setattr(electrode_map, '_label_runs', lambda *a, **k: pytest.fail('labels allocated before the prepass was priced'))
-    outcome, peak = _dense_run(dense, limit, monkeypatch)
+    monkeypatch.setattr(electrode_map, '_region_windows', lambda *a, **k: pytest.fail('window objects built before the bound'))
+    monkeypatch.setattr(electrode_map, 'measure_union', lambda *a, **k: pytest.fail('measure_union ran before the bound'))
+    outcome, peak = _dense_run(dense, links - 1, monkeypatch)
     assert isinstance(outcome, NumericContractError) and outcome.code == 'oversized_real_operation'
-    assert 'stage-4 component count: 400 runs of 160000 cells' in str(outcome) and f'estimated {counting} bytes' in str(outcome)
-    assert peak <= limit
+    assert 'stage-4 links: 1 links in 1 regions of 160000 cells' in str(outcome) and f'estimated {links} bytes' in str(outcome)
+    assert peak <= links - 1
 
 
-def test_stage4_dense_region_succeeds_above_the_estimate_within_it(dense, monkeypatch):
-    counting, regions = _dense_estimates()
-    outcome, peak = _dense_run(dense, max(counting, regions), monkeypatch)      # exactly the estimate is enough
+def test_stage4_dense_region_succeeds_at_the_estimate_and_it_bounds_the_peak(dense, monkeypatch):
+    seen, _ = _phase_estimates(dense, monkeypatch, np.ones((400, 400), bool))
+    estimate = max(seen.values())
+    outcome, peak = _dense_run(dense, estimate, monkeypatch)                   # exactly the estimate is enough
     assert not isinstance(outcome, Exception)
     assert [len(layer.regions) for layer in outcome.layers] == [1] and outcome.layers[0].regions[0].area_px == 160_000
-    assert peak <= max(counting, regions)                      # the estimate is a true upper bound of the traced peak
+    assert peak <= estimate                                    # the estimate is a true upper bound of the traced peak
+    assert estimate < 4 * peak                                 # ... and not an absurd one
+
+
+def test_stage4_count_and_link_guards_use_the_state_they_are_given(dense):
+    """The count prepass and the link bound grow with the links, regions and reserved bytes already held."""
+    dataset = _dataset(dense, max_operation_bytes=1 << 30)
+    cells = 160_000
+    kwargs = dict(layers_done=1, layer_cases=1, layer_electrodes=2)
+    base = real_hotspot.estimate_stage_map_counting(cells, regions_done=0, runs=400, **kwargs)
+    more = real_hotspot.estimate_stage_map_counting(cells, regions_done=0, runs=400, links_done=1000, reserved=777, **kwargs)
+    assert more - base == 1000 * real_hotspot.MAP_LINK_BYTES + 777
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = more - 1
+    with pytest.raises(NumericContractError, match='stage-4 component count: 400 runs of 160000 cells'):
+        real_hotspot.guard_stage_map_counting('electrode-map', dataset, regions_done=0, runs=400, links_done=1000,
+                                              reserved=777, **kwargs)
+    dataset.provenance['resource_estimate']['max_operation_bytes'] = more
+    real_hotspot.guard_stage_map_counting('electrode-map', dataset, regions_done=0, runs=400, links_done=1000,
+                                          reserved=777, **kwargs)
 
 
 # ---- RA3 B2: a connected comb has few cells per run; the window objects of its one region are priced too --------
@@ -541,14 +597,6 @@ def _comb_mask():
     return active
 
 
-def _comb_estimates():
-    kwargs = dict(layers_done=1, layer_cases=1, layer_electrodes=2)
-    counting = real_hotspot.estimate_stage_map_counting(40_000, regions_done=0, runs=19_901, **kwargs)
-    regions = real_hotspot.estimate_stage_map_regions(40_000, regions=1, runs=19_901, largest_area=20_100,
-                                                      largest_runs=19_901, **kwargs)
-    return counting, regions
-
-
 def test_comb_mask_is_one_region_with_one_run_per_cell_pair():
     from simcompare.electrode_map import _component_run_counts, _component_sizes, _label_runs, _run_counts
     active = _comb_mask()
@@ -558,25 +606,25 @@ def test_comb_mask_is_one_region_with_one_run_per_cell_pair():
 
 
 def test_stage4_comb_region_succeeds_at_the_estimate_within_it(comb_fixture, monkeypatch):
-    counting, regions = _comb_estimates()
-    admission = _stage4_estimate(_dataset(comb_fixture, max_operation_bytes=1 << 30))
-    assert admission < counting < regions
-    assert regions > 6_528_016                                 # the estimate RA3 measured at 11.25 MB of traced peak
-    outcome, peak = _dense_run(comb_fixture, regions, monkeypatch, _comb_mask())
+    seen, _ = _phase_estimates(comb_fixture, monkeypatch, _comb_mask())
+    estimate = max(seen.values())
+    assert seen['guard_stage_map_links'] > seen['guard_stage_map_regions'] > 6_528_016   # RA3 measured 11.25 MB of traced peak
+    outcome, peak = _dense_run(comb_fixture, estimate, monkeypatch, _comb_mask())
     assert not isinstance(outcome, Exception)
     assert [len(layer.regions) for layer in outcome.layers] == [1] and outcome.layers[0].regions[0].area_px == 20_100
-    assert 6_528_016 < peak <= regions                         # the old price was below the true peak; the new one covers it
+    assert 6_528_016 < peak <= estimate                        # the old price was below the true peak; the new one covers it
 
 
 def test_stage4_comb_region_one_byte_below_fails_before_any_window_is_built(comb_fixture, monkeypatch):
-    counting, regions = _comb_estimates()
+    seen, _ = _phase_estimates(comb_fixture, monkeypatch, _comb_mask())
+    links = seen['guard_stage_map_links']
     import simcompare.electrode_map as electrode_map
     monkeypatch.setattr(electrode_map, '_region_windows', lambda *a, **k: pytest.fail('window objects built before the bound'))
     monkeypatch.setattr(electrode_map, 'measure_union', lambda *a, **k: pytest.fail('measure_union ran before the bound'))
-    outcome, peak = _dense_run(comb_fixture, regions - 1, monkeypatch, _comb_mask())
+    outcome, peak = _dense_run(comb_fixture, links - 1, monkeypatch, _comb_mask())
     assert isinstance(outcome, NumericContractError) and outcome.code == 'oversized_real_operation'
-    assert 'stage-4 regions: 1 regions of 40000 cells' in str(outcome) and f'estimated {regions} bytes' in str(outcome)
-    assert peak <= regions - 1
+    assert 'stage-4 links: 1 links in 1 regions of 40000 cells' in str(outcome) and f'estimated {links} bytes' in str(outcome)
+    assert peak <= links - 1
 
 
 # ---- A4: env-gated hash / decode counters used by the benchmark ----------------------------------------

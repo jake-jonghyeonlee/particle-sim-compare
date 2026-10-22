@@ -1,0 +1,409 @@
+{
+ "cases": 1682,
+ "size": 1262,
+ "shapes": {
+  "reference": [
+   1262,
+   1262
+  ],
+  "target": [
+   1262,
+   1262
+  ]
+ },
+ "profile": "centered",
+ "electrodes": "distinct",
+ "stages": "1-6",
+ "python": "/Users/jonghyeonlee/git/particle-sim-compare/.venv/bin/python",
+ "limits": {
+  "max_operation_bytes": 34359738368
+ },
+ "commands": [
+  {
+   "command": "import-hotspots reference",
+   "wall_seconds": 259.2,
+   "peak_rss_mib": 861.8,
+   "exit_code": 3,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 58870,
+    "sha256_bytes": 304994976,
+    "mask_decodes": 0
+   },
+   "output_bytes": 206584900,
+   "disk_after_bytes": 2482272929
+  },
+  {
+   "command": "import-hotspots target",
+   "wall_seconds": 260.5,
+   "peak_rss_mib": 854.4,
+   "exit_code": 3,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 58870,
+    "sha256_bytes": 305041385,
+    "mask_decodes": 0
+   },
+   "output_bytes": 206584781,
+   "disk_after_bytes": 2688857779
+  },
+  {
+   "command": "validate-data",
+   "wall_seconds": 141.1,
+   "peak_rss_mib": 1109.8,
+   "exit_code": 3,
+   "error_code": null,
+   "detail": "",
+   "io_counters": {
+    "sha256_files": 107650,
+    "sha256_bytes": 262844051,
+    "mask_decodes": 107648
+   },
+   "output_bytes": 151799398,
+   "disk_after_bytes": 2840790548
+  },
+  {
+   "command": "compare",
+   "wall_seconds": 812.4,
+   "peak_rss_mib": 3492.5,
+   "exit_code": 3,
+   "error_code": null,
+   "detail": "density_contract_unconfirmed,unit_area_basis_unconfirmed",
+   "io_counters": {
+    "sha256_files": 107650,
+    "sha256_bytes": 262844051,
+    "mask_decodes": 215296
+   },
+   "output_bytes": 487783864,
+   "disk_after_bytes": 3328574487,
+   "artefact_bytes": 51253484
+  },
+  {
+   "command": "import-electrode-assets reference",
+   "wall_seconds": 107.7,
+   "peak_rss_mib": 569.5,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 53825,
+    "sha256_bytes": 131422097,
+    "mask_decodes": 53824
+   },
+   "output_bytes": 22998205,
+   "disk_after_bytes": 3351624969,
+   "assets_files": 3364
+  },
+  {
+   "command": "import-electrode-assets target",
+   "wall_seconds": 107.0,
+   "peak_rss_mib": 568.7,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 53825,
+    "sha256_bytes": 131421954,
+    "mask_decodes": 53824
+   },
+   "output_bytes": 22998411,
+   "disk_after_bytes": 3397673862,
+   "assets_files": 3364
+  },
+  {
+   "command": "candidates",
+   "wall_seconds": 299.2,
+   "peak_rss_mib": 1215.9,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 218660,
+    "map_loads": 3364,
+    "asset_decodes": 6728,
+    "asset_memo_hits": 20184
+   },
+   "output_bytes": 30181797,
+   "disk_after_bytes": 3450855750
+  },
+  {
+   "command": "confirm-pairs P=50",
+   "wall_seconds": 213.2,
+   "peak_rss_mib": 885.3,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 215296
+   },
+   "output_bytes": 22345380,
+   "disk_after_bytes": 3476890403
+  },
+  {
+   "command": "confirm-pairs P=200",
+   "wall_seconds": 210.1,
+   "peak_rss_mib": 1246.6,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 215296
+   },
+   "output_bytes": 89624290,
+   "disk_after_bytes": 3566535396
+  },
+  {
+   "command": "compare-windows P=50 labelled artefact",
+   "wall_seconds": 323.2,
+   "peak_rss_mib": 1055.7,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 218496,
+    "mask_unpacks": 38406,
+    "mask_unpack_hits": 62094,
+    "layout_auth_reads": 6728,
+    "layout_decodes": 600
+   },
+   "output_bytes": 68553470,
+   "disk_after_bytes": 3635301964,
+   "checks": {
+    "pairs_in_file": 50,
+    "ready_pairs": 50,
+    "provenance_n_ready": 50,
+    "n_rows": 4800,
+    "rows_expected": 4800,
+    "named_pair_rows": 4800,
+    "jitter_rows": 4800,
+    "explained_present": true,
+    "status": "available",
+    "both_endpoint_pairs": 50
+   }
+  },
+  {
+   "command": "compare-windows P=50 stage5 artefact",
+   "wall_seconds": 295.4,
+   "peak_rss_mib": 817.3,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 215296,
+    "mask_unpacks": 19206,
+    "mask_unpack_hits": 31044,
+    "layout_auth_reads": 6728,
+    "layout_decodes": 118
+   },
+   "output_bytes": 30366584,
+   "disk_after_bytes": 3597115253,
+   "checks": {
+    "pairs_in_file": 25,
+    "ready_pairs": 25,
+    "provenance_n_ready": 25,
+    "n_rows": 2400,
+    "rows_expected": 2400,
+    "named_pair_rows": 0,
+    "jitter_rows": 2400,
+    "explained_present": true,
+    "status": "available",
+    "both_endpoint_pairs": 0
+   }
+  },
+  {
+   "command": "compare-windows P=200 labelled artefact",
+   "wall_seconds": 461.5,
+   "peak_rss_mib": 1225.5,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 228096,
+    "mask_unpacks": 153606,
+    "mask_unpack_hits": 248394,
+    "layout_auth_reads": 6728,
+    "layout_decodes": 2390
+   },
+   "output_bytes": 274019764,
+   "disk_after_bytes": 3840768611,
+   "checks": {
+    "pairs_in_file": 200,
+    "ready_pairs": 200,
+    "provenance_n_ready": 200,
+    "n_rows": 19200,
+    "rows_expected": 19200,
+    "named_pair_rows": 19200,
+    "jitter_rows": 19200,
+    "explained_present": true,
+    "status": "available",
+    "both_endpoint_pairs": 200
+   }
+  },
+  {
+   "command": "compare-windows P=200 stage5 artefact",
+   "wall_seconds": 346.3,
+   "peak_rss_mib": 870.6,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 215296,
+    "mask_unpacks": 76806,
+    "mask_unpack_hits": 124194,
+    "layout_auth_reads": 6728,
+    "layout_decodes": 598
+   },
+   "output_bytes": 121430435,
+   "disk_after_bytes": 3688179458,
+   "checks": {
+    "pairs_in_file": 100,
+    "ready_pairs": 100,
+    "provenance_n_ready": 100,
+    "n_rows": 9600,
+    "rows_expected": 9600,
+    "named_pair_rows": 0,
+    "jitter_rows": 9600,
+    "explained_present": true,
+    "status": "available",
+    "both_endpoint_pairs": 0
+   }
+  },
+  {
+   "command": "compare-windows P=200 labelled recompute",
+   "wall_seconds": 1100.2,
+   "peak_rss_mib": 3297.2,
+   "exit_code": 0,
+   "error_code": null,
+   "detail": null,
+   "io_counters": {
+    "sha256_files": 215298,
+    "sha256_bytes": 525555775,
+    "mask_decodes": 335744,
+    "mask_unpacks": 153606,
+    "mask_unpack_hits": 248394,
+    "layout_auth_reads": 6728,
+    "layout_decodes": 2390
+   },
+   "output_bytes": 274021205,
+   "disk_after_bytes": 3840770406,
+   "checks": {
+    "pairs_in_file": 200,
+    "ready_pairs": 200,
+    "provenance_n_ready": 200,
+    "n_rows": 19200,
+    "rows_expected": 19200,
+    "named_pair_rows": 19200,
+    "jitter_rows": 19200,
+    "explained_present": true,
+    "status": "available",
+    "both_endpoint_pairs": 200
+   }
+  }
+ ],
+ "generate_seconds": 46.8,
+ "input_bytes": 1929483535,
+ "imported_bytes": 413169819,
+ "disk_peak_bytes": 3840770406,
+ "stage4": {
+  "exit_code": 0,
+  "output_bytes": 30181797,
+  "exports": {
+   "reference_export": {
+    "rows": 1682,
+    "ready": 1682,
+    "bytes": 8354593
+   },
+   "reference_index_export": {
+    "rows": 1682,
+    "ready": 1682,
+    "bytes": 5811223
+   },
+   "target_export": {
+    "rows": 1682,
+    "ready": 1682,
+    "bytes": 8334406
+   },
+   "target_index_export": {
+    "rows": 1682,
+    "ready": 1682,
+    "bytes": 5811220
+   }
+  },
+  "funnel": {
+   "reference_to_target": {
+    "regions": 1,
+    "merged_queries": 1,
+    "after_max_candidates": 1,
+    "exported_ready": 1
+   },
+   "target_to_reference": {
+    "regions": 1,
+    "merged_queries": 1,
+    "after_max_candidates": 1,
+    "exported_ready": 1
+   }
+  }
+ },
+ "stage5": {
+  "queries": {
+   "reference_to_target": 1682,
+   "target_to_reference": 1682
+  },
+  "runs": {
+   "50": {
+    "accepted_decisions": 50,
+    "exit_code": 0,
+    "output_bytes": 22345380,
+    "pairs": 25,
+    "ready": 25,
+    "both_endpoints": 0
+   },
+   "200": {
+    "accepted_decisions": 200,
+    "exit_code": 0,
+    "output_bytes": 89624290,
+    "pairs": 100,
+    "ready": 100,
+    "both_endpoints": 0
+   }
+  }
+ },
+ "stage6": [],
+ "artefact_decodes": {
+  "artefact": [
+   218496,
+   215296,
+   228096,
+   215296
+  ],
+  "recompute": [
+   335744
+  ]
+ },
+ "total_command_seconds": 4937.0,
+ "wall_seconds_total": 5137.0,
+ "assertions_failed": [
+  "confirm-pairs P=50: 25 pairs (25 ready) for 50 accepted decisions",
+  "confirm-pairs P=200: 100 pairs (100 ready) for 200 accepted decisions"
+ ],
+ "warnings": [
+  "confirm-pairs P=50: 25 pairs (25 ready) for 50 accepted decisions",
+  "confirm-pairs P=200: 100 pairs (100 ready) for 200 accepted decisions"
+ ]
+}

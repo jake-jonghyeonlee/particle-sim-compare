@@ -5,15 +5,17 @@ G4 pending에는 crop 크기를 만들지 않는다. 기본 위치 출처는 사
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
 import numpy as np
 
-from .numeric_images import check_hash, read_binary, resolve_path
+from .numeric_images import MASK_SEMANTICS, check_hash, read_binary, resolve_path
 from .numeric_schema import CaseIdentity, Frame, NumericContractError, finite, text, require_same_frame, current_gate_decisions
 
 IDENTITY_FIELDS = tuple(CaseIdentity.__dataclass_fields__)
@@ -42,20 +44,72 @@ def _frame_payload(frame):
             'axis_order':frame.axis_order,'origin_convention':frame.origin_convention}
 
 
-def _asset(root, ref, frame, *, valid=False):
+class AssetMemo:
+    """Invocation-scoped, bounded record of assets that were already decoded and checked in this run.
+
+    Key: absolute resolved path + sha256 + value_semantics; value: (shape, sha256 of the decoded mask bytes), never an
+    array. A hit still resolves the path and re-hashes the file (a changed or missing file fails exactly as before);
+    only the PNG decode is skipped, which is deterministic for identical bytes. Every use re-checks the frame shape and,
+    for `valid`, equality with the frame's valid mask, so one asset may serve cases of different frames or roots."""
+
+    def __init__(self, max_entries=100_000):
+        self.max_entries = max_entries
+        self.entries = {}
+        self.decodes = self.hits = 0
+
+
+def _count_asset(kind):
+    from .adapters import real_hotspot
+    if real_hotspot.IO_COUNTERS is not None:     # benchmark counters: assets decoded / served from the memo
+        real_hotspot.IO_COUNTERS[kind] = real_hotspot.IO_COUNTERS.get(kind, 0) + 1
+
+
+def _mask_digest(mask):
+    return hashlib.sha256(mask.astype('uint8').tobytes()).hexdigest()
+
+
+def _read_asset(root, ref, memo):
+    """(shape, digest-of-the-decoded-mask-bytes-or-None-when-not-needed, mask-or-None); the mask only on a miss."""
+    semantics, expected = ref['value_semantics'], ref['sha256']
+    if memo is None or semantics not in MASK_SEMANTICS or not isinstance(expected, str):
+        mask = read_binary(root, ref['path'], sha256=expected, value_semantics=semantics)
+        return mask.shape, None, mask
+    path = resolve_path(root, ref['path'])
+    key = (str(path), expected, semantics)
+    entry = memo.entries.get(key)
+    if entry is not None:
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise NumericContractError('input_hash_mismatch', ref['path'])
+        memo.hits += 1
+        _count_asset('asset_memo_hits')
+        return entry[0], entry[1], None
+    mask = read_binary(root, ref['path'], sha256=expected, value_semantics=semantics)
+    memo.decodes += 1
+    _count_asset('asset_decodes')
+    if len(memo.entries) < memo.max_entries:
+        memo.entries[key] = (mask.shape, _mask_digest(mask))
+    return mask.shape, None, mask
+
+
+def _asset(root, ref, frame, *, valid=False, memo=None):
     if not isinstance(ref,dict) or not {'path','sha256','value_semantics','observed'} <= set(ref):
         raise NumericContractError('source_asset_reference_required')
     if ref['observed'] is not True:
         raise NumericContractError('source_asset_unobserved')
-    arr = read_binary(root,ref['path'],sha256=ref['sha256'],value_semantics=ref['value_semantics'])
-    if arr.shape != frame.shape_yx:
+    shape, digest, mask = _read_asset(root, ref, memo)
+    if shape != frame.shape_yx:
         raise NumericContractError('source_asset_frame_mismatch')
-    if valid and not np.array_equal(arr,frame.valid):
-        raise NumericContractError('source_valid_mismatch')
+    if valid:
+        if mask is not None:
+            same = np.array_equal(mask,frame.valid)
+        else:
+            same = digest == frame.valid_hash
+        if not same:
+            raise NumericContractError('source_valid_mismatch')
     return {k:ref[k] for k in ('path','sha256','value_semantics','observed')}
 
 
-def check_asset_manifest(dataset, root, reference):
+def check_asset_manifest(dataset, root, reference, memo=None):
     """최소 합성 원본 asset manifest 검증; 실제 source 형식 승인이 아니다.
 
     반환 mapping에는 원본 identity/frame/binding과 검증한 asset만 있다.
@@ -116,10 +170,10 @@ def check_asset_manifest(dataset, root, reference):
             for endpoint,entry in zip(eps,layouts):
                 if entry['endpoint'] != endpoint:
                     raise NumericContractError('source_asset_endpoint_binding_mismatch')
-                bound.append({'endpoint':endpoint,'asset':_asset(root,entry['asset'],frame)})
-            validated = {'layouts':bound,'valid':_asset(root,assets.get('valid'),frame,valid=True),
-                         'cnt':_asset(root,assets.get('cnt'),frame),
-                         'via':[_asset(root,entry,frame) for entry in assets.get('via',[])]}
+                bound.append({'endpoint':endpoint,'asset':_asset(root,entry['asset'],frame,memo=memo)})
+            validated = {'layouts':bound,'valid':_asset(root,assets.get('valid'),frame,valid=True,memo=memo),
+                         'cnt':_asset(root,assets.get('cnt'),frame,memo=memo),
+                         'via':[_asset(root,entry,frame,memo=memo) for entry in assets.get('via',[])]}
             result[key] = {'assets':validated,'reasons':[],'source_version':version}
         except (NumericContractError,OSError,ValueError,TypeError,KeyError) as exc:
             result[key] = {'assets':None,'reasons':['source_shape_required',getattr(exc,'code','malformed_source_asset')],
@@ -159,15 +213,113 @@ def _manual_case(dataset, request):
     return matches[0], reasons
 
 
+COVERAGE_LISTS = ('observed', 'missing', 'not_applicable', 'measurement_errors')
+SCHEMA_VERSION = 'review_roi_v1'
+_HOOKS = []
+
+
+@contextmanager
+def export_hooks(*, row_gate=None, asset_memo=None, reserved_bytes=0):
+    """Caller hooks for the export_review_rois calls made inside the block (candidates uses them through
+    pipeline._real_roi_export, which has no parameter for them).
+
+    row_gate(rows) -> int may turn ready rows into blocked ones BEFORE the file is written (the single write then carries
+    the gate's result; a non-zero return makes an 'available' export 'partial'); asset_memo is an AssetMemo shared by the
+    asset checks. The yielded dict receives the last export's `rows` and `payload` (everything but rows and
+    region_coverages), so the caller never has to re-read the file it just caused to be written.
+    """
+    state = {'row_gate': row_gate, 'asset_memo': asset_memo, 'reserved_bytes': reserved_bytes, 'rows': None, 'payload': None}
+    _HOOKS.append(state)
+    try:
+        yield state
+    finally:
+        _HOOKS.remove(state)
+
+
+def _json_stream(path, payload):
+    """Write payload exactly as json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)+'\\n' would, chunk by chunk,
+    to a temporary file that replaces `path` only when complete (no multi-GB string, no partial file on failure)."""
+    path = Path(path)
+    temporary = path.with_name(f'{path.name}.tmp-{os.getpid()}')
+    try:
+        with open(temporary, 'w', encoding='utf-8') as handle:
+            for chunk in json.JSONEncoder(ensure_ascii=False, indent=2, allow_nan=False).iterencode(payload):
+                handle.write(chunk)
+            handle.write('\n')
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def file_sha256(path, chunk=1 << 20):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(chunk), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def expand_region_coverages(payload):
+    """The full-identity (pre-reference) form of an export: every row's `provenance.coverage` carries the four identity lists
+    in place of `observed_ref` and the top-level `region_coverages` is dropped. Applied to a parsed slim export and dumped
+    with indent=2 it reproduces, byte for byte, what 7bcb07a wrote for the same run. Exports without references are returned
+    unchanged."""
+    shared = payload.get('region_coverages')
+    if not isinstance(shared, dict):
+        return payload
+    rows = []
+    for row in payload.get('rois', []):
+        coverage = ((row.get('provenance') or {}).get('coverage')) if isinstance(row, dict) else None
+        if isinstance(coverage, dict) and 'observed_ref' in coverage:
+            lists = shared[coverage['observed_ref']]
+            expanded = {k: lists[k] for k in COVERAGE_LISTS if k in lists}
+            expanded.update((k, v) for k, v in coverage.items() if k != 'observed_ref')
+            row = {**row, 'provenance': {**row['provenance'], 'coverage': expanded}}
+        rows.append(row)
+    return {k: (rows if k == 'rois' else v) for k, v in payload.items() if k != 'region_coverages'}
+
+
 def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
                        asset_manifest=None, producer_commit=None):
-    """설정에 명시한 layer region 및 manual 위치만 내보낸다. 학습/검색 호출 없음."""
+    """설정에 명시한 layer region 및 manual 위치만 내보낸다. 학습/검색 호출 없음.
+
+    region 행의 provenance.coverage는 case 식별 목록(observed/missing/not_applicable/measurement_errors) 대신
+    `observed_ref`만 갖고, 목록은 최상위 `region_coverages`에 한 번만 쓴다(행 수 x case 수로 커지는 중복 제거).
+    """
+    hooks = _HOOKS[-1] if _HOOKS else {}
     root = Path(source_root)
     selections = {} if selections is None else selections
     if not isinstance(selections,dict) or set(selections)-{'map_region_ids','manual'}:
         raise NumericContractError('invalid_roi_selection')
-    assets, manifest_reasons = check_asset_manifest(dataset,root,asset_manifest)
+    assets, manifest_reasons = check_asset_manifest(dataset,root,asset_manifest,memo=hooks.get('asset_memo'))
     rows, excluded = [], []
+    shared_coverages, coverage_refs, slim_coverages = {}, {}, {}
+
+    def region_coverage(region):
+        """The row form of the region's coverage: its identity lists replaced by one reference to a shared copy."""
+        coverage = region.coverage
+        if not any(k in coverage for k in COVERAGE_LISTS):
+            return coverage
+        if id(coverage) not in slim_coverages:
+            lists = {k: coverage[k] for k in COVERAGE_LISTS if k in coverage}
+            lists_key = tuple(id(v) for v in lists.values())
+            if lists_key not in coverage_refs:
+                text_form = json.dumps(lists, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+                coverage_refs[lists_key] = 'coverage_' + hashlib.sha256(text_form.encode()).hexdigest()[:24]
+                shared_coverages[coverage_refs[lists_key]] = lists
+            slim, placed = {}, False
+            for key, value in coverage.items():
+                if key in COVERAGE_LISTS:
+                    if not placed:
+                        slim['observed_ref'], placed = coverage_refs[lists_key], True
+                else:
+                    slim[key] = value
+            slim_coverages[id(coverage)] = slim
+        return slim_coverages[id(coverage)]
     def add(kind, case, center, region=None, request=None, reasons=()):
         reasons = set(reasons) | set(manifest_reasons)
         identity = asdict(case.identity) if case else {k:(request or {}).get(k) for k in IDENTITY_FIELDS}
@@ -207,7 +359,7 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
             center = None
         provenance = ({'representative_diameter_um':region.provenance['representative_diameter_um'],
                        'threshold':region.provenance['threshold'],'connectivity':4,
-                       'coverage':region.coverage,'G7b':region.provenance['G7b'],
+                       'coverage':region_coverage(region),'G7b':region.provenance['G7b'],
                        'position_policy':'region_bbox_center'} if region else {'position_policy':'explicit_manual_point'})
         row = {'product_id':identity['product_id'],'design_version':identity['design_version'],
                'case_id':identity['case_id'],'source_identity':identity,
@@ -234,6 +386,12 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
     if not (selected == 'all' or isinstance(selected,list) and all(isinstance(s,str) for s in selected)):
         raise NumericContractError('invalid_region_selection')
     regions = [] if maps is None else [r for layer in maps.layers for r in layer.regions]
+    manual = selections.get('manual',[])
+    if isinstance(dataset.provenance.get('resource_estimate'), dict):
+        from .adapters.real_hotspot import guard_stage_map_export
+        planned = sum(len(r.cases) for r in regions if selected == 'all' or r.region_id in selected)
+        guard_stage_map_export('roi-export',dataset,maps,planned+(len(manual) if isinstance(manual,list) else 0),
+                               reserved=hooks.get('reserved_bytes',0))
     by_identity = {_identity(asdict(c.identity)):c for c in dataset.cases}
     found = set()
     for region in regions:
@@ -284,16 +442,23 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
                     if producer_commit is None:commit_reason='producer_git_revision_unavailable'
             except OSError:
                 commit_reason='producer_git_unavailable'
-    payload = {'schema_version':'review_roi_v1','producer_commit':producer_commit,'producer_commit_reason':commit_reason,
+    gated = 0
+    if hooks.get('row_gate') is not None:
+        gated = hooks['row_gate'](rows)
+    payload = {'schema_version':SCHEMA_VERSION,'producer_commit':producer_commit,'producer_commit_reason':commit_reason,
                'source_manifest_hash':dataset.provenance['input_hash'],'assets_root':str(root.resolve()),
+               **({'region_coverages':dict(sorted(shared_coverages.items()))} if shared_coverages else {}),
                'rois':rows,'excluded_records':excluded,
                'gates':current_gate_decisions(),
                'tensor_input_policy':'original_layout_CNT_VIA_valid_only',
-               'status':'partial' if excluded else 'available'}
+               'status':'partial' if excluded or gated else 'available'}
     folder = Path(out)
     folder.mkdir(parents=True,exist_ok=True)
     path = folder/'review_rois.json'
-    path.write_text(json.dumps(payload,ensure_ascii=False,indent=2,allow_nan=False)+'\n',encoding='utf-8')
+    _json_stream(path,payload)
+    if hooks:
+        hooks['rows'] = rows
+        hooks['payload'] = {k:v for k,v in payload.items() if k not in ('rois','region_coverages')}
     return {'status':payload['status'],'outputs':[str(path)],'n_rois':len(rows),
             'n_ready':sum(r['status']=='ready' for r in rows),'n_blocked':sum(r['status']=='blocked' for r in rows),
             'exit_code':3 if excluded else 0}

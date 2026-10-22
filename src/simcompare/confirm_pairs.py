@@ -68,8 +68,11 @@ def _read_json_bytes(path, problems, label):
     except OSError as exc:
         problems.add(f'{label}_unreadable', f'{path}: {exc}')
         return None, None
+    digest = _sha256_bytes(data)
     try:
-        return json.loads(data.decode('utf-8')), _sha256_bytes(data)
+        text = data.decode('utf-8')
+        del data   # the raw bytes are not needed while the parser builds the objects
+        return json.loads(text), digest
     except ValueError as exc:
         problems.add(f'{label}_not_json', f'{path}: {exc}')
         return None, None
@@ -87,7 +90,24 @@ def _centre(value):
 
 # ---- inputs -------------------------------------------------------------------------------
 
-def _load_candidates(candidates_dir, cfg, problems):
+def _export_sizes(directory, payload):
+    """On-disk bytes of the review_rois.json files candidates_payload names (files that cannot be statted are skipped:
+    reading them reports the problem)."""
+    sizes = {}
+    for entry in payload.get('directions', []):
+        if not isinstance(entry, dict):
+            continue
+        for field in ('query_export', 'index_export'):
+            relative = entry.get(field)
+            if isinstance(relative, str) and relative not in sizes:
+                try:
+                    sizes[relative] = (directory/relative).stat().st_size
+                except OSError:
+                    pass
+    return sizes
+
+
+def _load_candidates(candidates_dir, cfg, problems, datasets=None):
     directory = Path(candidates_dir)
     payload, payload_sha = _read_json_bytes(directory/'candidate_queries_v1.json', problems, 'candidates_payload')
     if payload is None:
@@ -99,6 +119,10 @@ def _load_candidates(candidates_dir, cfg, problems):
     if recorded is not None and cfg.get('_config_sha256') is not None and recorded != cfg['_config_sha256']:
         problems.add('config_changed_since_candidates', f'{recorded} != {cfg["_config_sha256"]}')
     info = {'dir': directory, 'payload': payload, 'payload_sha256': payload_sha, 'directions': {}}
+    if datasets:   # real datasets carry the operation limit: refuse before any export is read or parsed
+        from .adapters.real_hotspot import guard_stage_confirm_read
+        guard_stage_confirm_read('confirm-pairs', [item['dataset'] for item in datasets.values()],
+                                 list(_export_sizes(directory, payload).values()))
     match_inputs = payload.get('match_inputs') or {}
     if 'match_files' in payload:
         files = payload['match_files']
@@ -129,6 +153,8 @@ def _load_candidates(candidates_dir, cfg, problems):
                 problems.add('confirm_export_changed_since_candidates',
                              f'{name} {key} export {relative}: on disk {sha} != candidates record {recorded_sha!r}')
             rows = _rows_by_id(export, problems, f'{name} {key} export') if export is not None else {}
+            if isinstance(export, dict):
+                export.pop('region_coverages', None)   # the shared identity lists (one per layer) are not read by any step here
             paths[key] = {'path': str(path), 'sha256': sha, 'export': export, 'rows': rows, 'dataset_name': side_name}
         info['directions'][name] = {'query_product': entry.get('query_product'), 'index_product': entry.get('index_product'), **paths}
     for name in DIRECTION_NAMES:
@@ -507,7 +533,7 @@ def _prepare(cfg, candidates_dir, matches, problems):
         if direction not in DIRECTION_NAMES:
             raise NumericContractError('unknown_match_direction', direction)
     datasets = _load_datasets(cfg)
-    cands = _load_candidates(candidates_dir, cfg, problems)
+    cands = _load_candidates(candidates_dir, cfg, problems, datasets)
     loaded = {}
     if cands is not None:
         _check_chain(cands, datasets, problems)

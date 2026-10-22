@@ -94,7 +94,8 @@ def merge_regions(regions, window_um, overlap):
 
 
 def _sha256_file(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    from simcompare.roi_export import file_sha256
+    return file_sha256(path)   # streamed: an export can be gigabytes
 
 
 def _canonical_sha(value):
@@ -154,19 +155,20 @@ def _role_gate(side, rows):
     return n
 
 
-def _persist_role_gate(path, payload, n_blocked):
-    """role gate가 막은 row를 export 파일 자체에 반영한다(DL2가 읽는 것은 디스크의 파일이다).
+def _slim_rows(rows):
+    """The fields of an export row the funnel and the coverage tables read, sharing the row's own objects: the full rows
+    (assets, frame, provenance) are not kept once the file is written."""
+    slim = []
+    for row in rows:
+        assets = row.get('source_assets')
+        slim.append({'roi_id': row['roi_id'], 'status': row['status'], 'reasons': row['reasons'],
+                     'source_region_id': row.get('source_region_id'),
+                     'source_assets': None if assets is None else {'layouts': [{'endpoint': item.get('endpoint')}
+                                                                               for item in assets.get('layouts', [])]}})
+    return slim
 
-    top-level status는 ready row가 하나도 남지 않거나 일부가 막혔으면 `partial`로 바꾸고, 해시는 이 이후 최종 바이트에서 계산한다.
-    """
-    if not n_blocked:
-        return
-    if payload.get('status') == 'available':
-        payload['status'] = 'partial'
-    Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)+'\n', encoding='utf-8')
 
-
-def _prepare(cfg, name, min_count, diameter_um):
+def _prepare(cfg, name, min_count, diameter_um, reserved_bytes=0):
     from simcompare import pipeline
     from simcompare.electrode_map import compute_electrode_maps
     from simcompare.numeric_images import resolve_path
@@ -199,7 +201,8 @@ def _prepare(cfg, name, min_count, diameter_um):
                              dataset_input_hash=side.dataset.provenance.get('input_hash'),
                              source_kind='real_hotspot_v1' if real is not None else 'numeric_v2')
     if side.status == 'available':
-        side.maps = compute_electrode_maps(side.dataset, diameter_um=diameter_um, min_count=min_count)
+        side.maps = compute_electrode_maps(side.dataset, diameter_um=diameter_um, min_count=min_count,
+                                           reserved_bytes=reserved_bytes)
         incomplete = sorted({r for layer in side.maps.layers if layer.status != 'available' for r in layer.reasons})
         if any(layer.status != 'available' for layer in side.maps.layers):
             side.warnings.append('map_coverage_incomplete')
@@ -215,42 +218,57 @@ def _prepare(cfg, name, min_count, diameter_um):
     return side
 
 
-def _do_export(cfg, side, selections, folder, min_count, diameter_um, track):
-    """selections를 기존 export 경로(numeric 또는 real T1b)로 내보낸다. real인데 전극 증거가 없으면 None."""
+def _do_export(cfg, side, selections, folder, min_count, diameter_um, track, memo, reserved_bytes):
+    """selections를 기존 export 경로(numeric 또는 real T1b)로 내보낸다. real인데 전극 증거가 없으면 None.
+
+    파일은 한 번만 쓴다(role gate는 쓰기 전에 행에 적용). 쓴 파일을 다시 읽지 않고 exporter가 넘겨 준 행·payload를 쓴다.
+    반환: (결과, export 경로, payload(rois 포함), role gate가 막은 행 수).
+    """
     from simcompare import pipeline
-    from simcompare.roi_export import export_review_rois
-    if side.real is not None:
-        if side.evidence is None:
-            return None
-        folder.mkdir()
-        track(folder, is_dir=True)
-        for name in ('review_rois.json', 'review_rois.csv'):
-            track(folder/name)
-        derived = {**cfg, 'map': {'input': side.section, 'diameter_um': diameter_um, 'min_count': min_count},
-                   'review_rois': selections}
-        result = pipeline._real_roi_export(derived, folder, side.real, derived['map'],
-                                           prepared=(side.root, side.dataset, side.maps))
-    else:
-        folder.mkdir()
-        track(folder, is_dir=True)
-        track(folder/'review_rois.json')
-        result = export_review_rois(side.dataset, side.root, folder, maps=side.maps, selections=selections,
-                                    asset_manifest=side.section.get('asset_manifest'))
+    from simcompare.roi_export import export_hooks, export_review_rois
+    blocked = [0]
+
+    def gate(rows):
+        blocked[0] = _role_gate(side, rows)
+        return blocked[0]
+
+    with export_hooks(row_gate=gate, asset_memo=memo, reserved_bytes=reserved_bytes) as captured:
+        if side.real is not None:
+            if side.evidence is None:
+                return None
+            folder.mkdir()
+            track(folder, is_dir=True)
+            for name in ('review_rois.json', 'review_rois.csv'):
+                track(folder/name)
+            derived = {**cfg, 'map': {'input': side.section, 'diameter_um': diameter_um, 'min_count': min_count},
+                       'review_rois': selections}
+            result = pipeline._real_roi_export(derived, folder, side.real, derived['map'],
+                                               prepared=(side.root, side.dataset, side.maps))
+        else:
+            folder.mkdir()
+            track(folder, is_dir=True)
+            track(folder/'review_rois.json')
+            result = export_review_rois(side.dataset, side.root, folder, maps=side.maps, selections=selections,
+                                        asset_manifest=side.section.get('asset_manifest'))
     path = folder/'review_rois.json'
-    return result, path, json.loads(path.read_text(encoding='utf-8'))
+    if captured['payload'] is not None:
+        payload = {**captured['payload'], 'rois': _slim_rows(captured['rows'])}
+    else:   # pipeline wrote a small inspection file (blocked / unavailable): no rows, nothing worth re-reading
+        payload = {'status': result['status'], 'reasons': list(result.get('reasons', [])), 'rois': [],
+                   'excluded_records': [], 'producer_commit': None}
+    return result, path, payload, blocked[0]
 
 
-def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track):
+def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track, memo, reserved_bytes):
     """선택한 대표 region만 기존 export 경로(numeric 또는 real T1b)로 내보낸다."""
-    done = _do_export(cfg, side, {'map_region_ids': sorted(selected_ids)}, folder, min_count, diameter_um, track)
+    done = _do_export(cfg, side, {'map_region_ids': sorted(selected_ids)}, folder, min_count, diameter_um, track, memo,
+                      reserved_bytes)
     if done is None:
         side.status = 'blocked'
         side.reasons = list(SHORT_CIRCUIT_REASONS)
         return
-    side.exported, side.export_path, payload = done
+    side.exported, side.export_path, payload, side.role_blocked = done
     side.rows = payload['rois']
-    side.role_blocked = _role_gate(side, side.rows)
-    _persist_role_gate(side.export_path, payload, side.role_blocked)
     side.export_payload = payload
     if payload.get('status') in ('blocked', 'unavailable'):
         side.status = payload['status']
@@ -272,7 +290,7 @@ def _index_point(frame):
     return [float(x0+(int(col)+0.5)*pitch), float(y0+(int(row)+0.5)*pitch)]
 
 
-def _export_index(cfg, side, folder, min_count, diameter_um, track):
+def _export_index(cfg, side, folder, min_count, diameter_um, track, memo, reserved_bytes):
     """데이터셋 case마다 명시 manual ROI 하나를 내보내 role/layer union이 제품 전체 전극을 덮게 한다(index 전용)."""
     requests, own_blocked = [], {}
     for case in sorted(side.dataset.cases, key=lambda c: tuple(str(v) for v in asdict(c.identity).values())):
@@ -290,15 +308,13 @@ def _export_index(cfg, side, folder, min_count, diameter_um, track):
         state['status'] = 'blocked'
         state['reasons'] = ['index_no_exportable_case']
         return
-    done = _do_export(cfg, side, {'manual': requests}, folder, min_count, diameter_um, track)
+    done = _do_export(cfg, side, {'manual': requests}, folder, min_count, diameter_um, track, memo, reserved_bytes)
     if done is None:
         state['status'] = 'blocked'
         state['reasons'] = list(SHORT_CIRCUIT_REASONS)
         return
-    state['exported'], state['path'], payload = done
+    state['exported'], state['path'], payload, side.role_blocked_index = done
     state['rows'] = payload['rois']
-    side.role_blocked_index = _role_gate(side, state['rows'])
-    _persist_role_gate(state['path'], payload, side.role_blocked_index)
     state['payload'] = payload
     if payload.get('status') in ('blocked', 'unavailable'):
         state['status'] = payload['status']
@@ -448,22 +464,26 @@ def _write_text(path, text, track):
 
 
 def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, diameter_um):
-    sides = {name: _prepare(cfg, name, min_count, diameter_um) for name in ('reference', 'target')}
-    plans = {}
-    for name, side in sides.items():
+    from simcompare.adapters.real_hotspot import MAP_SLIM_ROW_BYTES, MAP_REGION_INFO_BYTES
+    from simcompare.roi_export import AssetMemo
+    sides, plans = {}, {}
+    memo = AssetMemo()   # asset PNGs decoded for one product's exports are not decoded again for its second export
+    reserved = 0         # what the first product still holds (rows, regions) while the second one's map is built
+    for name in ('reference', 'target'):
+        side = sides[name] = _prepare(cfg, name, min_count, diameter_um, reserved)
         merged = merge_regions(side.regions, window_um, merge_overlap)
         cut = merged[max_candidates:] if max_candidates is not None else []
         kept = merged[:max_candidates] if max_candidates is not None else merged
         plans[name] = {'n_regions': len(side.regions), 'n_merged': len(merged), 'kept': kept, 'cut': cut}
-    for name, side in sides.items():
-        if side.status == 'unavailable':
-            continue
-        ids = [m['representative'].region_id for m in plans[name]['kept']]
-        _export_side(cfg, side, ids, out/f'{name}_export', min_count, diameter_um, track)
-    for name, side in sides.items():
-        if side.status == 'unavailable':
-            continue
-        _export_index(cfg, side, out/f'{name}_index_export', min_count, diameter_um, track)
+        if side.status != 'unavailable':
+            ids = [m['representative'].region_id for m in kept]
+            _export_side(cfg, side, ids, out/f'{name}_export', min_count, diameter_um, track, memo, reserved)
+            if side.status != 'unavailable':   # the query export may have found the product unavailable
+                _export_index(cfg, side, out/f'{name}_index_export', min_count, diameter_um, track, memo, reserved)
+        side.maps = None   # counts, region masks and links are only needed for the exports above
+        reserved += MAP_SLIM_ROW_BYTES * (len(side.rows) + (len(side.index['rows']) if side.index else 0))
+        reserved += MAP_REGION_INFO_BYTES * len(side.regions)
+    memo = None
 
     warnings, notes = [], []
     directions, funnels = [], []

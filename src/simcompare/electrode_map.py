@@ -13,8 +13,9 @@ from typing import Iterable
 
 import numpy as np
 
+from .linepixel import PackedMask
 from .measurement import measure_full_mask, measure_union
-from .numeric_schema import (CaseIdentity, Frame, Measurement, NumericCase, NumericDataset,
+from .numeric_schema import (CaseIdentity, Frame, MaskRecord, Measurement, NumericCase, NumericDataset,
     NumericContractError, NumericFrameError, PhysicalWindow, binary_mask,
     diameter_key, finite, require_same_frame, text)
 
@@ -224,6 +225,29 @@ class CaseLink:
     source_metadata: dict
 
 
+def _pack(mask):
+    return PackedMask(mask.shape, np.packbits(np.ascontiguousarray(mask).reshape(-1)))
+
+
+class _PackedMaskField:
+    """ElectrodeRegion.mask: stored 1 bit per cell, every read returns a fresh read-only bool array of the frame shape.
+
+    It is a normal dataclass field (same name, position, constructor argument and to_dict key); only the storage is packed,
+    so a map with many regions keeps cells/8 bytes per region instead of one full-frame mask.
+    """
+
+    def __set_name__(self, owner, name):
+        self._slot = '_packed_' + name
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            raise AttributeError('required field')   # no class-level default: the dataclass field stays required
+        return instance.__dict__[self._slot].unpack()
+
+    def __set__(self, instance, value):
+        instance.__dict__[self._slot] = value if isinstance(value, PackedMask) else _pack(np.asarray(value, dtype=bool))
+
+
 @dataclass(frozen=True, eq=False)
 class ElectrodeRegion:
     region_id: str
@@ -236,6 +260,7 @@ class ElectrodeRegion:
     center_xy_um: tuple[float, float]
     frame: Frame
     mask: np.ndarray
+    mask = _PackedMaskField()   # storage only: still the required constructor field `mask` (see _PackedMaskField)
     electrodes: tuple[str, ...]
     cases: tuple[CaseLink, ...]
     coverage: dict
@@ -296,14 +321,30 @@ class ElectrodeMaps:
         return encode(self)
 
 
+def _header(records, diameter):
+    """Metadata of one record without loading its mask: LazyRecords.header(d), or the record itself for plain mappings."""
+    header = getattr(records, 'header', None)
+    return header(diameter) if header is not None else records[diameter]
+
+
+def _count_map_load():
+    from .adapters import real_hotspot
+    if real_hotspot.IO_COUNTERS is not None:     # benchmark counter: representative masks loaded by the map itself
+        real_hotspot.IO_COUNTERS['map_loads'] = real_hotspot.IO_COUNTERS.get('map_loads', 0) + 1
+
+
 def _validate_case(case):
+    """Checks every record's metadata. Lazy records are read through their headers (no mask is loaded): a corrupt
+    non-representative .npz is not detected here, only by the manifest authentication; the representative mask of each
+    case is validated when it is loaded for the map."""
     text(case.analysis_layer, 'analysis_layer')
     if not case.endpoints:
         raise NumericContractError('empty_electrodes')
     for endpoint in case.endpoints:
         text(endpoint.electrode_id, 'electrode_id')
     keys = set()
-    for diameter, record in case.records.items():
+    for diameter in case.records:
+        record = _header(case.records, diameter)
         key = diameter_key(diameter)
         if key in keys:
             raise NumericContractError('duplicate_case_diameter')
@@ -314,7 +355,7 @@ def _validate_case(case):
             raise NumericContractError('record_case_binding_mismatch')
         if record.frame.frame_id != case.identity.frame_id:
             raise NumericFrameError('record_identity_frame_mismatch')
-        if record.input_status == 'observed':
+        if record.input_status == 'observed' and isinstance(record, MaskRecord):
             binary_mask(record.mask)
         if record.input_status == 'not_applicable':
             height = case.metadata.get('height_um')
@@ -333,6 +374,38 @@ def _validate_case(case):
                 raise NumericContractError('not_applicable_evidence_required')
             if not diameter < finite(height, 'height_um', positive=True) < 5:
                 raise NumericContractError('invalid_not_applicable_height')
+
+
+class _Observed:
+    """One case's representative record after the map has measured it: the metadata of the MaskRecord, the original mask
+    packed (1 bit/cell) and the bounding box of its set cells. The full mask is not kept (record() rebuilds the
+    MaskRecord, with exactly the original mask, when a region needs it)."""
+    __slots__ = ('case', 'measured', 'fields', 'packed', 'bbox')
+
+    def __init__(self, case, record, measured):
+        self.case, self.measured = case, measured
+        self.fields = (record.diameter_um, record.frame, record.input_status, record.reasons, record.source_ca,
+                       record.identity, record.analysis_layer, record.conservation_atol_um2, record.conservation_rtol)
+        mask = record.mask
+        self.packed = _pack(mask)
+        rows, columns = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+        self.bbox = (int(rows[0]), int(columns[0]), int(rows[-1])+1, int(columns[-1])+1) if rows.size else None
+
+    def active(self, valid):
+        return self.packed.unpack() & valid
+
+    def touches(self, inside, bbox):
+        """(record.mask & inside).any(): inside lies in the bbox of the region and in the valid domain."""
+        if self.bbox is None or self.bbox[0] >= bbox[2] or self.bbox[2] <= bbox[0] \
+                or self.bbox[1] >= bbox[3] or self.bbox[3] <= bbox[1]:
+            return False
+        r0, c0, r1, c1 = bbox
+        return bool((self.packed.unpack()[r0:r1, c0:c1] & inside[r0:r1, c0:c1]).any())
+
+    def record(self):
+        diameter, frame, status, reasons, source_ca, identity, layer, atol, rtol = self.fields
+        return MaskRecord(diameter, frame, self.packed.unpack(), status, reasons, source_ca, identity, layer,
+                          conservation_atol_um2=atol, conservation_rtol=rtol)
 
 
 def _key(case):
@@ -356,11 +429,12 @@ def _region_windows(inside, frame):
 
 
 def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
-                           diameter_um=DEFAULT_DIAMETER_UM, min_count=None) -> ElectrodeMaps:
+                           diameter_um=DEFAULT_DIAMETER_UM, min_count=None, reserved_bytes=0) -> ElectrodeMaps:
     """T2 원본 binary/valid에서 계산. pair 표·density·unit divisor를 사용하지 않는다.
 
     counts는 관측된 short의 하한이며 coverage와 scope를 함께 읽어야 한다.
     source/process/exposure별 layer 지도를 보존하며 product/design/unit 요약은 최대값이다.
+    reserved_bytes: 호출자가 이 지도 밖에 이미 들고 있는 바이트(candidates의 다른 제품 행·영역). real dataset의 admission 추정에만 더한다.
     """
     diameter = float(diameter_key(diameter_um))
     threshold = None if min_count is None else _threshold(min_count)
@@ -368,7 +442,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
     cases = list(dataset.cases if dataset else inputs)
     if dataset is not None:
         from .adapters.real_hotspot import guard_stage_map
-        guard_stage_map('electrode-map', dataset)  # Phase A: fail fast before per-electrode masks are allocated
+        guard_stage_map('electrode-map', dataset, reserved=reserved_bytes)  # fail fast before any mask is loaded
     provenance = {'domain': 'full_mask_valid', 'defect_scope': 'short_only',
                   'scope_status': 'confirmed', 'count_semantics': 'observed_short_lower_bound',
                   'G7b': copy.deepcopy(SCOPE_DECISION),
@@ -400,15 +474,23 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                 missing_manifest.append(identity)
     provenance['missing_manifest_cases'] = missing_manifest
     layers = []
-    region_total = 0
+    region_total = link_total = 0
+    priced = dataset is not None and isinstance(dataset.provenance.get('resource_estimate'), dict)
+    if priced:
+        from .adapters.real_hotspot import guard_stage_map_counting, guard_stage_map_links, guard_stage_map_regions
+    region_provenance = None   # one read-only copy shared by every region (nothing mutates it)
     for key, entries in sorted(grouped.items()):
-        frames = [r.frame for c in entries for r in c.records.values()]
-        if not frames:
+        frame = None   # headers only: no mask is loaded to find or compare the frames
+        for case in entries:
+            for d in case.records:
+                other = _header(case.records, d).frame
+                if frame is None:
+                    frame = other
+                elif other is not frame:
+                    require_same_frame(frame, other)
+        if frame is None:
             # frame 없이 위치를 추정하지 않는다.
             raise NumericFrameError('source_frame_required')
-        frame = frames[0]
-        for other in frames[1:]:
-            require_same_frame(frame, other)
         coverage = {'observed': [], 'missing': [], 'not_applicable': [], 'measurement_errors': [],
                     'source_coverage_status': 'available', 'valid_area_um2': float(frame.valid.sum())*frame.pixel_pitch_um**2,
                     'full_area_um2': frame.valid.size*frame.pixel_pitch_um**2,
@@ -416,20 +498,24 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                         'unconfirmed' if any('expected_case_inventory_unprovided' in c.reasons for c in entries)
                         else 'confirmed'},
                     'valid_fraction': float(frame.valid.mean())}
-        touched, observed = {}, []
+        observed, by_electrode = [], {}
         reasons = set()
+        area_cache = {}   # the full-frame window is the same for every case of the layer
         for case in sorted(entries, key=lambda c: c.identity.case_id):
             reasons.update(case.reasons)
-            record = next((r for d, r in case.records.items() if diameter_key(d) == diameter_key(diameter)), None)
+            representative = next((d for d in case.records if diameter_key(d) == diameter_key(diameter)), None)
+            head = None if representative is None else _header(case.records, representative)
             identity = asdict(case.identity)
-            if record is None or record.input_status == 'missing':
-                coverage['missing'].append({'identity': identity, 'reasons': list(record.reasons) if record else ['representative_diameter_missing']})
+            if head is None or head.input_status == 'missing':
+                coverage['missing'].append({'identity': identity, 'reasons': list(head.reasons) if head else ['representative_diameter_missing']})
                 reasons.add('source_case_missing')
                 continue
-            coverage[record.input_status].append(identity)
-            if record.input_status == 'not_applicable':
+            coverage[head.input_status].append(identity)
+            if head.input_status == 'not_applicable':
                 continue
-            measured = measure_full_mask(record)
+            record = case.records[representative]   # the one mask load of this case; packed below, then released
+            _count_map_load()
+            measured = measure_full_mask(record, area_cache=area_cache)
             reasons.update((*record.reasons, *measured.reasons))
             if measured.status == 'partial':
                 coverage['measurement_errors'].append({'identity': identity,
@@ -439,11 +525,11 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                 coverage['measurement_errors'].append({'identity': identity, 'reasons': measured.reasons, 'original_case_ca': asdict(measured)})
                 reasons.update(measured.reasons)
                 continue
-            active = record.mask & frame.valid
+            observed.append(_Observed(case, record, measured))
+            record = None
             for endpoint in case.endpoints:
-                name = endpoint.electrode_id
-                touched[name] = touched.get(name, np.zeros(frame.shape_yx, bool)) | active
-            observed.append((case, record, measured))
+                by_electrode.setdefault(endpoint.electrode_id, []).append(len(observed)-1)
+        area_cache = None
         inventory_unconfirmed = coverage['source_coverage_summary']['expected_case_inventory_status'] != 'confirmed'
         if coverage['missing'] or coverage['measurement_errors'] or missing_manifest or inventory_unconfirmed:
             coverage['source_coverage_status'] = 'partial' if observed else 'unavailable'
@@ -459,57 +545,85 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
             reasons.add('valid_coverage_partial')
             if coverage['source_coverage_status'] == 'available':
                 coverage['source_coverage_status'] = 'partial'
-        counts = (np.sum(list(touched.values()), axis=0, dtype=np.int64) if touched
-                  else np.zeros(frame.shape_yx, np.int64))
+        # distinct electrodes per cell: OR the actives of each electrode's cases (a shared or repeated endpoint counts once),
+        # then add the electrodes up. One electrode's bool mask is alive at a time.
+        counts = np.zeros(frame.shape_yx, np.int64)
+        for indexes in by_electrode.values():
+            touched = np.zeros(frame.shape_yx, bool)
+            for index in indexes:
+                touched |= observed[index].active(frame.valid)
+            counts += touched
+        touched = None
         counts.setflags(write=False)
         regions = []
         labelled = None
+        layer_runs = 0
         if threshold is not None:
             active = (counts >= threshold) & frame.valid
             run_counts = _run_counts(active)
-            if dataset is not None and isinstance(dataset.provenance.get('resource_estimate'), dict):
+            if priced:
                 # real datasets: price the count prepass, then the region construction, before allocating either
-                from .adapters.real_hotspot import guard_stage_map_counting, guard_stage_map_regions
-                guard_stage_map_counting('electrode-map', dataset, regions_done=region_total, runs=int(run_counts.sum()),
-                                         layers_done=len(layers) + 1, layer_cases=len(entries), layer_electrodes=len(touched))
+                layer_runs = int(run_counts.sum())
+                guard_stage_map_counting('electrode-map', dataset, regions_done=region_total, runs=layer_runs,
+                                         layers_done=len(layers) + 1, layer_cases=len(entries), layer_electrodes=len(by_electrode),
+                                         links_done=link_total, reserved=reserved_bytes)
                 labelled = _label_runs(active, run_counts)
                 sizes = _component_sizes(active, labelled)
                 region_total += int(sizes.size)
                 component_runs = _component_run_counts(labelled)
-                guard_stage_map_regions('electrode-map', dataset, regions=region_total, runs=int(run_counts.sum()),
+                guard_stage_map_regions('electrode-map', dataset, regions=region_total, runs=layer_runs,
                                         largest_area=int(sizes.max()) if sizes.size else 0,
                                         largest_runs=int(component_runs.max()) if component_runs.size else 0,
                                         layers_done=len(layers) + 1, layer_cases=len(entries),
-                                        layer_electrodes=len(touched))
+                                        layer_electrodes=len(by_electrode), links_done=link_total,
+                                        reserved=reserved_bytes)
                 del sizes, component_runs
             del run_counts
+        shared = {}   # per case: identity, endpoints and ONE deep copy of raw/metadata, shared by all its links
         for inside, bbox in (() if threshold is None else _components(active, labelled)):
             r0, c0, r1, c1 = bbox
             x, y = frame.origin_xy_um
             p = frame.pixel_pitch_um
             physical = (x+c0*p, y+r0*p, x+c1*p, y+r1*p)
-            names = tuple(sorted(name for name, mask in touched.items() if (mask & inside).any()))
+            linked = [item for item in observed if item.touches(inside, bbox)]
+            names = tuple(sorted({endpoint.electrode_id for item in linked for endpoint in item.case.endpoints}))
+            if priced:
+                guard_stage_map_links('electrode-map', dataset, regions=region_total, runs=layer_runs,
+                                      largest_area=int(inside.sum()), largest_runs=int(_run_counts(inside).sum()),
+                                      layers_done=len(layers) + 1, layer_cases=len(entries),
+                                      layer_electrodes=len(by_electrode), links_done=link_total, new_links=len(linked),
+                                      reserved=reserved_bytes)
             windows = _region_windows(inside, frame)
-            links = tuple(CaseLink(asdict(case.identity), case.failure_type,
-                                  tuple(asdict(e) for e in case.endpoints), measured,
-                                  measure_union(record, windows), copy.deepcopy(case.raw), copy.deepcopy(case.metadata))
-                          for case, record, measured in observed if (record.mask & inside).any())
-            windows = None  # one region's windows at a time: the guard prices the region with the most runs
+            region_cache = {}   # one cell-area table per region window set, shared by all its links
+            links = []
+            for item in linked:
+                case = item.case
+                if id(case) not in shared:
+                    shared[id(case)] = (asdict(case.identity), tuple(asdict(e) for e in case.endpoints),
+                                        copy.deepcopy(case.raw), copy.deepcopy(case.metadata))
+                case_identity, case_endpoints, raw, source_metadata = shared[id(case)]
+                links.append(CaseLink(case_identity, case.failure_type, case_endpoints, item.measured,
+                                      measure_union(item.record(), windows, area_cache=region_cache), raw, source_metadata))
+            links = tuple(links)
+            link_total += len(links)
+            windows = region_cache = None  # one region's windows at a time: the guard prices the region with the most runs
             payload = [asdict(key), diameter, threshold, frame.frame_id, frame.pixel_pitch_um,
                        frame.origin_xy_um, frame.shape_yx, frame.valid_hash, np.argwhere(inside).tolist()]
             stable_id = 'region_' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
             inside.setflags(write=False)
-            region_coverage = copy.deepcopy(coverage)
-            region_coverage.update(region_valid_area_um2=float(inside.sum())*p*p,
-                                   bbox_valid_area_um2=float(frame.valid[r0:r1, c0:c1].sum())*p*p,
-                                   bbox_area_um2=(r1-r0)*(c1-c0)*p*p)
+            region_coverage = {**coverage, 'region_valid_area_um2': float(inside.sum())*p*p,
+                               'bbox_valid_area_um2': float(frame.valid[r0:r1, c0:c1].sum())*p*p,
+                               'bbox_area_um2': (r1-r0)*(c1-c0)*p*p}
+            if region_provenance is None:
+                region_provenance = copy.deepcopy(provenance)
             regions.append(ElectrodeRegion(stable_id, key, int(counts[inside].max()), int(inside.sum()),
                            float(inside.sum())*p*p, bbox, physical,
                            ((physical[0]+physical[2])/2, (physical[1]+physical[3])/2),
-                           frame, inside, names, links, region_coverage, copy.deepcopy(provenance)))
-        labelled = active = None  # the run labels and thresholded mask are not kept past the regions
+                           frame, inside, names, links, region_coverage, region_provenance))
+        labelled = active = shared = None  # the run labels, thresholded mask and packed records are not kept
+        has_observed, observed = bool(observed), None
         regions.sort(key=lambda r: (-r.max_count, -r.area_um2, r.region_id))
-        status = coverage['source_coverage_status'] if observed or coverage['not_applicable'] else 'unavailable'
+        status = coverage['source_coverage_status'] if has_observed or coverage['not_applicable'] else 'unavailable'
         layers.append(LayerMap(key, frame, counts if status!='unavailable' else None, status, tuple(sorted(reasons)), coverage, tuple(regions)))
     summaries = []
     summary_groups = {}

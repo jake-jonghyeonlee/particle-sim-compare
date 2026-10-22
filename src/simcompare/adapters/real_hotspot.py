@@ -570,7 +570,7 @@ STAGE6_TOP_BUCKETS = 1                # compare-windows reads masks/areas only: 
 # pattern entry and ~215 B per history node at 10-17 M entries; the check in _partition_labels keeps the history
 # at the limit (+ one refinement step), so one entry of max_label_pattern_entries is budgeted at 256 B.
 LABEL_PATTERN_ENTRY_BYTES = 256
-MAP_REGION_PAYLOAD_BYTES = 16 * 1024  # per retained stage-4 region: stable id, links (per-case measurement + raw copies), coverage
+MAP_REGION_PAYLOAD_BYTES = 16 * 1024  # per retained stage-4 region: stable id, coverage dict, bbox/provenance tuples (its links are priced apart)
 MAP_REGION_ID_BYTES_PER_CELL = 200    # transient per cell of the largest region: np.argwhere(...).tolist() + its json text
 MAP_RUN_BYTES = 48                    # per horizontal run of the thresholded map (<= cells/2 runs): the 4 int32 label arrays
                                       # (16 B, kept until the regions are built) + <= 32 B of scratch (pointer doubling,
@@ -579,7 +579,39 @@ MAP_REGION_RUN_BYTES = 400            # per horizontal run of the region being b
                                       # clipped-rectangle tuples measure_union makes of it. Measured on a connected comb mask
                                       # (200 x 200, 19,901 runs): 270-300 B per run beyond MAP_RUN_BYTES on Python 3.8/numpy 1.21
                                       # and 230-285 B on 3.11/numpy 2.4; 400 keeps >= 1.3x margin on both.
+MAP_OBSERVED_BYTES = 2 * 1024         # per observed case the map scan keeps besides its packed mask: record fields, Measurement,
+                                      # bbox, coverage identity entry, electrode index
+MAP_CASE_COPY_BYTES = 128 * 1024      # per linked case: the ONE deep copy of case.raw / case.metadata shared by all its links
+MAP_LINK_BYTES = 3 * 1024             # per retained CaseLink: its own Measurement (the identity/endpoints/raw are shared per case)
+MAP_ROW_BYTES = 12 * 1024             # per ROI export row kept in memory until the export file is written (and, slimmed, after)
+MAP_SLIM_ROW_BYTES = 2 * 1024         # per export row candidates keeps after the file is written (roi_id, status, reasons, endpoints)
+MAP_REGION_INFO_BYTES = 1024          # per RegionInfo candidates keeps for the merge
+MAP_ASSET_ENTRY_BYTES = 4 * 1024      # per case: the validated asset references check_asset_manifest holds for the export
+MAP_SCAN_BYTES_PER_CELL = 32          # transient of measuring + packing one representative: loaded mask, its binary_mask copy,
+                                      # the cell-area tables of the first window (cached afterwards, priced apart as 8 B/cell)
+MAP_ACCUMULATE_BYTES_PER_CELL = 4     # one electrode's OR mask + the unpacked case mask + its valid-masked copy
+MAP_REGION_MEASURE_BYTES_PER_CELL = 40  # one region: its full mask, counts[inside] gather, the cell-area tables of its window
+                                      # set (one table cached per region), the rebuilt MaskRecord and measure_union temporaries
+STAGE4_REMEDY = ('split cases, select fewer regions (--max-candidates, fewer map regions) or raise max_operation_bytes up '
+                 'to physical RAM (host RAM, not a cgroup/job limit)')
 LAYOUT_TRANSIENT_BYTES_PER_CELL = 20  # PNG decode of one electrode layout (see adapters/electrode_png.py)
+STAGE6_UNPACK_CACHE_ENTRIES = 2 * 4 * 4    # local_delta.UNPACK_CACHE_ENTRIES: both sides x (union + 3 pieces) x 4 diameters
+STAGE6_LAYOUT_CACHE_CASES = 8         # local_delta_report.LAYOUT_CACHE_CASES: decoded layout cases (2 masks each) per side
+STAGE6_PAGE_MASK_ENTRIES = 24         # local_delta_report.PAGE_MASK_CACHE_ENTRIES
+# Measured at N=300 / 1262^2 / 32 diameters (tracemalloc, per model): dataset 41 MB = 4.4 KB per record, AreaResult 61 MB = masks + output
+# (50 MB) + 1.2 KB per record; the Phase A payload constant (3 KiB per record, "dataset and result") is below that, so stage 6 prices its own.
+STAGE6_DATASET_RECORD_BYTES = 5 * 1024   # the configured dataset's share per case/diameter record (raw copies, LazyRecords entries)
+STAGE6_RESULT_RECORD_BYTES = 2 * 1024    # the AreaResult's share per record (SourceCaseArea, Measurement, shared raw reference)
+STAGE6_FIXED_BYTES = 2 * 1024 * 1024     # per model: manifest + provenance copies, frames, pair table, cfg
+STAGE6_REUSED_GROUP_BYTES = 8 * 1024  # metadata of one group read back from the compare artefact (AreaMetrics, fractions, key)
+STAGE6_PAIR_BYTES = 4 * 1024          # one bound pair (BoundPair, two BoundSides, source dict, repeats)
+STAGE6_ROW_BYTES = 32 * 1024          # one (pair x size x diameter) row: measured 9-12 KB retained incl. its ranking entry, 2.7x margin
+STAGE6_SENSITIVITY_ENTRY_BYTES = 4 * 1024   # one (pair x diameter) window_sensitivity entry
+STAGE6_WINDOW_BYTES_PER_CELL = 64     # measure_union of one window: crop, MaskRecord, cell-area tables, label/run temporaries
+STAGE6_NAMED_INDEX_BYTES = 256        # per case of the named-case index
+STAGE6_PAGE_BYTES_PER_PAIR_SIZE = 256 * 1024   # the page: 4 base64 thumbnails + table text of one pair and size
+STAGE6_REMEDY = ('fewer pairs or window sizes (split the correspondence file), or raise max_operation_bytes up to '
+                 'physical RAM (host RAM, not a cgroup/job limit)')
 OPERATION_REMEDY = ('split cases or raise max_operation_bytes up to physical RAM '
                     '(host RAM, not a cgroup/job limit); streaming support for this stage is pending')
 
@@ -645,70 +677,99 @@ def _dataset_profile(dataset):
             estimate['max_operation_bytes'], entries, frame.shape_yx, label_entries)
 
 
-def guard_stage_map(stage, dataset):
-    """Stage 4 admission (electrode-map / candidates / ROI export), before any per-electrode mask exists.
+def _stage4_error(stage, estimated, limit):
+    return NumericContractError('oversized_real_operation',
+                                f'{stage}: estimated {estimated} bytes exceed limit {limit}; {STAGE4_REMEDY}')
 
-    electrode_map.compute_electrode_maps keeps, per layer: the representative record of every case with its
-    full bool mask (N_l x cells), one bool mask per distinct electrode (E_l x cells) and np.stack of those
-    (E_l x cells), then int64 counts (8 x cells, kept). Candidates keep both sides' counts, so the retained part
-    is counted twice. The region masks are NOT guessed here: their number is only known after the counts exist,
-    so compute_electrode_maps counts the connected components first (guard_stage_map_counting prices that
-    prepass, guard_stage_map_regions the region construction) before it allocates the first full-frame region mask. Phase A only fails fast: streaming for this stage is pending.
+
+def _packed_bytes(cells):
+    return (cells + 7) // 8
+
+
+def _stage_map_cache(cells, layer_cases):
+    """The packed representative masks of one layer and the per-case records the scan keeps."""
+    return layer_cases * (_packed_bytes(cells) + MAP_OBSERVED_BYTES)
+
+
+def estimate_stage_map_admission(cells, layer_cases, layers, *, reserved=0):
+    """Peak of the case scan and the electrode accumulation of the most populated layer.
+
+    compute_electrode_maps loads ONE representative mask at a time and packs it (cells/8) next to a small record; the
+    area table of the full-frame window is cached for the layer (8 B/cell) and the counts (int64, 8 B/cell) of every
+    layer are kept. `reserved` is what the caller holds besides this map (the other product's rows and regions)."""
+    retained = layers * 8 * cells
+    scan = _stage_map_cache(cells, max(layer_cases, default=0)) + retained + 8 * cells + MAP_SCAN_BYTES_PER_CELL * cells
+    accumulate = (_stage_map_cache(cells, max(layer_cases, default=0)) + retained
+                  + MAP_ACCUMULATE_BYTES_PER_CELL * cells)
+    return reserved + max(scan, accumulate)
+
+
+def guard_stage_map(stage, dataset, *, reserved=0):
+    """Stage 4 admission (electrode-map / candidates / ROI export), before any mask is loaded.
+
+    Streaming scan: one representative mask is alive at a time; per case only the packed mask (cells/8) and a small
+    record stay (estimate_stage_map_admission). The region masks are NOT guessed here: their number is only known
+    after the counts exist, so compute_electrode_maps counts the connected components first (guard_stage_map_counting
+    prices that prepass, guard_stage_map_regions the region construction and guard_stage_map_links every region's links)
+    before it allocates the first full-frame region mask.
     """
     profile = _dataset_profile(dataset)
     if profile is None:
         return
     cells, counts, _, limit, _, _, _ = profile
-    electrodes = {}
-    for case in dataset.cases:
-        electrodes.setdefault(case.analysis_layer, set()).update(ep.electrode_id for ep in case.endpoints)
-    retained = len(counts) * 8 * cells
-    peak = max((count + 2 * len(electrodes[layer])) * cells + 16 * cells for layer, count in counts.items())
-    estimated = peak + 2 * retained
+    estimated = estimate_stage_map_admission(cells, list(counts.values()), len(counts), reserved=reserved)
     if estimated > limit:
-        raise _operation_error(stage, estimated, limit)
+        raise _stage4_error(stage, estimated, limit)
 
 
-def _stage_map_live(cells, *, regions, layers_done, layer_cases, layer_electrodes):
+def _stage_map_live(cells, *, regions, layers_done, layer_cases, layer_electrodes, links_done=0, reserved=0):
     """Bytes alive in compute_electrode_maps while a layer is thresholded and its regions are built, excluding
-    the run labels and the id payload: the layer's representative masks and per-electrode masks ((N + E) x cells),
-    the int64 counts of every layer done and one full-frame bool mask + MAP_REGION_PAYLOAD_BYTES per region (both
-    counted twice like the admission estimate: candidates keep both sides), the 16 x cells slack of guard_stage_map
-    and the thresholded `active` mask (1 x cells)."""
-    retained = 2 * (layers_done * 8 * cells + regions * (cells + MAP_REGION_PAYLOAD_BYTES))
-    return (layer_cases + layer_electrodes) * cells + retained + 17 * cells
+    the run labels and the id payload: the layer's packed representatives (N x (cells/8 + record)), the int64 counts of
+    every layer done, one PACKED mask + MAP_REGION_PAYLOAD_BYTES per region, MAP_LINK_BYTES per retained link, the
+    shared per-case raw/metadata copy of every case that may be linked and the thresholded `active` mask (1 x cells).
+    reserved = bytes the caller holds besides this map (the other product)."""
+    return (reserved + _stage_map_cache(cells, layer_cases) + layers_done * 8 * cells
+            + regions * (_packed_bytes(cells) + MAP_REGION_PAYLOAD_BYTES) + links_done * MAP_LINK_BYTES
+            + layer_cases * MAP_CASE_COPY_BYTES + 512 * layer_electrodes + cells)
 
 
-def estimate_stage_map_counting(cells, *, regions_done, runs, layers_done, layer_cases, layer_electrodes):
+def estimate_stage_map_counting(cells, *, regions_done, runs, layers_done, layer_cases, layer_electrodes, links_done=0,
+                                reserved=0):
     """Peak of the component-count prepass of one layer (run-length union-find, see electrode_map._label_runs)."""
     return (_stage_map_live(cells, regions=regions_done, layers_done=layers_done, layer_cases=layer_cases,
-                            layer_electrodes=layer_electrodes) + cells + MAP_RUN_BYTES * runs)
+                            layer_electrodes=layer_electrodes, links_done=links_done, reserved=reserved)
+            + cells + MAP_RUN_BYTES * runs)
 
 
 def estimate_stage_map_regions(cells, *, regions, runs, largest_area, largest_runs, layers_done, layer_cases,
-                               layer_electrodes):
+                               layer_electrodes, links_done=0, new_links=0, reserved=0):
     """Peak while the regions of a layer are built: _stage_map_live with every region counted, the run labels
-    (kept until the last region exists), the id payload of the largest region (transient) and the window objects
-    plus measure_union rectangles of the region with the most runs (one region at a time, transient)."""
+    (kept until the last region exists), the id payload of the largest region (transient), the window objects plus
+    measure_union rectangles of the region with the most runs (one region at a time, transient), the working set of
+    measuring one region (MAP_REGION_MEASURE_BYTES_PER_CELL) and the links already built plus the `new_links` the region
+    is about to build."""
     return (_stage_map_live(cells, regions=regions, layers_done=layers_done, layer_cases=layer_cases,
-                            layer_electrodes=layer_electrodes) + MAP_RUN_BYTES * runs
-            + MAP_REGION_ID_BYTES_PER_CELL * largest_area + MAP_REGION_RUN_BYTES * largest_runs)
+                            layer_electrodes=layer_electrodes, links_done=links_done + new_links, reserved=reserved)
+            + MAP_RUN_BYTES * runs + MAP_REGION_ID_BYTES_PER_CELL * largest_area + MAP_REGION_RUN_BYTES * largest_runs
+            + MAP_REGION_MEASURE_BYTES_PER_CELL * cells)
 
 
-def guard_stage_map_counting(stage, dataset, *, regions_done, runs, layers_done, layer_cases, layer_electrodes):
+def guard_stage_map_counting(stage, dataset, *, regions_done, runs, layers_done, layer_cases, layer_electrodes,
+                             links_done=0, reserved=0):
     """Stage 4 count prepass bound, called by electrode_map once a layer's counts exist and its horizontal runs
     are known (a row scan, O(width) memory), before the label arrays (MAP_RUN_BYTES per run) are allocated."""
     profile = _dataset_profile(dataset)
     if profile is None:
         return
     estimated = estimate_stage_map_counting(profile[0], regions_done=regions_done, runs=runs, layers_done=layers_done,
-                                            layer_cases=layer_cases, layer_electrodes=layer_electrodes)
+                                            layer_cases=layer_cases, layer_electrodes=layer_electrodes,
+                                            links_done=links_done, reserved=reserved)
     if estimated > profile[3]:
-        raise _operation_error(f'{stage} (stage-4 component count: {runs} runs of {profile[0]} cells)', estimated, profile[3])
+        raise _stage4_error(f'{stage} (stage-4 component count: {runs} runs of {profile[0]} cells)', estimated, profile[3])
 
 
 def guard_stage_map_regions(stage, dataset, *, regions, runs, largest_area, largest_runs, layers_done, layer_cases,
-                            layer_electrodes):
+                            layer_electrodes, links_done=0, reserved=0):
     """Stage 4 region bound, called by electrode_map after the components of a layer are counted and before any
     region mask is allocated.
 
@@ -723,38 +784,183 @@ def guard_stage_map_regions(stage, dataset, *, regions, runs, largest_area, larg
     cells, limit = profile[0], profile[3]
     estimated = estimate_stage_map_regions(cells, regions=regions, runs=runs, largest_area=largest_area,
                                            largest_runs=largest_runs, layers_done=layers_done, layer_cases=layer_cases,
-                                           layer_electrodes=layer_electrodes)
+                                           layer_electrodes=layer_electrodes, links_done=links_done, reserved=reserved)
     if estimated > limit:
-        raise _operation_error(f'{stage} (stage-4 regions: {regions} regions of {cells} cells)', estimated, limit)
+        raise _stage4_error(f'{stage} (stage-4 regions: {regions} regions of {cells} cells)', estimated, limit)
 
 
-def guard_stage_compare_windows(stage, reference, target, *, layouts_cfg=None):
-    """Stage 6 admission (compare-windows and its report), before AreaResults and layout masks exist.
+STAGE5_PARSE_MULTIPLIER = 5           # retained Python objects per byte of a parsed review_rois.json (measured 1.9-2.5x on 3.8/3.11,
+                                      # peak 3.5x with the text; 5 keeps 2x margin for number-heavy rows)
+STAGE5_READ_TRANSIENT = 3             # per byte of the file being read: the raw bytes, its decoded text and parser working set
+STAGE5_REMEDY = ('rerun candidates with --max-candidates (fewer exported regions) or raise max_operation_bytes up to physical '
+                 'RAM (host RAM, not a cgroup/job limit)')
 
-    Both models' AreaResults coexist (retained + payload of each, transient of one at a time). The report then
-    holds both sides' original layout masks, 2 per case at (h+1000) x (w+1000) bool each, only for sides
-    whose cfg has an asset_manifest (layouts_cfg = cfg; None assumes no layouts).
-    """
+
+def estimate_stage_confirm_read(sizes):
+    """Peak of confirm-pairs while it holds every parsed candidates export: all files stay parsed (their rows are looked
+    up by roi_id), only the file being read adds the raw bytes and the decoded text."""
+    return sum(sizes) * STAGE5_PARSE_MULTIPLIER + max(sizes, default=0) * STAGE5_READ_TRANSIENT
+
+
+def guard_stage_confirm_read(stage, datasets, sizes):
+    """Stage 5 pre-read gate on the export file sizes, called before any export is read or json-parsed."""
+    profiles = [_dataset_profile(d) for d in datasets]
+    if not profiles or any(p is None for p in profiles):
+        return
+    limit = min(p[3] for p in profiles)
+    estimated = estimate_stage_confirm_read(sizes)
+    if estimated > limit:
+        raise NumericContractError(
+            'oversized_real_operation',
+            f'{stage} (stage-5 export read: {sum(sizes)} bytes in {len(sizes)} files x {STAGE5_PARSE_MULTIPLIER} parsed): '
+            f'estimated {estimated} bytes exceed limit {limit}; {STAGE5_REMEDY}')
+
+
+def estimate_stage_map_export(cells, *, layers, regions, links, rows, cases, reserved=0):
+    """Peak while ROI rows are built and written: the map is still alive (counts of every layer, packed regions, links,
+    the shared per-case raw/metadata copies), the rows exist in full until the file is written, one electrode layout is
+    decoded at a time and check_asset_manifest holds the validated references of every case."""
+    return (reserved + layers * 8 * cells + regions * (_packed_bytes(cells) + MAP_REGION_PAYLOAD_BYTES)
+            + links * MAP_LINK_BYTES + cases * (MAP_CASE_COPY_BYTES + MAP_ASSET_ENTRY_BYTES) + rows * MAP_ROW_BYTES
+            + LAYOUT_TRANSIENT_BYTES_PER_CELL * cells)
+
+
+def guard_stage_map_export(stage, dataset, maps, rows, *, reserved=0):
+    """Stage 4 export bound, called by roi_export once the number of rows to build is known and before any row exists."""
+    profile = _dataset_profile(dataset)
+    if profile is None:
+        return
+    layers = list(maps.layers) if maps is not None else []
+    regions = [r for layer in layers for r in layer.regions]
+    estimated = estimate_stage_map_export(profile[0], layers=len(layers), regions=len(regions),
+                                          links=sum(len(r.cases) for r in regions), rows=rows,
+                                          cases=len(dataset.cases), reserved=reserved)
+    if estimated > profile[3]:
+        raise _stage4_error(f'{stage} (stage-4 export: {rows} rows)', estimated, profile[3])
+
+
+def guard_stage_map_links(stage, dataset, *, regions, runs, largest_area, largest_runs, layers_done, layer_cases,
+                          layer_electrodes, links_done, new_links, reserved=0):
+    """Stage 4 link bound, called by electrode_map for every region after its linked cases are known and before its
+    windows, CaseLinks or measurements exist: the links built so far (links_done, all layers) plus this region's."""
+    profile = _dataset_profile(dataset)
+    if profile is None:
+        return
+    cells, limit = profile[0], profile[3]
+    estimated = estimate_stage_map_regions(cells, regions=regions, runs=runs, largest_area=largest_area,
+                                           largest_runs=largest_runs, layers_done=layers_done, layer_cases=layer_cases,
+                                           layer_electrodes=layer_electrodes, links_done=links_done,
+                                           new_links=new_links, reserved=reserved)
+    if estimated > limit:
+        raise _stage4_error(f'{stage} (stage-4 links: {links_done + new_links} links in {regions} regions of {cells} cells)',
+                            estimated, limit)
+
+
+def _stage6_frames(dataset):
+    """[(cells, pixel pitch)] of every frame of a dataset (a real dataset has one)."""
+    return [(int(frame.valid.size), float(frame.pixel_pitch_um)) for frame in dataset.frames.values()]
+
+
+def estimate_stage_compare_windows(profiles, frames, *, ready, blocked, sizes, jitter_um=None, named=False,
+                                   layouts=(False, False), reuse=False, phase='all'):
+    """Peak bytes of compare-windows as the MAX of its phases (never their sum), for the largest frame of both models.
+
+    profiles = _dataset_profile of reference and target; frames = _stage6_frames of each; layouts = per side: does the
+    cfg configure an asset_manifest. Phases:
+      areas   compute_areas of both models (or the artefact load): held + the one-group transient
+      rows    all rows exist, the unpack cache (<= STAGE6_UNPACK_CACHE_ENTRIES masks) and the named-case records are
+              live, windows are measured: held + pairs + rows + caches + one window's temporaries
+      report  the unpack cache is dropped; the page keeps its own small cache, <= STAGE6_LAYOUT_CACHE_CASES decoded
+              layout cases per side, the pinned overview masks, one decode, the page text
+    held = both AreaResults (summary buckets: retained + payload) or, with the artefact, the packed masks of the
+    groups compare-windows reads (4 per group) + their metadata; every term is an upper bound.
+    Returns {'areas', 'rows', 'report', 'peak', terms...} (a phase that does not apply is 0)."""
+    cells = [p[0] for p in profiles]
+    max_cells = max(cells)
+    groups = [len(p[1]) * len(DIAMETERS_UM) for p in profiles]
+    parts = [estimate_area_bytes(p[0], p[1], p[2], p[4], STAGE6_TOP_BUCKETS, p[6]) for p in profiles]
+    dataset_bytes = [p[2] * STAGE6_DATASET_RECORD_BYTES + STAGE6_FIXED_BYTES for p in profiles]
+    if reuse:
+        held = sum(g * (4 * _packed_bytes(c) + STAGE6_REUSED_GROUP_BYTES) + data
+                   for g, c, data in zip(groups, cells, dataset_bytes))
+        areas_transient = sum(g * STAGE6_REUSED_GROUP_BYTES for g in groups) + max(_packed_bytes(c) for c in cells)
+    else:
+        held = sum(part['retained'] + p[2] * STAGE6_RESULT_RECORD_BYTES + data
+                   for part, p, data in zip(parts, profiles, dataset_bytes))
+        areas_transient = max(part['transient'] for part in parts)
+    n_sizes, n_diameters = len(sizes), len(DIAMETERS_UM)
+    pairs_bytes = (ready + blocked) * STAGE6_PAIR_BYTES
+    rows_bytes = ready * n_sizes * n_diameters * STAGE6_ROW_BYTES + ready * n_diameters * STAGE6_SENSITIVITY_ENTRY_BYTES
+    side = max(sizes, default=0.0) + 2 * (jitter_um or 0.0)
+    window_cells = 0
+    for c, model_frames in zip(cells, frames):
+        if model_frames:
+            window_cells = max(window_cells, min(c, (math.ceil(side / model_frames[0][1]) + 4) ** 2))
+    rows_phase = report = 0
+    if ready:
+        # every (pair, size, diameter) row touches <= 8 masks (4 per side), so the cache never needs more than that
+        unpack_entries = min(STAGE6_UNPACK_CACHE_ENTRIES, 4 * sum(groups), 8 * n_diameters * ready)
+        caches = (unpack_entries + 1) * max_cells
+        if named:
+            caches += (2 * n_diameters + 2) * max_cells + sum(p[2] for p in profiles) // n_diameters * STAGE6_NAMED_INDEX_BYTES
+        rows_phase = held + pairs_bytes + rows_bytes + caches + STAGE6_WINDOW_BYTES_PER_CELL * window_cells
+        report = (held + pairs_bytes + rows_bytes + (STAGE6_PAGE_MASK_ENTRIES + 1) * max_cells
+                  + ready * n_sizes * STAGE6_PAGE_BYTES_PER_PAIR_SIZE + 4 * max_cells)
+    else:
+        caches = 0
+    if any(layouts):
+        asset_cells = [c for c, on in zip(cells, layouts) if on]
+        widest = max(asset_cells)
+        layout_cache = sum(STAGE6_LAYOUT_CACHE_CASES * 2 * c for c in asset_cells) if ready else 0
+        pinned = sum(2 * c * max(1, len(f)) for c, f, on in zip(cells, frames, layouts) if on) if ready else 0
+        refs = sum(p[2] // n_diameters * MAP_ASSET_ENTRY_BYTES for p, on in zip(profiles, layouts) if on)
+        report = max(report, held + pairs_bytes + rows_bytes) + layout_cache + pinned + refs \
+            + (LAYOUT_TRANSIENT_BYTES_PER_CELL + 4) * widest
+    areas_phase = held + areas_transient
+    wanted = {'all': (areas_phase, rows_phase, report), 'compute': (areas_phase, rows_phase, 0),
+              'rows': (0, rows_phase, 0), 'report': (0, 0, report)}[phase]
+    return {'areas': wanted[0], 'rows': wanted[1], 'report': wanted[2], 'peak': max(wanted), 'held': held,
+            'rows_bytes': rows_bytes, 'caches': caches, 'pairs_bytes': pairs_bytes, 'window_cells': window_cells}
+
+
+def stage_compare_windows_estimate(reference, target, *, layouts_cfg=None, pairs=None, sizes=(), jitter_um=None,
+                                   reuse=False, phase='all'):
+    """(estimate dict, limit) for the two datasets, or None when either is not a configured real dataset."""
     profiles = [_dataset_profile(d) for d in (reference, target)]
     if any(p is None for p in profiles):
+        return None
+    pairs = [] if pairs is None else list(pairs)
+    ready = sum(1 for p in pairs if p.status == 'ready')
+    named = any(p.status == 'ready' and p.a.endpoints is not None and p.b.endpoints is not None for p in pairs)
+    layouts = tuple(isinstance(layouts_cfg, dict) and isinstance(layouts_cfg.get(name), dict)
+                    and bool(layouts_cfg[name].get('asset_manifest')) for name in ('reference', 'target'))
+    estimate = estimate_stage_compare_windows(
+        profiles, [_stage6_frames(reference), _stage6_frames(target)], ready=ready, blocked=len(pairs) - ready,
+        sizes=tuple(sizes), jitter_um=jitter_um, named=named, layouts=layouts, reuse=reuse, phase=phase)
+    estimate['ready'], estimate['blocked'] = ready, len(pairs) - ready
+    return estimate, min(p[3] for p in profiles)
+
+
+def guard_stage_compare_windows(stage, reference, target, *, layouts_cfg=None, pairs=None, sizes=(), jitter_um=None,
+                                reuse=False, phase='all'):
+    """Stage 6 admission, after the correspondence is loaded and bound and before any compute or allocation.
+
+    pairs = BoundPair list (ready / blocked are counted), sizes = the validated window sizes (µm). The estimate is the
+    max over the phases (see estimate_stage_compare_windows); layouts_cfg = cfg prices the page's layout cache for the
+    sides that have an asset_manifest; reuse = the compare artefact supplies the AreaResults (no compute_areas).
+    phase selects the part that is still ahead of the caller ('compute' before the rows, 'report' before the page).
+    A caller without pairs (None) prices zero pairs, as the stage-2-only checks always did."""
+    found = stage_compare_windows_estimate(reference, target, layouts_cfg=layouts_cfg, pairs=pairs, sizes=sizes,
+                                           jitter_um=jitter_um, reuse=reuse, phase=phase)
+    if found is None:
         return
-    parts = [estimate_area_bytes(p[0], p[1], p[2], p[4], STAGE6_TOP_BUCKETS, p[6]) for p in profiles]
-    limit = min(p[3] for p in profiles)
-    held = sum(part['retained'] + part['payload'] for part in parts)
-    estimated = held + max(part['transient'] for part in parts)
-    if layouts_cfg is not None:
-        stored, widest = 0, 0
-        for name, dataset, profile in (('reference', reference, profiles[0]), ('target', target, profiles[1])):
-            if not isinstance(layouts_cfg.get(name), dict) or not layouts_cfg[name].get('asset_manifest'):
-                continue
-            layout_cells = (profile[5][0] + 1000) * (profile[5][1] + 1000)
-            confirmed = sum(1 for c in dataset.cases if (c.raw or {}).get('geometry_status') == 'confirmed')
-            stored += confirmed * 2 * layout_cells
-            widest = max(widest, layout_cells)
-        if stored:
-            estimated = max(estimated, held + stored + LAYOUT_TRANSIENT_BYTES_PER_CELL * widest)
-    if estimated > limit:
-        raise _operation_error(stage, estimated, limit)
+    estimate, limit = found
+    if estimate['peak'] > limit:
+        raise NumericContractError(
+            'oversized_real_operation',
+            f"{stage}: estimated {estimate['peak']} bytes exceed limit {limit} "
+            f"({estimate['ready']} ready and {estimate['blocked']} blocked pairs x {len(tuple(sizes))} window sizes x "
+            f"{len(DIAMETERS_UM)} diameters{', compare masks reused' if reuse else ''}); {STAGE6_REMEDY}")
 
 
 class LazyRecords(Mapping):

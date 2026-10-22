@@ -11,6 +11,7 @@ as such. DL scores are shown as provenance text only.
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict
 import hashlib
 from html import escape
 import io
@@ -21,8 +22,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .local_delta import METRICS, LocalDeltaResult, _named_case, find_group
+from .local_delta import METRICS, LocalDeltaResult, MaskCache, NamedCaseIndex, _count, _named_case, find_group, group_mask
 from .numeric_schema import DIAMETERS_UM, diameter_key
+from .publication import staged_file
 
 PIECE_COLOURS = {'lateral_only': (0, 90, 200), 'vertical_only': (0, 150, 80), 'simultaneous': (200, 30, 30)}
 ELECTRODE_COLOURS = ((40, 90, 220), (235, 140, 20))
@@ -33,6 +35,8 @@ CORE_OUTLINE = (0, 140, 0)
 DEFAULT_DISPLAY_DIAMETER_UM = 5.0  # same convention as the electrode-count map
 OVERVIEW_MAX_PX = 800
 THUMBS_SCHEMA = 'local_delta_thumbs_v1'
+LAYOUT_CACHE_CASES = 8      # decoded layout cases (2 masks each) a side keeps at once
+PAGE_MASK_CACHE_ENTRIES = 24  # unpacked failure-piece masks the page keeps (3 pieces x 2 sides x 4 groups)
 
 
 def _crop_cells(frame, bounds, margin_um):
@@ -140,11 +144,19 @@ def _fmt(value, digits=6):
 
 
 class _Assets:
-    """Original layout masks per case, resolved through the review asset manifest when configured."""
+    """Original layout masks per case, resolved through the review asset manifest when configured.
+
+    Decoding is lazy and bounded: the constructor validates the manifest and then reads every layout once, in dataset
+    order, exactly like the eager loader did (so the first unreadable layout still stops the later ones and sets the
+    same page-wide reason), but keeps only the validated references. layouts(case) decodes a case again on demand and
+    keeps at most LAYOUT_CACHE_CASES cases per side."""
 
     def __init__(self, cfg, side_name, dataset):
-        self.masks = {}
+        self.refs = {}
         self.reason = None
+        self.reads = 0
+        self._root = None
+        self._cache = OrderedDict()
         if cfg is None or not isinstance(cfg.get(side_name), dict) or dataset is None:
             self.reason = 'source_asset_manifest_required'
             return
@@ -158,20 +170,45 @@ class _Assets:
             if reasons:
                 self.reason = ','.join(reasons)
                 return
+            self._root = root
             for case in dataset.cases:
                 entry = assets.get(_identity(asdict(case.identity)))
                 if not entry or entry['assets'] is None:
                     continue
-                layouts = []
-                for item in entry['assets']['layouts']:
-                    ref = item['asset']
-                    layouts.append(read_binary(root, ref['path'], sha256=ref['sha256'], value_semantics=ref['value_semantics']))
-                self.masks[case.identity] = layouts
+                refs = [item['asset'] for item in entry['assets']['layouts']]
+                for ref in refs:
+                    read_binary(root, ref['path'], sha256=ref['sha256'], value_semantics=ref['value_semantics'])
+                    self.reads += 1
+                    _count('layout_auth_reads')
+                self.refs[case.identity] = refs
         except Exception as exc:  # the page must still be written; thumbnails become 'unavailable'
             self.reason = getattr(exc, 'code', type(exc).__name__)
 
     def layouts(self, case):
-        return self.masks.get(case.identity)
+        identity = case.identity
+        layouts = self._cache.get(identity)
+        if layouts is not None:
+            self._cache.move_to_end(identity)
+            return layouts
+        refs = self.refs.get(identity)
+        if refs is None:
+            return None
+        from .numeric_images import read_binary
+        try:
+            layouts = []
+            for ref in refs:
+                layouts.append(read_binary(self._root, ref['path'], sha256=ref['sha256'], value_semantics=ref['value_semantics']))
+                self.reads += 1
+                _count('layout_decodes')
+        except Exception as exc:  # changed on disk after the authentication pass: this case has no layouts now
+            del self.refs[identity]
+            if self.reason is None:
+                self.reason = getattr(exc, 'code', type(exc).__name__)
+            return None
+        self._cache[identity] = layouts
+        while len(self._cache) > LAYOUT_CACHE_CASES:
+            self._cache.popitem(last=False)
+        return layouts
 
 
 def _iou_cell_centres(mask_a, frame_a, bounds_a, mask_b, frame_b, bounds_b):
@@ -193,7 +230,7 @@ def _iou_cell_centres(mask_a, frame_a, bounds_a, mask_b, frame_b, bounds_b):
             'sampling': 'cell_centres', 'registration': 'none'}
 
 
-def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, label):
+def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, label, named_index=None, masks=None):
     """Layout crop (named case electrodes) and hotspot crop (pieces) for one side."""
     bounds = display_row['window']['bounds_um'][label]
     core = display_row['attributable_core'].get('bounds_um')
@@ -210,7 +247,7 @@ def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, labe
     if side.endpoints is None:
         out['layout_note'] = '전극 지정 없음 (endpoints 없음)'
     else:
-        matches = _named_case(dataset.cases, side)
+        matches = named_index.matches(side) if named_index is not None else _named_case(dataset.cases, side)
         if len(matches) != 1:
             out['layout_note'] = 'named_pair_case_not_found' if not matches else 'named_pair_case_ambiguous'
         else:
@@ -224,7 +261,7 @@ def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, labe
     group, _ = find_group(areas, side, diameter, label)
     if group is not None:
         base = [] if layouts is None else [(m, (225, 225, 225)) for m in layouts]
-        pieces = [(group.failure_piece_masks[name], PIECE_COLOURS[name]) for name in PIECE_COLOURS]
+        pieces = [(group_mask(group, name, masks), PIECE_COLOURS[name]) for name in PIECE_COLOURS]
         out['hotspot'], _ = _render(side.frame, crop, base + pieces, rectangles)
     else:
         out['hotspot_note'] = 'hotspot_group_not_found'
@@ -283,62 +320,19 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
     areas_a, areas_b = result.areas if result.areas is not None else (None, None)
     if cfg is not None and reference is not None and target is not None:
         from .adapters.real_hotspot import guard_stage_compare_windows
-        guard_stage_compare_windows('compare-windows report', reference, target, layouts_cfg=cfg)  # layouts of both models
+        guard_stage_compare_windows('compare-windows report', reference, target, layouts_cfg=cfg, pairs=result.pairs,
+                                    sizes=result.window_sizes_um, jitter_um=result.jitter_um, phase='report',
+                                    reuse=result.areas is not None and getattr(result.areas[0], 'reused_from', None) is not None)
     assets = {'a': _Assets(cfg, 'reference', reference), 'b': _Assets(cfg, 'target', target)}
+    named_indexes = {label: None if dataset is None else NamedCaseIndex(dataset.cases)
+                     for label, dataset in (('a', reference), ('b', target))}
+    masks = MaskCache(PAGE_MASK_CACHE_ENTRIES)
     ready = {pair.pair_id: pair for pair in result.pairs if pair.status == 'ready'}
     blocked = [pair for pair in result.pairs if pair.status != 'ready']
     by_pair_size = {}
     for row in result.rows:
         by_pair_size.setdefault((row['pair_id'], row['window_size_um']), {})[row['diameter_um']] = row
-    sections = ''
     crop_files, window_records, overview_layouts = {}, [], {}
-    for size in result.window_sizes_um:
-        ranking = result.ranking.get('by_window_size', {}).get(str(size))
-        order = [e['pair_id'] for e in ranking] if ranking else list(ready)
-        rows_html = ''
-        for pair_id in order:
-            pair = ready[pair_id]
-            rows_by_d = by_pair_size.get((pair_id, size), {})
-            if display_d not in rows_by_d:
-                continue
-            thumbs = {}
-            for label, dataset, areas in (('a', reference, areas_a), ('b', target, areas_b)):
-                side = pair.a if label == 'a' else pair.b
-                if dataset is None or areas is None:
-                    thumbs[label] = {'layout': None, 'hotspot': None, 'layout_note': 'dataset_not_supplied', 'layout_masks': None}
-                else:
-                    try:
-                        thumbs[label] = _side_thumbnails(side, dataset, assets[label], areas, rows_by_d[display_d], size, label)
-                    except Exception as exc:  # the numbers are already written; the page must still render
-                        thumbs[label] = {'layout': None, 'hotspot': None, 'layout_masks': None,
-                                         'layout_note': 'thumbnail_failed:' + getattr(exc, 'code', type(exc).__name__)}
-            iou = None
-            if thumbs['a']['layout_masks'] is not None and thumbs['b']['layout_masks'] is not None:
-                bounds = rows_by_d[display_d]['window']['bounds_um']
-                iou = [_iou_cell_centres(ma, pair.a.frame, bounds['a'], mb, pair.b.frame, bounds['b'])
-                       for ma, mb in zip(thumbs['a']['layout_masks'], thumbs['b']['layout_masks'])]
-            rows_html += _row_html(pair, size, rows_by_d, display_d, thumbs, iou)
-            for label in ('a', 'b'):
-                side = pair.a if label == 'a' else pair.b
-                thumb = thumbs[label]
-                bounds = rows_by_d[display_d]['window']['bounds_um'][label]
-                core = rows_by_d[display_d]['attributable_core'].get('bounds_um')
-                window_records.append({'pair_id': pair_id, 'window_size_um': size, 'side': label, 'window_bounds_um': list(bounds),
-                                       'core_bounds_um': None if core is None else list(core[label])})
-                for kind in ('layout', 'hotspot'):
-                    note = thumb['layout_note'] if kind == 'layout' else (thumb.get('hotspot_note') or thumb['layout_note'])
-                    crop_files[(pair_id, size, label, kind)] = {
-                        'pair_id': pair_id, 'window_size_um': size, 'diameter_um': display_d, 'side': label, 'kind': kind,
-                        'file': None if thumb[kind] is None else _png_file(out, name + '_thumb', thumb[kind]),
-                        'crop_bounds_um': thumb.get('crop_bounds_um'), 'note': None if thumb[kind] is not None else note}
-                if thumb['layout_masks'] is not None:
-                    # The overview background shows only this first pair's two electrodes; the report names the pair
-                    # (overview_source_pair_id) and says so. No full-layout composite is attempted.
-                    overview_layouts.setdefault((label, side.frame.frame_id), (pair, side, thumb['layout_masks']))
-        order_note = ('|Δ_union| 내림차순 (정렬 지름 ' + _fmt(result.sort_diameter_um) + ' µm)') if ranking else '대응 파일 순서 (정렬 지름 미지정)'
-        sections += ('<h2>창 ' + escape(_fmt(size)) + ' µm</h2><p>순서: ' + escape(order_note) + '</p>'
-                     '<table class="pairs"><tr><th>쌍</th><th>a layout · a hotspot · b layout · b hotspot (빨간 사각형 = 창, 초록 = attributable core)</th><th>a / b / Δ (b − a) @ 표시 지름</th></tr>' +
-                     (rows_html or '<tr><td colspan="3">표시할 ready 쌍이 없습니다</td></tr>') + '</table>')
     blocked_html = ''
     if blocked:
         blocked_html = '<h2>blocked 쌍</h2><ul>' + ''.join('<li>' + escape(p.pair_id) + ': ' + escape(', '.join(p.reasons)) + '</li>' for p in blocked) + '</ul>'
@@ -355,7 +349,7 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
               '<p>창 값은 창 안 이물 중심 위치의 정확한 국부 위험이고, core 값은 창 안 형상 탓으로 읽을 수 있는 부분입니다. '
               'fraction은 창 면적으로 나눈 단위 없는 값입니다. DL 점수는 출처 표시일 뿐 어떤 수치에도 들어가지 않습니다. '
               '숫자 전체는 local_delta.json / local_delta_rows.csv, 창 크기 민감도는 window_sensitivity.*에 있습니다.</p>')
-    html = ('<!doctype html><html lang="ko"><meta charset="utf-8"><title>' + escape(name) + '</title><style>'
+    head = ('<!doctype html><html lang="ko"><meta charset="utf-8"><title>' + escape(name) + '</title><style>'
             'body{font-family:system-ui;max-width:1500px;margin:1.5rem auto;padding:0 1rem}'
             'table.pairs{border-collapse:collapse;width:100%}table.pairs td,table.pairs th{border:1px solid #ccc;padding:6px;vertical-align:top}'
             'td.thumbs{white-space:nowrap}.pane{display:inline-block;margin:0 6px;text-align:center}.pane span{display:block;font-size:12px;color:#555}'
@@ -363,9 +357,61 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
             '.missing{width:160px;height:80px;border:1px dashed #999;color:#777;font-size:12px;display:flex;align-items:center;justify-content:center;white-space:normal}'
             'table.metrics{border-collapse:collapse;font-size:13px}table.metrics td,table.metrics th{border:1px solid #ddd;padding:2px 6px;text-align:right}'
             'td.delta{font-weight:bold}td.meta{min-width:220px}small{color:#555}</style>'
-            '<h1>국부 ΔCA: 대응 위치의 같은 물리 창</h1>' + header + legend + sections + blocked_html + '</html>')
+            '<h1>국부 ΔCA: 대응 위치의 같은 물리 창</h1>' + header + legend)
     path = out / (name + '.html')
-    path.write_text(html, encoding='utf-8')
+    with staged_file(path) as page:  # written row by row: the page never exists as one string
+        page.write(head)
+        for size in result.window_sizes_um:
+            ranking = result.ranking.get('by_window_size', {}).get(str(size))
+            order = [e['pair_id'] for e in ranking] if ranking else list(ready)
+            order_note = ('|Δ_union| 내림차순 (정렬 지름 ' + _fmt(result.sort_diameter_um) + ' µm)') if ranking else '대응 파일 순서 (정렬 지름 미지정)'
+            page.write('<h2>창 ' + escape(_fmt(size)) + ' µm</h2><p>순서: ' + escape(order_note) + '</p>'
+                       '<table class="pairs"><tr><th>쌍</th><th>a layout · a hotspot · b layout · b hotspot (빨간 사각형 = 창, 초록 = attributable core)</th><th>a / b / Δ (b − a) @ 표시 지름</th></tr>')
+            wrote_row = False
+            for pair_id in order:
+                pair = ready[pair_id]
+                rows_by_d = by_pair_size.get((pair_id, size), {})
+                if display_d not in rows_by_d:
+                    continue
+                thumbs = {}
+                for label, dataset, areas in (('a', reference, areas_a), ('b', target, areas_b)):
+                    side = pair.a if label == 'a' else pair.b
+                    if dataset is None or areas is None:
+                        thumbs[label] = {'layout': None, 'hotspot': None, 'layout_note': 'dataset_not_supplied', 'layout_masks': None}
+                    else:
+                        try:
+                            thumbs[label] = _side_thumbnails(side, dataset, assets[label], areas, rows_by_d[display_d], size, label,
+                                                             named_indexes[label], masks)
+                        except Exception as exc:  # the numbers are already written; the page must still render
+                            thumbs[label] = {'layout': None, 'hotspot': None, 'layout_masks': None,
+                                             'layout_note': 'thumbnail_failed:' + getattr(exc, 'code', type(exc).__name__)}
+                iou = None
+                if thumbs['a']['layout_masks'] is not None and thumbs['b']['layout_masks'] is not None:
+                    bounds = rows_by_d[display_d]['window']['bounds_um']
+                    iou = [_iou_cell_centres(ma, pair.a.frame, bounds['a'], mb, pair.b.frame, bounds['b'])
+                           for ma, mb in zip(thumbs['a']['layout_masks'], thumbs['b']['layout_masks'])]
+                page.write(_row_html(pair, size, rows_by_d, display_d, thumbs, iou))
+                wrote_row = True
+                for label in ('a', 'b'):
+                    side = pair.a if label == 'a' else pair.b
+                    thumb = thumbs[label]
+                    bounds = rows_by_d[display_d]['window']['bounds_um'][label]
+                    core = rows_by_d[display_d]['attributable_core'].get('bounds_um')
+                    window_records.append({'pair_id': pair_id, 'window_size_um': size, 'side': label, 'window_bounds_um': list(bounds),
+                                           'core_bounds_um': None if core is None else list(core[label])})
+                    for kind in ('layout', 'hotspot'):
+                        note = thumb['layout_note'] if kind == 'layout' else (thumb.get('hotspot_note') or thumb['layout_note'])
+                        crop_files[(pair_id, size, label, kind)] = {
+                            'pair_id': pair_id, 'window_size_um': size, 'diameter_um': display_d, 'side': label, 'kind': kind,
+                            'file': None if thumb[kind] is None else _png_file(out, name + '_thumb', thumb[kind]),
+                            'crop_bounds_um': thumb.get('crop_bounds_um'), 'note': None if thumb[kind] is not None else note}
+                    if thumb['layout_masks'] is not None:
+                        # The overview background shows only this first pair's two electrodes; the report names the pair
+                        # (overview_source_pair_id) and says so. No full-layout composite is attempted.
+                        overview_layouts.setdefault((label, side.frame.frame_id), (pair, side, thumb['layout_masks']))
+            page.write('' if wrote_row else '<tr><td colspan="3">표시할 ready 쌍이 없습니다</td></tr>')
+            page.write('</table>')
+        page.write(blocked_html + '</html>')
     sides = []
     for label, dataset in (('a', reference), ('b', target)):
         seen = set()
@@ -390,9 +436,10 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
                     record['note'] = 'overview_failed:' + getattr(exc, 'code', type(exc).__name__)
             sides.append(record)
     thumbs_path = out / (name + '_thumbs.json')
-    thumbs_path.write_text(json.dumps({'schema_version': THUMBS_SCHEMA, 'display_diameter_um': display_d,
-                                       'crops': list(crop_files.values()), 'sides': sides, 'windows': window_records},
-                                      indent=2, ensure_ascii=False), encoding='utf-8')
+    with staged_file(thumbs_path) as handle:
+        json.dump({'schema_version': THUMBS_SCHEMA, 'display_diameter_um': display_d,
+                   'crops': list(crop_files.values()), 'sides': sides, 'windows': window_records},
+                  handle, indent=2, ensure_ascii=False)
     files = sorted({str(out / r['file']) for r in crop_files.values() if r['file']} |
                    {str(out / r['overview_file']) for r in sides if r['overview_file']})
     return [str(path), str(thumbs_path)] + files

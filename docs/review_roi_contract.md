@@ -70,6 +70,8 @@ manual에는 product_id/design_version/frame_id/center_xy_um와 case_id 또는 �
 
 `simcompare candidates`는 두 제품의 electrode-map 영역에서 대표 region만 골라 위 `map_region_ids`로 `export_review_rois`(numeric 또는 real T1b 경로)를 호출한다. `review_roi_v1` 스키마는 바뀌지 않는다. 한 영역의 case마다 ROI 행이 생기므로 질의 하나가 ROI 여러 개(`candidate_queries_v1`의 `roi_ids`)를 가질 수 있다. 질의 export는 선택한 case의 전극 layout만 참조하므로 DL2 index로 쓰면 안 된다(`candidate_queries_v1.json`의 `notes`에 정보 메모 `index_union_partial`). 대신 제품마다 `<product>_index_export/`를 함께 만든다: 데이터셋 case마다 명시 manual ROI 하나(위치는 valid 셀 안의 결정적 점)이며 모든 전극의 layout을 참조해 role/layer union이 제품 전체를 덮는다. 이 행들은 index 전용이며 질의가 아니고 region provenance가 없다. 전극을 덮지 못하거나 blocked ROI가 있으면 `index_coverage_incomplete`와 종료 코드 3이다. 자세한 인수·병합·깔때기 규칙은 usage.md의 "취약 영역 후보" 절을 본다.
 
+region 행의 `provenance.coverage`는 식별 목록(`observed`·`missing`·`not_applicable`·`measurement_errors`) 대신 같은 목록을 가리키는 `observed_ref`를 갖고, 목록은 최상위 `region_coverages`(`{id: {observed, missing, not_applicable, measurement_errors}}`)에 한 번만 쓴다. `source_coverage_status`와 개수·면적 스칼라는 행에 그대로 있다. `schema_version`은 `review_roi_v1`이며 DL2는 region 행의 `provenance.coverage.source_coverage_status`만 읽는다. 목록이 필요한 읽는 쪽은 `region_coverages[row.provenance.coverage.observed_ref]`를 쓴다. manual 전용 export에는 `region_coverages`가 없다.
+
 ### 입력 불변 가정과 role 차단 기록
 
 - 증거 게이트(asset manifest, import record)는 같은 bytes를 해시·파싱하고 export 전후로 다시 해시하지만, `export_review_rois`는 manifest를 자체적으로 다시 읽는다. 따라서 그 호출 안에서 manifest를 바꿨다가 되돌리는 경우는 감지하지 못한다. 이 도구는 명령 실행 중 다른 프로세스가 입력을 수정하지 않는다고 가정한다(단일 사용자 폐쇄망). 데이터 디렉터리 사본에서 실행하기를 권장하며, 이 경쟁이 방지된다고 주장하지 않는다.

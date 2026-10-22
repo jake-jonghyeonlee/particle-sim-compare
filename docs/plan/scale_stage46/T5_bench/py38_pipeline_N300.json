@@ -1,0 +1,62 @@
+{
+ "python": "/tmp/py38/bin/python",
+ "N": 300,
+ "size": 1262,
+ "profile": "components",
+ "generate_s": 8.6,
+ "accepted": 50,
+ "queries": {
+  "reference_to_target": 882,
+  "target_to_reference": 891
+ },
+ "pairs": 50,
+ "ready": 50,
+ "rows": 4800,
+ "rows_expected": 4800,
+ "status": "partial",
+ "artefact": true,
+ "steps": [
+  {
+   "stage": "1_import_hotspots",
+   "runner": "simcompare_job_1_import_hotspots.py",
+   "exit": 0,
+   "wall_s": 174.5,
+   "tail": "us\": \"partial\",\n  \"manifest\": \"/private/tmp/py38run/data/imported/reference/manifest.json\",\n  \"cases\": 300,\n  \"diagnostics\": 0,\n  \"is_synthetic\": false,\n  \"source_payload_hash\": \"bc7c6fdb509ffb74c15b868c3f05d3e05a80fd758ab0eaf4ba5ee80a3ebd4992\"\n}\n{\n  \"status\": \"partial\",\n  \"manifest\": \"/private/tmp/py38run/data/imported/target/manifest.json\",\n  \"cases\": 300,\n  \"diagnostics\": 0,\n  \"is_synthetic\": false,\n  \"source_payload_hash\": \"60df0547b57615750a287f1fc3fdbb6fcdc682f1a378df54b0c01c02f7c800ae\"\n}\n"
+  },
+  {
+   "stage": "2_validate_compare",
+   "runner": "simcompare_job_2_validate_compare.py",
+   "exit": 0,
+   "wall_s": 234.2,
+   "tail": "\n{\n  \"status\": \"partial\",\n  \"reasons\": [],\n  \"outputs\": [\n    \"/tmp/py38run/outputs/compare/validation.json\",\n    \"/tmp/py38run/outputs/compare/validation_records.csv\",\n    \"/tmp/py38run/outputs/compare/validation.html\"\n  ],\n  \"exit_code\": 3\n}\n{\n  \"status\": \"partial\",\n  \"reasons\": [\n    \"density_contract_unconfirmed\",\n    \"unit_area_basis_unconfirmed\"\n  ],\n  \"outputs\": [\n    \"/tmp/py38run/outputs/compare/comparison.json\",\n    \"/tmp/py38run/outputs/compare/comparison.csv\"\n  ],\n  \"exit_code\": 3\n}\n"
+  },
+  {
+   "stage": "3_import_electrode_assets",
+   "runner": "simcompare_job_3_import_electrode_assets.py",
+   "exit": 0,
+   "wall_s": 70.6,
+   "tail": "b6e7e92592a30851add2dbe3697356557ece04cea6b889f\",\n  \"memory_estimate_mb\": 40.282,\n  \"exit_code\": 0\n}\n{\n  \"status\": \"available\",\n  \"outputs\": [\n    \"/private/tmp/py38run/data/assets/target/review_assets.json\",\n    \"/private/tmp/py38run/data/assets/target/electrode_asset_import_record.json\"\n  ],\n  \"cases_converted\": 300,\n  \"cases_blocked\": 0,\n  \"asset_files\": 602,\n  \"input_hash\": \"749485c8a54adfa66cbf393855fc3b840e770fea8cbcdf9d3ffe6268603db2f7\",\n  \"memory_estimate_mb\": 40.282,\n  \"exit_code\": 0\n}\n"
+  },
+  {
+   "stage": "4_candidates",
+   "runner": "simcompare_job_4_candidates.py",
+   "exit": 0,
+   "wall_s": 91.8,
+   "tail": "6\",\n    \"D0267\",\n    \"D0268\",\n    \"D0269\",\n    \"D0270\",\n    \"D0271\",\n    \"D0272\",\n    \"D0273\",\n    \"D0274\",\n    \"D0275\",\n    \"D0276\",\n    \"D0277\",\n    \"D0278\",\n    \"D0279\",\n    \"D0280\",\n    \"D0281\",\n    \"D0282\",\n    \"D0283\",\n    \"D0284\",\n    \"D0285\",\n    \"D0286\",\n    \"D0287\",\n    \"D0288\",\n    \"D0289\",\n    \"D0290\",\n    \"D0291\",\n    \"D0292\",\n    \"D0293\",\n    \"D0294\",\n    \"D0295\",\n    \"D0296\",\n    \"D0297\",\n    \"D0298\",\n    \"D0299\"\n  ]\n}[simcompare_job] 2026-10-22 23:44:57 candidates exit 0 in 92s\n\n"
+  },
+  {
+   "stage": "5_confirm_pairs",
+   "runner": "simcompare_job_5_confirm_pairs.py",
+   "exit": 0,
+   "wall_s": 75.1,
+   "tail": "tputs\": [\n    \"confirm_funnel.csv\",\n    \"confirm_funnel.json\",\n    \"confirmed_pairs_sidecar.json\",\n    \"execution.json\",\n    \"roi_correspondence.json\"\n  ],\n  \"exit_code\": 0,\n  \"labelled_by\": \"bench\",\n  \"labelled_at\": \"2026-10-22T14:46:12Z\",\n  \"n_accepted\": 50,\n  \"n_emitted_ready\": 50,\n  \"n_emitted_blocked\": 0,\n  \"n_merged_away\": 0,\n  \"funnel\": {\n    \"candidates\": 5319,\n    \"accept\": 50,\n    \"reject\": 0,\n    \"undecided\": 5269,\n    \"blocked\": 0,\n    \"merged_away\": 0,\n    \"emitted_ready\": 50\n  }\n}\n"
+  },
+  {
+   "stage": "6_compare_windows",
+   "runner": "simcompare_job_6_compare_windows.py",
+   "exit": 0,
+   "wall_s": 182.7,
+   "tail": "    \"data/local/local_delta_thumb_f95c896e8408.png\",\n    \"data/local/local_delta_thumb_f99c799ca2cf.png\",\n    \"data/local/local_delta_thumb_fa030642201f.png\",\n    \"data/local/local_delta_thumb_fa8c01641d94.png\",\n    \"data/local/local_delta_thumb_fb5ae6043df8.png\",\n    \"data/local/local_delta_thumb_fb7251521262.png\",\n    \"data/local/local_delta_thumb_fc5ed87ef386.png\",\n    \"data/local/local_delta_thumb_ff14b207462d.png\",\n    \"data/local/local_delta_thumb_ff60be4e07b2.png\"\n  ],\n  \"exit_code\": 3\n}\n"
+  }
+ ]
+}

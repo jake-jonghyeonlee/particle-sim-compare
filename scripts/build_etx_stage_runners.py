@@ -33,14 +33,17 @@ def _electrode(side, model):
 
 STAGES = {
     "1_import_hotspots": (
-        ["1회차: hotspot import. 끝나면 pairs.csv를 data/imported/reference/와 data/imported/target/ 안에 복사한다."],
+        ["1회차: hotspot import. 끝나면 pairs.csv를 data/imported/reference/와 data/imported/target/ 안에 복사한다.",
+         "4회차 ROI를 ready로 만들려면 각 import에 '--expected-cases', '<case 이름을 줄마다 적은 txt>'를 더한다. 없으면 기대 case 목록이",
+         "unconfirmed라 모든 ROI가 blocked(map_coverage_incomplete)가 된다. 이미 import했다면 새 --out으로 1회차를 다시 해야 한다."],
         [("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_R00", "--out", f"{DATA}/imported/reference"],
           "reference (QA4_R00). --out은 아직 없는 새 경로"),
          ("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_T00", "--out", f"{DATA}/imported/target"],
           "target (QA4_T00)")]),
     "2_validate_compare": (
         ["2회차: 검사·비교. 마스크를 한 장씩 읽는 스트리밍이라 기본 max_operation_bytes(8 GiB)로 충분한 것이 정상이다.",
-         "oversized_real_operation이 나오면 메시지의 추정치 N에 여유를 더해(물리 메모리 이하) max_operation_bytes로 넣는다."],
+         "oversized_real_operation이 나오면 메시지의 추정치 N에 여유를 더해(물리 메모리 이하) max_operation_bytes로 넣는다.",
+         "compare는 comparison.json/csv와 함께 comparison_masks.zip을 만든다(6회차가 두 모델의 면적 계산을 건너뛰는 데 쓴다)."],
         [("validate-data", ["--config", CONFIG], None),
          ("compare", ["--config", CONFIG], None)]),
     "3_import_electrode_assets": (
@@ -50,7 +53,8 @@ STAGES = {
         [_electrode("reference", "QA4_R00"), _electrode("target", "QA4_T00")]),
     "4_candidates": (
         ["4회차: 후보(DL2 직전). --min-count, --window-um, --merge-overlap은 필수이며 값은 예시다.",
-         "결과의 *_export/review_rois.json, *_index_export/review_rois.json이 DL2 입력이고 dl2_model_roles가 DL2 model.roles 목록이다."],
+         "결과의 *_export/review_rois.json, *_index_export/review_rois.json이 DL2 입력이고 dl2_model_roles가 DL2 model.roles 목록이다.",
+         "review_rois.json은 슬림 형식(행마다 observed_ref, 목록은 최상위 region_coverages)이며 review_roi_v1 그대로라 DL2가 읽는다."],
         [("candidates", ["--config", CONFIG, "--min-count", "3", "--window-um", "20", "--merge-overlap", "0.5",
                          "--out", f"{DATA}/candidates_k3"], None)]),
     "5_confirm_pairs": (
@@ -69,7 +73,8 @@ STAGES = {
           "accept 후보만 roi_correspondence.json으로. --labelled-by CHANGE_ME를 실제 ID로 바꾼다")]),
     "6_compare_windows": (
         ["6회차: 확정 쌍 위치의 창별 국부 ΔCA. 창 10/20/30 µm, jitter 0.5 µm, 정렬 지름 5 µm는 권장 운용값(코드 기본값 아님)이다.",
-         "결과 local_delta.html이 쌍별 ΔCA 보기다. 통합 report는 아직 실자료(real_hotspot) compare 출력을 읽지 못해 회차에서 뺐다."],
+         "결과 local_delta.html이 쌍별 ΔCA 보기다. 통합 report는 아직 실자료(real_hotspot) compare 출력을 읽지 못해 회차에서 뺐다.",
+         "2회차의 comparison_masks.zip이 맞으면 재사용하고 없거나 입력이 바뀌었으면 다시 계산한다. 출력 폴더는 한 세대로 공개되며 죽은 뒤 다시 실행하면 복구한다."],
         [("compare-windows", ["--config", CONFIG, "--correspondence", f"{DATA}/confirmed/roi_correspondence.json",
                               "--window-sizes", "10", "20", "30", "--jitter-um", "0.5", "--sort-diameter-um", "5",
                               "--out", f"{DATA}/local"], None)]),

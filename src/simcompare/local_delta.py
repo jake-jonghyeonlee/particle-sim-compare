@@ -13,9 +13,11 @@ these numbers.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 import hashlib
+import itertools
 import json
 import math
 from pathlib import Path
@@ -25,12 +27,17 @@ import numpy as np
 from .correspondence import BoundPair, BoundSide
 from .linepixel import FAILURE_PIECES, AreaMetric, AreaResult, GroupArea
 from .measurement import measure_union
+from .publication import staged_file
 from .numeric_schema import (
     DIAMETERS_UM, Frame, MaskRecord, NumericContractError, NumericDataset, PhysicalWindow, Status,
     diameter_key, finite,
 )
 
 METRICS = ('union', *FAILURE_PIECES)
+# Both sides x every metric x 4 diameters. Unpacking costs ~0.06 ms per 1262^2 mask while a window measurement costs ~10 ms, so the cache only has
+# to cover the 24 uses of a row's 8 masks (a row needs 8 unpacks instead of 24); the 256 entries that would keep every diameter of a layer
+# bought another ~5 % of time for ~420 MB (T3_report.md), so the bound stays small. STAGE6_UNPACK_CACHE_ENTRIES in real_hotspot.py must match.
+UNPACK_CACHE_ENTRIES = 2 * len(METRICS) * 4
 SPATIAL_GROUP_REASONS = ('partial_observation',)
 WINDOW_KINDS = ('window', 'attributable_core')
 SCHEMA_VERSION = 'local_delta_v1'
@@ -77,6 +84,54 @@ def _group_matches(key, side: BoundSide, diameter) -> bool:
     if diameter_key(key.diameter_um) != diameter_key(diameter):
         return False
     return all(getattr(key, name) == value for name, value in side.filters.items())
+
+
+def _count(kind, amount=1):
+    from .adapters import real_hotspot
+    if real_hotspot.IO_COUNTERS is not None:     # benchmark / test counters, off by default
+        real_hotspot.IO_COUNTERS[kind] = real_hotspot.IO_COUNTERS.get(kind, 0) + amount
+
+
+class MaskCache:
+    """Bounded LRU of unpacked group masks for ONE invocation (it is dropped with compute_local_delta / the page writer).
+
+    Entries are keyed by the PackedMask they came from and hold a strong reference to it, so a key can never be
+    reused by another object while its entry is alive. The arrays are the same read-only arrays PackedMask.unpack
+    returns: measuring them gives the same numbers as unpacking afresh for every use."""
+
+    def __init__(self, max_entries=None):
+        self.max_entries = UNPACK_CACHE_ENTRIES if max_entries is None else max_entries
+        self._entries = OrderedDict()
+        self.unpacks = self.hits = 0
+
+    def get(self, packed):
+        entry = self._entries.get(id(packed))
+        if entry is not None and entry[0] is packed:
+            self._entries.move_to_end(id(packed))
+            self.hits += 1
+            _count('mask_unpack_hits')
+            return entry[1]
+        array = packed.unpack()
+        self.unpacks += 1
+        _count('mask_unpacks')
+        if self.max_entries > 0:
+            self._entries[id(packed)] = (packed, array)
+            while len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+        return array
+
+    def __len__(self):
+        return len(self._entries)
+
+    def clear(self):
+        self._entries.clear()
+
+
+def group_mask(group, name: str, masks: MaskCache | None = None):
+    """The union (name == 'union') or failure-piece mask of a group; through the cache when one is given."""
+    if masks is None:
+        return group.union_mask if name == 'union' else group.failure_piece_masks[name]
+    return masks.get(group.union_packed if name == 'union' else group.failure_piece_packed[name])
 
 
 def find_group(areas: AreaResult, side: BoundSide, diameter, which: str):
@@ -203,15 +258,15 @@ def _unavailable(window: PhysicalWindow, reasons) -> WindowMetric:
 
 
 def measure_group_metric(group: GroupArea | None, name: str, diameter, window: PhysicalWindow,
-                         reasons=()) -> WindowMetric:
+                         reasons=(), masks: MaskCache | None = None) -> WindowMetric:
     if group is None:
         return _unavailable(window, reasons)
     metric = group.union if name == 'union' else group.failure_pieces[name]
-    mask = group.union_mask if name == 'union' else group.failure_piece_masks[name]
     state, group_reasons = _group_state(metric)
     if state == 'not_applicable':
         return WindowMetric(None, None, 'not_applicable', tuple(sorted(group_reasons | set(reasons))),
                             _window_area(window), 0.0, None)
+    mask = group_mask(group, name, masks)
     measured = _measure_cropped(group.frame, mask, window, diameter=diameter, analysis_layer=group.key.analysis_layer)
     if measured.status == 'unavailable' or state == 'unavailable':
         status = 'unavailable'
@@ -258,16 +313,22 @@ def delta_of(a: WindowMetric, b: WindowMetric) -> WindowDelta:
     return WindowDelta(None, 'unavailable', tuple(sorted(reasons)), None)
 
 
-def _named_case(cases, side: BoundSide):
-    ids = frozenset(e.electrode_id for e in side.endpoints)
+def _case_key(case):
+    identity = case.identity
+    return (identity.product_id, identity.design_version, identity.frame_id, case.analysis_layer,
+            frozenset(e.electrode_id for e in case.endpoints))
+
+
+def _side_key(side: BoundSide):
+    return (side.product_id, side.design_version, side.frame.frame_id, side.analysis_layer,
+            frozenset(e.electrode_id for e in side.endpoints))
+
+
+def _named_filter(candidates, side: BoundSide):
+    """The checks of _named_case after the identity / endpoint-set match, in the original order."""
     matches = []
-    for case in cases:
+    for case in candidates:
         identity = case.identity
-        if (identity.product_id, identity.design_version, identity.frame_id, case.analysis_layer) != (
-                side.product_id, side.design_version, side.frame.frame_id, side.analysis_layer):
-            continue
-        if frozenset(e.electrode_id for e in case.endpoints) != ids:
-            continue
         if side.failure_type is not None and case.failure_type != side.failure_type:
             continue
         ok = True
@@ -279,9 +340,54 @@ def _named_case(cases, side: BoundSide):
     return matches
 
 
-def _compare(group_a, group_b, reasons_a, reasons_b, diameter, window_a, window_b):
-    a = {name: measure_group_metric(group_a, name, diameter, window_a, reasons_a) for name in METRICS}
-    b = {name: measure_group_metric(group_b, name, diameter, window_b, reasons_b) for name in METRICS}
+def _named_case(cases, side: BoundSide):
+    key = _side_key(side)
+    return _named_filter([case for case in cases if _case_key(case) == key], side)
+
+
+class NamedCaseIndex:
+    """dataset.cases bucketed once by (product, design, frame, layer, endpoint set), case order preserved, so
+    matches(side) equals _named_case(dataset.cases, side) without scanning every case for every pair / size."""
+
+    def __init__(self, cases):
+        self._buckets = {}
+        for case in cases:
+            self._buckets.setdefault(_case_key(case), []).append(case)
+
+    def matches(self, side: BoundSide):
+        return _named_filter(self._buckets.get(_side_key(side), ()), side)
+
+
+class _Run:
+    """Caches of one compute_local_delta invocation; they die with it (nothing is process-wide)."""
+
+    def __init__(self, reference, target):
+        self.masks = MaskCache()
+        self._datasets = {'a': reference, 'b': target}
+        self._indexes = {}
+        self._records = {}
+
+    def named_matches(self, label, side):
+        index = self._indexes.get(label)
+        if index is None:
+            index = self._indexes[label] = NamedCaseIndex(self._datasets[label].cases)
+        return index.matches(side)
+
+    def new_pair(self):
+        self._records.clear()
+
+    def record(self, label, case, diameter):
+        """case.records[diameter] loaded once per pair (a lazy record reads its .npz on every access)."""
+        key = (label, id(case), diameter)
+        entry = self._records.get(key)
+        if entry is None:
+            entry = self._records[key] = (case, case.records[diameter])
+        return entry[1]
+
+
+def _compare(group_a, group_b, reasons_a, reasons_b, diameter, window_a, window_b, masks=None):
+    a = {name: measure_group_metric(group_a, name, diameter, window_a, reasons_a, masks) for name in METRICS}
+    b = {name: measure_group_metric(group_b, name, diameter, window_b, reasons_b, masks) for name in METRICS}
     return {'a': a, 'b': b, 'delta': {name: delta_of(a[name], b[name]) for name in METRICS},
             'bounds_um': {'a': list(window_a.bounds_um()), 'b': list(window_b.bounds_um())}}
 
@@ -332,21 +438,25 @@ class LocalDeltaResult:
     areas: tuple | None = None  # (AreaResult a, AreaResult b); masks for the HTML page, never serialised
     explained: dict | None = None
 
+    def payload(self):
+        """The JSON document with `rows` and the rest still as live objects (not converted by json_value)."""
+        return {'schema_version': SCHEMA_VERSION, 'status': self.status, 'reasons': list(self.reasons),
+                'direction': 'b_minus_a', 'coordinate_policy': 'independent_product_frames_same_physical_window',
+                'window_sizes_um': list(self.window_sizes_um), 'jitter_um': self.jitter_um,
+                'sort_diameter_um': self.sort_diameter_um, 'metrics': list(METRICS),
+                'window_kinds': list(WINDOW_KINDS), 'products': self.products, 'provenance': self.provenance,
+                'pairs': [pair.to_dict() for pair in self.pairs], 'rows': self.rows,
+                'ranking': self.ranking, 'window_sensitivity': self.sensitivity,
+                'explained_fraction': self.explained,
+                'interpretation': {
+                    'window': '창 안 이물 중심 위치의 면적. 창 밖 전극이 원인일 수 있는 정확한 국부 위험',
+                    'attributable_core': '한 변 (창 − 지름)의 안쪽 정사각형. 창 안 형상 탓으로 읽을 수 있는 부분',
+                    'fraction_of_window': '면적 / 창 면적. 단위 없음, 유닛 크기와 무관',
+                    'dl_scores': '표시 문맥일 뿐 어떤 수치에도 들어가지 않음'}}
+
     def to_dict(self):
         from .report import json_value
-        return json_value({'schema_version': SCHEMA_VERSION, 'status': self.status, 'reasons': list(self.reasons),
-                           'direction': 'b_minus_a', 'coordinate_policy': 'independent_product_frames_same_physical_window',
-                           'window_sizes_um': list(self.window_sizes_um), 'jitter_um': self.jitter_um,
-                           'sort_diameter_um': self.sort_diameter_um, 'metrics': list(METRICS),
-                           'window_kinds': list(WINDOW_KINDS), 'products': self.products, 'provenance': self.provenance,
-                           'pairs': [pair.to_dict() for pair in self.pairs], 'rows': self.rows,
-                           'ranking': self.ranking, 'window_sensitivity': self.sensitivity,
-                           'explained_fraction': self.explained,
-                           'interpretation': {
-                               'window': '창 안 이물 중심 위치의 면적. 창 밖 전극이 원인일 수 있는 정확한 국부 위험',
-                               'attributable_core': '한 변 (창 − 지름)의 안쪽 정사각형. 창 안 형상 탓으로 읽을 수 있는 부분',
-                               'fraction_of_window': '면적 / 창 면적. 단위 없음, 유닛 크기와 무관',
-                               'dl_scores': '표시 문맥일 뿐 어떤 수치에도 들어가지 않음'}})
+        return json_value(self.payload())
 
 
 def _validate_sizes(window_sizes_um):
@@ -360,7 +470,10 @@ def _validate_sizes(window_sizes_um):
 
 def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset, *, window_sizes_um,
                         jitter_um=None, sort_diameter_um=None, areas=None, provenance=None) -> LocalDeltaResult:
-    """pairs: BoundPair list (side a → reference, side b → target)."""
+    """pairs: BoundPair list (side a → reference, side b → target).
+
+    areas = (AreaResult a, AreaResult b) skips compute_areas (the caller owns their admission); anything with the
+    groups / input_hash / is_synthetic of an AreaResult works, e.g. compare_masks.ReusedAreaResult."""
     from .linepixel import compute_areas
     sizes = _validate_sizes(window_sizes_um)
     if jitter_um is not None:
@@ -374,43 +487,48 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
     reference, target = _as_dataset(reference), _as_dataset(target)
     if areas is None:
         from .adapters.real_hotspot import guard_stage_compare_windows
-        guard_stage_compare_windows('compare-windows', reference, target)  # Phase A: fail fast before both AreaResults
+        guard_stage_compare_windows('compare-windows', reference, target, pairs=pairs, sizes=sizes,
+                                    jitter_um=jitter_um, phase='compute')  # before both AreaResults exist
     # compare-windows reads masks and areas only: summary mode keeps one bucket per class (STAGE6_TOP_BUCKETS)
     from .adapters.real_hotspot import STAGE6_TOP_BUCKETS
     summary = {'bucket_detail': 'summary', 'top_buckets': STAGE6_TOP_BUCKETS}
     areas_a, areas_b = areas if areas is not None else (compute_areas(reference.cases if reference.provenance.get('_case_list') else reference, **summary),
                                                         compute_areas(target.cases if target.provenance.get('_case_list') else target, **summary))
     rows, reasons = [], set()
+    run = _Run(reference, target)
     for pair in pairs:
         if pair.status != 'ready':
             reasons.add('blocked_pairs_present')
             continue
+        run.new_pair()
         for size in sizes:
             window_a, window_b = _square(pair.a.center_xy_um, size), _square(pair.b.center_xy_um, size)
             for diameter in DIAMETERS_UM:
                 group_a, reasons_a = find_group(areas_a, pair.a, diameter, 'a')
                 group_b, reasons_b = find_group(areas_b, pair.b, diameter, 'b')
-                window = _compare(group_a, group_b, reasons_a, reasons_b, diameter, window_a, window_b)
+                window = _compare(group_a, group_b, reasons_a, reasons_b, diameter, window_a, window_b, run.masks)
                 core_side = Fraction(str(size)) - Fraction(str(diameter))
                 if core_side <= 0:
                     core = _not_applicable_comparison(None, 'window_smaller_than_diameter')
                 else:
                     core = {**_compare(group_a, group_b, reasons_a, reasons_b, diameter,
-                                       _square(pair.a.center_xy_um, core_side), _square(pair.b.center_xy_um, core_side)),
+                                       _square(pair.a.center_xy_um, core_side), _square(pair.b.center_xy_um, core_side),
+                                       run.masks),
                             'side_um': float(core_side)}
                 named = None
                 if pair.a.endpoints is not None and pair.b.endpoints is not None:
                     named = _named_pair(reference, target, pair, diameter, window_a, window_b,
-                                        window['a']['union'], window['b']['union'])
+                                        window['a']['union'], window['b']['union'], run)
                 jitter = None
                 if jitter_um is not None:
-                    jitter = _jitter(pair, group_a, group_b, reasons_a, reasons_b, diameter, size, jitter_um)
+                    jitter = _jitter(pair, group_a, group_b, reasons_a, reasons_b, diameter, size, jitter_um, run.masks)
                 rows.append({'pair_id': pair.pair_id, 'window_size_um': size, 'diameter_um': float(diameter),
                              'status': window['delta']['union'].status,
                              'window': {**window, 'side_um': size}, 'attributable_core': core,
                              'named_pair': named, 'jitter': jitter,
                              'group_a': None if group_a is None else asdict(group_a.key),
                              'group_b': None if group_b is None else asdict(group_b.key)})
+    run.new_pair()
     ready = [p for p in pairs if p.status == 'ready']
     for row in rows:
         if row['status'] not in ('available', 'not_applicable'):
@@ -418,7 +536,8 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
     status = ('unavailable' if not ready else 'available' if not reasons else 'partial')
     ranking = _ranking(rows, sizes, sort_diameter_um)
     sensitivity = window_sensitivity(rows, sizes, sort_diameter_um)
-    explained = explained_fraction(rows, ready, areas_a, areas_b, sizes)
+    explained = explained_fraction(rows, ready, areas_a, areas_b, sizes, run.masks)
+    run.masks.clear()   # the page writer builds its own small cache; the compute-phase one must not outlive the phase
     products = {'a': {'product_id': _product(reference), 'frames': _frames(reference)},
                 'b': {'product_id': _product(target), 'frames': _frames(target)}}
     provenance = {**(provenance or {}), 'reference_input_hash': areas_a.input_hash, 'target_input_hash': areas_b.input_hash,
@@ -451,12 +570,12 @@ def _frames(dataset):
             for fid, f in sorted(dataset.frames.items())}
 
 
-def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=None, union_b=None):
+def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=None, union_b=None, run=None):
     out = {'a': None, 'b': None, 'delta': None, 'cases': {'a': None, 'b': None}, 'reasons': []}
     metrics = {}
     unions = {'a': union_a, 'b': union_b}
     for label, dataset, side, window in (('a', reference, pair.a, window_a), ('b', target, pair.b, window_b)):
-        matches = _named_case(dataset.cases, side)
+        matches = _named_case(dataset.cases, side) if run is None else run.named_matches(label, side)
         if len(matches) != 1:
             reason = f'named_pair_case_not_found_{label}' if not matches else f'named_pair_case_ambiguous_{label}'
             out['reasons'].append(reason)
@@ -465,7 +584,7 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
         case = matches[0]
         out['cases'][label] = {'case_id': case.identity.case_id, 'failure_type': case.failure_type,
                                'pair_id': case.pair_id, 'classification': case.classification}
-        record = case.records[diameter]
+        record = case.records[diameter] if run is None else run.record(label, case, diameter)
         measured = _measure_cropped(record.frame, record.mask, window, diameter=diameter, analysis_layer=record.analysis_layer,
                                     identity=record.identity, input_status=record.input_status, reasons=record.reasons)
         metrics[label] = _from_measurement(measured, window, 'physical_window_single_case')
@@ -481,14 +600,14 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
     return out
 
 
-def _jitter(pair, group_a, group_b, reasons_a, reasons_b, diameter, size, jitter_um):
+def _jitter(pair, group_a, group_b, reasons_a, reasons_b, diameter, size, jitter_um, masks=None):
     offsets = [(jitter_um, 0.0), (-jitter_um, 0.0), (0.0, jitter_um), (0.0, -jitter_um)]
     values = []
     for dx, dy in offsets:
         wa = _square((pair.a.center_xy_um[0] + dx, pair.a.center_xy_um[1] + dy), size)
         wb = _square((pair.b.center_xy_um[0] + dx, pair.b.center_xy_um[1] + dy), size)
-        delta = delta_of(measure_group_metric(group_a, 'union', diameter, wa, reasons_a),
-                         measure_group_metric(group_b, 'union', diameter, wb, reasons_b))
+        delta = delta_of(measure_group_metric(group_a, 'union', diameter, wa, reasons_a, masks),
+                         measure_group_metric(group_b, 'union', diameter, wb, reasons_b, masks))
         values.append(delta.value)
     complete = all(v is not None for v in values)
     sign_stable = None
@@ -584,7 +703,7 @@ def _overlap_components(bounds):
     return list(groups.values())
 
 
-def explained_fraction(rows, ready_pairs, areas_a, areas_b, sizes):
+def explained_fraction(rows, ready_pairs, areas_a, areas_b, sizes, masks=None):
     """PLAN_v3 T3b: Σ(window union CA × repeats_per_frame) / frame_area per side, against the
     product-level fraction_of_frame delta of the referenced groups. repeats_per_frame counts the
     repeats of the structure inside the measured frame (the 2×2 domain on the real path), never a
@@ -640,7 +759,7 @@ def explained_fraction(rows, ready_pairs, areas_a, areas_b, sizes):
                             reasons.add(f'overlapping_windows_with_different_repeats_{label}:' + ','.join(sorted(pair_ids)))
                             continue
                         state, _ = _group_state(group.union)
-                        measured = _measure_cropped_windows(group.frame, group.union_mask,
+                        measured = _measure_cropped_windows(group.frame, group_mask(group, 'union', masks),
                                                             [PhysicalWindow(*r['window']['bounds_um'][label]) for r in component_rows],
                                                             diameter=diameter, analysis_layer=group.key.analysis_layer)
                         if measured.status != 'available' or state != 'available':
@@ -669,54 +788,114 @@ def explained_fraction(rows, ready_pairs, areas_a, areas_b, sizes):
             'by_window_size': by_size}
 
 
+CSV_ROW_COLUMNS = ('pair_id', 'window_size_um', 'diameter_um', 'kind', 'side_um', 'metric',
+                   'a_value_um2', 'a_partial_value_um2', 'a_status', 'a_fraction_of_window',
+                   'b_value_um2', 'b_partial_value_um2', 'b_status', 'b_fraction_of_window',
+                   'delta_um2', 'delta_fraction', 'delta_status', 'delta_reasons')
+
+
 def _csv_rows(result: LocalDeltaResult):
-    out = []
+    """local_delta_rows.csv rows one by one (every row has exactly CSV_ROW_COLUMNS, in this order)."""
     for row in result.rows:
         for kind in WINDOW_KINDS:
             comparison = row[kind]
             for name in METRICS:
                 a, b, d = comparison['a'][name], comparison['b'][name], comparison['delta'][name]
-                out.append({'pair_id': row['pair_id'], 'window_size_um': row['window_size_um'], 'diameter_um': row['diameter_um'],
-                            'kind': kind, 'side_um': comparison.get('side_um'), 'metric': name,
-                            'a_value_um2': a.value, 'a_partial_value_um2': a.partial_value, 'a_status': a.status,
-                            'a_fraction_of_window': a.fraction_of_window,
-                            'b_value_um2': b.value, 'b_partial_value_um2': b.partial_value, 'b_status': b.status,
-                            'b_fraction_of_window': b.fraction_of_window,
-                            'delta_um2': d.value, 'delta_fraction': d.fraction_delta, 'delta_status': d.status,
-                            'delta_reasons': list(d.reasons)})
+                yield {'pair_id': row['pair_id'], 'window_size_um': row['window_size_um'], 'diameter_um': row['diameter_um'],
+                       'kind': kind, 'side_um': comparison.get('side_um'), 'metric': name,
+                       'a_value_um2': a.value, 'a_partial_value_um2': a.partial_value, 'a_status': a.status,
+                       'a_fraction_of_window': a.fraction_of_window,
+                       'b_value_um2': b.value, 'b_partial_value_um2': b.partial_value, 'b_status': b.status,
+                       'b_fraction_of_window': b.fraction_of_window,
+                       'delta_um2': d.value, 'delta_fraction': d.fraction_delta, 'delta_status': d.status,
+                       'delta_reasons': list(d.reasons)}
         named = row['named_pair']
         if named is not None and named['delta'] is not None:
-            out.append({'pair_id': row['pair_id'], 'window_size_um': row['window_size_um'], 'diameter_um': row['diameter_um'],
-                        'kind': 'window', 'side_um': row['window_size_um'], 'metric': 'named_pair',
-                        'a_value_um2': named['a'].value, 'a_partial_value_um2': named['a'].partial_value, 'a_status': named['a'].status,
-                        'a_fraction_of_window': named['a'].fraction_of_window,
-                        'b_value_um2': named['b'].value, 'b_partial_value_um2': named['b'].partial_value, 'b_status': named['b'].status,
-                        'b_fraction_of_window': named['b'].fraction_of_window,
-                        'delta_um2': named['delta'].value, 'delta_fraction': named['delta'].fraction_delta,
-                        'delta_status': named['delta'].status, 'delta_reasons': list(named['delta'].reasons)})
-    return out
+            yield {'pair_id': row['pair_id'], 'window_size_um': row['window_size_um'], 'diameter_um': row['diameter_um'],
+                   'kind': 'window', 'side_um': row['window_size_um'], 'metric': 'named_pair',
+                   'a_value_um2': named['a'].value, 'a_partial_value_um2': named['a'].partial_value, 'a_status': named['a'].status,
+                   'a_fraction_of_window': named['a'].fraction_of_window,
+                   'b_value_um2': named['b'].value, 'b_partial_value_um2': named['b'].partial_value, 'b_status': named['b'].status,
+                   'b_fraction_of_window': named['b'].fraction_of_window,
+                   'delta_um2': named['delta'].value, 'delta_fraction': named['delta'].fraction_delta,
+                   'delta_status': named['delta'].status, 'delta_reasons': list(named['delta'].reasons)}
 
 
-def _write_json_csv(out, name, payload, tables):
+LAZY_LIST_MIN = 32
+JSON_CHUNK_BYTES = 1 << 16
+
+
+class _LazyList(list):
+    """A list for json.JSONEncoder.iterencode that converts each item with json_value only when the encoder reaches it, so
+    the converted copy of a long list never exists as a whole. The real items live in `_items`; this list object is empty,
+    which is why it must only be encoded through iterencode() (the C encoder used by dumps() without indent reads the
+    empty storage): _write_json does."""
+
+    def __init__(self, items):
+        super().__init__()
+        self._items = items
+
+    def __len__(self):
+        return len(self._items)
+
+    def __iter__(self):
+        from .report import json_value
+        for item in self._items:
+            yield json_value(item)
+
+
+def _lazy_json(value):
+    """json_value(value) with every long list left to _LazyList; dict keys become str, tuples lists, as json_value does."""
+    from .report import json_value
+    if isinstance(value, dict):
+        return {str(k): _lazy_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)) and len(value) > LAZY_LIST_MIN:
+        return _LazyList(value)
+    return json_value(value)
+
+
+def _write_json(path, payload):
+    """json.dumps(json_value(payload), ensure_ascii=False, indent=2, allow_nan=False) + newline, written in 64 KiB pieces."""
+    encoder = json.JSONEncoder(ensure_ascii=False, indent=2, allow_nan=False)
+    with staged_file(path) as handle:
+        pending, size = [], 0
+        for chunk in encoder.iterencode(_lazy_json(payload)):  # not _one_shot: the Python encoder walks _LazyList
+            pending.append(chunk)
+            size += len(chunk)
+            if size >= JSON_CHUNK_BYTES:
+                handle.write(''.join(pending))
+                pending, size = [], 0
+        pending.append('\n')
+        handle.write(''.join(pending))
+
+
+def _csv_cell(value):
+    return (json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+            if value is None or isinstance(value, (dict, list, bool)) else value)
+
+
+def _write_csv(path, rows, columns=None):
+    """Rows (json_value'd one at a time) as CSV. Without `columns` the header is the keys in first-seen order over all
+    rows (the rows are then held; a row without some key leaves that cell empty); with `columns` the rows are streamed and
+    each must have exactly these keys. An empty table gets the placeholder header."""
     import csv
     from .report import json_value
-    payload = json_value(payload)
-    paths = []
-    json_path = out / (name + '.json')
-    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n', encoding='utf-8')
-    paths.append(str(json_path))
-    for table, rows in tables.items():
-        rows = [json_value(row) for row in rows]
-        path = out / (name + '_' + table + '.csv')
+    rows = (json_value(row) for row in rows)
+    first = ()
+    fixed = columns is not None
+    if not fixed:
+        rows = list(rows)
         columns = list(dict.fromkeys(k for row in rows for k in row)) or ['value', 'status', 'reasons']
-        with path.open('w', encoding='utf-8', newline='') as handle:
-            writer = csv.DictWriter(handle, columns, lineterminator='\n')
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({k: json.dumps(v, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-                                 if v is None or isinstance(v, (dict, list, bool)) else v for k, v in row.items()})
-        paths.append(str(path))
-    return paths
+    else:
+        first = list(itertools.islice(rows, 1))
+        columns = list(columns) if first else ['value', 'status', 'reasons']
+    with staged_file(path, newline='') as handle:
+        writer = csv.DictWriter(handle, columns, lineterminator='\n')
+        writer.writeheader()
+        for row in itertools.chain(first, rows):
+            if fixed and list(row) != columns:
+                raise ValueError(f'{Path(path).name}: row keys differ from the table columns')
+            writer.writerow({k: _csv_cell(v) for k, v in row.items()})
 
 
 def write_local_delta(out, result: LocalDeltaResult, *, compact=False):
@@ -724,6 +903,8 @@ def write_local_delta(out, result: LocalDeltaResult, *, compact=False):
 
     compact=True leaves the per-row nested metrics out of the JSON (they stay in
     local_delta_rows.csv) so tens of pairs × several windows do not produce tens of MB.
+    Rows are converted and written one at a time (no second copy of the result); each file appears whole or not at all.
+    compare-windows calls this with a scratch directory and publishes the whole set afterwards (publication.py).
     """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -731,21 +912,26 @@ def write_local_delta(out, result: LocalDeltaResult, *, compact=False):
         for old in out.glob(prefix + '*'):
             if old.is_file() and old.suffix in ('.json', '.csv', '.html'):
                 old.unlink()
-    payload = result.to_dict()
+    payload = result.payload()
     if compact:
         payload = {**payload, 'rows': None, 'json_detail': 'compact', 'rows_csv': 'local_delta_rows.csv',
                    'n_rows': len(result.rows)}
     else:
         payload = {**payload, 'json_detail': 'full', 'rows_csv': 'local_delta_rows.csv', 'n_rows': len(result.rows)}
-    paths = _write_json_csv(out, 'local_delta', payload, {'rows': _csv_rows(result)})
+    paths = [out / 'local_delta.json', out / 'local_delta_rows.csv']
+    _write_json(paths[0], payload)
+    _write_csv(paths[1], _csv_rows(result), CSV_ROW_COLUMNS)
     sensitivity = result.sensitivity
     rows = [{'pair_id': e['pair_id'], 'diameter_um': e['diameter_um'], 'sign_consistent': e['sign_consistent'],
              'max_abs_delta': e['max_abs_delta'], 'min_abs_delta': e['min_abs_delta'],
              **{f'delta_union_{size}um': value for size, value in e['delta_union_by_size'].items()}}
             for e in sensitivity['per_pair_diameter']]
-    paths += _write_json_csv(out, 'window_sensitivity', sensitivity,
-                             {'rows': rows, 'rank_agreement': sensitivity['rank_agreement']})
-    return paths
+    paths += [out / 'window_sensitivity.json', out / 'window_sensitivity_rows.csv',
+              out / 'window_sensitivity_rank_agreement.csv']
+    _write_json(paths[2], sensitivity)
+    _write_csv(paths[3], rows)
+    _write_csv(paths[4], sensitivity['rank_agreement'])
+    return [str(path) for path in paths]
 
 
 def correspondence_hash(path) -> str:

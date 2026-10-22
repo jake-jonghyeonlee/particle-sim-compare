@@ -1,0 +1,360 @@
+[
+ {
+  "tag": "new_P50_1",
+  "variant": "new",
+  "P": 50,
+  "sizes": [
+   10.0,
+   20.0,
+   30.0
+  ],
+  "jitter": 0.5,
+  "mode": "1",
+  "exit": 0,
+  "wall_s": 95.6,
+  "peak_rss_mb": 677.0,
+  "phases": {
+   "load_dataset": {
+    "seconds": 21.1,
+    "maxrss_mb": 195.0
+   },
+   "corr": {
+    "seconds": 0.0,
+    "maxrss_mb": 195.0
+   },
+   "reuse_load": {
+    "seconds": 0.0,
+    "maxrss_mb": 226.0
+   },
+   "write_json_csv": {
+    "seconds": 2.4,
+    "maxrss_mb": 672.0
+   },
+   "report": {
+    "seconds": 13.5,
+    "maxrss_mb": 677.0
+   },
+   "publish_commit": {
+    "seconds": 0.0,
+    "maxrss_mb": 677.0
+   },
+   "rows": {
+    "seconds": 47.9,
+    "maxrss_mb": 671.0
+   },
+   "compute_or_reuse": {
+    "seconds": 0.0,
+    "what": "artefact load"
+   }
+  },
+  "io_counters": {
+   "sha256_files": 38402,
+   "sha256_bytes": 80521738,
+   "mask_decodes": 41600,
+   "mask_unpacks": 38598,
+   "mask_unpack_hits": 62702,
+   "layout_auth_reads": 1200,
+   "layout_decodes": 588
+  },
+  "tail": ".png\",\n    \"/tmp/t4bench/work/out_new_P50_1/local_delta_thumb_f8e97c3feb14.png\",\n    \"/tmp/t4bench/work/out_new_P50_1/local_delta_thumb_f9fc46b2edc1.png\",\n    \"/tmp/t4bench/work/out_new_P50_1/local_delta_thumb_fc16d61df5b5.png\",\n    \"/tmp/t4bench/work/out_new_P50_1/local_delta_thumb_fcaeeff008f8.png\",\n    \"/tmp/t4bench/work/out_new_P50_1/local_delta_thumb_fcc8577ed0c5.png\"\n  ],\n  \"exit_code\": 0\n}\n",
+  "rows": 4800,
+  "n_ready": 50,
+  "status": "available",
+  "out_bytes": {
+   "window_sensitivity.json": 484405,
+   "local_delta.json": 58761300,
+   "window_sensitivity_rank_agreement.csv": 208,
+   "window_sensitivity_rows.csv": 134107,
+   "local_delta.html": 1540602,
+   "local_delta_thumbs.json": 299194,
+   "local_delta_rows.csv": 6152143,
+   "execution.json": 29277
+  },
+  "hidden_files_left": [],
+  "png_files": 388
+ },
+ {
+  "tag": "new_P200_1",
+  "variant": "new",
+  "P": 200,
+  "sizes": [
+   10.0,
+   20.0,
+   30.0
+  ],
+  "jitter": 0.5,
+  "mode": "1",
+  "exit": 0,
+  "wall_s": 268.5,
+  "peak_rss_mb": 852.0,
+  "phases": {
+   "load_dataset": {
+    "seconds": 21.2,
+    "maxrss_mb": 197.0
+   },
+   "corr": {
+    "seconds": 0.0,
+    "maxrss_mb": 197.0
+   },
+   "reuse_load": {
+    "seconds": 0.0,
+    "maxrss_mb": 211.0
+   },
+   "write_json_csv": {
+    "seconds": 9.7,
+    "maxrss_mb": 852.0
+   },
+   "report": {
+    "seconds": 21.2,
+    "maxrss_mb": 852.0
+   },
+   "publish_commit": {
+    "seconds": 0.1,
+    "maxrss_mb": 852.0
+   },
+   "rows": {
+    "seconds": 205.6,
+    "maxrss_mb": 852.0
+   },
+   "compute_or_reuse": {
+    "seconds": 0.0,
+    "what": "artefact load"
+   }
+  },
+  "io_counters": {
+   "sha256_files": 38402,
+   "sha256_bytes": 80521738,
+   "mask_decodes": 51200,
+   "mask_unpacks": 153798,
+   "mask_unpack_hits": 248394,
+   "layout_auth_reads": 1200,
+   "layout_decodes": 2358
+  },
+  "rows": 19200,
+  "n_ready": 200,
+  "status": "available",
+  "out_bytes": {
+   "window_sensitivity.json": 1931360,
+   "local_delta.json": 234276878,
+   "window_sensitivity_rank_agreement.csv": 209,
+   "window_sensitivity_rows.csv": 534661,
+   "local_delta.html": 6166042,
+   "local_delta_thumbs.json": 1193657,
+   "local_delta_rows.csv": 24447621,
+   "execution.json": 111647
+  },
+  "hidden_files_left": [],
+  "png_files": 1481
+ },
+ {
+  "tag": "new_P200_0",
+  "variant": "new",
+  "P": 200,
+  "sizes": [
+   10.0,
+   20.0,
+   30.0
+  ],
+  "jitter": 0.5,
+  "mode": "0",
+  "exit": 0,
+  "wall_s": 333.2,
+  "peak_rss_mb": 928.0,
+  "phases": {
+   "load_dataset": {
+    "seconds": 21.3,
+    "maxrss_mb": 193.0
+   },
+   "corr": {
+    "seconds": 0.0,
+    "maxrss_mb": 193.0
+   },
+   "compute_areas": {
+    "seconds": 64.5,
+    "maxrss_mb": 423.0
+   },
+   "write_json_csv": {
+    "seconds": 9.8,
+    "maxrss_mb": 928.0
+   },
+   "report": {
+    "seconds": 21.3,
+    "maxrss_mb": 928.0
+   },
+   "publish_commit": {
+    "seconds": 0.1,
+    "maxrss_mb": 928.0
+   },
+   "rows": {
+    "seconds": 205.4,
+    "maxrss_mb": 928.0
+   },
+   "compute_or_reuse": {
+    "seconds": 64.5,
+    "what": "compute_areas x2"
+   }
+  },
+  "io_counters": {
+   "sha256_files": 38402,
+   "sha256_bytes": 80521738,
+   "mask_decodes": 70400,
+   "mask_unpacks": 153798,
+   "mask_unpack_hits": 248394,
+   "layout_auth_reads": 1200,
+   "layout_decodes": 2358
+  },
+  "rows": 19200,
+  "n_ready": 200,
+  "status": "available",
+  "out_bytes": {
+   "window_sensitivity.json": 1931360,
+   "local_delta.json": 234276878,
+   "window_sensitivity_rank_agreement.csv": 209,
+   "window_sensitivity_rows.csv": 534661,
+   "local_delta.html": 6166042,
+   "local_delta_thumbs.json": 1193657,
+   "local_delta_rows.csv": 24447621,
+   "execution.json": 111647
+  },
+  "hidden_files_left": [],
+  "png_files": 1481
+ },
+ {
+  "tag": "new_P50_0",
+  "variant": "new",
+  "P": 50,
+  "sizes": [
+   10.0,
+   20.0,
+   30.0
+  ],
+  "jitter": 0.5,
+  "mode": "0",
+  "exit": 0,
+  "wall_s": 160.4,
+  "peak_rss_mb": 751.0,
+  "phases": {
+   "load_dataset": {
+    "seconds": 21.4,
+    "maxrss_mb": 194.0
+   },
+   "corr": {
+    "seconds": 0.0,
+    "maxrss_mb": 194.0
+   },
+   "compute_areas": {
+    "seconds": 64.4,
+    "maxrss_mb": 428.0
+   },
+   "write_json_csv": {
+    "seconds": 2.4,
+    "maxrss_mb": 746.0
+   },
+   "report": {
+    "seconds": 13.5,
+    "maxrss_mb": 751.0
+   },
+   "publish_commit": {
+    "seconds": 0.0,
+    "maxrss_mb": 751.0
+   },
+   "rows": {
+    "seconds": 47.8,
+    "maxrss_mb": 745.0
+   },
+   "compute_or_reuse": {
+    "seconds": 64.4,
+    "what": "compute_areas x2"
+   }
+  },
+  "io_counters": {
+   "sha256_files": 38402,
+   "sha256_bytes": 80521738,
+   "mask_decodes": 60800,
+   "mask_unpacks": 38598,
+   "mask_unpack_hits": 62702,
+   "layout_auth_reads": 1200,
+   "layout_decodes": 588
+  },
+  "rows": 4800,
+  "n_ready": 50,
+  "status": "available",
+  "out_bytes": {
+   "window_sensitivity.json": 484405,
+   "local_delta.json": 58761300,
+   "window_sensitivity_rank_agreement.csv": 208,
+   "window_sensitivity_rows.csv": 134107,
+   "local_delta.html": 1540602,
+   "local_delta_thumbs.json": 299194,
+   "local_delta_rows.csv": 6152143,
+   "execution.json": 29277
+  },
+  "hidden_files_left": [],
+  "png_files": 388
+ },
+ {
+  "tag": "old_P50_0",
+  "variant": "old",
+  "P": 50,
+  "sizes": [
+   10.0,
+   20.0,
+   30.0
+  ],
+  "jitter": 0.5,
+  "mode": "0",
+  "exit": 0,
+  "wall_s": 173.2,
+  "peak_rss_mb": 2694.0,
+  "phases": {
+   "load_dataset": {
+    "seconds": 21.4,
+    "maxrss_mb": 201.0
+   },
+   "corr": {
+    "seconds": 0.0,
+    "maxrss_mb": 201.0
+   },
+   "compute_areas": {
+    "seconds": 64.5,
+    "maxrss_mb": 427.0
+   },
+   "write_json_csv": {
+    "seconds": 3.3,
+    "maxrss_mb": 1034.0
+   },
+   "report": {
+    "seconds": 12.0,
+    "maxrss_mb": 2694.0
+   },
+   "rows": {
+    "seconds": 61.3,
+    "maxrss_mb": 492.0
+   },
+   "compute_or_reuse": {
+    "seconds": 64.5,
+    "what": "compute_areas x2"
+   }
+  },
+  "io_counters": {
+   "sha256_files": 38402,
+   "sha256_bytes": 80521738,
+   "mask_decodes": 67200
+  },
+  "rows": 4800,
+  "n_ready": 50,
+  "status": "available",
+  "out_bytes": {
+   "window_sensitivity.json": 484405,
+   "local_delta.json": 58761300,
+   "window_sensitivity_rank_agreement.csv": 208,
+   "window_sensitivity_rows.csv": 134107,
+   "local_delta.html": 1540602,
+   "local_delta_thumbs.json": 299194,
+   "local_delta_rows.csv": 6152143,
+   "execution.json": 29277
+  },
+  "hidden_files_left": [],
+  "png_files": 388
+ }
+]

@@ -274,7 +274,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     folder = Path(output)
                     folder.mkdir(parents=True,exist_ok=True)
-                    _remove_reports(folder,args.command)
+                    if not getattr(exc, "keeps_previous_outputs", False):  # compare / compare-windows after their publication opened
+                        _remove_reports(folder,args.command)
                     encoded_error = json.dumps(error,ensure_ascii=False,indent=2)
                     (folder/"error.json").write_text(encoded_error,encoding="utf-8")
                     (folder/"execution.json").write_text(encoded_error,encoding="utf-8")
