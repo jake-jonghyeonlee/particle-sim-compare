@@ -34,11 +34,16 @@ def _electrode(side, model):
 STAGES = {
     "1_import_hotspots": (
         ["1회차: hotspot import. 끝나면 pairs.csv를 data/imported/reference/와 data/imported/target/ 안에 복사한다.",
-         "4회차 ROI를 ready로 만들려면 각 import에 '--expected-cases', '<case 이름을 줄마다 적은 txt>'를 더한다. 없으면 기대 case 목록이",
-         "unconfirmed라 모든 ROI가 blocked(map_coverage_incomplete)가 된다. 이미 import했다면 새 --out으로 1회차를 다시 해야 한다."],
-        [("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_R00", "--out", f"{DATA}/imported/reference"],
+         "각 import는 --expected-cases-from-roots로 다른 모델의 root를 함께 주어, 기대 case 목록을 두 모델에서 발견된 case 이름의 합집합으로 만든다",
+         "(한쪽에만 없는 case 폴더는 expected_case_folder_missing으로 보고된다. 두 모델 모두에 없는 case는 찾을 수 없다).",
+         "예전 실행기로 이미 import했다면(기대 목록 없음 → 4회차 ROI 전부 blocked) 1회차부터 다시 한다. 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다",
+         "(--out은 없는 경로여야 한다): data/imported/reference·target, data/assets/reference·target, data/candidates_k3, data/confirmed.",
+         "회차 사이 수작업도 다시 한다: 1회차 뒤 pairs.csv 복사, 3회차 뒤 import 결과 배치와 real.yaml electrode_import_record.sha256 갱신."],
+        [("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_R00", "--expected-cases-from-roots", f"{DATA}/input/hotspot/QA4_T00",
+                            "--out", f"{DATA}/imported/reference"],
           "reference (QA4_R00). --out은 아직 없는 새 경로"),
-         ("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_T00", "--out", f"{DATA}/imported/target"],
+         ("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_T00", "--expected-cases-from-roots", f"{DATA}/input/hotspot/QA4_R00",
+                            "--out", f"{DATA}/imported/target"],
           "target (QA4_T00)")]),
     "2_validate_compare": (
         ["2회차: 검사·비교. 마스크를 한 장씩 읽는 스트리밍이라 기본 max_operation_bytes(8 GiB)로 충분한 것이 정상이다.",

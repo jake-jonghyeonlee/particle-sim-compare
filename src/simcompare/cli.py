@@ -44,6 +44,8 @@ def _parser() -> argparse.ArgumentParser:
     importer.add_argument("--root", required=True, help="입력 hotspot root")
     importer.add_argument("--out", required=True, help="새 출력 디렉터리")
     importer.add_argument("--expected-cases", help="누락된 case 폴더 확인용 case 이름 목록")
+    importer.add_argument("--expected-cases-from-roots", nargs="+", metavar="ROOT",
+                          help="기대 case 목록을 --root와 여기 적은 다른 root에서 발견된 case 이름의 합집합으로 만든다 (--expected-cases와 함께 쓸 수 없음)")
     electrode = _korean_help(sub.add_parser(
         "import-electrode-assets", add_help=False,
         help="실제 전극 PNG(DL1 폴더 또는 hotspot case의 1.png/2.png)를 review_assets_v1 manifest와 asset으로 변환"))
@@ -155,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     if arguments and arguments[0] in RETIRED:
         print(f"오류: {arguments[0]} 명령은 폐기되었습니다. {RETIRED[arguments[0]]}", file=sys.stderr)
         return 2
-    args = _parser().parse_args(arguments)
+    parser = _parser()
+    args = parser.parse_args(arguments)
     try:
         if args.command == "demo-data":
             from simcompare.synthetic import generate_numeric_demo
@@ -169,8 +172,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "import-hotspots":
             from simcompare.adapters.real_hotspot import import_hotspots
+            if args.expected_cases and args.expected_cases_from_roots:
+                parser.error("--expected-cases와 --expected-cases-from-roots는 함께 쓸 수 없습니다")
             result = import_hotspots(Path(args.root), Path(args.out),
-                                     expected_cases=Path(args.expected_cases) if args.expected_cases else None)
+                                     expected_cases=Path(args.expected_cases) if args.expected_cases else None,
+                                     expected_case_roots=([Path(r) for r in args.expected_cases_from_roots]
+                                                          if args.expected_cases_from_roots else None))
             _print(result)
             return 0 if result['status'] == 'available' else 3
         if args.command == "import-electrode-assets":

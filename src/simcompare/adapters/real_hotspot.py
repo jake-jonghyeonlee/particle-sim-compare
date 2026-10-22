@@ -182,24 +182,8 @@ def _read_gray(path: Path, relative_path: str):
     return read_gray_hotspot(path, relative_path, return_sha256=True)
 
 
-def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None,
-                    max_input_pixels: int = 100_000_000):
-    """Import discovered cases one mask at a time into a versioned manifest."""
-    root, out = Path(root).resolve(strict=True), Path(out).resolve()
-    if not root.is_dir():
-        raise NumericContractError('real_hotspot_root_required', str(root))
-    if out.exists():
-        raise NumericContractError('real_hotspot_output_exists', str(out))
-    if not isinstance(max_input_pixels, int) or max_input_pixels <= 0:
-        raise NumericContractError('invalid_resource_limit')
-    expected = None
-    if expected_cases is not None:
-        expected = [line.strip() for line in Path(expected_cases).read_text(encoding='utf-8-sig').splitlines()
-                    if line.strip() and not line.lstrip().startswith('#')]
-        if len(expected) != len(set(expected)):
-            raise NumericContractError('duplicate_expected_case')
-        for name in expected:
-            _case_name(name)
+def _discover_cases(root: Path):
+    """Case folders under a hotspot root and their images/ layout directories."""
     found, images_dirs = [], {}
     for directory, dirs, files in os.walk(root):
         if ('1.png' in files or '2.png' in files
@@ -224,6 +208,45 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
     for case_dir in found:
         if any(parent != root and parent in found for parent in case_dir.parents):
             raise NumericContractError('nested_real_case_directory', str(case_dir))
+    return found, images_dirs
+
+
+def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None,
+                    expected_case_roots: list | None = None, max_input_pixels: int = 100_000_000):
+    """Import discovered cases one mask at a time into a versioned manifest."""
+    root, out = Path(root).resolve(strict=True), Path(out).resolve()
+    if not root.is_dir():
+        raise NumericContractError('real_hotspot_root_required', str(root))
+    if out.exists():
+        raise NumericContractError('real_hotspot_output_exists', str(out))
+    if not isinstance(max_input_pixels, int) or max_input_pixels <= 0:
+        raise NumericContractError('invalid_resource_limit')
+    if expected_cases is not None and expected_case_roots is not None:
+        raise NumericContractError('expected_cases_sources_exclusive')
+    expected = None
+    if expected_cases is not None:
+        expected = [line.strip() for line in Path(expected_cases).read_text(encoding='utf-8-sig').splitlines()
+                    if line.strip() and not line.lstrip().startswith('#')]
+        if len(expected) != len(set(expected)):
+            raise NumericContractError('duplicate_expected_case')
+        for name in expected:
+            _case_name(name)
+    found, images_dirs = _discover_cases(root)
+    expected_source = None
+    if expected_case_roots is not None:
+        extra_roots = [Path(extra) for extra in expected_case_roots]
+        union = set(p.name for p in found)
+        for extra in extra_roots:
+            extra_resolved = extra.resolve(strict=True)
+            if not extra_resolved.is_dir():
+                raise NumericContractError('real_hotspot_root_required', str(extra_resolved))
+            union.update(p.name for p in _discover_cases(extra_resolved)[0])
+        expected = sorted(union)
+        expected_source = {'kind': 'union_of_discovered_roots',
+                           'roots': [extra.as_posix() for extra in extra_roots],
+                           'limitation': 'cases absent from every root are not detected'}
+    elif expected is not None:
+        expected_source = {'kind': 'file'}
     out.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=out.name+'.tmp-', dir=out.parent))
     try:
@@ -366,7 +389,8 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                     'physical_metadata': {'product_id': None, 'design_version': None, 'source_id': None,
                                           'process_step_id': None, 'exposure_id': None, 'unit_id': None,
                                           'layer_process_mapping': None, 'height_um': None, 'electrode_roles': None},
-                    'expected_cases': expected, 'expected_case_coverage_status': 'confirmed' if expected is not None else 'unconfirmed',
+                    'expected_cases': expected, 'expected_case_source': expected_source,
+                    'expected_case_coverage_status': 'confirmed' if expected is not None else 'unconfirmed',
                     'frame': frames, 'cases': cases, 'diagnostics': diagnostics, 'source_files': file_index}
         # Canonicalize through the JSON representation first so integer CSV row
         # keys and tuple shapes hash exactly as their persisted string/list forms.
@@ -554,6 +578,17 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
             raise NumericContractError('invalid_real_expected_case_inventory')
         for expected_name in expected:
             _case_name(expected_name)
+    if manifest.get('expected_case_source') is not None:
+        source = manifest['expected_case_source']
+        kind = source.get('kind') if isinstance(source, dict) else None
+        if manifest.get('expected_cases') is None or kind not in ('file', 'union_of_discovered_roots'):
+            raise NumericContractError('invalid_real_expected_case_source')
+        if kind == 'file' and set(source) != {'kind'}:
+            raise NumericContractError('invalid_real_expected_case_source')
+        if kind == 'union_of_discovered_roots' and (
+                set(source) != {'kind', 'roots', 'limitation'} or not isinstance(source['roots'], list)
+                or not all(isinstance(r, str) for r in source['roots']) or not isinstance(source['limitation'], str)):
+            raise NumericContractError('invalid_real_expected_case_source')
     return manifest
 
 
