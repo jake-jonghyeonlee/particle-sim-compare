@@ -5,6 +5,9 @@
 schema_version: numeric_config_v1
 mode: real
 output_dir: outputs/numeric_real
+# compare 출력 상세도. 기본은 요약: bucket 개수와 면적 상위 top_buckets개만 lineage/contributors와 함께 쓴다(면적·CSV는 같다).
+# 모든 bucket 목록이 필요할 때만 켠다(shared bucket이 많으면 comparison.json이 GB 단위가 될 수 있다).
+# compare: {full_bucket_detail: false, top_buckets: 20}
 reference: &reference_side
   product_id: QA4_R00
   data_dir: data/imported/reference
@@ -31,7 +34,12 @@ reference: &reference_side
     pair_table_path: pairs.csv
     # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
     electrode_role_policy: electrode_id
-    # 큰 자료용 한도. max_operation_bytes는 처음에는 빼고 실행해 오류 메시지의 추정치를 본 뒤 여유를 더해 넣는다.
+    # 큰 자료용 한도. 2회차 compare는 마스크를 한 장씩 읽으므로 max_operation_bytes는 기본(8 GiB)이면 된다.
+    # oversized_real_operation이 나오면 메시지의 추정치에 여유를 더해 넣는다. 물리 메모리는 호스트 RAM 기준이며 cgroup/job 한도가 아니다.
+    # max_bucket_output_entries: 한 layer×지름 그룹의 bucket 출력 항목 상한(기본 1000000). 넘으면 oversized_real_bucket_output.
+    #   요약 모드에서는 상위 top_buckets개만 쓰므로 실제로는 거의 닿지 않는다. 메모리 추정에는 32개 그룹이 모두 보관하는 양으로 들어간다.
+    # max_label_pattern_entries: 정확한 영역 분할(label)이 한 layer×지름 그룹에서 보관하는 겹침 패턴의 상한(기본 24000000,
+    #   패턴에 든 pair 수의 합). 넘으면 oversized_real_label_patterns. 항목당 약 256 B로 메모리 추정에 들어간다.
     max_materialized_source_cells: 20000000000
     max_group_mask_cells: 5000000000
     # max_operation_bytes: 34359738368   # 예: 32 GiB. 물리 메모리를 넘기면 거부된다

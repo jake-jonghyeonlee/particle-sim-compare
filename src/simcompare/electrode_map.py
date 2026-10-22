@@ -29,26 +29,105 @@ def _threshold(value):
     return int(value)
 
 
-def _components(active):
-    """행 우선의 안정적인 4-neighbour 연결 성분. scipy 의존성 없음."""
-    seeds = [tuple(map(int, cell)) for cell in np.argwhere(active)]
-    remaining = set(seeds)
-    for seed in seeds:
-        if seed not in remaining:
-            continue
-        remaining.remove(seed)
-        cells, stack = [seed], [seed]
-        while stack:
-            r, c = stack.pop()
-            for other in ((r-1, c), (r+1, c), (r, c-1), (r, c+1)):
-                if other in remaining:
-                    remaining.remove(other)
-                    cells.append(other)
-                    stack.append(other)
+def _run_counts(active):
+    """Horizontal runs of True per row (int64, one entry per row); O(width) scratch, nothing per cell."""
+    counts = np.zeros(active.shape[0], np.int64)
+    for r in range(active.shape[0]):
+        row = active[r]
+        counts[r] = int(row[0]) + int(np.count_nonzero(row[1:] > row[:-1])) if row.size else 0
+    return counts
+
+
+def _label_runs(active, counts):
+    """4-neighbour connected components by run-length union-find: (rows, starts, ends, root), each int32 per run.
+
+    Memory is 16 B per run (a run is a maximal horizontal stretch of True, so runs <= cells/2) plus O(width)
+    per row and one temporary the size of the root array while the roots are flattened; no per-cell Python
+    object is created. Runs are numbered row-major and a root is always the smallest run id of its component,
+    so ascending roots enumerate the components in the row-major order of their first cell.
+    """
+    total = int(counts.sum())
+    rows = np.empty(total, np.int32)
+    starts = np.empty(total, np.int32)
+    ends = np.empty(total, np.int32)
+    parent = np.arange(total, dtype=np.int32)
+    link = memoryview(parent)
+
+    def find(x):
+        while link[x] != x:
+            link[x] = link[link[x]]
+            x = link[x]
+        return x
+
+    offset, prev_s, prev_e, prev_first = 0, [], [], 0
+    for r in range(active.shape[0]):
+        edge = np.diff(active[r].view(np.int8), prepend=np.int8(0), append=np.int8(0))
+        s, e = np.flatnonzero(edge == 1), np.flatnonzero(edge == -1)
+        n = s.size
+        rows[offset:offset+n] = r
+        starts[offset:offset+n] = s
+        ends[offset:offset+n] = e
+        cur_s, cur_e = s.tolist(), e.tolist()
+        i = j = 0
+        while i < n and j < len(prev_s):
+            if cur_s[i] < prev_e[j] and prev_s[j] < cur_e[i]:  # the two runs share a column
+                a, b = find(offset+i), find(prev_first+j)
+                if a != b:
+                    if a < b:
+                        link[b] = a
+                    else:
+                        link[a] = b
+            if cur_e[i] < prev_e[j]:
+                i += 1
+            else:
+                j += 1
+        prev_s, prev_e, prev_first, offset = cur_s, cur_e, offset, offset+n
+    del link
+    while total:  # every parent id is smaller than its child, so pointer doubling terminates in log steps
+        flat = parent[parent]
+        if np.array_equal(flat, parent):
+            break
+        parent = flat
+    return rows, starts, ends, parent
+
+
+def _components(active, labelled=None):
+    """행 우선의 안정적인 4-neighbour 연결 성분. scipy 의존성 없음.
+
+    labelled = (_label_runs(...) result) when the caller already counted the components; each component is
+    then built from its own runs, so only that component's full-frame mask is allocated.
+    """
+    rows, starts, ends, root = labelled if labelled is not None else _label_runs(active, _run_counts(active))
+    if not root.size:
+        return
+    order = np.argsort(root, kind='stable')
+    first = np.flatnonzero(np.diff(root[order])) + 1
+    bounds = zip(np.r_[0, first].tolist(), np.r_[first, order.size].tolist())
+    for lo, hi in bounds:
+        members = order[lo:hi]
         inside = np.zeros(active.shape, bool)
-        rows, cols = zip(*cells)
-        inside[rows, cols] = True
-        yield inside, (min(rows), min(cols), max(rows)+1, max(cols)+1)
+        for k in members.tolist():
+            inside[rows[k], starts[k]:ends[k]] = True
+        yield inside, (int(rows[members].min()), int(starts[members].min()),
+                       int(rows[members].max())+1, int(ends[members].max()))
+
+
+def _component_sizes(active, labelled=None):
+    """Cell counts (int64 array, one per component, in _components order) without allocating any full-frame mask."""
+    rows, starts, ends, root = labelled if labelled is not None else _label_runs(active, _run_counts(active))
+    if not root.size:
+        return np.zeros(0, np.int64)
+    sizes = np.bincount(root, weights=(ends - starts))
+    return sizes[(root == np.arange(root.size, dtype=np.int32))[:sizes.size]].astype(np.int64)
+
+
+def _component_run_counts(labelled):
+    """Horizontal runs per component (int64 array, same order as _component_sizes); no full-frame mask."""
+    root = labelled[3]
+    if not root.size:
+        return np.zeros(0, np.int64)
+    runs = np.bincount(root)
+    return runs[(root == np.arange(root.size, dtype=np.int32))[:runs.size]]
 
 
 @dataclass(frozen=True)
@@ -287,6 +366,9 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
     threshold = None if min_count is None else _threshold(min_count)
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     cases = list(dataset.cases if dataset else inputs)
+    if dataset is not None:
+        from .adapters.real_hotspot import guard_stage_map
+        guard_stage_map('electrode-map', dataset)  # Phase A: fail fast before per-electrode masks are allocated
     provenance = {'domain': 'full_mask_valid', 'defect_scope': 'short_only',
                   'scope_status': 'confirmed', 'count_semantics': 'observed_short_lower_bound',
                   'G7b': copy.deepcopy(SCOPE_DECISION),
@@ -318,6 +400,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                 missing_manifest.append(identity)
     provenance['missing_manifest_cases'] = missing_manifest
     layers = []
+    region_total = 0
     for key, entries in sorted(grouped.items()):
         frames = [r.frame for c in entries for r in c.records.values()]
         if not frames:
@@ -380,7 +463,27 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                   else np.zeros(frame.shape_yx, np.int64))
         counts.setflags(write=False)
         regions = []
-        for inside, bbox in (() if threshold is None else _components((counts >= threshold) & frame.valid)):
+        labelled = None
+        if threshold is not None:
+            active = (counts >= threshold) & frame.valid
+            run_counts = _run_counts(active)
+            if dataset is not None and isinstance(dataset.provenance.get('resource_estimate'), dict):
+                # real datasets: price the count prepass, then the region construction, before allocating either
+                from .adapters.real_hotspot import guard_stage_map_counting, guard_stage_map_regions
+                guard_stage_map_counting('electrode-map', dataset, regions_done=region_total, runs=int(run_counts.sum()),
+                                         layers_done=len(layers) + 1, layer_cases=len(entries), layer_electrodes=len(touched))
+                labelled = _label_runs(active, run_counts)
+                sizes = _component_sizes(active, labelled)
+                region_total += int(sizes.size)
+                component_runs = _component_run_counts(labelled)
+                guard_stage_map_regions('electrode-map', dataset, regions=region_total, runs=int(run_counts.sum()),
+                                        largest_area=int(sizes.max()) if sizes.size else 0,
+                                        largest_runs=int(component_runs.max()) if component_runs.size else 0,
+                                        layers_done=len(layers) + 1, layer_cases=len(entries),
+                                        layer_electrodes=len(touched))
+                del sizes, component_runs
+            del run_counts
+        for inside, bbox in (() if threshold is None else _components(active, labelled)):
             r0, c0, r1, c1 = bbox
             x, y = frame.origin_xy_um
             p = frame.pixel_pitch_um
@@ -391,6 +494,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                                   tuple(asdict(e) for e in case.endpoints), measured,
                                   measure_union(record, windows), copy.deepcopy(case.raw), copy.deepcopy(case.metadata))
                           for case, record, measured in observed if (record.mask & inside).any())
+            windows = None  # one region's windows at a time: the guard prices the region with the most runs
             payload = [asdict(key), diameter, threshold, frame.frame_id, frame.pixel_pitch_um,
                        frame.origin_xy_um, frame.shape_yx, frame.valid_hash, np.argwhere(inside).tolist()]
             stable_id = 'region_' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -403,6 +507,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                            float(inside.sum())*p*p, bbox, physical,
                            ((physical[0]+physical[2])/2, (physical[1]+physical[3])/2),
                            frame, inside, names, links, region_coverage, copy.deepcopy(provenance)))
+        labelled = active = None  # the run labels and thresholded mask are not kept past the regions
         regions.sort(key=lambda r: (-r.max_count, -r.area_um2, r.region_id))
         status = coverage['source_coverage_status'] if observed or coverage['not_applicable'] else 'unavailable'
         layers.append(LayerMap(key, frame, counts if status!='unavailable' else None, status, tuple(sorted(reasons)), coverage, tuple(regions)))

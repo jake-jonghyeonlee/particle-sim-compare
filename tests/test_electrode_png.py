@@ -612,6 +612,10 @@ def test_dataset_bytes_counts_every_retained_mask_without_double_counting_aliase
             arrays[id(base)] = base.nbytes
     for frame in dataset.frames.values():
         walk(frame.valid)
+    # Real records are lazy since the streaming compare: the loaded dataset retains no source mask.
+    assert electrode_png._dataset_bytes(dataset) == sum(int(f.valid.nbytes) for f in dataset.frames.values())
+    for case in dataset.cases:  # an eager dict of loaded records is still counted mask by mask
+        case.records = {d: case.records[d] for d in case.records}
     masks = [r.mask for c in dataset.cases for r in c.records.values() if r.mask is not None]
     assert masks, 'fixture must retain observed masks'
     for m in masks:

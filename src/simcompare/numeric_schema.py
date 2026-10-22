@@ -4,12 +4,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from numbers import Real
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 import hashlib
 
 import numpy as np
 
 DIAMETERS_UM = (*range(1, 31), 40, 50)
+# Largest buckets per class kept by a summary-mode compare (linepixel.compute_areas bucket_detail='summary'); also the
+# default admission assumption of configured_dataset for stages that do not state their own bucket detail.
+DEFAULT_TOP_BUCKETS = 20
+# Resource limits of one layer/diameter group; the single source of the defaults used by the admission estimate
+# (adapters.real_hotspot), execution (linepixel.compute_areas), provenance and docs/usage.md.
+DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES = 1_000_000
+# 24 M live label-pattern entries x 256 B (LABEL_PATTERN_ENTRY_BYTES) ~ 6 GB: the most that fits the 8 GiB default
+# max_operation_bytes together with the retained results.
+DEFAULT_MAX_LABEL_PATTERN_ENTRIES = 24_000_000
 Status = Literal['available', 'partial', 'unavailable', 'not_applicable']
 
 
@@ -229,6 +238,16 @@ class Pair:
             raise NumericContractError('invalid_pair')
         for electrode in self.electrode_ids:
             text(electrode, 'electrode_id')
+
+
+class RecordHeader(NamedTuple):
+    """MaskRecord metadata that can be read without loading the mask (lazy real records)."""
+    diameter_um: float
+    frame: Frame
+    identity: CaseIdentity | None
+    analysis_layer: str | None
+    input_status: str
+    reasons: tuple
 
 
 @dataclass

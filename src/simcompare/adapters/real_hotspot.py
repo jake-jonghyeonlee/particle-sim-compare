@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import PurePosixPath
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -22,7 +23,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ..numeric_schema import DIAMETERS_UM, NumericContractError
+from ..numeric_schema import (DEFAULT_TOP_BUCKETS, DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES,
+                              DIAMETERS_UM, NumericContractError)
 from ..numeric_images import resolve_path
 from ..png_strict import read_gray_hotspot
 
@@ -48,8 +50,30 @@ def _physical_memory_bytes():
     return pages * page_size if pages > 0 and page_size > 0 else None
 
 
+# Benchmark instrumentation, off by default: with SIMCOMPARE_IO_COUNTERS=<file> the process counts the files it
+# hashes and the masks it decodes and writes the totals as JSON at exit (scripts/benchmark_scale_compare.py).
+IO_COUNTERS = None
+
+
+def enable_io_counters(path=None):
+    global IO_COUNTERS
+    IO_COUNTERS = {'sha256_files': 0, 'sha256_bytes': 0, 'mask_decodes': 0}
+    if path:
+        import atexit
+        atexit.register(lambda: Path(path).write_text(json.dumps(IO_COUNTERS), encoding='utf-8'))
+    return IO_COUNTERS
+
+
+if os.environ.get('SIMCOMPARE_IO_COUNTERS'):
+    enable_io_counters(os.environ['SIMCOMPARE_IO_COUNTERS'])
+
+
 def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    data = path.read_bytes()
+    if IO_COUNTERS is not None:
+        IO_COUNTERS['sha256_files'] += 1
+        IO_COUNTERS['sha256_bytes'] += len(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def _case_name(name: str):
@@ -131,6 +155,8 @@ MASK_ENCODING = 'npz_deflate_bool_v1'
 
 def _load_mask(asset: Path, record: dict, mmap: bool = False):
     """Load one stored hotspot mask. Legacy imports (no mask_encoding) are .npy; new ones are one-member .npz."""
+    if IO_COUNTERS is not None:
+        IO_COUNTERS['mask_decodes'] += 1
     encoding, mask_path = record.get('mask_encoding'), str(record.get('mask_path'))
     if encoding is None and 'mask_encoding' not in record:
         if not mask_path.endswith('.npy'):
@@ -531,8 +557,256 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
     return manifest
 
 
-def configured_dataset(folder: Path, manifest: dict, assignment: dict):
-    """Bind explicit analysis assignments and pair table to real observations."""
+# ---- resource model (streaming compare) -----------------------------------------------------------
+# Unit costs are conservative worst cases measured/derived from linepixel._group; `cells` = frame cells.
+RETAINED_MASKS_PER_GROUP = 7          # line, pixel_effective, transfer, union + 3 failure pieces, packed (cells/8 B each)
+TRANSIENT_BYTES_PER_CELL = 64         # one group at a time: label 4 + flatnonzero 8 + gather 4 + unique inverse/sort 16
+                                      # + lookup 4 + bool temporaries 3 + cell-area cache 16 + loaded mask 2 + touch pass 8
+PAYLOAD_BYTES_PER_RECORD = 3 * 1024   # SourceCaseArea + shared raw copy (x2: dataset and result) per case/diameter
+BUCKET_ENTRY_BYTES = 100              # one emitted bucket pair id / lineage / contributor entry (tuple slot + share of Bucket)
+BUCKET_SERIALIZE_BYTES = 200          # the same entry while its group is serialized: asdict copy slot + ~90 B of JSON text
+STAGE6_TOP_BUCKETS = 1                # compare-windows reads masks/areas only: its AreaResults keep one bucket per class
+# Measured (T6, scripts: rectangles band model, RSS of _partition_labels incl. final tuples/dicts): 184-190 B per live
+# pattern entry and ~215 B per history node at 10-17 M entries; the check in _partition_labels keeps the history
+# at the limit (+ one refinement step), so one entry of max_label_pattern_entries is budgeted at 256 B.
+LABEL_PATTERN_ENTRY_BYTES = 256
+MAP_REGION_PAYLOAD_BYTES = 16 * 1024  # per retained stage-4 region: stable id, links (per-case measurement + raw copies), coverage
+MAP_REGION_ID_BYTES_PER_CELL = 200    # transient per cell of the largest region: np.argwhere(...).tolist() + its json text
+MAP_RUN_BYTES = 48                    # per horizontal run of the thresholded map (<= cells/2 runs): the 4 int32 label arrays
+                                      # (16 B, kept until the regions are built) + <= 32 B of scratch (pointer doubling,
+                                      # bincount, argsort of the roots)
+MAP_REGION_RUN_BYTES = 400            # per horizontal run of the region being built: its PhysicalWindow plus the rectangle and
+                                      # clipped-rectangle tuples measure_union makes of it. Measured on a connected comb mask
+                                      # (200 x 200, 19,901 runs): 270-300 B per run beyond MAP_RUN_BYTES on Python 3.8/numpy 1.21
+                                      # and 230-285 B on 3.11/numpy 2.4; 400 keeps >= 1.3x margin on both.
+LAYOUT_TRANSIENT_BYTES_PER_CELL = 20  # PNG decode of one electrode layout (see adapters/electrode_png.py)
+OPERATION_REMEDY = ('split cases or raise max_operation_bytes up to physical RAM '
+                    '(host RAM, not a cgroup/job limit); streaming support for this stage is pending')
+
+
+def _max_patterns(cases, cells):
+    """Most distinct pair-membership patterns one group can have: a cell carries one pattern; pairs <= cases."""
+    return min(cells, 2 ** min(cases, 40))
+
+
+def estimate_area_bytes(cells, group_counts, record_count, max_bucket_entries, top_buckets=None,
+                        max_label_entries=DEFAULT_MAX_LABEL_PATTERN_ENTRIES):
+    """Peak bytes of compute_areas for ONE model (one layer x diameter group is computed at a time).
+
+    masks     = layers x 32 diameters x 7 packed masks (cells/8 each)          -- the AreaResult, packed
+    output    = layers x 32 groups x emitted bucket entries x 100 B            -- RETAINED: every group of the
+                AreaResult keeps its bucket lists until the result is written, so it is charged once per group
+    group     = max_layer_count x 2 packed masks (sources + pair unions) + 64 B/cell transient
+    history   = max_label_entries x 256 B (measured live-pattern cost) + serialization of one group's output
+                (emitted x 200 B: asdict copies + JSON text)
+    payload   = records x 3 KiB
+    emitted per group = max_bucket_entries (full) or, in summary mode, min(max_bucket_entries, 2 classes x
+    top_buckets x 3 lists x that layer's case count), never more than the group can structurally produce
+    (buckets <= distinct patterns <= min(cells, 2^cases), each <= 3 x cases entries). The label partition
+    stays exact and is bounded by max_label_entries, likewise capped at patterns x cases.
+    retained = masks + output. Returns the components so callers can combine two models (stage 6): their
+    retained+payload coexist, the group/history transient is live for one model at a time.
+    """
+    layers = len(group_counts)
+    packed = (cells + 7) // 8
+    masks = layers * len(DIAMETERS_UM) * RETAINED_MASKS_PER_GROUP * packed
+    per_layer = [min(max_bucket_entries, _max_patterns(count, cells) * 3 * count) if top_buckets is None else
+                 min(max_bucket_entries, 2 * top_buckets * 3 * count, _max_patterns(count, cells) * 3 * count)
+                 for count in group_counts.values()]
+    max_label_entries = min(max_label_entries, max((_max_patterns(count, cells) * count
+                                                    for count in group_counts.values()), default=0))
+    output = len(DIAMETERS_UM) * sum(per_layer) * BUCKET_ENTRY_BYTES
+    group = max(group_counts.values(), default=0) * 2 * packed + TRANSIENT_BYTES_PER_CELL * cells
+    history = max(per_layer, default=0) * BUCKET_SERIALIZE_BYTES + max_label_entries * LABEL_PATTERN_ENTRY_BYTES
+    payload = record_count * PAYLOAD_BYTES_PER_RECORD
+    retained = masks + output
+    return {'retained': retained, 'output': output, 'payload': payload, 'transient': group + history,
+            'total': retained + payload + group + history}
+
+
+def _operation_error(stage, estimated, limit):
+    return NumericContractError('oversized_real_operation',
+                                f'{stage}: estimated {estimated} bytes exceed limit {limit}; {OPERATION_REMEDY}')
+
+
+def _dataset_profile(dataset):
+    """(cells, {layer: case count}, record count, limit, bucket entries) from metadata only; None if not a real dataset."""
+    estimate = dataset.provenance.get('resource_estimate')
+    if not isinstance(estimate, dict) or not dataset.frames:
+        return None
+    frame = next(iter(dataset.frames.values()))
+    counts = {}
+    for case in dataset.cases:
+        counts[case.analysis_layer] = counts.get(case.analysis_layer, 0) + 1
+    assignment = dataset.provenance.get('configured_assignments') or {}
+    entries = assignment.get('max_bucket_output_entries', DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES)
+    label_entries = assignment.get('max_label_pattern_entries', DEFAULT_MAX_LABEL_PATTERN_ENTRIES)
+    return (int(frame.valid.size), counts, len(dataset.cases) * len(DIAMETERS_UM),
+            estimate['max_operation_bytes'], entries, frame.shape_yx, label_entries)
+
+
+def guard_stage_map(stage, dataset):
+    """Stage 4 admission (electrode-map / candidates / ROI export), before any per-electrode mask exists.
+
+    electrode_map.compute_electrode_maps keeps, per layer: the representative record of every case with its
+    full bool mask (N_l x cells), one bool mask per distinct electrode (E_l x cells) and np.stack of those
+    (E_l x cells), then int64 counts (8 x cells, kept). Candidates keep both sides' counts, so the retained part
+    is counted twice. The region masks are NOT guessed here: their number is only known after the counts exist,
+    so compute_electrode_maps counts the connected components first (guard_stage_map_counting prices that
+    prepass, guard_stage_map_regions the region construction) before it allocates the first full-frame region mask. Phase A only fails fast: streaming for this stage is pending.
+    """
+    profile = _dataset_profile(dataset)
+    if profile is None:
+        return
+    cells, counts, _, limit, _, _, _ = profile
+    electrodes = {}
+    for case in dataset.cases:
+        electrodes.setdefault(case.analysis_layer, set()).update(ep.electrode_id for ep in case.endpoints)
+    retained = len(counts) * 8 * cells
+    peak = max((count + 2 * len(electrodes[layer])) * cells + 16 * cells for layer, count in counts.items())
+    estimated = peak + 2 * retained
+    if estimated > limit:
+        raise _operation_error(stage, estimated, limit)
+
+
+def _stage_map_live(cells, *, regions, layers_done, layer_cases, layer_electrodes):
+    """Bytes alive in compute_electrode_maps while a layer is thresholded and its regions are built, excluding
+    the run labels and the id payload: the layer's representative masks and per-electrode masks ((N + E) x cells),
+    the int64 counts of every layer done and one full-frame bool mask + MAP_REGION_PAYLOAD_BYTES per region (both
+    counted twice like the admission estimate: candidates keep both sides), the 16 x cells slack of guard_stage_map
+    and the thresholded `active` mask (1 x cells)."""
+    retained = 2 * (layers_done * 8 * cells + regions * (cells + MAP_REGION_PAYLOAD_BYTES))
+    return (layer_cases + layer_electrodes) * cells + retained + 17 * cells
+
+
+def estimate_stage_map_counting(cells, *, regions_done, runs, layers_done, layer_cases, layer_electrodes):
+    """Peak of the component-count prepass of one layer (run-length union-find, see electrode_map._label_runs)."""
+    return (_stage_map_live(cells, regions=regions_done, layers_done=layers_done, layer_cases=layer_cases,
+                            layer_electrodes=layer_electrodes) + cells + MAP_RUN_BYTES * runs)
+
+
+def estimate_stage_map_regions(cells, *, regions, runs, largest_area, largest_runs, layers_done, layer_cases,
+                               layer_electrodes):
+    """Peak while the regions of a layer are built: _stage_map_live with every region counted, the run labels
+    (kept until the last region exists), the id payload of the largest region (transient) and the window objects
+    plus measure_union rectangles of the region with the most runs (one region at a time, transient)."""
+    return (_stage_map_live(cells, regions=regions, layers_done=layers_done, layer_cases=layer_cases,
+                            layer_electrodes=layer_electrodes) + MAP_RUN_BYTES * runs
+            + MAP_REGION_ID_BYTES_PER_CELL * largest_area + MAP_REGION_RUN_BYTES * largest_runs)
+
+
+def guard_stage_map_counting(stage, dataset, *, regions_done, runs, layers_done, layer_cases, layer_electrodes):
+    """Stage 4 count prepass bound, called by electrode_map once a layer's counts exist and its horizontal runs
+    are known (a row scan, O(width) memory), before the label arrays (MAP_RUN_BYTES per run) are allocated."""
+    profile = _dataset_profile(dataset)
+    if profile is None:
+        return
+    estimated = estimate_stage_map_counting(profile[0], regions_done=regions_done, runs=runs, layers_done=layers_done,
+                                            layer_cases=layer_cases, layer_electrodes=layer_electrodes)
+    if estimated > profile[3]:
+        raise _operation_error(f'{stage} (stage-4 component count: {runs} runs of {profile[0]} cells)', estimated, profile[3])
+
+
+def guard_stage_map_regions(stage, dataset, *, regions, runs, largest_area, largest_runs, layers_done, layer_cases,
+                            layer_electrodes):
+    """Stage 4 region bound, called by electrode_map after the components of a layer are counted and before any
+    region mask is allocated.
+
+    regions = connected regions counted so far over all layers including the current one (from the label sizes,
+    no mask allocated), largest_area = cells of the biggest of them, runs = horizontal runs of the current layer,
+    largest_runs = horizontal runs of the region with the most (a connected comb has few cells per run).
+    See estimate_stage_map_regions for what is alive.
+    """
+    profile = _dataset_profile(dataset)
+    if profile is None:
+        return
+    cells, limit = profile[0], profile[3]
+    estimated = estimate_stage_map_regions(cells, regions=regions, runs=runs, largest_area=largest_area,
+                                           largest_runs=largest_runs, layers_done=layers_done, layer_cases=layer_cases,
+                                           layer_electrodes=layer_electrodes)
+    if estimated > limit:
+        raise _operation_error(f'{stage} (stage-4 regions: {regions} regions of {cells} cells)', estimated, limit)
+
+
+def guard_stage_compare_windows(stage, reference, target, *, layouts_cfg=None):
+    """Stage 6 admission (compare-windows and its report), before AreaResults and layout masks exist.
+
+    Both models' AreaResults coexist (retained + payload of each, transient of one at a time). The report then
+    holds both sides' original layout masks, 2 per case at (h+1000) x (w+1000) bool each, only for sides
+    whose cfg has an asset_manifest (layouts_cfg = cfg; None assumes no layouts).
+    """
+    profiles = [_dataset_profile(d) for d in (reference, target)]
+    if any(p is None for p in profiles):
+        return
+    parts = [estimate_area_bytes(p[0], p[1], p[2], p[4], STAGE6_TOP_BUCKETS, p[6]) for p in profiles]
+    limit = min(p[3] for p in profiles)
+    held = sum(part['retained'] + part['payload'] for part in parts)
+    estimated = held + max(part['transient'] for part in parts)
+    if layouts_cfg is not None:
+        stored, widest = 0, 0
+        for name, dataset, profile in (('reference', reference, profiles[0]), ('target', target, profiles[1])):
+            if not isinstance(layouts_cfg.get(name), dict) or not layouts_cfg[name].get('asset_manifest'):
+                continue
+            layout_cells = (profile[5][0] + 1000) * (profile[5][1] + 1000)
+            confirmed = sum(1 for c in dataset.cases if (c.raw or {}).get('geometry_status') == 'confirmed')
+            stored += confirmed * 2 * layout_cells
+            widest = max(widest, layout_cells)
+        if stored:
+            estimated = max(estimated, held + stored + LAYOUT_TRANSIENT_BYTES_PER_CELL * widest)
+    if estimated > limit:
+        raise _operation_error(stage, estimated, limit)
+
+
+class LazyRecords(Mapping):
+    """Per-diameter MaskRecords of one real case; a mask is read from disk only on item access (no cache).
+
+    header(d) returns RecordHeader without touching the file; records[d] loads the mask through _load_mask with
+    the same dtype/shape check and error code as the eager path. Geometry-unconfirmed and missing records carry
+    no mask and never read a file. Treat it as read-only: it holds metadata, never arrays.
+    """
+
+    def __init__(self, case_name, frame, shape, folder, identity, analysis_layer, entries):
+        self._case_name, self._frame, self._shape, self._folder = case_name, frame, shape, folder
+        self._identity, self._layer = identity, analysis_layer
+        self._entries = entries  # float diameter -> (source_record dict, status, reasons, source_ca, tolerance, load)
+
+    def __iter__(self):
+        return iter(self._entries)
+
+    def __len__(self):
+        return len(self._entries)
+
+    def __contains__(self, diameter):
+        return diameter in self._entries
+
+    def header(self, diameter):
+        from ..numeric_schema import RecordHeader
+        _, status, reasons, _, _, _ = self._entries[diameter]
+        return RecordHeader(diameter, self._frame, self._identity, self._layer, status, reasons)
+
+    def __getitem__(self, diameter):
+        from ..numeric_schema import MaskRecord
+        source_record, status, reasons, source_ca, tolerance, load = self._entries[diameter]
+        mask = None
+        if load:
+            mask = _load_mask(resolve_path(self._folder, source_record['mask_path']), source_record)
+            if mask.dtype != np.dtype(bool) or mask.shape != self._shape:
+                raise NumericContractError('real_mask_shape_mismatch', self._case_name)
+        return MaskRecord(float(source_record['diameter_um']), self._frame, mask, status, reasons,
+                          source_ca, self._identity, self._layer,
+                          conservation_atol_um2=tolerance)
+
+
+
+def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_buckets=DEFAULT_TOP_BUCKETS):
+    """Bind explicit analysis assignments and pair table to real observations.
+
+    top_buckets prices the compare admission estimate: an int N = summary mode (the default, like the compare
+    default), None = full bucket detail (`compare.full_bucket_detail: true`), whose retained output is charged for
+    every group. The choice is recorded as provenance['admitted_bucket_detail']; compute_areas defaults to it and refuses
+    a costlier explicit mode. Stages that never compute buckets (validate-data, electrode-map, compare-windows) must not be
+    refused for output they do not keep, so they use the summary default.
+    """
     import copy
     from ..numeric_schema import (CaseIdentity, DensityRow, Endpoint, Frame, MaskRecord,
         NumericCase, NumericDataset, Pair, SourceCA)
@@ -542,7 +816,8 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
     if not isinstance(assignment, dict) or any(not assignment.get(k) for k in required):
         raise NumericContractError('real_grouping_assignment_required')
     allowed = set(required) | {'pair_table_path', 'electrode_roles', 'electrode_role_policy', 'max_group_mask_cells',
-                               'max_materialized_source_cells', 'max_operation_bytes'}
+                               'max_materialized_source_cells', 'max_operation_bytes',
+                               'max_bucket_output_entries', 'max_label_pattern_entries'}
     if set(assignment) - allowed:
         raise NumericContractError('unknown_real_grouping_assignment_field')
     role_policy = assignment.get('electrode_role_policy')
@@ -605,9 +880,15 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
         raise NumericContractError('real_common_frame_shape_required')
     frame_id = frame_spec['frame_id']
     cases, unresolved = [], []
-    max_group_cells = assignment.get('max_group_mask_cells', 500_000_000)
+    max_group_cells = assignment.get('max_group_mask_cells', 5_000_000_000)
     max_source_cells = assignment.get('max_materialized_source_cells', 6_000_000_000)
     max_operation_bytes = assignment.get('max_operation_bytes', 8 * 1024**3)
+    max_bucket_entries = assignment.get('max_bucket_output_entries', DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES)
+    if type(max_bucket_entries) is not int or max_bucket_entries <= 0:
+        raise NumericContractError('invalid_resource_limit', 'max_bucket_output_entries must be a positive integer')
+    max_label_entries = assignment.get('max_label_pattern_entries', DEFAULT_MAX_LABEL_PATTERN_ENTRIES)
+    if type(max_label_entries) is not int or max_label_entries <= 0:
+        raise NumericContractError('invalid_resource_limit', 'max_label_pattern_entries must be a positive integer')
     if type(max_group_cells) is not int or max_group_cells <= 0 or type(max_source_cells) is not int or max_source_cells <= 0:
         raise NumericContractError('invalid_resource_limit')
     physical = _physical_memory_bytes()
@@ -645,21 +926,21 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
         if not isinstance(stack[layer][1], str) or not stack[layer][1]:
             raise NumericContractError('real_density_layer_assignment_required', layer)
         group_counts[layer] = group_counts.get(layer, 0) + 1
-    if observed_count * shape[0] * shape[1] > max_source_cells:
+    frame_cells = shape[0] * shape[1]
+    # max_materialized_source_cells bounds what one layer x diameter group materialises: sources + pair masks.
+    widest = max(group_counts.values(), default=0) * frame_cells
+    if widest > max_source_cells:
         raise NumericContractError('oversized_real_materialization',
-                                   f'{observed_count*shape[0]*shape[1]} source cells exceed limit {max_source_cells}')
-    oversized = {layer: count*shape[0]*shape[1] for layer, count in group_counts.items()
-                 if count*shape[0]*shape[1] > max_group_cells}
+                                   f'{widest} source cells exceed limit {max_source_cells}')
+    oversized = {layer: count*frame_cells for layer, count in group_counts.items()
+                 if count*frame_cells > max_group_cells}
     if oversized:
         layer, cells = next(iter(sorted(oversized.items())))
         raise NumericContractError('oversized_real_mask_group', f'{layer} requires {cells} cells; limit {max_group_cells}')
-    # Eager peak estimate: every loaded source mask, retained per-diameter output
-    # and a conservative per-case transient margin. This does not claim streaming.
-    source_bytes = observed_count * shape[0] * shape[1]
-    frame_cells = shape[0] * shape[1]
-    output_bytes = len(group_counts) * len(DIAMETERS_UM) * 14 * frame_cells
-    transient_bytes = max(group_counts.values(), default=0) * 20 * frame_cells
-    estimated_peak_bytes = source_bytes + output_bytes + transient_bytes
+    # Streaming model: masks are read one at a time, a group keeps packed bits, results keep packed masks.
+    estimate = estimate_area_bytes(frame_cells, group_counts, sum(group_counts.values()) * len(DIAMETERS_UM),
+                                   max_bucket_entries, top_buckets, max_label_entries)
+    estimated_peak_bytes = estimate['total']
     if estimated_peak_bytes > max_operation_bytes:
         raise NumericContractError('oversized_real_operation',
             f'estimated {estimated_peak_bytes} bytes exceed {max_operation_bytes}; reduce input scope')
@@ -689,16 +970,12 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                                 assignment['process_step_id'], assignment['exposure_id'], raw_case['case_name'],
                                 frame_id, manifest['schema_version'])
         pair = None if same_name else pairs.get(frozenset((a['electrode_id'], b['electrode_id'])))
-        records = {}
+        entries = {}
+        geometry_confirmed = raw_case.get('geometry_status') == 'confirmed'
         for source_record in raw_case['records']:
-            mask = None
             source_ca = None
-            geometry_confirmed = raw_case.get('geometry_status') == 'confirmed'
-            if source_record['input_status'] == 'observed' and geometry_confirmed:
-                asset = resolve_path(folder, source_record['mask_path'])
-                mask = _load_mask(asset, source_record)
-                if mask.dtype != np.dtype(bool) or mask.shape != shape:
-                    raise NumericContractError('real_mask_shape_mismatch', raw_case['case_name'])
+            load = source_record['input_status'] == 'observed' and geometry_confirmed
+            if load:
                 csv_area = source_record.get('csv_area')
                 if csv_area is not None and source_record.get('csv_status') == 'consistent':
                     source_ca = SourceCA(csv_area['value'], frame_id, frame.valid_hash)
@@ -707,12 +984,11 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                 reasons += ('csv_area_mismatch',)
             if not geometry_confirmed:
                 reasons += ('case_geometry_unconfirmed',)
-                mask, source_ca = None, None
             tolerance = source_record.get('area_tolerance_um2') or 1e-9
-            records[float(source_record['diameter_um'])] = MaskRecord(
-                float(source_record['diameter_um']), frame, mask,
-                'missing' if 'case_geometry_unconfirmed' in reasons else source_record['input_status'], reasons,
-                source_ca, identity, analysis_layer, conservation_atol_um2=tolerance)
+            entries[float(source_record['diameter_um'])] = (
+                source_record, 'missing' if 'case_geometry_unconfirmed' in reasons else source_record['input_status'],
+                reasons, source_ca, tolerance, load)
+        records = LazyRecords(raw_case['case_name'], frame, shape, folder, identity, analysis_layer, entries)
         case_reasons = []
         if same_name:
             case_reasons.append('same_electrode_name_both_endpoints_short_unresolved')
@@ -777,10 +1053,18 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict):
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),
                   'configured_assignment_hash': assignment_hash, 'input_hash': configured_hash,
                   'unresolved_same_name_cases': unresolved,
+                  # the bucket detail the admission estimate above priced; linepixel.compute_areas binds to it
+                  'admitted_bucket_detail': ({'bucket_detail': 'full'} if top_buckets is None else
+                                             {'bucket_detail': 'summary', 'top_buckets': top_buckets}),
                   'electrode_roles_effective': dict(sorted(role_map.items())),
                   'resource_estimate': {'estimated_peak_bytes': estimated_peak_bytes,
                     'max_operation_bytes': max_operation_bytes,
-                    'method': 'retained_source + 14 masks per layer/diameter + 20 masks per case transient; eager, conservative'}}
+                    'max_bucket_output_entries': max_bucket_entries,
+                    'max_label_pattern_entries': max_label_entries,
+                    'components': estimate,
+                    'method': 'streaming: 7 packed masks + the bucket output of every layer/diameter group retained '
+                              '+ one group transient (2 packed masks per source + 64 B/cell + label budget + '
+                              'serialization of one group) + 3 KiB per record'}}
     return NumericDataset(cases, pairs, {frame_id: frame}, [],
                           {'frame_id': frame_id, 'unit_width_um': None, 'unit_height_um': None,
                            'measured_width_um': None, 'measured_height_um': None}, {},

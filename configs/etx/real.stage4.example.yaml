@@ -36,7 +36,9 @@ reference: &reference_side
     pair_table_path: pairs.csv
     # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
     electrode_role_policy: electrode_id
-    # 큰 자료용 한도. max_operation_bytes는 처음에는 빼고 실행해 오류 메시지의 추정치를 본 뒤 여유를 더해 넣는다.
+    # 큰 자료용 한도. 4회차(electrode-map/candidates)와 6회차(compare-windows)는 아직 스트리밍이 아니다. 추정치가
+    # max_operation_bytes를 넘으면 계산 전에 oversized_real_operation으로 멈춘다(케이스를 나누거나 값을 물리 메모리 이하로 올린다).
+    # 물리 메모리는 호스트 RAM 기준이며 cgroup/job 한도가 아니다.
     max_materialized_source_cells: 20000000000
     max_group_mask_cells: 5000000000
     # max_operation_bytes: 34359738368   # 예: 32 GiB. 물리 메모리를 넘기면 거부된다

@@ -16,26 +16,35 @@ from .numeric_schema import (
 )
 
 
+def check_union_compatible(first, record) -> None:
+    """Source-union compatibility of `record` against `first`.
+
+    Both arguments only need frame, analysis_layer, input_status, diameter_um and identity,
+    so callers that stream sources can keep this metadata instead of the first mask.
+    """
+    require_same_frame(first.frame, record.frame)
+    if record.analysis_layer != first.analysis_layer:
+        raise NumericContractError('incompatible_analysis_layer')
+    if record.input_status != 'observed' or record.diameter_um != first.diameter_um:
+        raise NumericContractError('incompatible_union_record')
+    if record.identity is not None and first.identity is not None:
+        a, b = record.identity, first.identity
+        if (a.product_id, a.design_version, a.source_id, a.process_step_id,
+            a.exposure_id, a.source_contract_version) != (
+            b.product_id, b.design_version, b.source_id, b.process_step_id,
+            b.exposure_id, b.source_contract_version):
+            raise NumericContractError('incompatible_source_conditions')
+    elif record.identity != first.identity:
+        raise NumericContractError('incompatible_source_identity')
+
+
 def union_masks(records: Sequence[MaskRecord]) -> np.ndarray:
     """Validate compatible original sources before OR; callers retain all cases."""
     if not records:
         raise NumericContractError('empty_union')
     first = records[0]
     for record in records:
-        require_same_frame(first.frame, record.frame)
-        if record.analysis_layer != first.analysis_layer:
-            raise NumericContractError('incompatible_analysis_layer')
-        if record.input_status != 'observed' or record.diameter_um != first.diameter_um:
-            raise NumericContractError('incompatible_union_record')
-        if record.identity is not None and first.identity is not None:
-            a, b = record.identity, first.identity
-            if (a.product_id, a.design_version, a.source_id, a.process_step_id,
-                a.exposure_id, a.source_contract_version) != (
-                b.product_id, b.design_version, b.source_id, b.process_step_id,
-                b.exposure_id, b.source_contract_version):
-                raise NumericContractError('incompatible_source_conditions')
-        elif record.identity != first.identity:
-            raise NumericContractError('incompatible_source_identity')
+        check_union_compatible(first, record)
     result = np.zeros(first.frame.shape_yx, dtype=bool)
     for record in records:
         np.logical_or(result, record.mask, out=result)
@@ -87,8 +96,15 @@ def _conservation(record, rtol, atol):
     return residual, source.value_um2, reasons
 
 
+def _same_frame(first, second) -> bool:
+    return ((first.frame_id, first.pixel_pitch_um, first.origin_xy_um, first.shape_yx)
+            == (second.frame_id, second.pixel_pitch_um, second.origin_xy_um, second.shape_yx)
+            and np.array_equal(first.valid, second.valid))
+
+
 def measure_union(record: MaskRecord, windows: Sequence[PhysicalWindow], *,
-                  conservation_rtol: float = 1e-9, conservation_atol_um2: float = 1e-9) -> Measurement:
+                  conservation_rtol: float = 1e-9, conservation_atol_um2: float = 1e-9,
+                  area_cache: dict | None = None) -> Measurement:
     """Measure one original source over a union of explicit windows.
 
     ca_um2 is null for partial/unavailable observation; partial_value retains the known sum.
@@ -113,16 +129,24 @@ def measure_union(record: MaskRecord, windows: Sequence[PhysicalWindow], *,
     if errors:
         return Measurement(None, 0.0, requested, None, 'unavailable', (*errors,*warnings),
                            residual, source_ca, identity=record.identity, basis='physical_window_union')
-    cell_areas = _cell_areas(record.frame, rectangles)
-    areas = cell_areas * record.frame.valid
-    valid_area = float(areas.sum())
+    frame = record.frame
+    cached = None if area_cache is None else area_cache.get(tuple(rectangles))
+    if cached is not None and cached[0] is not frame and not _same_frame(cached[0], frame):
+        cached = None  # the cache entry belongs to another frame: its cell areas and valid area do not apply
+    if cached is None:
+        cell_areas = _cell_areas(frame, rectangles)
+        areas = cell_areas * frame.valid
+        cached = (frame, areas, float(areas.sum()), bool(np.any(cell_areas[~frame.valid] > 0)))
+        if area_cache is not None:
+            area_cache[tuple(rectangles)] = cached
+    _, areas, valid_area, positive_outside_valid = cached
     observed_ca = float(areas[record.mask].sum())
     if valid_area == 0:
         return Measurement(None, 0.0, requested, None, 'unavailable', ('empty_valid_area',*warnings),
                            residual, source_ca, 0.0, record.identity, 'physical_window_union')
     x0, y0, x1, y1 = record.frame.bbox_um
     complete = (all(a >= x0 and b >= y0 and c <= x1 and d <= y1 for a, b, c, d in rectangles)
-                and not np.any(cell_areas[~record.frame.valid] > 0))
+                and not positive_outside_valid)
     complete = complete and not record.reasons
     return Measurement(observed_ca if complete else None, valid_area, requested,
                        observed_ca / valid_area if complete else None,

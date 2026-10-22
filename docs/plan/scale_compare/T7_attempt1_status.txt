@@ -1,0 +1,54 @@
+ M bundles/etx/simcompare_job_1_import_hotspots.py
+ M bundles/etx/simcompare_job_2_validate_compare.py
+ M bundles/etx/simcompare_job_3_import_electrode_assets.py
+ M bundles/etx/simcompare_job_4_candidates.py
+ M bundles/etx/simcompare_job_5_confirm_pairs.py
+ M bundles/etx/simcompare_job_6_compare_windows.py
+ M bundles/simcompare_job.py
+ M configs/etx/README.md
+ M configs/etx/real.stage2.example.yaml
+ M configs/etx/real.stage4.example.yaml
+ M docs/usage.md
+ M scripts/build_etx_stage_runners.py
+ M src/simcompare/adapters/real_hotspot.py
+ M src/simcompare/electrode_map.py
+ M src/simcompare/linepixel.py
+ M src/simcompare/local_delta.py
+ M src/simcompare/local_delta_report.py
+ M src/simcompare/measurement.py
+ M src/simcompare/numeric_schema.py
+ M src/simcompare/pipeline.py
+ M tests/test_electrode_png.py
+?? docs/plan/scale_compare/
+?? scripts/benchmark_linepixel.py
+?? scripts/benchmark_scale_compare.py
+?? scripts/make_compare_fixture.py
+?? scripts/measure_compare_payload.py
+?? tests/reference_comparison_v1.py
+?? tests/reference_linepixel.py
+?? tests/test_comparison_v2.py
+?? tests/test_linepixel_equivalence.py
+?? tests/test_scale_guards.py
+?? tests/test_summary_mode.py
+ bundles/etx/simcompare_job_1_import_hotspots.py    | 8612 +++++++++----------
+ bundles/etx/simcompare_job_2_validate_compare.py   | 8616 ++++++++++----------
+ .../simcompare_job_3_import_electrode_assets.py    | 8612 +++++++++----------
+ bundles/etx/simcompare_job_4_candidates.py         | 8612 +++++++++----------
+ bundles/etx/simcompare_job_5_confirm_pairs.py      | 8612 +++++++++----------
+ bundles/etx/simcompare_job_6_compare_windows.py    | 8612 +++++++++----------
+ bundles/simcompare_job.py                          | 8612 +++++++++----------
+ configs/etx/README.md                              |    6 +-
+ configs/etx/real.stage2.example.yaml               |   10 +-
+ configs/etx/real.stage4.example.yaml               |    4 +-
+ docs/usage.md                                      |   37 +-
+ scripts/build_etx_stage_runners.py                 |    4 +-
+ src/simcompare/adapters/real_hotspot.py            |  288 +-
+ src/simcompare/electrode_map.py                    |   30 +
+ src/simcompare/linepixel.py                        |  474 +-
+ src/simcompare/local_delta.py                      |   10 +-
+ src/simcompare/local_delta_report.py               |    3 +
+ src/simcompare/measurement.py                      |   62 +-
+ src/simcompare/numeric_schema.py                   |   18 +-
+ src/simcompare/pipeline.py                         |  340 +-
+ tests/test_electrode_png.py                        |    4 +
+ 21 files changed, 31931 insertions(+), 29647 deletions(-)

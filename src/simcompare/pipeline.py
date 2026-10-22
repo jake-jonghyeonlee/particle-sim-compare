@@ -1,7 +1,10 @@
 """numeric_v2 실행 경로. 학습이나 legacy loader를 호출하지 않는다."""
 from __future__ import annotations
+import errno
 import hashlib
 import json
+import os
+import shutil
 from pathlib import Path
 
 
@@ -26,13 +29,15 @@ def _real_source(cfg, section):
     return root, load_real_manifest(root, manifest_path)
 
 
-def _configured_real(cfg, section, real):
+def _configured_real(cfg, section, real, detail=None):
     from simcompare.adapters.real_hotspot import configured_dataset
     root, manifest = real
     assignment = section.get('condition_assignment') if isinstance(section, dict) else None
     if assignment is None:
         return None
-    dataset = configured_dataset(root, manifest, assignment)
+    # detail is the compare bucket detail: {} = full (admission charges every group's output), else summary
+    dataset = configured_dataset(root, manifest, assignment,
+                                 **({} if detail is None else {'top_buckets': detail.get('top_buckets')}))
     return root, dataset
 
 
@@ -49,6 +54,332 @@ def _write_inspection(output, prefix, payload, rows):
         writer.writeheader()
         writer.writerows(rows or [{'status': 'no_records'}])
     return [str(json_path), str(csv_path)]
+
+
+def _dumps(value):
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'), default=str)
+
+
+def _write_csv(path, rows):
+    import csv
+    fields = list(dict.fromkeys(k for row in rows for k in row))
+    with path.open('w', encoding='utf-8-sig', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields or ['status'])
+        writer.writeheader()
+        writer.writerows(rows or [{'status': 'no_records'}])
+
+
+def _real_area_rows(side, groups):
+    rows = []
+    for group in groups:
+        row = {'side': side, 'group': group.key.__dict__, 'status': group.union.status,
+               'union_um2': group.union.value, 'partial_union_um2': group.union.partial_value,
+               'line_um2': group.line.area.value, 'pixel_effective_um2': group.pixel.area.value,
+               'transfer_um2': group.transfer.value, 'unmapped_pair_count': group.coverage.unmapped,
+               'missing_count': group.coverage.missing, 'is_synthetic': False}
+        for source in group.source_cases:
+            raw_records = source.raw.get('records', []) if isinstance(source.raw, dict) else []
+            raw_record = next((r for r in raw_records if r.get('diameter_um') == source.diameter_um), {})
+            csv_area = raw_record.get('csv_area') or {}
+            rows.append({**row, 'case_id': source.identity.case_id, 'diameter_um': source.diameter_um,
+                         'case_area_um2': source.measurement.ca_um2,
+                         'case_partial_area_um2': source.measurement.partial_value,
+                         'input_status': source.input_status,
+                         'csv_status': raw_record.get('csv_status'),
+                         'csv_area_um2': csv_area.get('value'),
+                         'csv_raw_value': csv_area.get('raw_area'),
+                         'area_difference_um2': raw_record.get('area_difference_um2'),
+                         'area_tolerance_um2': raw_record.get('area_tolerance_um2'),
+                         'reasons': list(source.measurement.reasons)})
+    return rows
+
+
+class _ComparisonStream:
+    """Streams real_hotspot_comparison_v2 into sibling temp files; nothing is published before commit().
+
+    Per side: AreaResult header, groups one by one (group fields, then each source_case separately) and
+    `cases_raw` once. The full v1 dict (or asdict of raw) is never built. On any exception, including
+    KeyboardInterrupt, abort() removes the temp files; until the publication starts (the journal is written) an
+    existing comparison.json/csv stays untouched. During the publication the pair can be torn for a moment and an
+    interrupted run is repaired by recover (forward after the commit marker, otherwise back). Recovery fails closed:
+    state it cannot read is reported as `comparison_recovery_unreadable` and left exactly as found.
+    """
+    SCHEMA = 'real_hotspot_comparison_v2'
+
+    def __init__(self, output, top_buckets=None):
+        """top_buckets=None writes full bucket lists; an int marks the file as bucket_detail "summary"."""
+        self.output = Path(output)
+        self.top_buckets = top_buckets
+        self._fh = None
+        self._temps = []
+
+    def _open_temp(self, name):
+        import secrets
+        path = self.output / f'.{name}.{os.getpid()}.{secrets.token_hex(4)}.tmp'
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        self._temps.append(path)
+        return path, fd
+
+    def begin(self):
+        self.output.mkdir(parents=True, exist_ok=True)
+        self._recover()  # a previous run killed during publication: roll forward if committed, else back
+        if self._present(self._marker()):
+            raise OSError(errno.EIO, 'cannot finish the committed publication in ' + str(self.output))
+        self.json_tmp, fd = self._open_temp('comparison.json')
+        self._fh = os.fdopen(fd, 'w', encoding='utf-8', newline='', buffering=1 << 20)
+        self._fh.write('{"schema_version":"%s","source_contract_version":"real_hotspot_v1","is_synthetic":false'
+                       % self.SCHEMA)
+        if self.top_buckets is not None:  # absent bucket_detail means full (T2 layout, byte-identical)
+            self._fh.write(',"bucket_detail":"summary","top_buckets":%d' % self.top_buckets)
+
+    def side(self, name, result):
+        write = self._fh.write
+        if result is None:
+            write(',"%s":null' % name)
+            return
+        import dataclasses
+        header = dataclasses.replace(result, groups={}).to_dict()
+        header.pop('groups')
+        write(',"%s":%s,"groups":[' % (name, _dumps(header)[:-1]))
+        cases_raw, ids = {}, {}
+        for number, key in enumerate(sorted(result.groups)):
+            group = result.groups[key]
+            head = dataclasses.replace(group, source_cases=()).to_dict()
+            head.pop('source_cases')
+            write(('' if number == 0 else ',') + _dumps(head)[:-1] + ',"source_cases":[')
+            for index, source in enumerate(group.source_cases):
+                ref = ids.get(id(source.raw))
+                if ref is None:
+                    base = ref = source.identity.case_id
+                    suffix = 1
+                    while ref in cases_raw and cases_raw[ref] != source.raw:
+                        suffix += 1
+                        ref = '%s#%d' % (base, suffix)
+                    cases_raw[ref] = source.raw
+                    ids[id(source.raw)] = ref
+                piece = dataclasses.asdict(dataclasses.replace(source, raw=None))
+                del piece['raw']
+                piece['raw_ref'] = ref
+                write(('' if index == 0 else ',') + _dumps(piece))
+            write(']}')
+        write('],"cases_raw":{')
+        for index, (ref, raw) in enumerate(cases_raw.items()):
+            write(('' if index == 0 else ',') + _dumps(ref) + ':' + _dumps(raw))
+        write('}}')
+
+    def commit(self, tail, rows):
+        write = self._fh.write
+        write(',"records":[')
+        for index, row in enumerate(rows):
+            write(('' if index == 0 else ',') + _dumps(row))
+        write(']')
+        for key, value in tail.items():
+            write(',%s:%s' % (_dumps(key), _dumps(value)))
+        write('}')
+        self._finish(self._fh)
+        self._fh = None
+        csv_tmp, fd = self._open_temp('comparison.csv')
+        os.close(fd)
+        _write_csv(csv_tmp, rows)
+        with csv_tmp.open('rb') as handle:
+            os.fsync(handle.fileno())
+        self._publish(csv_tmp)
+        self._sync_dir()
+
+    # -- all-or-nothing publication of the json/csv pair ----------------------------------------------
+    # Protocol (every step is a separate filesystem operation; the commit decision is one atomic rename):
+    #   1. write the journal (which of the two files exist) atomically (partial file, then rename)
+    #                                                             -- no journal yet: nothing was replaced
+    #   2. hard-link (copy as a fallback) the previous pair to *.prev
+    #   3. os.replace json, os.replace csv                        -- recover (no marker) = restore *.prev
+    #   4. COMMIT: atomically rename .comparison.committed.partial -> .comparison.committed
+    #   5. delete *.prev, then the journal, then the marker       -- recover (marker) = finish this deletion
+    # The rollback material (*.prev, journal) is only destroyed after the marker exists, and recovery only acts on
+    # a journal/marker it read successfully (an unreadable one raises and changes nothing), so after a recovery
+    # that completed the pair on disk is (OLD_JSON, OLD_CSV) or (NEW_JSON, NEW_CSV). Between a process death and
+    # the next begin() (or a recovery that reported comparison_recovery_unreadable) the two files can be of
+    # different generations; the leftover .comparison.publishing / .comparison.committed show that. A failure or
+    # interrupt in step 5 never rolls back.
+    _NAMES = ('comparison.json', 'comparison.csv')
+
+    def _journal(self):
+        return self.output / '.comparison.publishing'
+
+    def _prev(self, name):
+        return self.output / f'.{name}.prev'
+
+    def _marker(self):
+        return self.output / '.comparison.committed'
+
+    @staticmethod
+    def _create(path, text):
+        with open(str(path), 'w', encoding='utf-8') as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    @staticmethod
+    def _unlink(path):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+    @staticmethod
+    def _present(path):
+        """Exists or not; an error other than "not there" is raised (Path.exists() hides it on Python >= 3.12)."""
+        try:
+            os.lstat(str(path))
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        return True
+
+    @staticmethod
+    def _read_text(path):
+        return path.read_text(encoding='utf-8')
+
+    def _unreadable(self, path, exc):
+        from simcompare.numeric_schema import NumericContractError
+        return NumericContractError(
+            'comparison_recovery_unreadable',
+            '%s cannot be used (%s); nothing in %s was changed. Fix the cause and run compare again, or restore '
+            'comparison.json/comparison.csv from .comparison.json.prev/.comparison.csv.prev by hand and delete the '
+            '.comparison.* files' % (path, exc, self.output))
+
+    def _sync_dir(self):
+        try:
+            dir_fd = os.open(str(self.output), os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(dir_fd)
+
+    def _publish(self, csv_tmp):
+        if self._present(self._marker()):  # begin() could not finish an earlier commit: do not mix generations
+            raise OSError(errno.EIO, 'a previous publication is committed but not cleaned up: ' + str(self._marker()))
+        existed = {name: self._present(self.output / name) for name in self._NAMES}
+        try:
+            journal_tmp = self._journal().with_name(self._journal().name + '.partial')
+            self._create(journal_tmp, json.dumps(existed))
+            os.replace(str(journal_tmp), str(self._journal()))  # never a half-written journal
+            for name in self._NAMES:
+                if existed[name]:
+                    self._backup(self.output / name, self._prev(name))
+            os.replace(str(self.json_tmp), str(self.output / 'comparison.json'))
+            self._temps.remove(self.json_tmp)
+            os.replace(str(csv_tmp), str(self.output / 'comparison.csv'))
+            self._temps.remove(csv_tmp)
+            self._sync_dir()
+            pending = self._marker().with_name(self._marker().name + '.partial')
+            self._create(pending, 'committed')
+            os.replace(str(pending), str(self._marker()))  # the commit decision
+        except BaseException:
+            self._recover()
+            raise
+        self._finish_commit()
+
+    @staticmethod
+    def _backup(source, backup):
+        if _ComparisonStream._present(backup):
+            backup.unlink()
+        try:
+            os.link(str(source), str(backup))
+            return
+        except OSError:
+            pass
+        partial = backup.with_name(backup.name + '.partial')
+        shutil.copyfile(str(source), str(partial))
+        with partial.open('rb') as handle:
+            os.fsync(handle.fileno())
+        os.replace(str(partial), str(backup))
+
+    def _discard_material(self):
+        """Delete *.prev (+ partial copies) then the journal; False (nothing more deleted) at the first error."""
+        try:
+            for name in self._NAMES:
+                prev = self._prev(name)
+                self._unlink(prev)
+                self._unlink(prev.with_name(prev.name + '.partial'))
+            self._unlink(self._journal().with_name(self._journal().name + '.partial'))
+            self._unlink(self._journal())
+        except OSError:
+            return False
+        return True
+
+    def _finish_commit(self):
+        """Roll forward: the marker exists, so the new pair is final; drop the rollback material, marker last."""
+        if self._discard_material():
+            try:
+                self._unlink(self._marker().with_name(self._marker().name + '.partial'))
+                self._unlink(self._marker())
+            except OSError:
+                pass
+
+    def _recover(self):
+        """Repair an interrupted publication: forward when the commit marker exists, otherwise back. Idempotent.
+
+        Fails closed: if the marker or the journal cannot be read, or a backup cannot be looked up, nothing is
+        replaced or deleted and NumericContractError('comparison_recovery_unreadable') is raised.
+        """
+        try:
+            committed = self._present(self._marker())
+        except OSError as exc:
+            raise self._unreadable(self._marker(), exc) from exc
+        if committed:
+            self._finish_commit()
+        else:
+            self._rollback()
+
+    def _rollback(self):
+        """Restore the generation recorded in the journal; idempotent, safe to repeat after a crash."""
+        journal = self._journal()
+        try:
+            existed = json.loads(self._read_text(journal))
+        except FileNotFoundError:  # the journal is renamed into place first: no journal, nothing was replaced
+            self._unlink(journal.with_name(journal.name + '.partial'))
+            self._unlink(self._marker().with_name(self._marker().name + '.partial'))
+            return
+        except (OSError, ValueError) as exc:  # unreadable or corrupt: unknown how far the publication got
+            raise self._unreadable(journal, exc) from exc
+        if not isinstance(existed, dict) or any(not isinstance(existed.get(name), bool) for name in self._NAMES):
+            raise self._unreadable(journal, 'unexpected content')
+        try:
+            has_prev = {name: self._present(self._prev(name)) for name in self._NAMES}
+        except OSError as exc:
+            raise self._unreadable(self.output, exc) from exc
+        for name in self._NAMES:
+            final = self.output / name
+            if existed[name]:
+                if has_prev[name]:
+                    os.replace(str(self._prev(name)), str(final))
+            else:
+                self._unlink(final)
+        self._unlink(self._marker().with_name(self._marker().name + '.partial'))
+        self._discard_material()
+
+    @staticmethod
+    def _finish(handle):
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+
+    def abort(self):
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except (OSError, ValueError):
+                pass
+            self._fh = None
+        for path in self._temps:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        self._temps = []
 
 
 def _real_validation(cfg, section, output):
@@ -80,6 +411,24 @@ def _real_validation(cfg, section, output):
     return {'status': 'partial', 'reasons': payload['reasons'], 'outputs': paths, 'exit_code': 3}
 
 
+def _compare_options(cfg):
+    """Validate the optional top-level `compare` section; returns (full_bucket_detail, top_buckets)."""
+    from simcompare.linepixel import DEFAULT_TOP_BUCKETS
+    from simcompare.numeric_schema import NumericContractError
+    section = cfg.get('compare', {})
+    if section is None:
+        section = {}
+    if not isinstance(section, dict) or set(section) - {'full_bucket_detail', 'top_buckets'}:
+        raise NumericContractError('invalid_compare_options', 'compare accepts only full_bucket_detail and top_buckets')
+    full = section.get('full_bucket_detail', False)
+    top = section.get('top_buckets', DEFAULT_TOP_BUCKETS)
+    if type(full) is not bool:
+        raise NumericContractError('invalid_compare_options', 'full_bucket_detail must be true or false')
+    if type(top) is not int or top <= 0:
+        raise NumericContractError('invalid_compare_options', 'top_buckets must be a positive integer')
+    return full, top
+
+
 def load_numeric_config(path):
     import yaml
     from simcompare.numeric_schema import NumericContractError, text
@@ -92,10 +441,11 @@ def load_numeric_config(path):
         raise NumericContractError('invalid_numeric_config',str(exc)) from exc
     if not isinstance(cfg,dict) or cfg.get('schema_version') != 'numeric_config_v1':
         raise NumericContractError('unsupported_numeric_config', 'numeric_config_v1 설정을 사용하세요; legacy export의 numeric 변환은 G2 pending입니다')
-    allowed = {'schema_version','mode','output_dir','reference','target','map','review_rois'}
+    allowed = {'schema_version','mode','output_dir','reference','target','map','review_rois','compare'}
     if set(cfg)-allowed or cfg.get('mode') not in ('synthetic','real') or not isinstance(cfg.get('output_dir'),str):
         raise NumericContractError('invalid_numeric_config')
     text(cfg['output_dir'],'output_dir')
+    _compare_options(cfg)
     cfg['_config_dir'] = path.parent
     cfg['_config_path'] = path
     cfg['_config_sha256'] = hashlib.sha256(raw).hexdigest()
@@ -179,55 +529,37 @@ def run_numeric_compare(cfg, out=None):
         if (cfg['reference'].get('condition_assignment') is not None and
                 cfg['target'].get('condition_assignment') is not None):
             from simcompare.linepixel import compute_areas
-            def area_rows(side, result):
-                rows = []
-                for group in result.groups.values():
-                    row = {'side': side, 'group': group.key.__dict__, 'status': group.union.status,
-                           'union_um2': group.union.value, 'partial_union_um2': group.union.partial_value,
-                           'line_um2': group.line.area.value, 'pixel_effective_um2': group.pixel.area.value,
-                           'transfer_um2': group.transfer.value, 'unmapped_pair_count': group.coverage.unmapped,
-                           'missing_count': group.coverage.missing, 'is_synthetic': False}
-                    for source in group.source_cases:
-                        raw_records = source.raw.get('records', []) if isinstance(source.raw, dict) else []
-                        raw_record = next((r for r in raw_records if r.get('diameter_um') == source.diameter_um), {})
-                        csv_area = raw_record.get('csv_area') or {}
-                        rows.append({**row, 'case_id': source.identity.case_id, 'diameter_um': source.diameter_um,
-                                     'case_area_um2': source.measurement.ca_um2,
-                                     'case_partial_area_um2': source.measurement.partial_value,
-                                     'input_status': source.input_status,
-                                     'csv_status': raw_record.get('csv_status'),
-                                     'csv_area_um2': csv_area.get('value'),
-                                     'csv_raw_value': csv_area.get('raw_area'),
-                                     'area_difference_um2': raw_record.get('area_difference_um2'),
-                                     'area_tolerance_um2': raw_record.get('area_tolerance_um2'),
-                                     'reasons': list(source.measurement.reasons)})
-                return rows
-            reference_configured = _configured_real(cfg, cfg['reference'], reference_real)
-            left = compute_areas(reference_configured[1]) if reference_configured[1].cases else None
-            left_payload = left.to_dict() if left is not None else None
-            left_rows = area_rows('reference', left) if left is not None else []
-            left_unresolved = reference_configured[1].provenance.get('unresolved_same_name_cases', [])
-            del reference_configured, left
-            target_configured = _configured_real(cfg, cfg['target'], target_real)
-            right = compute_areas(target_configured[1]) if target_configured[1].cases else None
-            right_payload = right.to_dict() if right is not None else None
-            right_rows = area_rows('target', right) if right is not None else []
-            right_unresolved = target_configured[1].provenance.get('unresolved_same_name_cases', [])
-            del target_configured, right
-            if left_payload is not None or right_payload is not None:
-                rows = left_rows+right_rows
-                unresolved_same = left_unresolved or right_unresolved
-                payload = {'schema_version': 'real_hotspot_comparison_v1', 'source_contract_version': 'real_hotspot_v1',
-                           'is_synthetic': False, 'status': 'partial',
-                           'reasons': ['density_contract_unconfirmed', 'unit_area_basis_unconfirmed',
-                                       'same_name_cases_unresolved' if unresolved_same else ''],
-                           'raw_case_areas_status': 'available', 'classified_line_pixel_areas_status': 'partial' if rows else 'unavailable',
-                           'weighted_rates_status': 'unavailable', 'deltas_status': 'unavailable',
-                           'reference': left_payload, 'target': right_payload, 'records': rows}
-                payload['reasons'] = sorted(filter(None, payload['reasons']))
-                output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
-                paths = _write_inspection(output, 'comparison', payload, rows)
-                return {'status': 'partial', 'reasons': payload['reasons'], 'outputs': paths, 'exit_code': 3}
+            output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
+            full_detail, top = _compare_options(cfg)
+            detail = {} if full_detail else {'bucket_detail': 'summary', 'top_buckets': top}
+            stream = _ComparisonStream(output, None if full_detail else top)
+            try:
+                reference_configured = _configured_real(cfg, cfg['reference'], reference_real, detail)
+                left = compute_areas(reference_configured[1], **detail) if reference_configured[1].cases else None
+                left_rows = _real_area_rows('reference', left.groups.values()) if left is not None else []
+                left_unresolved = reference_configured[1].provenance.get('unresolved_same_name_cases', [])
+                left_present = left is not None
+                stream.begin()
+                stream.side('reference', left)
+                del reference_configured, left
+                target_configured = _configured_real(cfg, cfg['target'], target_real, detail)
+                right = compute_areas(target_configured[1], **detail) if target_configured[1].cases else None
+                right_rows = _real_area_rows('target', right.groups.values()) if right is not None else []
+                right_unresolved = target_configured[1].provenance.get('unresolved_same_name_cases', [])
+                has_cases = left_present or right is not None
+                stream.side('target', right)
+                del target_configured, right
+                if has_cases:
+                    rows = left_rows+right_rows
+                    reasons = sorted(filter(None, ['density_contract_unconfirmed', 'unit_area_basis_unconfirmed',
+                                                   'same_name_cases_unresolved' if left_unresolved or right_unresolved else '']))
+                    stream.commit({'status': 'partial', 'reasons': reasons, 'raw_case_areas_status': 'available',
+                                   'classified_line_pixel_areas_status': 'partial' if rows else 'unavailable',
+                                   'weighted_rates_status': 'unavailable', 'deltas_status': 'unavailable'}, rows)
+                    return {'status': 'partial', 'reasons': reasons,
+                            'outputs': [str(output/'comparison.json'), str(output/'comparison.csv')], 'exit_code': 3}
+            finally:
+                stream.abort()
         output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
         rows = []
         for side, imported in (('reference', reference_real[1]), ('target', target_real[1])):
@@ -384,7 +716,9 @@ def run_numeric_validate(cfg, out=None):
                     expected_coverage = manifest['expected_case_coverage_status']
                 assignment = section.get('condition_assignment')
                 if assignment is not None:
-                    configured_dataset(root, manifest, assignment)
+                    # validate-data admits what the following compare would admit (same bucket detail)
+                    full_detail, top = _compare_options(cfg)
+                    configured_dataset(root, manifest, assignment, top_buckets=None if full_detail else top)
                 source_key = str(root.resolve()) + '::' + str(section.get('manifest_path', 'manifest.json'))
                 input_aliases.setdefault(source_key, []).append(label)
                 if source_key not in seen:
@@ -629,6 +963,8 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
         raise NumericContractError('mixed_real_and_numeric_source_formats')
     reference = _dataset_for(cfg, cfg.get('reference'), 'reference')
     target = _dataset_for(cfg, cfg.get('target'), 'target')
+    from simcompare.adapters.real_hotspot import guard_stage_compare_windows
+    guard_stage_compare_windows('compare-windows', reference, target, layouts_cfg=cfg)  # before any long computation
     payload = load_correspondence(correspondence)
     pairs = bind_pairs(payload, reference, target)
     result = compute_local_delta(pairs, reference, target, window_sizes_um=window_sizes_um, jitter_um=jitter_um,

@@ -372,8 +372,14 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
     if not isinstance(pairs, (list, tuple)) or any(not isinstance(p, BoundPair) for p in pairs):
         raise NumericContractError('bound_pairs_required')
     reference, target = _as_dataset(reference), _as_dataset(target)
-    areas_a, areas_b = areas if areas is not None else (compute_areas(reference.cases if reference.provenance.get('_case_list') else reference),
-                                                        compute_areas(target.cases if target.provenance.get('_case_list') else target))
+    if areas is None:
+        from .adapters.real_hotspot import guard_stage_compare_windows
+        guard_stage_compare_windows('compare-windows', reference, target)  # Phase A: fail fast before both AreaResults
+    # compare-windows reads masks and areas only: summary mode keeps one bucket per class (STAGE6_TOP_BUCKETS)
+    from .adapters.real_hotspot import STAGE6_TOP_BUCKETS
+    summary = {'bucket_detail': 'summary', 'top_buckets': STAGE6_TOP_BUCKETS}
+    areas_a, areas_b = areas if areas is not None else (compute_areas(reference.cases if reference.provenance.get('_case_list') else reference, **summary),
+                                                        compute_areas(target.cases if target.provenance.get('_case_list') else target, **summary))
     rows, reasons = [], set()
     for pair in pairs:
         if pair.status != 'ready':

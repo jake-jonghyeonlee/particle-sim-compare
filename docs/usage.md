@@ -228,7 +228,11 @@ uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --ove
 - 상대 경로: 실행기는 시작할 때 작업 폴더를 `BASE_DIR`(없으면 실행기 `.py`가 있는 폴더)로 바꾸므로 `JOBS`·`LOG_FILE`의 상대 경로는 그 폴더 기준이다. wrapper가 `.py`를 다른 곳에 복사해 실행하면 기준이 바뀌므로 상대 경로를 쓸 때는 `BASE_DIR`에 절대 경로를 적는다. 로그 첫 줄 `relative paths resolve from ...`에 실제 기준 폴더가 나온다. config 파일 **안**의 상대 경로는 이와 별개로 config 파일 위치 기준이고, `pair_table_path`·`asset_manifest.path` 등은 `data_dir` 기준이다.
 - 파일 맨 위 `EDIT BELOW` ~ `EDIT ABOVE` 블록만 고친다. `JOBS`는 `(명령, [인자...])` 목록이며 `python -m simcompare <명령> <인자...>`와 같다. 종료 코드 0·3이면 다음 작업으로, 그 밖이면 멈춘다. `LOG_FILE`에 진행 줄과 출력이 남는다.
 - 실행하면 `.simcompare_pkg_<해시>/`에 패키지를 바이트 그대로 풀고 그 복사본을 먼저 import한다(서버에 다른 simcompare·yaml이 있으면 오류로 알린다).
-- 큰 실자료는 `condition_assignment`의 `max_materialized_source_cells`, `max_group_mask_cells`, `max_operation_bytes`를 명시해 올린다. 필요한 메모리를 정확히 알고 싶으면 앞의 두 값만 크게 두고 `max_operation_bytes`는 기본값으로 한 번 실행한다. 추정이 넘치면 `oversized_real_operation: estimated N bytes exceed ...`에 추정치 N이 나온다. 이 값은 보수적 추정이며 실측이 아니므로(배열이 아닌 메타데이터는 계상하지 않음) 물리 메모리에 여유를 둔다.
+- 실자료 `compare`(2회차)는 스트리밍이다: 케이스의 마스크는 접근할 때만 읽고(캐시 없음) 한 layer×지름 그룹에서 한 번에 한 장만 메모리에 둔다. 결과는 비트 패킹으로 보관한다. `condition_assignment`의 한도: `max_group_mask_cells`(한 layer×지름 그룹의 cells, 기본 5,000,000,000), `max_materialized_source_cells`(가장 큰 layer 그룹의 cells = 케이스 수 × 프레임 cells, 기본 6,000,000,000), `max_operation_bytes`(추정 최대 메모리, 기본 8 GiB, 물리 메모리 이하), `max_bucket_output_entries`(한 그룹이 실제로 내보내는 bucket pair id + lineage + contributor 항목 상한, 기본 1,000,000, 넘으면 `oversized_real_bucket_output`), `max_label_pattern_entries`(정확한 겹침 분할이 한 그룹에서 보관하는 패턴 항목 = 서로 다른 패턴에 든 pair 수의 합 상한, 기본 24,000,000, 넘으면 `oversized_real_label_patterns: <layer> d=<지름>: <개수> live label-pattern entries; limit <한도>; ...`).
+- 메모리 추정(`provenance.resource_estimate`) = 결과 보관 `layers × 32 × 7 × cells/8`(비트 패킹 마스크) + **모든 layer×지름 그룹이 끝까지 보관하는 bucket 출력** `layers × 32 × 그룹당 항목 수 × 100` B + 그룹 임시 `최대 layer 케이스 수 × 2 × cells/8 + 64 × cells` + label 패턴 예산 `max_label_pattern_entries × 256` B(실측 항목당 약 190~220 B) + 한 그룹 직렬화 `그룹당 항목 수 × 200` B + 레코드당 3 KiB. 그룹당 항목 수는 전체 모드(`full_bucket_detail: true`)에서 `max_bucket_output_entries`, 요약 모드에서 `min(max_bucket_output_entries, 2 × top_buckets × 3 × layer 케이스 수)`이고 둘 다 그룹이 구조적으로 만들 수 있는 최대(서로 다른 패턴 수 ≤ `min(cells, 2^케이스 수)`)를 넘지 않는다. 같은 구조적 상한이 label 예산에도 적용돼 아주 작은 입력은 기본 예산 전체를 물지 않는다. 1,682 케이스·한 layer·1262² 프레임이면 **요약 모드(기본, top 20)는 약 7.8 GB(7.3 GiB)로 기본 8 GiB 안**이고(결과 보관 0.69 GB, 그중 bucket 출력 0.65 GB, 임시 약 7.0 GB 대부분이 label 예산 6.1 GB), **전체 모드(`max_bucket_output_entries` 1,000,000)는 약 10.5 GB(9.8 GiB)라 기본 8 GiB를 넘는다**(bucket 출력 3.2 GB를 32그룹이 모두 보관하는 것으로 계산). `validate-data`는 `compare`와 같은 설정(`compare.full_bucket_detail`/`top_buckets`)으로 허가하고, bucket 출력을 보관하지 않는 4·6회차 로더는 요약 모드 기준으로 허가한다. 전체 모드는 `max_operation_bytes`를 물리 메모리 이하로 올리거나 `max_bucket_output_entries`를 낮춰야 한다. 예전 eager 추정은 85.7e9 cells로 항상 초과였다. 추정이 넘치면 `oversized_real_operation: estimated N bytes exceed ...`에 추정치 N이 나온다. 보수적 추정이며 실측이 아니다.
+- 4회차(`electrode-map`, `candidates`)와 6회차(`compare-windows`, 보고서)는 아직 스트리밍이 아니다. 4회차는 계산 전에 layer별 `(케이스 + 2×전극) × cells`와 보관 counts(`8 × cells`, 후보는 양쪽이라 2배)를 `max_operation_bytes`와 비교하고, 영역(region) 선택(`min_count`)을 쓰면 counts가 나온 뒤 연결 성분을 **셀마다 파이썬 객체를 만들지 않는** 행 단위(run-length) union-find로 센다(메모리는 가로 run마다 약 48 B까지). run 수는 행 스캔만으로 먼저 알 수 있으므로 라벨 배열을 만들기 **전에** 이 센 단계를 비교하고(`stage-4 component count: N runs of C cells`), 센 뒤에는 **영역 마스크를 만들기 전에** `영역 수 × (cells + 16 KiB)`(2배) + run 라벨 + 가장 큰 영역의 id 임시치(셀당 200 B)를 더해 다시 비교한다(고정 가정 없음; 메시지에 `stage-4 regions: N regions of C cells`가 나온다). 6회차는 두 모델의 결과(bucket은 클래스당 1개만 보관하는 요약 모드로 계산) + 전극 layout 마스크를 추정한다. 넘으면 `oversized_real_operation: <단계>: estimated X bytes exceed limit Y; split cases or raise max_operation_bytes up to physical RAM; streaming support for this stage is pending`으로 멈춘다.
+- `max_operation_bytes`의 물리 메모리 상한은 호스트 RAM(`sysconf`)이며 cgroup/job 메모리 한도는 감지하지 못한다. 컨테이너·스케줄러 한도가 더 작으면 그 한도 이하로 직접 낮춘다.
+- 기존 1회차 import(`.npz`와 옛 `.npy`)는 그대로 읽힌다.
 
 ## ETX(Linux GPU 서버) 실행 순서
 
@@ -252,7 +256,7 @@ JOBS = [
 ```yaml
     max_materialized_source_cells: 20000000000
     max_group_mask_cells: 5000000000
-    # max_operation_bytes: 처음에는 빼고 실행해 추정치를 확인한 뒤 여유를 더해 넣는다
+    # max_operation_bytes: 기본(8 GiB)이면 compare에 충분하다. 넘는다는 오류가 나오면 추정치에 여유를 더해 넣는다
 ```
 
 2회차 — 검사·비교:
@@ -264,7 +268,11 @@ JOBS = [
 ]
 ```
 
-`max_operation_bytes`를 빼고 실행하면 기본 8 GiB를 넘을 때 `oversized_real_operation: estimated N bytes exceed ...`로 멈추며 N이 필요 메모리 추정치다. N에 여유를 더한 값(물리 메모리 이하)을 넣고 다시 실행한다. 종료 코드 3은 partial 항목이 있다는 뜻이며 `reasons`를 확인한다.
+`compare`는 스트리밍이라 `max_operation_bytes` 기본 8 GiB로 충분한 것이 정상이다. 기본값을 넘으면 `oversized_real_operation: estimated N bytes exceed ...`로 멈추며 N이 추정치다. N에 여유를 더한 값(물리 메모리 이하)을 넣고 다시 실행한다. 종료 코드 3은 partial 항목이 있다는 뜻이며 `reasons`를 확인한다.
+
+**스케일 개선 후 재시작(2회차부터)**: 1회차 import 결과(`.npz`·옛 `.npy`)는 그대로 읽히므로 1회차는 다시 하지 않는다. 6개 실행기(`bundles/etx/simcompare_job_1~6_*.py`)를 모두 새 파일로 교체하고 2회차부터 다시 돈다(`JOBS`·`BASE_DIR`은 새 파일에서 다시 고친다). `real.yaml`의 새 선택 키는 `compare: {full_bucket_detail: false, top_buckets: 20}`(기본 요약, 위 "요약 모드")과 `condition_assignment.max_bucket_output_entries`(기본 1,000,000)와 `max_label_pattern_entries`(기본 24,000,000)다. 모든 bucket 목록(`full_bucket_detail: true`)은 GB 단위 `comparison.json`을 만들 수 있어 필요할 때만 켠다. 4·6회차는 아직 스트리밍이 아니므로 `oversized_real_operation`으로 멈출 수 있다(위 설명).
+
+**실측과 예상 시간·메모리**(`docs/plan/scale_compare/T5_benchmark.md`, 한 layer, 합성 자료, macOS, 모델당 1,682 case, crop 1262²·32 지름, 모든 case가 crop 중앙 근처에 겹치는 "centered" 모델): `validate-data` 약 1~1.5분·1.1 GiB, `compare` 약 10~12분·3.3~3.7 GiB(crop 1500²에서 12분·3.7 GiB), `import-hotspots`(1회차) 모델당 4~5.5분·0.85 GiB. 한 layer 기준 `comparison.json` 약 380 MB(요약), `comparison.csv` 약 52 MB. 기본 한도 그대로 두 크기 모두 끝난다(T6: 1262²에서 compare 584 s·3.5 GiB, 1500²에서 747 s·3.7 GiB, 둘 다 exit 3). 한도를 넘는 더 큰 자료는 `oversized_real_label_patterns: <layer> d=<지름>: N live label-pattern entries; limit L`로 멈추며, `max_label_pattern_entries`(항목당 약 256 B로 추정에 반영)와 필요하면 `max_operation_bytes`(물리 메모리 이하)를 함께 올린다. 케이스는 layer로 나뉘므로 한 layer가 최악이며, 11 layer라고 시간이 11배가 되지는 않는다(실측 아님). Python 3.8(numpy 1.21.6)에서도 동작하나 compare가 약 2배 느리다(N=300: 176 s vs 82 s).
 
 3회차 — 전극 PNG import (`real.yaml`의 `condition_assignment`와 같은 내용의 assignment JSON 필요, `--max-asset-memory-mb`는 기본값 없음). role은 `electrode_role_policy: electrode_id`로 자동이다(pair 표의 모든 전극 = 자기 이름):
 
@@ -298,7 +306,28 @@ DL2 — 위치 매칭(DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job
 
 6회차 — 국부 ΔCA(`simcompare_job_6_compare_windows.py`): 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
 
-통합 보고서(`report`)는 아직 실자료 경로를 지원하지 않는다: 실자료 `compare`는 `comparison.json`/`comparison.csv`(`real_hotspot_comparison_v1`)만 쓰고, `report`는 합성 numeric_v2의 `comparison_fractions.csv` 등을 요구해 `missing_input_file`(종료 코드 2)로 멈춘다. 그래서 ETX 회차에 넣지 않았다. 쌍별 결과는 6회차 `local_delta.html`에서 본다.
+통합 보고서(`report`)는 아직 실자료 경로를 지원하지 않는다: 실자료 `compare`는 `comparison.json`/`comparison.csv`(조건 배정이 있으면 `real_hotspot_comparison_v2`, 없으면 `real_hotspot_comparison_v1`)만 쓰고, `report`는 합성 numeric_v2의 `comparison_fractions.csv` 등을 요구해 `missing_input_file`(종료 코드 2)로 멈춘다. 그래서 ETX 회차에 넣지 않았다. 쌍별 결과는 6회차 `local_delta.html`에서 본다.
+
+### 실자료 `comparison.json` v2
+
+`condition_assignment`가 reference/target 양쪽에 설정된 실자료 `compare`는 `schema_version: real_hotspot_comparison_v2`를 쓴다. 합성 경로(`numeric_v2`)와 조건 배정이 없는 실자료 경로(검사용 `records`와 소스 해시만 쓰는 `real_hotspot_comparison_v1`)는 바뀌지 않았다. v2는 같은 정보를 잃지 않고 다음만 다르다.
+
+- 들여쓰기 없는 compact JSON이며 최상위 키(`reference`, `target`, `records`, `status`, `reasons`, `*_status`)와 `reference`/`target` 아래 `groups[*]`의 모든 필드는 v1과 같다. 한 쪽이 계산할 case가 없으면 그 쪽은 `null`이다.
+- 각 쪽(`reference`, `target`)에 `cases_raw`가 추가된다: `{case_id: raw}`로 case당 한 번만 기록한다(v1은 지름 32개 × case마다 같은 raw를 반복했다).
+- `groups[*].source_cases[*].raw`는 사라지고 `raw_ref`(= `cases_raw`의 키, 보통 `identity.case_id`)가 들어간다. 같은 case_id가 서로 다른 raw를 가지면 `case_id#2`처럼 구분한다.
+- `pair_ids`, `pair_lineage_case_keys`, `contributing_source_case_keys`는 v1과 같은 문자열 목록이다(정수 색인 인코딩은 쓰지 않았다; 근거는 `docs/plan/scale_compare/T2_payload.md`).
+
+v1로 되돌리는 규칙: `schema_version`을 `real_hotspot_comparison_v1`로 바꾸고, 각 쪽에서 `cases_raw`를 빼면서 모든 `source_cases[*]`에 `raw = cases_raw[raw_ref]`를 넣고 `raw_ref`를 지운다. 시험(`tests/test_comparison_v2.py`의 `decode_v2_to_v1`)이 이 복원 결과가 v1 기록기(`tests/reference_comparison_v1.py`)의 payload와 같음을 확인한다. `comparison.csv`는 v1과 바이트 단위로 같다.
+
+#### 요약 모드(기본)와 `compare` 설정
+
+설정 최상위의 선택 키 `compare: {full_bucket_detail: false, top_buckets: 20}`(둘 다 생략 가능, 다른 키는 `invalid_compare_options`). 기본은 **요약**이다: line/pixel/transfer/union/조각/fraction/coverage/`source_cases`의 면적은 전체 모드와 똑같이 계산하고 `comparison.csv`도 바이트 단위로 같다. 달라지는 것은 bucket 목록뿐이다.
+
+- 파일 최상위에 `bucket_detail: "summary"`와 `top_buckets: N`이 붙고, `groups[*].line`/`pixel`은 `exclusive`/`shared` 목록 대신 `bucket_count_exclusive`, `bucket_count_shared`, `top_buckets`(exclusive·shared를 합쳐 면적 큰 순 N개, 동률은 pair_ids 순; lineage·contributors 포함)를 가진다. `area`는 전체 bucket 면적의 합이다.
+- 요약 파일은 v1로 복원할 수 없다(시험의 `decode_v2_to_v1`은 거부한다). `bucket_detail` 키가 없으면 전체 모드(위 v2 레이아웃 그대로)다.
+- `full_bucket_detail: true`면 모든 bucket 목록을 쓴다. 이때 `max_bucket_output_entries`는 실제로 쓰는 항목에 적용된다. 요약 모드에서는 쓰는 상위 N개 항목에만 적용된다. 정확한 영역 분할(label 패턴)의 메모리는 별도 한도 `max_label_pattern_entries`가 막는다. 메모리 추정(`resource_estimate`)의 bucket 출력은 그룹마다 끝까지 보관되므로 32그룹×layer 수만큼 곱해 결과 보관에 들어가고(전체: 그룹당 `max_bucket_output_entries`, 요약: 그룹당 `2 × top_buckets × 3 × layer 케이스 수`), 한 그룹 직렬화분(항목 × 200 B)만 임시에 더해진다. label 패턴 부분은 한도 × 256 B 그대로다.
+
+기록은 스트리밍이다: 전체 v1 dict를 만들지 않고 group/source 단위로 같은 폴더의 임시 파일(`.comparison.json.<pid>.<난수>.tmp`)에 쓴다. reference 쪽은 임시 파일에 다 쓴 뒤 해제하고 target을 계산한다. 두 쪽이 모두 성공하고 JSON과 CSV 임시 파일이 fsync된 뒤에만 공개하며, 쌍으로 전부 아니면 전무다: 공개 직전에 `.comparison.publishing` 기록을 (임시 파일에 쓴 뒤 이름을 바꿔) 남기고 기존 쌍을 `.comparison.json.prev`/`.comparison.csv.prev`로 보존(하드링크, 실패하면 복사)한 뒤 두 파일을 `os.replace`로 바꾸고, 그 다음 **커밋 표시 `.comparison.committed`를 원자적 이름 바꾸기로 만든다. 이 표시가 있어야 새 쌍이 확정이다.** `.prev`와 기록 파일은 커밋 표시가 생긴 뒤에만 지우고(`.prev` → 기록 → 표시 순), 이 정리 중의 오류나 Ctrl-C는 절대 되돌리지 않는다. 커밋 표시 전에 오류·Ctrl-C가 오면 기존 쌍으로 되돌린다(새 JSON + 옛 CSV가 남지 않는다). 어느 단계에서든 프로세스가 강제 종료되면 다음 `compare` 시작 때 커밋 표시가 있으면 새 쌍으로 확정하고 정리를 마치고, 없으면 기록을 보고 기존 쌍으로 되돌린다. 복구는 읽기에 성공한 기록·커밋 표시만 따른다: 기록이나 커밋 표시를 읽을 수 없거나(권한·I/O 오류) 내용이 깨졌으면 `.prev`와 기록을 지우지 않고 아무것도 바꾸지 않은 채 `comparison_recovery_unreadable` 오류로 끝난다. 원인을 고쳐 `compare`를 다시 실행하면 이어서 복구하고, 기록이 깨졌다면 `.comparison.json.prev`/`.comparison.csv.prev`를 직접 `comparison.json`/`comparison.csv`로 되돌리고 `.comparison.*` 파일을 지운다. 따라서 `comparison.json`/`comparison.csv`는 복구가 끝난 뒤 항상 (옛 JSON, 옛 CSV) 또는 (새 JSON, 새 CSV) 한 쌍이다. 강제 종료 직후부터 다음 `compare`가 복구하기 전까지는 두 파일이 서로 다른 세대일 수 있다(`.comparison.publishing`/`.comparison.committed`가 보이면 복구 전이다). 커밋 표시를 지우지 못하는 상태(권한 등)면 `compare`는 새로 쓰지 않고 오류로 끝난다. 공개를 시작하기 전(`.comparison.publishing`을 남기기 전)의 오류, 곧 target 계산 오류, 쓰는 도중의 디스크 부족(ENOSPC) 등 `OSError`, Ctrl-C는 임시 파일만 지우고 기존 `comparison.json`/`comparison.csv`를 건드리지 않는다. 공개 중 커밋 표시 전의 오류·Ctrl-C는 위 규칙대로 되돌리는 동안 잠깐 두 파일이 서로 다른 세대일 수 있다(프로세스가 강제 종료되면 `.tmp`가 남을 수 있으며 지워도 된다). 종료 코드 3 의미는 같다.
 
 ## 실제 자료
 

@@ -281,6 +281,9 @@ def write_local_delta_html(out, result: LocalDeltaResult, *, cfg=None, reference
     display_d = result.sort_diameter_um if result.sort_diameter_um is not None else DEFAULT_DISPLAY_DIAMETER_UM
     display_d = next((float(d) for d in DIAMETERS_UM if diameter_key(d) == diameter_key(display_d)), float(display_d))
     areas_a, areas_b = result.areas if result.areas is not None else (None, None)
+    if cfg is not None and reference is not None and target is not None:
+        from .adapters.real_hotspot import guard_stage_compare_windows
+        guard_stage_compare_windows('compare-windows report', reference, target, layouts_cfg=cfg)  # layouts of both models
     assets = {'a': _Assets(cfg, 'reference', reference), 'b': _Assets(cfg, 'target', target)}
     ready = {pair.pair_id: pair for pair in result.pairs if pair.status == 'ready'}
     blocked = [pair for pair in result.pairs if pair.status != 'ready']

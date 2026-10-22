@@ -7,17 +7,18 @@ they do not change line/pixel priority, pair buckets or transfer.
 from __future__ import annotations
 from .numeric_schema import current_gate_decisions
 
-from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
 import copy
 import hashlib
 import json
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 import numpy as np
 
-from .measurement import measure_full_mask, union_masks
+from .measurement import check_union_compatible, measure_full_mask
 from .numeric_schema import (
+    DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES, DEFAULT_TOP_BUCKETS,
     DIAMETERS_UM, CaseIdentity, Endpoint, Frame, MaskRecord, Measurement,
     NumericCase, NumericContractError, NumericDataset, Status,
     diameter_key, finite, require_same_frame, text,
@@ -26,6 +27,17 @@ from .numeric_schema import (
 LINE = 'line'
 PIXEL = 'pixel'
 FAILURE_PIECES = ('lateral_only', 'vertical_only', 'simultaneous')
+# Budget for bucket output entries (pair ids + lineage keys + contributor keys) of one layer/diameter group, and
+# for the live patterns (sum of member counts of all distinct pair-membership patterns) of the exact label
+# partition of one group; stored by predecessor encoding, far cheaper per entry than emitted output.
+# compute_areas(max_*=...) overrides them; real runs set them from condition_assignment. The defaults are defined
+# once in numeric_schema (shared with the admission estimate of adapters.real_hotspot).
+# Label history is compacted when it exceeds max(_COMPACT_MIN_HISTORY, _COMPACT_FACTOR * labels kept at the
+# last compaction); module level so tests can shrink the threshold.
+_COMPACT_MIN_HISTORY = 1 << 16
+_COMPACT_FACTOR = 4
+_LABEL_HISTORY_LIMIT = 1 << 30
+_POPCOUNT = np.array([bin(i).count('1') for i in range(256)], dtype=np.uint8)
 FAILURE_PIECE_POLICY = {'status':'implemented','value':list(FAILURE_PIECES),
                         'decided_on':'2026-10-08','axis':'failure_type','reasons':[]}
 
@@ -157,8 +169,49 @@ class ClassShare:
     shared: tuple[Bucket, ...]
 
 
+@dataclass(frozen=True)
+class ClassShareSummary(ClassShare):
+    """Summary-mode share: exclusive/shared are empty; only the top-N buckets by area carry lineage/contributors."""
+    bucket_count_exclusive: int = 0
+    bucket_count_shared: int = 0
+    top_buckets: tuple[Bucket, ...] = ()
+
+
+@dataclass(frozen=True)
+class PackedMask:
+    """Row-major np.packbits of a boolean mask (default bit order, so numpy >= 1.16 is enough)."""
+    shape: tuple
+    bits: np.ndarray
+
+    def unpack(self) -> np.ndarray:
+        size = int(np.prod(self.shape, dtype=np.int64))
+        mask = np.unpackbits(self.bits)[:size].view(np.bool_).reshape(self.shape)
+        mask.setflags(write=False)
+        return mask
+
+    def count(self) -> int:
+        return int(_POPCOUNT[self.bits].sum(dtype=np.int64))
+
+
+class _PieceMasks(Mapping):
+    """Dict-style view of the packed failure pieces; each lookup returns a fresh read-only array."""
+
+    def __init__(self, packed):
+        self._packed = packed
+
+    def __getitem__(self, name):
+        return self._packed[name].unpack()
+
+    def __iter__(self):
+        return iter(self._packed)
+
+    def __len__(self):
+        return len(self._packed)
+
+
 @dataclass
 class GroupArea:
+    """Retained masks are packed (1 bit/cell); the *_mask properties unpack to a fresh read-only array."""
     key: GroupKey
     frame: Frame
     line: ClassShare
@@ -167,14 +220,34 @@ class GroupArea:
     union: AreaMetric
     source_cases: tuple[SourceCaseArea, ...]
     pair_membership: dict[str, tuple[str, str]]
-    line_mask: np.ndarray
-    pixel_effective_mask: np.ndarray
-    transfer_mask: np.ndarray
-    union_mask: np.ndarray
+    line_packed: PackedMask
+    pixel_effective_packed: PackedMask
+    transfer_packed: PackedMask
+    union_packed: PackedMask
     pair_table_version: str | None
     failure_pieces: dict[str, AreaMetric]
-    failure_piece_masks: dict[str, np.ndarray]
+    failure_piece_packed: dict[str, PackedMask]
     fractions: dict[str, FractionMetric] = field(default_factory=dict)
+
+    @property
+    def line_mask(self) -> np.ndarray:
+        return self.line_packed.unpack()
+
+    @property
+    def pixel_effective_mask(self) -> np.ndarray:
+        return self.pixel_effective_packed.unpack()
+
+    @property
+    def transfer_mask(self) -> np.ndarray:
+        return self.transfer_packed.unpack()
+
+    @property
+    def union_mask(self) -> np.ndarray:
+        return self.union_packed.unpack()
+
+    @property
+    def failure_piece_masks(self) -> Mapping:
+        return _PieceMasks(self.failure_piece_packed)
 
     @property
     def coverage(self) -> Coverage:
@@ -194,7 +267,7 @@ class GroupArea:
                       'valid_hash': self.frame.valid_hash},
             'pair_table_version': self.pair_table_version,
             'pair_membership': {pid: list(members) for pid, members in sorted(self.pair_membership.items())},
-            'line': asdict(self.line), 'pixel': asdict(self.pixel),
+            'line': _share_dict(self.line), 'pixel': _share_dict(self.pixel),
             'transfer': asdict(self.transfer), 'union': asdict(self.union),
             'source_cases': [asdict(source) for source in self.source_cases],
             'bucket_source_relationship': {'pair_lineage_case_keys':'pair_lineage',
@@ -204,6 +277,13 @@ class GroupArea:
             'frame_area_um2': self.frame_area_um2,
             'fraction_of_frame': {name:asdict(metric) for name,metric in self.fractions.items()},
         }
+
+
+def _share_dict(share) -> dict:
+    out = asdict(share)
+    if isinstance(share, ClassShareSummary):
+        del out['exclusive'], out['shared']
+    return out
 
 
 @dataclass
@@ -234,27 +314,142 @@ def bucket_key(group: GroupKey, classification: str, pair_ids: Iterable[str], *,
                             'kind': 'exclusive' if len(members) == 1 else 'shared', 'pair_ids': members})
 
 
-def _membership_counts(masks: dict[str, np.ndarray], keep: np.ndarray, chunk_cells: int) -> Counter:
-    """Exact arbitrary-width bit patterns with O(pair_count * chunk_cells) workspace."""
-    pairs = sorted(masks)
-    counts = Counter()
-    if not pairs:
-        return counts
-    flattened = [masks[pid].reshape(-1) for pid in pairs]
-    flat_keep = keep.reshape(-1)
-    for start in range(0, keep.size, chunk_cells):
-        stop = min(start + chunk_cells, keep.size)
-        membership = np.stack([mask[start:stop] for mask in flattened], axis=0)
-        selected = flat_keep[start:stop] & membership.any(axis=0)
-        if not selected.any():
+def _pack(mask: np.ndarray) -> np.ndarray:
+    return np.packbits(np.ascontiguousarray(mask).reshape(-1))
+
+
+def _unpack_flat(bits: np.ndarray, size: int) -> np.ndarray:
+    return np.unpackbits(bits)[:size].view(np.bool_)
+
+
+def _oversized_buckets(key, entries: int, limit: int) -> NumericContractError:
+    return NumericContractError('oversized_real_bucket_output',
+                                f'{key.analysis_layer} d={key.diameter_um}: {entries} entries; limit {limit}')
+
+
+def _oversized_label_patterns(key, entries: int, limit: int) -> NumericContractError:
+    return NumericContractError('oversized_real_label_patterns',
+                                f'{key.analysis_layer} d={key.diameter_um}: {entries} live label-pattern entries; '
+                                f'limit {limit}; raise condition_assignment.max_label_pattern_entries (and '
+                                'max_operation_bytes if needed) or split the cases across layers/groups')
+
+
+def _partition_labels(pair_ids, select, size, *, live_limit=None, on_oversize=None, stats=None):
+    """Exact membership partition by iterative refinement, O(pairs * cells) time.
+
+    pair_ids: sorted pair ids; select(pid) -> flat indices of the cells that pair covers inside `keep`.
+    A cell's label identifies the set of pairs covering it (0 = none). Patterns are stored by predecessor
+    encoding (parent label, added pair): O(1) per new label, tuples are rebuilt only for final live labels.
+
+    Memory: a label that stops being live has had all its cells moved to its single child, so every history
+    entry is an ancestor of a final live label and the history never exceeds the sum of the live patterns'
+    lengths (+1) -- exactly the pair_ids entries the buckets would emit. live_limit bounds that sum: it is
+    checked whenever the history passes a threshold (max(_COMPACT_MIN_HISTORY, _COMPACT_FACTOR * history at the
+    last check), but never above max(_COMPACT_MIN_HISTORY, live_limit)), raising on_oversize(n) before the history
+    can grow past live_limit by more than one refinement step.
+    The check also drops memo entries of dead parents. Labels stay int32 (int64 for >= 2**30 cells) and the
+    history is capped at _LABEL_HISTORY_LIMIT.
+    Returns (label array, {members tuple: cell count}, {members tuple: label id}).
+    """
+    dtype = np.int32 if size < _LABEL_HISTORY_LIMIT else np.int64
+    label = np.zeros(size, dtype=dtype)
+    count = len(pair_ids)
+    parent, added, depth, child = [0], [0], [0], {}
+    threshold = _COMPACT_MIN_HISTORY if live_limit is None else min(_COMPACT_MIN_HISTORY, live_limit)
+    if on_oversize is None:
+        def on_oversize(n):
+            return NumericContractError('oversized_real_bucket_output', f'{n} label history entries')
+    stats = {} if stats is None else stats
+    stats.update(peak_history=1, compactions=0, final_live=0)
+
+    def check():
+        nonlocal child, threshold
+        live = np.unique(label)
+        emitted = int(np.asarray(depth, dtype=np.int64)[live].sum())
+        if live_limit is not None and emitted > live_limit:
+            raise on_oversize(emitted)
+        alive = np.zeros(len(parent), dtype=bool)
+        alive[live] = True
+        child = {slot: found for slot, found in child.items() if alive[slot // count]}
+        threshold = min(max(_COMPACT_MIN_HISTORY, _COMPACT_FACTOR * len(parent)), _LABEL_HISTORY_LIMIT)
+        if live_limit is not None:
+            # history <= live patterns + 1, so the history passing the limit is always checked, however small the
+            # limit is. A check that passed at history = limit + 1 is not repeated at every following step.
+            threshold = max(min(threshold, live_limit), len(parent))
+        stats['compactions'] += 1
+
+    def prospective(present, selected_counts):
+        """Live pattern entries after the coming step: a fully moved label adds 1, a split one depth + 1."""
+        frequency = np.bincount(label, minlength=len(parent))
+        depths = np.asarray(depth, dtype=np.int64)
+        split = frequency[present] > selected_counts
+        return int(depths[frequency > 0].sum()) + int(np.where(split, depths[present] + 1, 1).sum())
+
+    for index, pid in enumerate(pair_ids):
+        if len(parent) > threshold:
+            check()
+        selected = select(pid)
+        if not selected.size:
             continue
-        packed = np.packbits(membership[:, selected], axis=0, bitorder='little').T
-        patterns, frequencies = np.unique(packed, axis=0, return_counts=True)
-        for pattern, frequency in zip(patterns, frequencies):
-            active = np.unpackbits(pattern, bitorder='little')[:len(pairs)]
-            members = tuple(pairs[i] for i in np.flatnonzero(active))
-            counts[members] += int(frequency)
-    return counts
+        old = label[selected]
+        n = len(parent)
+        dense = n <= max(1024, 2 * old.size)
+        if dense:
+            selected_counts = np.bincount(old, minlength=n)
+            present = np.flatnonzero(selected_counts)
+            selected_counts = selected_counts[present]
+        else:
+            present, inverse, selected_counts = np.unique(old, return_inverse=True, return_counts=True)
+        if live_limit is not None and n + present.size > live_limit + 1:
+            # The step adds one history node per present label and history <= live patterns + 1, so it can only
+            # stay within the limit if the live patterns after it do: price it before the history grows.
+            emitted = prospective(present, selected_counts)
+            if emitted > live_limit:
+                raise on_oversize(emitted)
+        if dense:
+            lookup = np.zeros(n, dtype=dtype)
+            lookup[present] = _child_ids(present.tolist(), index, count, parent, added, depth, child)
+            label[selected] = lookup[old]
+        else:
+            fresh = np.asarray(_child_ids(present.tolist(), index, count, parent, added, depth, child), dtype=dtype)
+            label[selected] = fresh[inverse]
+        if len(parent) >= _LABEL_HISTORY_LIMIT:
+            raise on_oversize(len(parent))
+        stats['peak_history'] = max(stats['peak_history'], len(parent))
+    frequencies = np.bincount(label, minlength=len(parent))
+    if live_limit is not None:
+        emitted = int(np.asarray(depth, dtype=np.int64)[frequencies > 0].sum())
+        if emitted > live_limit:
+            raise on_oversize(emitted)
+    counts, ids = {}, {}
+    for label_id in np.flatnonzero(frequencies):
+        label_id = int(label_id)
+        if label_id == 0:
+            continue
+        members, node = [], label_id
+        while node:
+            members.append(pair_ids[added[node]])
+            node = parent[node]
+        members = tuple(reversed(members))
+        counts[members] = counts.get(members, 0) + int(frequencies[label_id])
+        ids[members] = label_id
+    stats['final_live'] = len(counts)
+    return label, counts, ids
+
+
+def _child_ids(parents, index, count, parent, added, depth, child):
+    out = []
+    for old in parents:
+        slot = old * count + index
+        found = child.get(slot)
+        if found is None:
+            found = len(parent)
+            parent.append(old)
+            added.append(index)
+            depth.append(depth[old] + 1)
+            child[slot] = found
+        out.append(found)
+    return out
 
 
 def _raw_record(case: NumericCase, diameter: float) -> dict:
@@ -266,6 +461,14 @@ def _raw_record(case: NumericCase, diameter: float) -> dict:
         if key == diameter_key(diameter):
             return raw_record
     return {}
+
+
+def _record_heads(case: NumericCase):
+    """(diameter, record-or-header) pairs; lazy records (LazyRecords) are read by header, never loaded."""
+    header = getattr(case.records, 'header', None)
+    if header is None:
+        return list(case.records.items())
+    return [(diameter, header(diameter)) for diameter in case.records]
 
 
 def _validate_case(case: NumericCase) -> None:
@@ -287,7 +490,7 @@ def _validate_case(case: NumericCase) -> None:
         raise NumericContractError('invalid_case_classification')
     if case.pair_id is not None:
         text(case.pair_id, 'pair_id')
-    for diameter, record in case.records.items():
+    for diameter, record in _record_heads(case):
         if diameter_key(diameter) != diameter_key(record.diameter_um):
             raise NumericContractError('record_diameter_mismatch')
         if record.identity != case.identity or record.analysis_layer != case.analysis_layer:
@@ -307,23 +510,44 @@ def _validate_case(case: NumericCase) -> None:
                 raise NumericContractError('invalid_not_applicable_height')
 
 
-def _group(key, entries, chunk_cells, table_version):
+class _UnionMeta(NamedTuple):
+    """What check_union_compatible needs from the first source of a pair; never its mask."""
+    frame: Frame
+    analysis_layer: str | None
+    input_status: str
+    diameter_um: float
+    identity: CaseIdentity | None
+
+
+def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
+           max_bucket_entries=DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES,
+           max_label_entries=DEFAULT_MAX_LABEL_PATTERN_ENTRIES, top_buckets=None):
+    """top_buckets=None keeps every bucket; an int N keeps lineage/contributors only for the N largest buckets per class."""
     entries = sorted(entries, key=lambda item: _json(asdict(item[0].identity)))
     frame = entries[0][1].frame
-    for _, record in entries:
-        require_same_frame(frame, record.frame)
-    sources, usable, lineage, electrodes = [], {LINE: {}, PIXEL: {}}, {}, {}
-    contributor_records = {}
-    type_masks = {name:np.zeros(frame.shape_yx, bool) for name in ('lateral_short','vertical_short')}
+    for _, head in entries:
+        require_same_frame(frame, head.frame)
+    shape, size = frame.shape_yx, frame.valid.size
+    valid_flat = frame.valid.reshape(-1)
+    valid_bits = _pack(frame.valid)
+    area_cache = {}
+    sources, lineage, electrodes = [], {}, {}
+    pair_bits = {LINE: {}, PIXEL: {}}   # pid -> packed OR of its sources (shares the source array if only one)
+    pair_check = {LINE: {}, PIXEL: {}}  # pid -> [first-source metadata, first compatibility error]
+    source_bits = {}                    # computable source_key -> packed raw mask
+    type_bits = {name: np.zeros_like(valid_bits) for name in ('lateral_short', 'vertical_short')}
     observed = missing = na = unmapped = rejected = computable = 0
     reasons = set()
-    for case, record in entries:
-        measured = measure_full_mask(record)
+    for case, head in entries:
+        # Lazy records: exactly one source mask is alive at a time (the previous one is released on rebind).
+        record = head if isinstance(head, MaskRecord) else case.records[head.diameter_um]
+        measured = measure_full_mask(record, area_cache=area_cache)
         source_key = _key('source_case_v1', {'identity': asdict(case.identity), 'diameter_um': key.diameter_um})
         raw_record = _raw_record(case, key.diameter_um)
+        raw = copy.deepcopy(case.raw) if raw_copies is None else raw_copies[id(case)]
         sources.append(SourceCaseArea(source_key, case.identity, case.endpoints, case.failure_type,
                                       case.pair_id, case.classification, key.diameter_um, record.input_status,
-                                      measured, copy.deepcopy(case.raw), copy.deepcopy(raw_record.get('applicability_evidence')),
+                                      measured, raw, copy.deepcopy(raw_record.get('applicability_evidence')),
                                       case.metadata.get('height_evidence')))
         observed += record.input_status == 'observed'
         missing += record.input_status == 'missing'
@@ -348,11 +572,26 @@ def _group(key, entries, chunk_cells, table_version):
                 reasons.update(measured.reasons)
             elif case.classification is not None:
                 computable += 1
-                usable[case.classification].setdefault(case.pair_id, []).append(record)
-                contributor_records[source_key] = record
-                type_masks[case.failure_type] |= record.mask & frame.valid
+                kind = case.classification
+                bits = _pack(record.mask)
+                source_bits[source_key] = bits
+                checks = pair_check[kind].get(pid)
+                if checks is None:
+                    checks = pair_check[kind][pid] = [_UnionMeta(record.frame, record.analysis_layer,
+                                                                 record.input_status, record.diameter_um,
+                                                                 record.identity), None]
+                    pair_bits[kind][pid] = bits
+                else:
+                    pair_bits[kind][pid] = pair_bits[kind][pid] | bits
+                if checks[1] is None:
+                    try:
+                        check_union_compatible(checks[0], record)
+                    except NumericContractError as error:
+                        checks[1] = error
+                type_bits[case.failure_type] |= bits & valid_bits
+    record = None  # release the last loaded mask
     coverage = Coverage(len(entries), observed, missing, na, unmapped, rejected, computable,
-                        frame.valid.size, int(frame.valid.sum()))
+                        size, int(np.count_nonzero(valid_flat)))
     if not frame.valid.all():
         reasons.add('partial_observation')
     if unmapped:
@@ -374,49 +613,85 @@ def _group(key, entries, chunk_cells, table_version):
                           area, status, reason_tuple, coverage,
                           partial_value=area if status == 'partial' else None)
 
-    masks = {kind: {pid: union_masks(records) & frame.valid for pid, records in by_pair.items()}
-             for kind, by_pair in usable.items()}
-    combined = {kind: np.zeros(frame.shape_yx, dtype=bool) for kind in (LINE, PIXEL)}
-    for kind in combined:
-        for mask in masks[kind].values():
-            combined[kind] |= mask
+    for kind in (LINE, PIXEL):  # same precedence as the union validation of the eager implementation
+        for checks in pair_check[kind].values():
+            if checks[1] is not None:
+                raise checks[1]
+    combined = {}
+    for kind in (LINE, PIXEL):
+        bits = np.zeros_like(valid_bits)
+        for pair_mask in pair_bits[kind].values():
+            np.bitwise_or(bits, pair_mask, out=bits)
+        combined[kind] = bits & valid_bits
     line = combined[LINE]
     effective = combined[PIXEL] & ~line
     transfer = combined[PIXEL] & line
     union = line | combined[PIXEL]
+    budget = [0]
 
     def shares(kind, keep):
-        counts = _membership_counts(masks[kind], keep, chunk_cells)
-        exclusive, shared = [], []
-        for members, count in sorted(counts.items()):
-            inside = keep.copy()
-            for pid, mask in masks[kind].items():
-                inside &= mask if pid in members else ~mask
+        mask_bits = pair_bits[kind]
+        pair_ids = sorted(mask_bits)
+        label, counts, ids = _partition_labels(
+            pair_ids, lambda pid: np.flatnonzero(_unpack_flat(mask_bits[pid], size) & keep), size,
+            live_limit=max_label_entries, on_oversize=lambda n: _oversized_label_patterns(key, n, max_label_entries))
+        ordered = sorted(counts.items())
+        if top_buckets is not None:
+            # largest area first; the stable sort keeps the member-tuple order among ties
+            chosen = sorted(ordered, key=lambda item: -item[1])[:top_buckets]
+            wanted = np.array(sorted(ids[members] for members, _ in chosen), dtype=label.dtype)
+        else:
+            chosen = ordered
+        touched = {}
+        for pid in pair_ids:
+            for source in lineage[pid]:
+                if source in source_bits:
+                    found = np.unique(label[_unpack_flat(source_bits[source], size)])
+                    if top_buckets is not None:
+                        found = np.intersect1d(found, wanted, assume_unique=True)
+                    touched[source] = frozenset(found.tolist())
+        built = {}
+        for members, count in chosen:
             pair_lineage = tuple(sorted(source for pid in members for source in lineage[pid]))
-            contributors = tuple(source for source in pair_lineage if source in contributor_records
-                                 and np.any(contributor_records[source].mask & inside))
-            bucket = Bucket(bucket_key(key, kind, members, pair_table_version=table_version),
-                            'exclusive' if len(members) == 1 else 'shared', members, metric(count * pixel_area),
-                            pair_lineage, contributors)
-            (exclusive if len(members) == 1 else shared).append(bucket)
-        return ClassShare(metric(sum(counts.values()) * pixel_area), tuple(exclusive), tuple(shared))
+            budget[0] += len(members) + len(pair_lineage)
+            if budget[0] > max_bucket_entries:
+                raise _oversized_buckets(key, budget[0], max_bucket_entries)
+            label_id = ids[members]
+            contributors = tuple(source for source in pair_lineage
+                                 if source in touched and label_id in touched[source])
+            budget[0] += len(contributors)
+            if budget[0] > max_bucket_entries:
+                raise _oversized_buckets(key, budget[0], max_bucket_entries)
+            built[members] = Bucket(bucket_key(key, kind, members, pair_table_version=table_version),
+                                    'exclusive' if len(members) == 1 else 'shared', members,
+                                    metric(count * pixel_area), pair_lineage, contributors)
+        area = metric(sum(counts.values()) * pixel_area)
+        if top_buckets is None:
+            exclusive = tuple(b for b in built.values() if b.kind == 'exclusive')
+            shared = tuple(b for b in built.values() if b.kind == 'shared')
+            return ClassShare(area, exclusive, shared)
+        return ClassShareSummary(area, (), (), sum(1 for members, _ in ordered if len(members) == 1),
+                                 sum(1 for members, _ in ordered if len(members) > 1),
+                                 tuple(built[members] for members, _ in chosen))
 
-    lateral, vertical = type_masks['lateral_short'], type_masks['vertical_short']
-    piece_masks = {'lateral_only': lateral & ~vertical,
-                   'vertical_only': vertical & ~lateral, 'simultaneous': lateral & vertical}
-    pieces = {name:replace(metric(int(mask.sum())*pixel_area),
-                          basis='full_mask_valid_observed_sources_failure_type_union')
-              for name,mask in piece_masks.items()}
-    vertical_entries = [record for case,record in entries if case.failure_type=='vertical_short']
-    if vertical_entries and all(record.input_status=='not_applicable' for record in vertical_entries):
-        for name in ('vertical_only','simultaneous'):
-            pieces[name]=replace(pieces[name],value=None,partial_value=None,status='not_applicable',
-                                 reasons=('all_vertical_sources_not_applicable',))
-    for mask in (line, effective, transfer, union, *piece_masks.values()):
-        mask.setflags(write=False)
-    group = GroupArea(key, frame, shares(LINE, frame.valid), shares(PIXEL, frame.valid & ~line),
-                      metric(int(transfer.sum()) * pixel_area), metric(int(union.sum()) * pixel_area),
-                      tuple(sources), electrodes, line, effective, transfer, union, table_version, pieces, piece_masks)
+    lateral, vertical = type_bits['lateral_short'], type_bits['vertical_short']
+    piece_bits = {'lateral_only': lateral & ~vertical,
+                  'vertical_only': vertical & ~lateral, 'simultaneous': lateral & vertical}
+    packed = lambda bits: PackedMask(shape, bits)
+    pieces = {name: replace(metric(packed(bits).count() * pixel_area),
+                            basis='full_mask_valid_observed_sources_failure_type_union')
+              for name, bits in piece_bits.items()}
+    vertical_entries = [head for case, head in entries if case.failure_type == 'vertical_short']
+    if vertical_entries and all(head.input_status == 'not_applicable' for head in vertical_entries):
+        for name in ('vertical_only', 'simultaneous'):
+            pieces[name] = replace(pieces[name], value=None, partial_value=None, status='not_applicable',
+                                   reasons=('all_vertical_sources_not_applicable',))
+    line_share = shares(LINE, valid_flat)
+    pixel_share = shares(PIXEL, valid_flat & ~_unpack_flat(line, size))
+    group = GroupArea(key, frame, line_share, pixel_share,
+                      metric(packed(transfer).count() * pixel_area), metric(packed(union).count() * pixel_area),
+                      tuple(sources), electrodes, packed(line), packed(effective), packed(transfer), packed(union),
+                      table_version, pieces, {name: packed(bits) for name, bits in piece_bits.items()})
     group.fractions = {'line': fraction_of_frame(group.line.area, frame),
                        'pixel_effective': fraction_of_frame(group.pixel.area, frame),
                        'transfer': fraction_of_frame(group.transfer, frame),
@@ -425,15 +700,59 @@ def _group(key, entries, chunk_cells, table_version):
     return group
 
 
-def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells: int = 65536) -> AreaResult:
+def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells: int = 65536,
+                  max_bucket_output_entries: int | None = None, bucket_detail: str | None = None,
+                  top_buckets: int | None = None, max_label_pattern_entries: int | None = None) -> AreaResult:
     """Per-source-condition/layer/diameter full-mask areas with conservative coverage.
 
     Incomplete groups expose observed-source partial areas, not lower bounds:
     an unknown line mask could remove part of the currently effective pixel area.
     No aggregation across diameter, source conditions, products, density or units.
+
+    chunk_cells is accepted and validated for API compatibility; membership labelling no longer chunks.
+    max_bucket_output_entries bounds, per layer/diameter group, the bucket pair ids + lineage keys +
+    contributor keys that are produced (error 'oversized_real_bucket_output'); None takes the value of the
+    dataset's condition_assignment (real runs) or DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES.
+    bucket_detail='summary' still computes every area and the bucket counts, but builds lineage/contributors only for
+    the top_buckets largest buckets per class (ClassShareSummary); the emitted-entry budget counts only those.
+    The label partition stays exact; its live-pattern bound is the separate max_label_pattern_entries (error
+    'oversized_real_label_patterns'; None takes the dataset's condition_assignment or DEFAULT_MAX_LABEL_PATTERN_ENTRIES).
+    bucket_detail / top_buckets default to what the dataset was admitted for (a real configured_dataset records it in
+    provenance['admitted_bucket_detail'] and priced its resource estimate with it); any other input defaults to
+    'full' with DEFAULT_TOP_BUCKETS. An explicit mode that keeps more than the admitted one (full after a summary
+    admission, or a larger top_buckets) is refused with 'bucket_detail_exceeds_admission'.
+    Lazy records (adapters.real_hotspot.LazyRecords) are read by header; at most one source mask is loaded at a time.
+    SourceCaseArea.raw is one deep copy per case shared by that case's diameters; treat it as read-only.
     """
     if isinstance(chunk_cells, bool) or not isinstance(chunk_cells, int) or chunk_cells <= 0:
         raise NumericContractError('invalid_membership_chunk_size')
+    admitted = getattr(inputs, 'provenance', {}).get('admitted_bucket_detail')
+    if bucket_detail is None:
+        bucket_detail = admitted['bucket_detail'] if admitted else 'full'
+    if top_buckets is None:
+        top_buckets = admitted.get('top_buckets', DEFAULT_TOP_BUCKETS) if admitted else DEFAULT_TOP_BUCKETS
+    if bucket_detail not in ('full', 'summary'):
+        raise NumericContractError('invalid_bucket_detail', str(bucket_detail))
+    if bucket_detail == 'summary' and (type(top_buckets) is not int or top_buckets <= 0):
+        raise NumericContractError('invalid_top_buckets', 'top_buckets must be a positive integer')
+    if admitted and admitted['bucket_detail'] == 'summary' and (
+            bucket_detail == 'full' or (type(top_buckets) is int and top_buckets > admitted['top_buckets'])):
+        raise NumericContractError('bucket_detail_exceeds_admission',
+                                   f"admitted for summary top_buckets={admitted['top_buckets']}; asked for "
+                                   + ('full detail' if bucket_detail == 'full' else f'top_buckets={top_buckets}')
+                                   + ' (load the dataset with configured_dataset(..., top_buckets=None or larger))')
+    if max_bucket_output_entries is None:
+        configured = getattr(inputs, 'provenance', {}).get('configured_assignments') or {}
+        max_bucket_output_entries = configured.get('max_bucket_output_entries', DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES)
+    if (isinstance(max_bucket_output_entries, bool) or not isinstance(max_bucket_output_entries, int)
+            or max_bucket_output_entries <= 0):
+        raise NumericContractError('invalid_resource_limit', 'max_bucket_output_entries must be a positive integer')
+    if max_label_pattern_entries is None:
+        configured = getattr(inputs, 'provenance', {}).get('configured_assignments') or {}
+        max_label_pattern_entries = configured.get('max_label_pattern_entries', DEFAULT_MAX_LABEL_PATTERN_ENTRIES)
+    if (isinstance(max_label_pattern_entries, bool) or not isinstance(max_label_pattern_entries, int)
+            or max_label_pattern_entries <= 0):
+        raise NumericContractError('invalid_resource_limit', 'max_label_pattern_entries must be a positive integer')
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     cases = list(dataset.cases if dataset else inputs)
     grouped, seen, pair_definitions, electrode_definitions = {}, set(), {}, {}
@@ -459,7 +778,7 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
                 pair = dataset.pairs.get(definition[0])
                 if pair is None or pair.pair_id != case.pair_id or pair.classification != case.classification:
                     raise NumericContractError('case_pair_table_mismatch')
-        for diameter, record in case.records.items():
+        for diameter, record in _record_heads(case):
             i = case.identity
             key = GroupKey(i.product_id, i.design_version, case.metadata['unit_id'], i.source_id,
                            i.process_step_id, i.exposure_id, case.analysis_layer, case.density_process_layer,
@@ -474,7 +793,12 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
         if seen != expected:
             raise NumericContractError('expected_case_coverage_mismatch')
     table_version = provenance.get('pair_table_version')
-    return AreaResult({key: _group(key, grouped[key], chunk_cells, table_version) for key in sorted(grouped)},
+    raw_copies = {id(case): copy.deepcopy(case.raw) for case in cases}
+    return AreaResult({key: _group(key, grouped[key], chunk_cells, table_version, raw_copies=raw_copies,
+                                   max_bucket_entries=max_bucket_output_entries,
+                                   max_label_entries=max_label_pattern_entries,
+                                   top_buckets=top_buckets if bucket_detail == 'summary' else None)
+                       for key in sorted(grouped)},
                       copy.deepcopy(dataset.gates) if dataset else {}, provenance.get('input_hash'),
                       table_version, provenance.get('pair_table_hash'), bool(provenance.get('is_synthetic',False)))
 

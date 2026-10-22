@@ -39,8 +39,8 @@ STAGES = {
          ("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_T00", "--out", f"{DATA}/imported/target"],
           "target (QA4_T00)")]),
     "2_validate_compare": (
-        ["2회차: 검사·비교. 처음에는 real.yaml에서 max_operation_bytes를 빼고 실행해",
-         "oversized_real_operation 메시지의 추정치 N을 확인한 뒤 여유를 더해 넣고 다시 실행한다."],
+        ["2회차: 검사·비교. 마스크를 한 장씩 읽는 스트리밍이라 기본 max_operation_bytes(8 GiB)로 충분한 것이 정상이다.",
+         "oversized_real_operation이 나오면 메시지의 추정치 N에 여유를 더해(물리 메모리 이하) max_operation_bytes로 넣는다."],
         [("validate-data", ["--config", CONFIG], None),
          ("compare", ["--config", CONFIG], None)]),
     "3_import_electrode_assets": (
