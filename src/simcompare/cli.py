@@ -145,9 +145,20 @@ def _remove_reports(folder, command=None):
         for name in ("report.html", "report.json"):
             (Path(folder)/name).unlink(missing_ok=True)
         return
+    from simcompare.publication import LOCAL_DELTA_FILES
+    # 공개 트랜잭션이 남긴 제어 파일(.comparison.* / .local_delta.*)이 있으면 그 세대는 복구 대상이므로 지우지 않는다
+    # (지우면 다음 begin()이 "neither the file nor its backup exists"로 막힌다).
+    in_flight = {stem: any((Path(folder)/f'.{stem}.{kind}').exists() for kind in ('publishing', 'committed'))
+                 for stem in ('comparison', 'local_delta')}
     for prefix in ('comparison','electrode_map','validation','review_rois','local_delta','window_sensitivity'):
         for path in Path(folder).glob(prefix+'*'):
-            if path.is_file() and path.suffix in ('.json','.csv','.html','.png','.npz'):
+            if not path.is_file():
+                continue
+            if path.suffix in ('.json','.csv','.html','.png','.npz') or path.name == 'comparison_masks.zip':
+                managed = LOCAL_DELTA_FILES.fullmatch(path.name) and 'local_delta' or (
+                    path.name in ('comparison.json', 'comparison.csv', 'comparison_masks.zip') and 'comparison')
+                if managed and in_flight[managed]:
+                    continue
                 path.unlink()
 
 
@@ -177,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
             result = import_hotspots(Path(args.root), Path(args.out),
                                      expected_cases=Path(args.expected_cases) if args.expected_cases else None,
                                      expected_case_roots=([Path(r) for r in args.expected_cases_from_roots]
-                                                          if args.expected_cases_from_roots else None))
+                                                          if args.expected_cases_from_roots is not None else None))
             _print(result)
             return 0 if result['status'] == 'available' else 3
         if args.command == "import-electrode-assets":
@@ -281,7 +292,10 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     folder = Path(output)
                     folder.mkdir(parents=True,exist_ok=True)
-                    if not getattr(exc, "keeps_previous_outputs", False):  # compare / compare-windows after their publication opened
+                    # compare-windows: every error keeps the previous good generation. compare (real): errors before any output
+                    # is written and inside the publication transaction keep it; the two non-transactional real writers
+                    # (inspection without condition_assignment, numeric_v2 report) set keeps_previous_outputs=False (F4).
+                    if not (getattr(exc, "keeps_previous_outputs", False) or args.command == "compare-windows"):
                         _remove_reports(folder,args.command)
                     encoded_error = json.dumps(error,ensure_ascii=False,indent=2)
                     (folder/"error.json").write_text(encoded_error,encoding="utf-8")

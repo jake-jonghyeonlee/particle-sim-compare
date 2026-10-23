@@ -34,6 +34,7 @@ import io
 import contextlib
 import json
 import math
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -196,7 +197,10 @@ def deep_diff(a, b, path='$', limit=20):
             for (kx, vx), (ky, vy) in zip(x.items(), y.items()):
                 rec(vx, vy, f'{where}[{kx!r}]')
         elif isinstance(x, (list, tuple)):
-            if type(x) is not type(y) or len(x) != len(y):
+            # F1 / RB-A12: ElectrodeRegion.coverage holds its identity lists as (immutable) tuples; the frozen 7bcb07a keeps
+            # lists. Same elements, same JSON; this is the only type difference the comparison tolerates.
+            frozen_coverage = (isinstance(x, tuple) and type(y) is list and re.search(r"\.coverage\['[a-z_]+'\]$", where))
+            if (type(x) is not type(y) and not frozen_coverage) or len(x) != len(y):
                 out.append(f'{where}: sequence {type(x).__name__}/{len(x)} vs {type(y).__name__}/{len(y) if hasattr(y, "__len__") else "?"}')
                 return
             for i, (p, q) in enumerate(zip(x, y)):

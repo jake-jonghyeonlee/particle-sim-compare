@@ -235,11 +235,22 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
     expected_source = None
     if expected_case_roots is not None:
         extra_roots = [Path(extra) for extra in expected_case_roots]
-        union = set(p.name for p in found)
+        if not extra_roots:
+            raise NumericContractError('expected_case_roots_empty',
+                                       '--expected-cases-from-roots에는 --root가 아닌 root를 하나 이상 적어야 합니다')
+        resolved_roots = []
         for extra in extra_roots:
             extra_resolved = extra.resolve(strict=True)
             if not extra_resolved.is_dir():
                 raise NumericContractError('real_hotspot_root_required', str(extra_resolved))
+            if extra_resolved == root:
+                raise NumericContractError('expected_case_root_is_import_root',
+                                           f'{extra}는 --root와 같은 폴더입니다. 합집합은 다른 root가 있어야 의미가 있습니다')
+            if extra_resolved in resolved_roots:
+                raise NumericContractError('duplicate_expected_case_root', str(extra))
+            resolved_roots.append(extra_resolved)
+        union = set(p.name for p in found)
+        for extra_resolved in resolved_roots:
             union.update(p.name for p in _discover_cases(extra_resolved)[0])
         expected = sorted(union)
         expected_source = {'kind': 'union_of_discovered_roots',
@@ -589,6 +600,15 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
                 set(source) != {'kind', 'roots', 'limitation'} or not isinstance(source['roots'], list)
                 or not all(isinstance(r, str) for r in source['roots']) or not isinstance(source['limitation'], str)):
             raise NumericContractError('invalid_real_expected_case_source')
+    status = manifest.get('expected_case_coverage_status')
+    if status is not None or 'expected_case_source' in manifest:
+        # confirmed <=> an inventory (and, in the manifests that record one, its source) is present; legacy manifests
+        # without the expected_case_source key are only checked against the inventory
+        has_inventory = manifest.get('expected_cases') is not None
+        has_source = manifest.get('expected_case_source') is not None
+        if (status not in ('confirmed', 'unconfirmed') or (status == 'confirmed') != has_inventory
+                or ('expected_case_source' in manifest and has_source != has_inventory)):
+            raise NumericContractError('invalid_real_expected_case_coverage_status')
     return manifest
 
 
@@ -710,6 +730,13 @@ def _dataset_profile(dataset):
     label_entries = assignment.get('max_label_pattern_entries', DEFAULT_MAX_LABEL_PATTERN_ENTRIES)
     return (int(frame.valid.size), counts, len(dataset.cases) * len(DIAMETERS_UM),
             estimate['max_operation_bytes'], entries, frame.shape_yx, label_entries)
+
+
+def dataset_held_bytes(dataset):
+    """What a configured real dataset keeps alive after its map/export (0 for anything else): the stage-6 per-record
+    share plus the per-model fixed part. A caller that keeps the dataset while it admits a second product adds it to `reserved`."""
+    profile = _dataset_profile(dataset)
+    return 0 if profile is None else profile[2] * STAGE6_DATASET_RECORD_BYTES + STAGE6_FIXED_BYTES
 
 
 def _stage4_error(stage, estimated, limit):

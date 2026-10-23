@@ -416,15 +416,18 @@ def test_unreadable_recovery_state_is_an_error_and_the_cli_leaves_everything_as_
     assert err['reasons'] == ['local_delta_recovery_unreadable']
 
 
-def test_input_errors_before_the_publication_still_remove_the_managed_reports(stage46, tmp_path):
-    """cli.py's rule for input/config errors (docs/usage.md) is unchanged: only failures after the transaction opened keep them."""
+def test_input_errors_before_the_publication_keep_the_previous_generation_too(stage46, tmp_path):
+    """RB-A3: an error before the transaction opened (here: the correspondence file is missing) leaves the last good generation;
+    cli.py writes error.json / execution.json only."""
     out = tmp_path / 'out'
     assert run_windows(stage46, out, 3)[0] in (0, 3)
+    before = cli_free(eq.tree(out))
     cfg_path, _ = eq.make_windows_inputs(stage46, 'shared', dict(seed=3, n_pairs=6, repeats='uniform', **CLEAN), {}, (0.3, 0.8),
                                          dict(jitter=0.1))
     code, _, _ = eq.run_cli('simcompare', eq.windows_argv(cfg_path, tmp_path / 'missing.json', out, (0.3, 0.8)))
     assert code == 2
-    assert not [n for n in eq.tree(out) if n.startswith('local_delta')]
+    assert cli_free(eq.tree(out)) == before
+    assert json.loads((out / 'error.json').read_text(encoding='utf-8'))['exit_code'] == 2
 
 
 def test_crash_between_files_is_repaired_by_the_next_run(stage46, tmp_path, monkeypatch):

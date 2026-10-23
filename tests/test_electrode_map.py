@@ -339,6 +339,29 @@ def test_duplicate_case_and_same_layer_incompatible_frame_rejected():
         compute_electrode_maps([case, numeric_case('AC', ('A', 'C'), origin=(1, 0))])
 
 
+def test_region_coverage_does_not_alias_the_layer_coverage():
+    """RB-A12: a caller that mutates the LayerMap coverage cannot change the regions' (and vice versa); lists are tuples
+    shared by the regions of a layer, and the serialised form is the layer's own."""
+    import json
+    cases = [numeric_case('AB', cells=((0, 0), (1, 1)), shape=(2, 2)),
+             numeric_case('AC', ('A', 'C'), cells=((0, 0), (1, 1)), shape=(2, 2))]
+    layer = compute_electrode_maps(cases, min_count=3).layers[0]
+    first, second = layer.regions
+    keys = ('observed', 'missing', 'not_applicable', 'measurement_errors')
+    before = {key: json.dumps(first.coverage[key], sort_keys=True) for key in keys}
+    assert all(isinstance(first.coverage[key], tuple) for key in keys)
+    assert all(first.coverage[key] is second.coverage[key] for key in keys)        # shared, not copied per region
+    for key in keys:
+        assert json.dumps(first.coverage[key], sort_keys=True) == json.dumps(layer.coverage[key], sort_keys=True)
+    layer.coverage['observed'].append({'injected': True})
+    layer.coverage['observed'][0]['identity_mutated'] = True
+    layer.coverage['source_coverage_summary']['x'] = 1
+    assert {key: json.dumps(first.coverage[key], sort_keys=True) for key in keys} == before
+    assert 'x' not in first.coverage['source_coverage_summary']
+    with pytest.raises(AttributeError):
+        first.coverage['observed'].append(1)
+
+
 def test_valid_hole_is_excluded_from_region_and_bbox_coverage():
     # 연결된 3x3 고리: 가운데 invalid 1셀, 셀 면적=1.
     cells = tuple((r, c) for r in range(3) for c in range(3))

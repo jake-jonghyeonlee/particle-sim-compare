@@ -4,6 +4,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -116,6 +117,7 @@ class _ComparisonStream:
         self._fh = None
         self._masks = self._masks_fh = self.masks_tmp = None
         self._masks_ready = False
+        self._masks_dropped = False
         self._temps = []
 
     def _open_temp(self, name):
@@ -125,11 +127,26 @@ class _ComparisonStream:
         self._temps.append(path)
         return path, fd
 
+    _STALE_TEMP = re.compile(r'\.(?:comparison\.json|comparison\.csv|comparison_masks\.zip)\.([0-9]+)\.[0-9a-f]{8}\.tmp')
+
+    def _sweep_stale_temps(self):
+        """Temp files of earlier runs that died (a killed compare leaves a 50-72 MB comparison_masks.zip temp at ETX scale).
+        Only names this class creates, only when their owning process is surely gone: a live run's temps stay."""
+        from simcompare.publication import owner_is_gone
+        for name in os.listdir(str(self.output)):
+            found = self._STALE_TEMP.fullmatch(name)
+            if found and owner_is_gone(int(found.group(1))):
+                try:
+                    self._unlink(self.output / name)
+                except OSError:
+                    pass
+
     def begin(self):
         self.output.mkdir(parents=True, exist_ok=True)
         self._recover()  # a previous run killed during publication: roll forward if committed, else back
         if self._present(self._marker()):
             raise OSError(errno.EIO, 'cannot finish the committed publication in ' + str(self.output))
+        self._sweep_stale_temps()
         self.json_tmp, fd = self._open_temp('comparison.json')
         self._fh = os.fdopen(fd, 'w', encoding='utf-8', newline='', buffering=1 << 20)
         if self._with_masks:
@@ -291,7 +308,10 @@ class _ComparisonStream:
         staged = {'comparison.json': self.json_tmp, 'comparison.csv': csv_tmp}
         if self._masks_ready:
             staged[self._NAMES[2]] = self.masks_tmp
-        names = [name for name in self._NAMES if name in staged]
+        removed = ()
+        if self._masks_dropped and self._present(self.output / self._NAMES[2]):
+            removed = (self._NAMES[2],)  # the dropped artefact's predecessor must not stay beside the new pair
+        names = [name for name in self._NAMES if name in staged or name in removed]
         existed = {name: self._present(self.output / name) for name in names}
         try:
             journal_tmp = self._journal().with_name(self._journal().name + '.partial')
@@ -301,8 +321,11 @@ class _ComparisonStream:
                 if existed[name]:
                     self._backup(self.output / name, self._prev(name))
             for name in names:
-                os.replace(str(staged[name]), str(self.output / name))
-                self._temps.remove(staged[name])
+                if name in staged:
+                    os.replace(str(staged[name]), str(self.output / name))
+                    self._temps.remove(staged[name])
+                else:
+                    self._unlink(self.output / name)
             self._sync_dir()
             pending = self._marker().with_name(self._marker().name + '.partial')
             self._create(pending, 'committed')
@@ -411,6 +434,7 @@ class _ComparisonStream:
         if self.masks_tmp in self._temps:
             self._temps.remove(self.masks_tmp)
         self._with_masks = False
+        self._masks_dropped = True
         print(f'compare: comparison_masks.zip not written ({type(exc).__name__}: {exc}); compare-windows will recompute',
               file=sys.stderr)
 
@@ -580,6 +604,19 @@ def _numeric_rates(dataset, section):
 
 
 def run_numeric_compare(cfg, out=None):
+    try:
+        return _run_numeric_compare(cfg, out)
+    except Exception as exc:
+        # real mode: failures before any output is written (source validation, mixed formats, a moved import folder)
+        # and inside the transactional publication keep the previous good generation; cli.py's failure handler then
+        # writes only error.json / execution.json. Failures of the non-transactional writers set the flag to False
+        # (reports are removed as before). Synthetic compare is unchanged.
+        if cfg.get('mode') == 'real' and getattr(exc, 'keeps_previous_outputs', None) is None:
+            exc.keeps_previous_outputs = True
+        raise
+
+
+def _run_numeric_compare(cfg, out=None):
     from simcompare.linepixel import compare_rates
     from simcompare.report import comparison_report, write_numeric_report
     reference_real = _real_source(cfg, cfg.get('reference'))
@@ -595,14 +632,12 @@ def run_numeric_compare(cfg, out=None):
             full_detail, top = _compare_options(cfg)
             detail = {} if full_detail else {'bucket_detail': 'summary', 'top_buckets': top}
             stream = _ComparisonStream(output, None if full_detail else top, masks=True)
-            opened = False
             try:
                 reference_configured = _configured_real(cfg, cfg['reference'], reference_real, detail)
                 left = compute_areas(reference_configured[1], **detail) if reference_configured[1].cases else None
                 left_rows = _real_area_rows('reference', left.groups.values()) if left is not None else []
                 left_unresolved = reference_configured[1].provenance.get('unresolved_same_name_cases', [])
                 left_present = left is not None
-                opened = True  # from begin() on, a failure must not make cli.py delete the previous generation
                 stream.begin()
                 stream.side('reference', left)
                 del reference_configured, left
@@ -623,8 +658,8 @@ def run_numeric_compare(cfg, out=None):
                     return {'status': 'partial', 'reasons': reasons,
                             'outputs': [str(output/'comparison.json'), str(output/'comparison.csv')], 'exit_code': 3}
             except Exception as exc:
-                if opened:
-                    exc.keeps_previous_outputs = True
+                # before or after begin(): cli.py's failure handler must not delete the previous good generation
+                exc.keeps_previous_outputs = True
                 raise
             finally:
                 stream.abort()
@@ -653,7 +688,10 @@ def run_numeric_compare(cfg, out=None):
                    'target_source_hash': target_real[1]['source_payload_hash']}
         if any(case['diagnostics'] for source in (reference_real[1], target_real[1]) for case in source['cases']):
             payload['reasons'] = sorted(set((*payload['reasons'], 'same_name_endpoints_unresolved')))
-        paths = _write_inspection(output, 'comparison', payload, rows)
+        try:paths = _write_inspection(output, 'comparison', payload, rows)
+        except Exception as exc:
+            exc.keeps_previous_outputs = False  # non-transactional writer: a partial write must not stay beside old files
+            raise
         return {'status': 'partial', 'reasons': payload['reasons'], 'outputs': paths, 'exit_code': 3}
     _,reference = _numeric_input(cfg,cfg.get('reference'))
     _,target = _numeric_input(cfg,cfg.get('target'))
@@ -663,7 +701,10 @@ def run_numeric_compare(cfg, out=None):
                            target_product_id=cfg['target']['product_id'])
     payload,tables = comparison_report(rr,tr,deltas)
     output = Path(out) if out is not None else _numeric_path(cfg,cfg['output_dir'])
-    paths = write_numeric_report(output,'comparison',payload,tables)
+    try:paths = write_numeric_report(output,'comparison',payload,tables)
+    except Exception as exc:
+        exc.keeps_previous_outputs = False  # non-transactional writer (see the real inspection branch)
+        raise
     return {'status':payload['status'],'reasons':payload['reasons'],'outputs':paths,'exit_code':0 if payload['status']=='available' else 3}
 
 
@@ -1019,22 +1060,29 @@ def _dataset_for(cfg, section, label):
     return _numeric_input(cfg, section)[1]
 
 
-def _compare_masks_for_stage6(cfg, reference, target):
-    """(areas, reason): the compare artefact next to the default compare output when it matches both models, else (None, reason).
+def _stage6_artefact_candidate(cfg, reference, target):
+    """(output, reason): the compare output folder when its comparison_masks.zip may be read, else (None, reason).
 
-    Reading it needs no compute_areas; its size is checked against the operation limit before a byte is read.
-    Real datasets only (the artefact is written by the real compare path)."""
+    Only stats the file: nothing of the artefact is read here, so the stage-6 admission can run before the read (RB-A5).
+    Real datasets only (the artefact is written by the real compare path); the size is checked against the operation limit."""
     from simcompare.adapters.real_hotspot import _dataset_profile
-    from simcompare.compare_masks import artefact_bytes, load_compare_masks
+    from simcompare.compare_masks import artefact_bytes
     if cfg.get('output_dir') is None or any(_dataset_profile(d) is None for d in (reference, target)):
         return None, 'not_real'
     output = _numeric_path(cfg, cfg['output_dir'])
     size = artefact_bytes(output)
     if size is None:
         return None, 'absent'
-    limit = min(_dataset_profile(d)[3] for d in (reference, target))
-    if size > limit:
+    if size > min(_dataset_profile(d)[3] for d in (reference, target)):
         return None, 'artefact_exceeds_budget'
+    return output, None
+
+
+def _load_stage6_artefact(output, reference, target):
+    """(areas, reason): the packed masks stage 2 published when they match both models, else (None, reason)."""
+    from simcompare.adapters.real_hotspot import _dataset_profile
+    from simcompare.compare_masks import load_compare_masks
+    limit = min(_dataset_profile(d)[3] for d in (reference, target))
     a, b, reason = load_compare_masks(output, reference, target, max_bytes=limit)
     return ((a, b) if reason is None else None), reason
 
@@ -1059,11 +1107,19 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
     sizes = _validate_sizes(window_sizes_um)
     if jitter_um is not None:
         jitter_um = finite(jitter_um, 'jitter', positive=True)
-    # Q3: the packed masks stage 2 published, when they match both models; anything else recomputes compute_areas
-    areas, _ = _compare_masks_for_stage6(cfg, reference, target)
-    # B3: admission after the pairs are bound and before any compute, decode or cache allocation
+    # Q3: the packed masks stage 2 published, when they match both models; anything else recomputes compute_areas.
+    # B3 / RB-A5: admission after the pairs are bound, before any compute, decode or cache allocation, and before the
+    # artefact is read (the reuse estimate prices its packed masks); a candidate that turns out unusable is admitted again
+    # as a recompute before compute_areas runs.
+    output_dir, _ = _stage6_artefact_candidate(cfg, reference, target)
     guard_stage_compare_windows('compare-windows', reference, target, layouts_cfg=cfg, pairs=pairs, sizes=sizes,
-                                jitter_um=jitter_um, reuse=areas is not None)
+                                jitter_um=jitter_um, reuse=output_dir is not None)
+    areas = None
+    if output_dir is not None:
+        areas, _ = _load_stage6_artefact(output_dir, reference, target)
+        if areas is None:
+            guard_stage_compare_windows('compare-windows', reference, target, layouts_cfg=cfg, pairs=pairs, sizes=sizes,
+                                        jitter_um=jitter_um, reuse=False)
     # B2: the whole produced set (json, csv, html, png) is staged and published as one generation (publication.py); a
     # failure anywhere before its commit leaves the previous generation exactly as it was. begin() runs before the
     # compute so that an unreadable earlier publication is reported before the expensive work.

@@ -464,11 +464,11 @@ def _write_text(path, text, track):
 
 
 def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, diameter_um):
-    from simcompare.adapters.real_hotspot import MAP_SLIM_ROW_BYTES, MAP_REGION_INFO_BYTES
+    from simcompare.adapters.real_hotspot import MAP_SLIM_ROW_BYTES, MAP_REGION_INFO_BYTES, dataset_held_bytes
     from simcompare.roi_export import AssetMemo
     sides, plans = {}, {}
     memo = AssetMemo()   # asset PNGs decoded for one product's exports are not decoded again for its second export
-    reserved = 0         # what the first product still holds (rows, regions) while the second one's map is built
+    reserved = 0         # what the first product still holds (rows, regions, its configured dataset) while the second one is built
     for name in ('reference', 'target'):
         side = sides[name] = _prepare(cfg, name, min_count, diameter_um, reserved)
         merged = merge_regions(side.regions, window_um, merge_overlap)
@@ -483,6 +483,7 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
         side.maps = None   # counts, region masks and links are only needed for the exports above
         reserved += MAP_SLIM_ROW_BYTES * (len(side.rows) + (len(side.index['rows']) if side.index else 0))
         reserved += MAP_REGION_INFO_BYTES * len(side.regions)
+        reserved += dataset_held_bytes(side.dataset)   # kept for the index coverage below, so the second admission counts it
     memo = None
 
     warnings, notes = [], []

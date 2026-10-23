@@ -42,6 +42,45 @@ LOCAL_DELTA_FILES = re.compile(
     r'local_delta_thumb_[0-9a-f]{12}\.png|local_delta_overview_[ab]_[0-9a-f]{12}\.png')
 
 
+def pid_alive(pid):
+    """Is a process with this id running? Unknown means alive: a scratch file is only swept when its owner is surely gone.
+
+    Never os.kill(pid, 0) on Windows: there every signal other than CTRL_* terminates the process."""
+    if pid <= 0:
+        return True
+    if os.name == 'nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = kernel32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ctypes.get_last_error() != 87       # 87 = ERROR_INVALID_PARAMETER: no such pid (access denied = alive)
+            try:
+                code = wintypes.DWORD()
+                return not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == 259   # STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def owner_is_gone(pid):
+    """True for the pid of a run that can no longer be writing (never this process, never a live one)."""
+    return pid != os.getpid() and not pid_alive(pid)
+
+
 @contextmanager
 def staged_file(path, *, newline=None):
     """Text file that appears under `path` only when the block completes (a temp sibling is renamed into place)."""
@@ -181,7 +220,7 @@ class SetPublication:
                 raise OSError(errno.EIO, 'an earlier publication could not be cleaned up completely: '
                               + str(self._journal()))
             for name in self._listdir(self.output):  # scratch left by a killed run (never part of any generation)
-                if self._is_staging_name(name):
+                if self._is_staging_name(name) and self._owner_gone(name):
                     try:
                         self._rmtree(self.output / name)
                     except OSError:
@@ -192,6 +231,14 @@ class SetPublication:
             self.abort()
             raise
         return self.staging
+
+    def _owner_gone(self, staging_name):
+        """.<stem>.staging.<pid>.<hex>: a live process other than this one still owns its scratch directory."""
+        try:
+            pid = int(staging_name[len(f'.{self._stem}.staging.'):].split('.')[0])
+        except ValueError:
+            return True
+        return pid == os.getpid() or owner_is_gone(pid)
 
     def final_path(self, staged):
         return str(self.output / Path(staged).name)

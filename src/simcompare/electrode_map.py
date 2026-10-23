@@ -225,6 +225,14 @@ class CaseLink:
     source_metadata: dict
 
 
+def _frozen_coverage(coverage):
+    """A detached copy of a layer's coverage, shared by every region of that layer: the identity lists become tuples (the
+    elements are copied once), the other values are copied. json serialises it exactly like the original, and a caller that
+    mutates the LayerMap coverage cannot reach it (nor can anyone append to a region's tuples)."""
+    return {key: tuple(copy.deepcopy(item) for item in value) if isinstance(value, list) else copy.deepcopy(value)
+            for key, value in coverage.items()}
+
+
 def _pack(mask):
     return PackedMask(mask.shape, np.packbits(np.ascontiguousarray(mask).reshape(-1)))
 
@@ -556,6 +564,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
         touched = None
         counts.setflags(write=False)
         regions = []
+        shared_coverage = None   # one frozen copy of this layer's coverage for all its regions (_frozen_coverage)
         labelled = None
         layer_runs = 0
         if threshold is not None:
@@ -611,7 +620,9 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                        frame.origin_xy_um, frame.shape_yx, frame.valid_hash, np.argwhere(inside).tolist()]
             stable_id = 'region_' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
             inside.setflags(write=False)
-            region_coverage = {**coverage, 'region_valid_area_um2': float(inside.sum())*p*p,
+            if shared_coverage is None:
+                shared_coverage = _frozen_coverage(coverage)
+            region_coverage = {**shared_coverage, 'region_valid_area_um2': float(inside.sum())*p*p,
                                'bbox_valid_area_um2': float(frame.valid[r0:r1, c0:c1].sum())*p*p,
                                'bbox_area_um2': (r1-r0)*(c1-c0)*p*p}
             if region_provenance is None:

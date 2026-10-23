@@ -133,3 +133,51 @@ def test_extra_root_uses_same_discovery_errors(tmp_path):
     with pytest.raises(FileNotFoundError):
         import_hotspots(tgt, tmp_path/'o', expected_case_roots=[tmp_path/'nope'])
     assert not (tmp_path/'o').exists()
+
+
+def test_extra_roots_reject_empty_self_and_duplicates(tmp_path):
+    """EC-A2: a degenerate union (no other root, the import root itself, the same root twice) must not give 'confirmed'."""
+    ref, tgt = _roots(tmp_path)
+    for roots, code in (([], 'expected_case_roots_empty'), ([tgt], 'expected_case_root_is_import_root'),
+                        ([tgt/'..'/'tgt'], 'expected_case_root_is_import_root'), ([ref, tmp_path/'ref'/'..'/'ref'], 'duplicate_expected_case_root'),
+                        ([ref, ref], 'duplicate_expected_case_root'), ([ref, tgt], 'expected_case_root_is_import_root')):
+        with pytest.raises(NumericContractError, match=code):
+            import_hotspots(tgt, tmp_path/'o', expected_case_roots=roots)
+        assert not (tmp_path/'o').exists()
+    link = tmp_path/'link_to_tgt'
+    link.symlink_to(tgt, target_is_directory=True)
+    with pytest.raises(NumericContractError, match='expected_case_root_is_import_root'):
+        import_hotspots(tgt, tmp_path/'o', expected_case_roots=[link])
+
+
+def test_manifest_status_is_cross_checked_with_the_inventory_and_its_source(tmp_path):
+    """EC-A4: confirmed <=> inventory (and source, where the manifest records one); legacy manifests keep loading."""
+    ref, tgt = _roots(tmp_path)
+    out = tmp_path/'m'
+    import_hotspots(tgt, out, expected_case_roots=[ref])
+    path = out/'manifest.json'
+    manifest = json.loads(path.read_text(encoding='utf-8'))
+    for change in ({'expected_case_coverage_status': 'unconfirmed'},                   # inventory present but not confirmed
+                   {'expected_case_coverage_status': 'maybe'},
+                   {'expected_case_coverage_status': None},
+                   {'expected_case_source': None}):                                  # confirmed without a source
+        _write_rehashed(path, dict(manifest, **change))
+        with pytest.raises(NumericContractError, match='invalid_real_expected_case_coverage_status'):
+            load_real_manifest(out)
+    _write_rehashed(path, dict(manifest, expected_cases=None, expected_case_source=None))           # confirmed without a list
+    with pytest.raises(NumericContractError, match='invalid_real_expected_case_coverage_status|invalid_real_expected_case_source'):
+        load_real_manifest(out)
+    legacy = {k: v for k, v in manifest.items() if k != 'expected_case_source'}
+    _write_rehashed(path, legacy)
+    assert 'expected_case_source' not in load_real_manifest(out)                        # legacy 'file' manifest, as before
+    _write_rehashed(path, dict(legacy, expected_cases=None))
+    with pytest.raises(NumericContractError, match='invalid_real_expected_case_coverage_status'):
+        load_real_manifest(out)
+    plain = tmp_path/'plain'
+    import_hotspots(tgt, plain)
+    plain_path = plain/'manifest.json'
+    plain_manifest = json.loads(plain_path.read_text(encoding='utf-8'))
+    assert load_real_manifest(plain)['expected_case_coverage_status'] == 'unconfirmed'
+    _write_rehashed(plain_path, dict(plain_manifest, expected_case_coverage_status='confirmed'))
+    with pytest.raises(NumericContractError, match='invalid_real_expected_case_coverage_status'):
+        load_real_manifest(plain)

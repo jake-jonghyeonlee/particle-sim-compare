@@ -107,7 +107,18 @@ def _export_sizes(directory, payload):
     return sizes
 
 
-def _load_candidates(candidates_dir, cfg, problems, datasets=None):
+def _match_sizes(matches):
+    """On-disk bytes of the DL2 match JSONs given with --match (unreadable ones are skipped: reading reports them)."""
+    sizes = []
+    for path in (matches or {}).values():
+        try:
+            sizes.append(Path(path).stat().st_size)
+        except (OSError, TypeError, ValueError):
+            pass
+    return sizes
+
+
+def _load_candidates(candidates_dir, cfg, problems, datasets=None, matches=None):
     directory = Path(candidates_dir)
     payload, payload_sha = _read_json_bytes(directory/'candidate_queries_v1.json', problems, 'candidates_payload')
     if payload is None:
@@ -122,7 +133,7 @@ def _load_candidates(candidates_dir, cfg, problems, datasets=None):
     if datasets:   # real datasets carry the operation limit: refuse before any export is read or parsed
         from .adapters.real_hotspot import guard_stage_confirm_read
         guard_stage_confirm_read('confirm-pairs', [item['dataset'] for item in datasets.values()],
-                                 list(_export_sizes(directory, payload).values()))
+                                 list(_export_sizes(directory, payload).values()) + _match_sizes(matches))
     match_inputs = payload.get('match_inputs') or {}
     if 'match_files' in payload:
         files = payload['match_files']
@@ -533,7 +544,7 @@ def _prepare(cfg, candidates_dir, matches, problems):
         if direction not in DIRECTION_NAMES:
             raise NumericContractError('unknown_match_direction', direction)
     datasets = _load_datasets(cfg)
-    cands = _load_candidates(candidates_dir, cfg, problems, datasets)
+    cands = _load_candidates(candidates_dir, cfg, problems, datasets, matches)
     loaded = {}
     if cands is not None:
         _check_chain(cands, datasets, problems)

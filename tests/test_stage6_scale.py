@@ -983,19 +983,17 @@ def test_estimate_is_monotone_in_pairs_and_sizes_and_symmetric_in_the_models(lar
 
 @pytest.mark.parametrize('where', ['add_side', 'close'])
 def test_an_artefact_that_cannot_be_built_never_costs_the_compare(stage46, monkeypatch, where):
-    """Not an I/O error (those fail the publication like any file): the pair is published, the old artefact is untouched and
-    stage 6 simply recomputes."""
+    """Not an I/O error (those fail the publication like any file): the pair is published, the old artefact is removed in the
+    same transaction (RB-A4: one generation) and stage 6 simply recomputes."""
     out, cfg, corr, cmp_dir, _, _ = compare_config(stage46, 'shared', f'optional_{where}')
     cmp_dir.mkdir(parents=True)
     (cmp_dir / compare_masks.ARTEFACT_NAME).write_bytes(b'older-artefact')
     monkeypatch.setattr(compare_masks.MasksWriter, where, lambda self, *a, **k: (_ for _ in ()).throw(TypeError('numpy.float16')))
     code, _, err = eq.run_cli('simcompare', ['compare', '--config', cfg])
     assert code == 3 and 'comparison_masks.zip not written' in err
-    assert sorted(p.name for p in cmp_dir.iterdir() if p.is_file()) == ['comparison.csv', 'comparison.json', 'comparison_masks.zip',
-                                                                         'execution.json']
-    assert (cmp_dir / compare_masks.ARTEFACT_NAME).read_bytes() == b'older-artefact'
+    assert sorted(p.name for p in cmp_dir.iterdir() if p.is_file()) == ['comparison.csv', 'comparison.json', 'execution.json']
     monkeypatch.undo()
-    assert not reuse_state(monkeypatch, cfg, corr, out / 'w')              # the unusable old file is ignored: recompute
+    assert not reuse_state(monkeypatch, cfg, corr, out / 'w')              # no artefact: recompute
 
 
 def test_numpy_scalars_in_a_metric_are_stored_as_numbers(tmp_path):

@@ -353,6 +353,20 @@ def test_second_product_is_admitted_with_the_first_ones_rows_reserved(candidates
     assert seen[0] == 0 and seen[1] > 0                                # the target map is built with the reference rows held
 
 
+def test_second_product_admission_counts_the_first_products_configured_dataset(candidates_run, tmp_path, monkeypatch):
+    """RB-A7: the first product's configured dataset stays alive (index coverage) while the second one is admitted."""
+    _, _, _, _, cfg = candidates_run
+    seen, held = [], []
+    import simcompare.electrode_map as electrode_map
+    wrapped = electrode_map.compute_electrode_maps
+    monkeypatch.setattr(electrode_map, 'compute_electrode_maps',
+                        lambda dataset, *a, **k: (seen.append(k.get('reserved_bytes')), held.append(real_hotspot.dataset_held_bytes(dataset)))
+                        and wrapped(dataset, *a, **k))
+    assert _run_candidates(cfg, tmp_path/'cand') in (0, 3)
+    assert held[0] >= real_hotspot.STAGE6_FIXED_BYTES
+    assert seen[1] >= held[0] + real_hotspot.MAP_REGION_INFO_BYTES      # rows/regions AND the first dataset
+
+
 def test_roles_gate_is_in_the_single_write(candidates_run, tmp_path):
     gen, base, ref, tgt, cfg = candidates_run
     out = tmp_path/'cand'
@@ -415,6 +429,40 @@ def test_stage5_refuses_before_any_export_is_read(candidates_run, tmp_path, monk
                                         decisions_path=decisions, labelled_by='tester', mutual_tolerance_um=0.5)
     assert caught.value.code == 'oversized_real_operation' and 'stage-5 export read' in str(caught.value)
     assert not (tmp_path/'confirm').exists()
+
+
+def test_stage5_gate_also_prices_the_dl2_match_files(candidates_run, tmp_path, monkeypatch):
+    """RB-A8: a limit that admits the four exports alone refuses once the --match JSONs are priced; nothing is read."""
+    gen, base, ref, tgt, cfg = candidates_run
+    out = tmp_path/'cand'
+    assert _run_candidates(cfg, out) in (0, 3)
+    match_dir = tmp_path/'matches'
+    match_dir.mkdir()
+    matches = gen.fake_matches(out, {'reference': ref, 'target': tgt}, match_dir, seed=1)
+    decisions = gen.decisions_file(tmp_path/'decisions.csv', matches, seed=1)
+    sizes = [(out/folder/'review_rois.json').stat().st_size for folder in
+             ('reference_export', 'target_export', 'reference_index_export', 'target_index_export')]
+    match_sizes = [Path(path).stat().st_size for path in matches.values()]
+    assert all(match_sizes)
+    exports_only = real_hotspot.estimate_stage_confirm_read(sizes)
+    needed = real_hotspot.estimate_stage_confirm_read(sizes + match_sizes)
+    assert needed > exports_only
+    original = confirm_pairs._read_json_bytes
+    guarded = {str(path) for path in matches.values()}
+
+    def no_big_reads(path, problems, label):
+        if str(path).endswith('review_rois.json') or str(path) in guarded:
+            pytest.fail(f'read before the size gate: {path}')
+        return original(path, problems, label)
+    monkeypatch.setattr(confirm_pairs, '_read_json_bytes', no_big_reads)
+    profile = real_hotspot._dataset_profile
+    monkeypatch.setattr(real_hotspot, '_dataset_profile',
+                        lambda dataset: None if profile(dataset) is None else (*profile(dataset)[:3], needed - 1, *profile(dataset)[4:]))
+    from simcompare import pipeline
+    with pytest.raises(NumericContractError) as caught:
+        confirm_pairs.run_confirm_pairs(pipeline.load_numeric_config(cfg), tmp_path/'confirm', candidates_dir=out, matches=matches,
+                                        decisions_path=decisions, labelled_by='tester', mutual_tolerance_um=0.5)
+    assert caught.value.code == 'oversized_real_operation' and f'estimated {needed} bytes exceed limit {needed - 1}' in str(caught.value)
 
 
 def test_stage5_accepts_slim_and_old_form_exports_alike(candidates_run, tmp_path):
