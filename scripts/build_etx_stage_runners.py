@@ -76,7 +76,7 @@ STAGES = {
         ["5회차(DL2 경로 전용): 직접 대응(4회차의 direct/roi_correspondence.json)을 쓰면 이 회차를 건너뛴다.",
          "다른 제품 탐색이 필요할 때만 쓴다: DL2 baseline_ncc 결과(ncc_r2t.json, ncc_t2r.json)와 sheet.html을 보고 쓴",
          "decisions.csv(헤더 candidate_id,decision,note; decision=accept|reject)가 필요하다.",
-         "--match 파일은 baseline_ncc 결과(psdl2_baseline_ncc_v1) 또는 DL2 search 배치 봉투(psdl2_search_batch_v1)를 읽는다. 배치 봉투는 방향별 파일 하나다.",
+         "--match 파일은 baseline_ncc 결과(psdl2_baseline_ncc_v1) 또는 DL2 search 배치 봉투(psdl2_search_batch_v1)를 읽는다. 배치 봉투는 방향마다 따로 줄 수도 있고, DL2 가 쓴 search_batch.json 하나를 두 --match 에 같이 줄 수도 있다.",
          "첫 작업(--list)은 candidate_id 목록을 로그에 찍는다. decisions.csv가 없으면 둘째 작업이 종료 코드 2로 멈춘다.",
          "--labelled-by(확정한 사용자 ID)와 --mutual-tolerance-um은 필수이며 기본값이 없다. 값은 예시다."],
         [("confirm-pairs", ["--list", "--config", CONFIG, "--candidates", f"{DATA}/changes",
