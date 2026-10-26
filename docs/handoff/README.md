@@ -10,7 +10,7 @@
 
 DL1 pin: **`main` @ `dc9a0197f0d9dce127072cdbbca4c9697344aac3`** (`feat/png-input`을 2026-10-18 fast-forward 병합). `d4dd896..f0a5598` 독립 리뷰는 PASS-WITH-NOTES다([DL1_HEAD_F0A5598_REVIEW.md](../review/DL1_HEAD_F0A5598_REVIEW.md)). `dc9a019`는 그 위에 메모 2–3 보완(문서, `.gitattributes`)만 더했다. DL1 Windows 설치 ZIP의 psdl1은 `78a2f91` 소스이므로 현재 코드를 쓰려면 DL1의 `bundles/updates/grid-diagnostics-f74a718` wheel을 추가로 설치한다. 설치 후에는 ZIP 기준 설치 검증이 `installed psdl1 source differs`로 실패하는 것이 예상 동작이다(리뷰 메모 1–2, DL1 `docs/WINDOWS_OFFLINE.md`). 상세 입력 계약은 bundle의 `particle-sim-dl1/docs/USAGE.md`를 따른다.
 
-DL2 pin: **`main` @ `f41d42709f4f17e0e7891b1c50d0547616b8f791`** (2026-10-20, origin에 push됨). 이전 pin `ce98fd3`(2026-10-18) 위에 PLAN_v4 배치 NCC(`d72e839`), GPU 선택·공유 asset 캐시·torch 완화·진행 출력(`08ed566`, 독립 Sonnet high 리뷰 PASS-WITH-NOTES), 그리고 Astra high 검수 세 번의 FAIL을 반영한 수정(`440d329`, `c297774`, `f41d427`)을 더했다. 최종 `f41d427`은 Astra high PASS-WITH-NOTES다. `psdl2.eval_position`/`psdl2.baseline_ncc`는 수치 저장소의 `roi_correspondence_v1`과 `review_rois.json`을 읽는다([PLAN_v3](../plan/PLAN_v3_local_delta_ca.md), [PLAN_v4](../plan/PLAN_v4_auto_candidates.md)).
+DL2 pin: **`feat/dl2-patch-dataset` @ `77970b76625ed3ef38e888add769698b076293ae`** (2026-10-27, origin에 push됨). DL2 Run `20261026-dl2-db-search`의 `feat/dl2-db-search`를 fast-forward 병합한 commit이다. 이전 pin `f41d427`(`main`) 위에 패치 데이터셋·multi-export(`efc6dac`), DB 검색 배치 봉투 `psdl2_search_batch_v1`·`mask_derivation`·multi 평가(PLAN_v3_db_search, 최종 HEAD 독립 Opus high 리뷰 PASS-WITH-NOTES)를 더했다. 수치 저장소는 이 봉투를 `confirm-pairs --match`로 읽고(R3), 변경점 export에 `mask_derivation.json`을 함께 둔다(R1). 연결은 실제 DL2 코드로 검증했다(`tests/test_dl2_e2e.py`, [change_roi](../plan/change_roi/README.md)). 그 이전 기록: pin `f41d427`(2026-10-20)은 `ce98fd3`(2026-10-18) 위에 PLAN_v4 배치 NCC(`d72e839`), GPU 선택·공유 asset 캐시·torch 완화·진행 출력(`08ed566`, 독립 Sonnet high 리뷰 PASS-WITH-NOTES), 그리고 Astra high 검수 세 번의 FAIL을 반영한 수정(`440d329`, `c297774`, `f41d427`)을 더했다. 최종 `f41d427`은 Astra high PASS-WITH-NOTES다. `psdl2.eval_position`/`psdl2.baseline_ncc`는 수치 저장소의 `roi_correspondence_v1`과 `review_rois.json`을 읽는다([PLAN_v3](../plan/PLAN_v3_local_delta_ca.md), [PLAN_v4](../plan/PLAN_v4_auto_candidates.md)).
 
 build script의 python3는 >=3.11.4가 필요하다. 미지원 버전은 출력 생성 전에 오류로 중단한다.
 
@@ -20,7 +20,7 @@ Coordinator가 승인한 T12 커밋 이후, 세 저장소가 clean일 때 실행
 Windows CMD (미실행, Git Bash `bash` 필요):
 
 ```bat
-bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref dc9a0197f0d9dce127072cdbbca4c9697344aac3 --dl2-ref f41d42709f4f17e0e7891b1c50d0547616b8f791
+bash scripts/build_handoff.sh D:/approved-output/bundle --compare-ref APPROVED_COMPARE_COMMIT --dl1-ref dc9a0197f0d9dce127072cdbbca4c9697344aac3 --dl2-ref 77970b76625ed3ef38e888add769698b076293ae
 bash scripts/check_handoff.sh D:/approved-output/bundle --expect-manifest-sha256 APPROVED_MANIFEST_SHA256
 ```
 

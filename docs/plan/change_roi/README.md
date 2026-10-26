@@ -35,7 +35,7 @@ Windows zip·wheel은 T9에서 다시 만들지 않았다. Windows에서 `candid
 - 질의: `review_roi_v1`의 manual 행(`reference_export/`, `target_export/review_rois.json`). 검색 대상: `*_index_export/review_rois.json`. 매칭 쌍은 `candidate_queries_v1.json`의 `match_files`가 알려 준다.
 - 출력: 현 `NCC_SCHEMA`(`psdl2_baseline_ncc_v1`, `mode=all_ready`, `inputs.query_export_sha256`/`index_export_sha256`, `results[].query.roi_id`/`center_xy_um`, `primary[].rank`/`center_xy_um`/`frame_id`/`product_id`).
 - 향후 요청(아직 DL2에 없음): (1) `expected_center_xy_um` 힌트(정렬 offset으로 계산한 기대 중심 근처만 검색), (2) CNT 층별 채널(층 합집합 대신), (3) `--window-um`을 `candidates-change --window-um`과 일치시키는 옵션.
-- `docs/handoff/README.md`는 **고치지 않았다**. DL2 pin(`f41d42709f4f17e0e7891b1c50d0547616b8f791`)은 그대로다.
+- `docs/handoff/README.md`는 T9·T10에서 고치지 않았고, T11에서 DL2 pin을 `77970b76625ed3ef38e888add769698b076293ae`(이전 `f41d42709f4f17e0e7891b1c50d0547616b8f791`)로 갱신했다.
 
 ### T10: DL2 요청 R1~R5 처리 상태 (DL2 `PLAN_v3_db_search.md` §5)
 
@@ -46,7 +46,7 @@ Windows zip·wheel은 T9에서 다시 만들지 않았다. Windows에서 `candid
 | R3 `psdl2_search_batch_v1` 읽기 | **완료(T10)** | `confirm-pairs --match`가 배치 봉투를 읽는다(질의 해시 `rankings[i].query_export_sha256`, `index_sources[].export_sha256`·`product_ids`, `search_scope`). NCC 경로는 바이트·동작 그대로 |
 | R3e 출력 | **확인** | `roi_correspondence_v1`은 쌍 단위(a=reference, b=target, producer `manual`)이고 `compare-windows`가 그대로 읽는다. 사이드카에 `match_schema`, `rank`, `search_scope`, index source 해시를 남긴다 |
 | R4 | 보류 | 이번 Run에서 하지 않는다 |
-| R5 DL2 pin | 대기 | DL2 병합 뒤 T11에서 `docs/handoff/README.md`의 pin을 갱신한다. T10은 고치지 않았다 |
+| R5 DL2 pin | **완료(T11)** | DL2 `feat/dl2-db-search`를 `feat/dl2-patch-dataset`로 fast-forward 병합하고 origin에 push했다(2026-10-27). `docs/handoff/README.md`의 DL2 pin과 `--dl2-ref`를 `77970b76625ed3ef38e888add769698b076293ae`로 갱신했다 |
 
 T10b 수정(T10 리뷰 FAIL blk:1): DL2 문서의 DB 는 제품별 template export 이므로 `index_sources[].export_sha256`이 `*_index_export` 해시와 같을 수 없다. 후보 제품 검증은 `product_ids` 기준이고 해시 대조는 등급(`candidates_index_export`/`product_ids_only`/`unverifiable_single_export`/`no_source_for_index_product`)으로만 남는다. 일치 source 가 없다는 이유로 종료 2 를 내지 않는다. 한 봉투에 두 방향 질의가 들어 있어도 같은 파일을 두 `--match`에 줄 수 있다. `index_sources == "single_export"`일 때는 봉투에 export 해시가 없어 대조하지 못한다(`inputs.index_sha256`은 index 체크포인트 파일의 해시다). DL2가 이 경우에도 export 해시를 싣도록 바뀌면 `confirm_pairs._index_grade`에서 대조를 켠다.
 
@@ -65,7 +65,7 @@ DL2를 실제로 연결할 때 하나씩 확인한다. 1~10은 계획 초안(PLA
 | 7 | `confirm-pairs --list`가 `candidate_id` 목록을 찍고, `decisions.csv`의 id가 그 목록에 있다. | **확인.** 배치 봉투 세 종류와 NCC 모두에서 첫 usable 후보를 accept 해 종료 0. |
 | 8 | `compare-windows`가 확정 쌍 파일로 끝까지 돈다(종료 코드 0 또는 3과 그 사유 확인). | **확인.** 종료 3, `incomplete_local_delta`. 합성 hotspot이 5 µm뿐이라 다른 지름은 `source_coverage_incomplete`이고, ready 쌍마다 5 µm 행은 available이다. |
 | 9 | 실행기 로그에 `payload_sha256=`, numpy·Pillow 버전, `<명령> exit N`이 있고 N이 0 또는 3이다. Python 3.9 실행기 결과가 현재 인터프리터와 같다(`alignment.html` 제외, 아래 한계). | **T12에서 못 봄.** `tests/test_etx_chain.py`가 본다. T12는 단일 파일 실행기를 쓰지 않고 CLI를 직접 불렀다. |
-| 10 | DL2 pin과 불변 bundle: DL2 pin이 `docs/handoff/README.md`와 같고 Windows zip·wheel이 바뀌지 않았다. | **일부.** zip·wheel 해시는 위 표와 같다(바뀌지 않음). pin은 아직 `f41d427`이고 이 연결은 `77970b7`로 돌렸다. 갱신은 T11이다. |
+| 10 | DL2 pin과 불변 bundle: DL2 pin이 `docs/handoff/README.md`와 같고 Windows zip·wheel이 바뀌지 않았다. | **일부.** zip·wheel 해시는 위 표와 같다(바뀌지 않음). pin은 T11에서 `77970b7`로 갱신했다(이 연결을 검증한 commit과 같다). → **확인.** |
 | 11 | (X3) 질의 export 행의 `roi_id`와 `direct/roi_correspondence.json`의 `a.roi_id`/`b.roi_id`가 같은 행(중심·endpoints 일치)을 가리킨다. | **확인.** ready 쌍마다 중심·endpoints가 질의 export 행과 같다. |
 | 12 | 정렬 부호식 `p_target = p_reference + offset`이 `alignment.json`, 직접 쌍 b 중심(= a 중심 + 원점 차이 + offset), 질의 중심에서 같은 방향이다. | **확인.** `alignment.json`·질의 중심·직접 쌍 b 중심. |
 | 13 | 직접 경로로 `compare-windows`를 실행한다: `--correspondence data/changes/direct/roi_correspondence.json`. blocked 쌍이 있으면 `blocked_pairs_present`로 막힌다(사유는 사이드카). | **일부.** 실행해 종료 3(`incomplete_local_delta`, 8번과 같은 이유). 이 세계에는 blocked 쌍이 없어 `blocked_pairs_present` 경로는 못 봤다. |
@@ -89,7 +89,7 @@ DL2를 실제로 연결할 때 하나씩 확인한다. 1~10은 계획 초안(PLA
 
 - 실데이터 규모의 시간·메모리(`candidates-change`는 합성 소형 자료만 돌렸다).
 - 예시 탐색 반경 30 µm(0.1 µm pitch에서 300 px)의 탐색 비용·메모리는 측정하지 않았다.
-- (T12에서 해소) 실제 DL2 코드(`feat/dl2-db-search @ 77970b7`)로 `mask_derivation.json`·배치 봉투를 읽었다. 위 표와 아래 "검증한 것"을 본다. 남은 것: DL2 pin(`f41d427`)은 아직 `77970b7`이 아니다(T11).
+- (T12에서 해소) 실제 DL2 코드(`feat/dl2-db-search @ 77970b7`)로 `mask_derivation.json`·배치 봉투를 읽었다. 위 표와 아래 "검증한 것"을 본다. DL2 pin도 T11에서 `77970b7`로 갱신했다.
 - T12는 합성 소형 자료(모델 2개 + DB 전용 제품 1개, CPU 학습 1 epoch)로 연결만 증명한다. 순위 품질(정답 위치가 상위에 오는지)은 단언하지 않았고 DL2 후보는 격자 점(1 µm 간격)이다.
 - `index_sources == "single_export"` 봉투에서는 index export 해시를 대조하지 못한다(위 T10 절).
 - ETX Linux 서버에서의 실제 실행(Python 3.9 인터프리터는 macOS의 3.9 가상환경으로 대신 확인했다).
