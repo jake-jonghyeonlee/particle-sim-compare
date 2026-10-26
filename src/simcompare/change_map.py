@@ -9,6 +9,8 @@
 - ``window_candidates``: 층별 적분 영상으로 모든 W×W 창 합을 구하고 8-이웃 극대 창을 후보로 만든다.
 - ``case_contributions``: 선정된 창에 대해 case 를 한 번 더 돌며 기여 case 와 변경 종류를 구한다.
 분류(shifted/reshaped/…)는 설명용이며 선정·점수에 쓰지 않는다.
+한쪽 조합(한쪽 모델에만 있거나 층이 바뀐 case)은 ``pair_cases`` 에 전극 목록을 주면 쌍에 들어간다: 없는 쪽은 빈 mask 이므로
+그 hotspot 은 그쪽 합집합에만 들어가고, 잔차는 hotspot ∩ erode(D, r) 이며 변경 종류는 appeared / disappeared 이다.
 """
 from __future__ import annotations
 
@@ -46,32 +48,50 @@ class CasePair:
 
     ``flags`` = 두 대표 record 헤더 reasons(예 ``csv_area_mismatch``)를 ``reference:``/``target:`` 접두로 모은 정렬 튜플.
     쌍을 제외하지 않고 기여 case 에 표시만 한다."""
-    __slots__ = ('case_key', 'layer', 'ref_case', 'tgt_case', 'ref_diameter', 'tgt_diameter', 'flags')
+    __slots__ = ('case_key', 'layer', 'ref_case', 'tgt_case', 'ref_diameter', 'tgt_diameter', 'flags', 'layer_changed')
 
-    def __init__(self, case_key, layer, ref_case, tgt_case, ref_diameter, tgt_diameter, flags=()):
+    def __init__(self, case_key, layer, ref_case, tgt_case, ref_diameter, tgt_diameter, flags=(), layer_changed=False):
         self.case_key, self.layer = case_key, layer
         self.ref_case, self.tgt_case = ref_case, tgt_case
         self.ref_diameter, self.tgt_diameter = ref_diameter, tgt_diameter
         self.flags = tuple(flags)
+        self.layer_changed = bool(layer_changed)
+
+    @property
+    def present_in(self):
+        """``both`` | ``reference`` | ``target``. 한쪽 조합은 없는 쪽의 case 가 None 이다."""
+        return _present_in(self.ref_case, self.tgt_case)
 
     def load(self):
-        a = self.ref_case.records[self.ref_diameter].mask
-        b = self.tgt_case.records[self.tgt_diameter].mask
-        if a is None or b is None:
+        """(A, B). 없는 쪽(한쪽 조합)은 None 이다: 호출자가 그 쪽 frame 크기의 빈 mask 로 본다."""
+        a = None if self.ref_case is None else self.ref_case.records[self.ref_diameter].mask
+        b = None if self.tgt_case is None else self.tgt_case.records[self.tgt_diameter].mask
+        if (self.ref_case is not None and a is None) or (self.tgt_case is not None and b is None):
             raise NumericContractError('change_map_mask_unavailable', self.case_key)
         return a, b
 
 
 class MaskPair:
-    """이미 메모리에 있는 mask 쌍(합성 입력·테스트용). ``CasePair`` 와 같은 인터페이스."""
-    __slots__ = ('case_key', 'layer', 'a', 'b', 'flags')
+    """이미 메모리에 있는 mask 쌍(합성 입력·테스트용). ``CasePair`` 와 같은 인터페이스. a 또는 b 가 None 이면 한쪽 조합이다."""
+    __slots__ = ('case_key', 'layer', 'a', 'b', 'flags', 'layer_changed')
 
-    def __init__(self, case_key, layer, a, b, flags=()):
+    def __init__(self, case_key, layer, a, b, flags=(), layer_changed=False):
         self.case_key, self.layer, self.a, self.b = case_key, layer, a, b
         self.flags = tuple(flags)
+        self.layer_changed = bool(layer_changed)
+
+    @property
+    def present_in(self):
+        return _present_in(self.a, self.b)
 
     def load(self):
         return self.a, self.b
+
+
+def _present_in(ref_side, tgt_side):
+    if ref_side is not None and tgt_side is not None:
+        return 'both'
+    return 'reference' if ref_side is not None else 'target'
 
 
 def _endpoints(case):
@@ -131,7 +151,7 @@ def _context(dataset):
     return out
 
 
-def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
+def pair_cases(ref_dataset, tgt_dataset, *, diameter_um, ref_electrodes=None, tgt_electrodes=None):
     """결합 키 = (불량명, 정렬된 (전극, 층) 두 개) 로 두 dataset 의 case 를 짝짓는다. product_id·design_version 등은 키가 아니다.
 
     같은 키인데 analysis_layer 가 다르면 ``case_layer_mismatch``(공통 layer 가 하나도 없을 때), 한쪽에만 있으면
@@ -139,6 +159,11 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
     양쪽 대표 지름 record 가 관측(면적 0 포함)일 때만 쌍을 만든다. mask 는 읽지 않는다.
     한쪽에 중복이 있으면 반대편의 단일 case 도 ``duplicate_case_key_on_other_side`` 로 제외 목록에 남긴다(둘 다 쌍에서 빠진다).
     lateral_short·vertical_short 가 아닌 case 는 ``map_requires_short_only`` 로 제외한다(electrode_map 관례).
+    ``ref_electrodes``·``tgt_electrodes``(모델별 DL1 전극 폴더 이름 목록)를 둘 다 주면 한쪽 조합도 쌍에 넣는다: 한쪽 모델에만 있는
+    case(``cases_only_in_*``)와 층이 바뀐 case(``case_layer_mismatch``)를 자기 층의 한쪽 조합(``present_in`` = 있는 쪽,
+    flags ``one_sided_case`` + 층 변경이면 ``layer_changed``)으로 넣는다. 전극이 반대 모델 전극 목록에 없어도 넣고(전극 추가·삭제도
+    비교 대상) flag ``new_electrode``(target 에만 있는 전극) / ``removed_electrode``(reference 에만 있는 전극)를 붙인다.
+    중복은 ``duplicate_case_key``, 관측 불가는 그 사유로 제외한다. 목록을 주지 않으면 이전 동작이다(한쪽 조합 없음).
     두 dataset 의 process_step_id·exposure_id·unit_id·source_contract_version 은 ``stats['dataset_context']`` 에 적고
     다르면 ``warnings`` 에 ``change_map_dataset_context_differs`` 를 넣는다.
     반환: ``{'pairs': [CasePair], 'cases_excluded': [{case_key, side, product, reason}], 'cases_only_in_reference': [...],
@@ -155,6 +180,42 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
     def only(target, case_key, product):
         target.append({'case_key': case_key, 'product': product})
 
+    include_one_sided = ref_electrodes is not None and tgt_electrodes is not None
+    ref_names = set(ref_electrodes) if include_one_sided else set()
+    tgt_names = set(tgt_electrodes) if include_one_sided else set()
+    counts = {'one_sided_included_reference': 0, 'one_sided_included_target': 0, 'layer_changed_included': 0,
+              'new_electrode_included': 0, 'removed_electrode_included': 0}
+
+    def one_sided(side, cases, text, endpoints, layer, layer_changed):
+        """한쪽 모델에만 있는 (키, 층) 조합 하나를 쌍 목록에 넣거나 사유와 함께 제외한다.
+
+        전극이 반대 모델에 없어도(전극 추가·삭제) 비교 대상이다: 설계 변경으로 새 불량 조합이 생긴 경우와 같이 다루고
+        flag ``new_electrode``(target 에만 있는 전극) / ``removed_electrode``(reference 에만 있는 전극)만 붙인다."""
+        if not include_one_sided:
+            return
+        if len(cases) > 1:
+            exclude(text, side, 'duplicate_case_key')
+            return
+        found, reason, head = _observation(cases[0], diameter_um)
+        if reason:
+            exclude(text, side, reason)
+            return
+        other_names = tgt_names if side == 'reference' else ref_names
+        electrode_flag = None
+        if any(electrode not in other_names for electrode, _ in endpoints):
+            electrode_flag = 'removed_electrode' if side == 'reference' else 'new_electrode'
+        flags = sorted({f'{side}:{r}' for r in head} | {'one_sided_case'} | ({'layer_changed'} if layer_changed else set())
+                       | ({electrode_flag} if electrode_flag else set()))
+        if electrode_flag:
+            counts[electrode_flag + '_included'] += 1
+        if side == 'reference':
+            pairs.append(CasePair(text, layer, cases[0], None, found, None, flags, layer_changed))
+        else:
+            pairs.append(CasePair(text, layer, None, cases[0], None, found, flags, layer_changed))
+        counts['one_sided_included_' + side] += 1
+        if layer_changed:
+            counts['layer_changed_included'] += 1
+
     for key in sorted(set(ref_groups) | set(tgt_groups)):
         failure_type, endpoints = key
         ref_layers, tgt_layers = ref_groups.get(key, {}), tgt_groups.get(key, {})
@@ -166,13 +227,17 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
             continue
         if not ref_layers:
             for layer in sorted(tgt_layers):
+                text = _key_text(failure_type, endpoints, layer)
                 for _ in tgt_layers[layer]:
-                    only(only_tgt, _key_text(failure_type, endpoints, layer), tgt_product)
+                    only(only_tgt, text, tgt_product)
+                one_sided('target', tgt_layers[layer], text, endpoints, layer, False)
             continue
         if not tgt_layers:
             for layer in sorted(ref_layers):
+                text = _key_text(failure_type, endpoints, layer)
                 for _ in ref_layers[layer]:
-                    only(only_ref, _key_text(failure_type, endpoints, layer), ref_product)
+                    only(only_ref, text, ref_product)
+                one_sided('reference', ref_layers[layer], text, endpoints, layer, False)
             continue
         common = sorted(set(ref_layers) & set(tgt_layers))
         for layer in sorted(set(ref_layers) | set(tgt_layers)):
@@ -196,15 +261,20 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
                     flags = sorted({f'reference:{r}' for r in ref_head} | {f'target:{r}' for r in tgt_head})
                     pairs.append(CasePair(text, layer, in_ref[0], in_tgt[0], ref_d, tgt_d, flags))
             elif not common:
-                if in_ref:
-                    exclude(text, 'reference', 'case_layer_mismatch')
-                if in_tgt:
-                    exclude(text, 'target', 'case_layer_mismatch')
+                for side, mine in (('reference', in_ref), ('target', in_tgt)):
+                    if not mine:
+                        continue
+                    if include_one_sided:
+                        one_sided(side, mine, text, endpoints, layer, True)
+                    else:
+                        exclude(text, side, 'case_layer_mismatch')
             else:
                 if in_ref:
                     only(only_ref, text, ref_product)
+                    one_sided('reference', in_ref, text, endpoints, layer, False)
                 if in_tgt:
                     only(only_tgt, text, tgt_product)
+                    one_sided('target', in_tgt, text, endpoints, layer, False)
     pairs.sort(key=lambda p: p.case_key)
     excluded.sort(key=lambda e: (e['case_key'], e['side'], e['reason']))
     only_ref.sort(key=lambda e: e['case_key'])
@@ -217,7 +287,7 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
     return {'pairs': pairs, 'cases_excluded': excluded, 'cases_only_in_reference': only_ref,
             'cases_only_in_target': only_tgt, 'warnings': warnings,
             'stats': {'pairs': len(pairs), 'excluded_entries': len(excluded), 'excluded_by_reason': reasons,
-                      'only_in_reference': len(only_ref), 'only_in_target': len(only_tgt),
+                      'only_in_reference': len(only_ref), 'only_in_target': len(only_tgt), **counts,
                       'diameter_um': float(diameter_um), 'dataset_context': context}}
 
 
@@ -391,7 +461,9 @@ def _pair_bbox(a, b, dy, dx, height, width, margin):
 
 def _load_checked(pair, ref_shape, tgt_shape):
     a, b = pair.load()
-    a, b = np.asarray(a), np.asarray(b)
+    # 한쪽 조합: 없는 쪽은 그 쪽 frame 크기의 빈 mask 로 본다(합집합·잔차 모두 그 쪽에는 기여가 없다).
+    a = np.zeros(ref_shape, dtype=bool) if a is None else np.asarray(a)
+    b = np.zeros(tgt_shape, dtype=bool) if b is None else np.asarray(b)
     if a.dtype != bool or b.dtype != bool:
         raise _bad(f'case {pair.case_key}: masks must be bool')
     if a.shape != ref_shape or b.shape != tgt_shape:

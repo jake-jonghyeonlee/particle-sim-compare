@@ -26,7 +26,8 @@ DIAMETER_UM = 5
 ROI_SOURCE = 'cnt_change'
 ALIGNMENT_SCHEMA = 'cnt_alignment_v1'
 ELECTRODE_SET_BASIS = 'dl1_electrode_folders'
-UNION_BASIS = 'paired_cases_only'      # 합집합·순위는 짝지어진 조합만으로 계산한다(한쪽에만 있는 case 는 빠진다)
+UNION_BASIS = 'paired_and_one_sided_cases'   # 합집합·순위 = 짝지어진 조합 + 한쪽 조합(그쪽 합집합에만). 전극이 한쪽에만 있어도 포함한다
+NO_CASE_REASON = 'no_case_in_this_model'      # 이 방향 모델에는 기여 case 가 없다(전부 반대 모델에만 있는 조합)
 DIRECT_SOURCE = {'kind': 'template_match', 'method': 'cnt_alignment_v1', 'version': '1'}
 DIRECT_SIDECAR_SCHEMA = 'direct_pairs_sidecar_v1'
 DIRECT_LIMITATION = 'compare-windows does not verify these input hashes'
@@ -197,6 +198,43 @@ def _direct_side(case, center, rows_by_key, frame):
     return side, identity
 
 
+def _dataset_filters(dataset, layer):
+    """한쪽 조합에서 case 가 없는 쪽 side 의 group 필터: 그 쪽 dataset 의 (같은 층) case 들이 하나의 값을 공유할 때만 쓴다.
+    값이 여럿이면 필터를 비워 둔다(compare-windows 가 모호함을 ``ambiguous_source_group_*`` 로 알린다)."""
+    cases = [c for c in dataset.cases if c.analysis_layer == layer] or list(dataset.cases)
+    out = {}
+    for field in ('source_id', 'process_step_id', 'exposure_id'):
+        values = {getattr(c.identity, field, None) for c in cases}
+        if len(values) == 1 and None not in values:
+            out[field] = next(iter(values))
+    units = {c.metadata.get('unit_id') for c in cases}
+    if len(units) == 1 and None not in units:
+        out['unit_id'] = next(iter(units))
+    return out
+
+
+def _direct_side_one_sided(case, layer, center, rows_by_key, item):
+    """한쪽 조합의 side: endpoints·failure_type 을 쓰지 않는다(반대 모델에 그 case 가 없어 named_pair 를 찾을 수 없다).
+    analysis_layer 는 그 조합의 층, 필터는 case 가 있는 쪽은 그 case identity, 없는 쪽은 dataset 값이다."""
+    side = {'product_id': item.product_id, 'design_version': item.design_version, 'frame_id': item.frame_id,
+            'center_xy_um': list(center), 'analysis_layer': layer}
+    if case is None:
+        identity = {'product_id': item.product_id, 'design_version': item.design_version, 'frame_id': item.frame_id,
+                    **_dataset_filters(item.side.dataset, layer)}
+        side.update({k: v for k, v in identity.items() if k not in ('product_id', 'design_version', 'frame_id')})
+        return side, identity
+    identity = asdict(case.identity)
+    for field in ('source_id', 'process_step_id', 'exposure_id'):
+        side[field] = identity[field]
+    unit_id = case.metadata.get('unit_id')
+    if unit_id:
+        side['unit_id'] = unit_id
+    row = rows_by_key.get(_row_key(identity, case.failure_type, case.analysis_layer, center, item.frame))
+    if row is not None and row.get('status') == 'ready':
+        side['roi_id'] = row['roi_id']
+    return side, identity
+
+
 def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_index):
     """(선정 ROI, 기여 case) 하나당 쌍 하나. 두 방향의 ROI 는 a=reference / b=target 으로 정규화한 뒤 같은 키를 하나로 합친다.
 
@@ -213,11 +251,16 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
             b_center = [round(a_center[0] + shift[0], 6), round(a_center[1] + shift[1], 6)]
             for contribution in contrib[i]['contributing_cases']:
                 pair = pair_by_key[contribution['case_key']]
-                a, a_identity = _direct_side(pair.ref_case, a_center, rows_index['reference'], ref.frame)
-                b, b_identity = _direct_side(pair.tgt_case, b_center, rows_index['target'], tgt.frame)
+                present_in = pair.present_in
+                if present_in == 'both':
+                    a, a_identity = _direct_side(pair.ref_case, a_center, rows_index['reference'], ref.frame)
+                    b, b_identity = _direct_side(pair.tgt_case, b_center, rows_index['target'], tgt.frame)
+                else:
+                    a, a_identity = _direct_side_one_sided(pair.ref_case, pair.layer, a_center, rows_index['reference'], ref)
+                    b, b_identity = _direct_side_one_sided(pair.tgt_case, pair.layer, b_center, rows_index['target'], tgt)
                 digest = _sha_json({
-                    'a': [sorted(a_identity.items()), a['analysis_layer'], a['failure_type'], _cell(a_center, ref.frame)],
-                    'b': [sorted(b_identity.items()), b['analysis_layer'], b['failure_type'], _cell(b_center, tgt.frame)]})
+                    'a': [sorted(a_identity.items()), a['analysis_layer'], a.get('failure_type'), _cell(a_center, ref.frame)],
+                    'b': [sorted(b_identity.items()), b['analysis_layer'], b.get('failure_type'), _cell(b_center, tgt.frame)]})
                 pair_id = 'direct_' + digest[:16]
                 if pair_id in found:
                     found[pair_id]['directions'].add(direction)
@@ -227,6 +270,8 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
                                   'score_um2': rep.score, 'score_layer': rep.layer, 'region_id': rep.region_id,
                                   **_window_attributes(window, len(contrib[i]['contributing_cases'])),
                                   'observed_fraction': window['observed_fraction'], 'flags': flags,
+                                  'present_in': present_in, 'one_sided_case': present_in != 'both',
+                                  'layer_changed': pair.layer_changed,
                                   'change_kind': contribution['classification'],
                                   'residual_um2': contribution['residual_um2'], 'iou_global': contribution['iou_global'],
                                   'iou_local': contribution['iou_local'],
@@ -263,7 +308,8 @@ def _direct_documents(records, alignment, commit, inputs):
             'alignment_status': alignment['status'], 'alignment_reasons': list(alignment['reasons']),
             'peak_ratio': alignment['peak_ratio'], 'score_um2': r['score_um2'], 'score_layer': r['score_layer'],
             **{k: r[k] for k in ATTRIBUTE_KEYS},
-            'region_id': r['region_id'], 'change_kind': r['change_kind'], 'residual_um2': r['residual_um2'],
+            'region_id': r['region_id'], 'one_sided_case': r['one_sided_case'], 'present_in': r['present_in'],
+            'layer_changed': r['layer_changed'], 'change_kind': r['change_kind'], 'residual_um2': r['residual_um2'],
             'iou_global': r['iou_global'], 'iou_local': r['iou_local'], 'local_shift_um': r['local_shift_um'],
             'observed_fraction': r['observed_fraction'], 'flags': r['flags'], 'directions': sorted(r['directions'])}
     sidecar = {'schema_version': DIRECT_SIDECAR_SCHEMA, 'method': DIRECT_SOURCE['method'],
@@ -410,20 +456,22 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             notes.append({'code': 'cnt_input_note', 'product': name, **item})
 
     # --- 3. 변경 지도 → 창 후보 → 층마다 병합
-    pairing = change_map.pair_cases(sides['reference'].dataset, sides['target'].dataset, diameter_um=DIAMETER_UM)
+    # 같은 역할의 전극은 두 모델에서 같은 이름이다. 전극이 한쪽 모델에만 있어도 비교 대상이다: 그 전극을 쓰는 한쪽 조합은
+    # 설계 변경으로 새로 생긴(사라진) 불량 조합과 같이 그쪽 합집합에 들어가고(pair_cases) flag ``new_electrode`` /
+    # ``removed_electrode`` 만 붙는다. 모델 전체의 전극 목록 차이는 정보(note)다.
+    # 기준은 case endpoints 가 아니라 DL1 root 의 모델별 전극 폴더 이름이다(기대 case 는 두 모델의 합집합이라
+    # case 목록으로는 전극 추가·삭제가 가려지거나 거짓 차이가 난다).
+    names = {name: set(list_dl1_electrodes(args['cnt_from_dl1_root'], products[name].product_id)) for name in products}
+    pairing = change_map.pair_cases(sides['reference'].dataset, sides['target'].dataset, diameter_um=DIAMETER_UM,
+                                    ref_electrodes=sorted(names['reference']), tgt_electrodes=sorted(names['target']))
     pairs = pairing['pairs']
     pair_by_key = {p.case_key: p for p in pairs}
     for code in pairing['warnings']:
         warnings.append({'code': code})
-    # 같은 역할의 전극은 두 모델에서 같은 이름이다. 전극이 늘거나 줄었으면 회로 자체가 바뀐 것이라 비교 대상이 아니다:
-    # 경고만 남기고 계산은 계속한다. 한쪽 전극만 관여하는 case 는 cases_only_in_* 에 남고 ROI 후보가 되지 않는다.
-    # 기준은 case endpoints 가 아니라 DL1 root 의 모델별 전극 폴더 이름이다(기대 case 는 두 모델의 합집합이라
-    # case 목록으로는 전극 추가·삭제가 가려지거나 거짓 경고가 난다).
-    names = {name: set(list_dl1_electrodes(args['cnt_from_dl1_root'], products[name].product_id)) for name in products}
-    if names['reference'] != names['target']:
-        warnings.append({'code': 'electrode_set_differs', 'electrode_set_basis': ELECTRODE_SET_BASIS,
-                         'reference_only': sorted(names['reference'] - names['target']),
-                         'target_only': sorted(names['target'] - names['reference'])})
+    if names['reference'] != names['target']:        # 정보다: 경고도 종료 코드 3 도 아니다(전극 추가·삭제도 비교 대상)
+        notes.append({'code': 'electrode_set_differs', 'severity': 'info', 'electrode_set_basis': ELECTRODE_SET_BASIS,
+                      'reference_only': sorted(names['reference'] - names['target']),
+                      'target_only': sorted(names['target'] - names['reference'])})
     maps = change_map.change_maps(pairs, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px,
                                   pitch_um=pitch, tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit,
                                   window_um=window_um, reserved_bytes=reserved)
@@ -470,6 +518,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             for entry in contrib[i]['contributing_cases']:
                 pair = pair_by_key[entry['case_key']]
                 case = pair.ref_case if query_name == 'reference' else pair.tgt_case
+                if case is None:       # 한쪽 조합: 반대 방향 질의 제품에는 case 문맥이 없어 manual 행을 만들지 않는다
+                    continue
                 identity = asdict(case.identity)
                 key = _row_key(identity, case.failure_type, case.analysis_layer, center, item.frame)
                 requests.setdefault(key, {**identity, 'center_xy_um': center,
@@ -539,7 +589,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             if len(rows) < len(entry['keys']):
                 reasons.add('roi_row_missing')
             if not rows and not reasons:
-                reasons.add('no_roi_rows')
+                reasons.add(NO_CASE_REASON if contrib[i]['contributing_cases'] and not entry['keys'] else 'no_roi_rows')
             flags = list(window['flags'])
             shift_here = (0.0, 0.0) if query_name == 'reference' else shift
             if _clipped(entry['center'], tuple(item.frame.bbox_um), window_um):
@@ -567,8 +617,14 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 'contributing_cases': [
                     {'case_key': c['case_key'], 'residual_um2': c['residual_um2'], 'change_kind': c['classification'],
                      'iou_global': c['iou_global'], 'iou_local': c['iou_local'],
-                     'local_shift_um': c['local_shift_um'], 'flags': c['flags']}
+                     'local_shift_um': c['local_shift_um'], 'flags': c['flags'],
+                     'present_in': pair_by_key[c['case_key']].present_in,
+                     'layer_changed': pair_by_key[c['case_key']].layer_changed}
                     for c in contrib[i]['contributing_cases']],
+                'one_sided_cases': [
+                    {'case_key': c['case_key'], 'present_in': pair_by_key[c['case_key']].present_in,
+                     'layer_changed': pair_by_key[c['case_key']].layer_changed}
+                    for c in contrib[i]['contributing_cases'] if pair_by_key[c['case_key']].present_in != 'both'],
                 'cnt_change_um2_by_layer': cnt_change[i]})
         funnel = _funnel(direction, n_candidates, n_merged, queries, top_k)
         funnels.append(funnel)
@@ -626,7 +682,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         warnings.append({'code': 'alignment_report_images_skipped', 'estimated_bytes': need, 'reserved_bytes': reserved,
                          'max_operation_bytes': limit})
     report_html, report_info = alignment_report.build_alignment_html(
-        alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped)
+        alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped,
+        pairing_stats=pairing['stats'])
     report_source = None
     emit_bytes('alignment.html', report_html)
     alignment_report_doc = {k: report_info[k] for k in ('path', 'bytes', 'downscaled', 'crops_omitted')}
@@ -644,7 +701,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             inputs[name]['index_export_sha256'] = candidates._sha256_file(side.index['path'])
     commit = next((s.export_payload.get('producer_commit') for s in sides.values() if s.export_payload), None)
     all_queries = [q for d in directions for q in d['queries']]
-    complete = (not warnings and all(q['status'] == 'ready' and q['n_rois'] == q['n_rois_ready'] for q in all_queries)
+    # 반대 모델에만 있는 조합뿐인 방향 질의(NO_CASE_REASON)는 내보낼 ROI 가 원래 없으므로 완전성을 깨지 않는다.
+    complete = (not warnings and all((q['status'] == 'ready' and q['n_rois'] == q['n_rois_ready'])
+                                     or q['reasons'] == [NO_CASE_REASON] for q in all_queries)
                 and all(s.status == 'available' for s in sides.values()))
     funnel_doc = {'schema_version': 'candidate_funnel_v1', 'directions': funnels, 'top_k': top_k,
                   'top_k_scope': 'per_direction', 'index_coverage': coverage,
@@ -718,7 +777,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
               'direct': direct_summary,
               'match_inputs': match_inputs, 'match_files': payload['match_files'], 'dl2_model_roles': dl2_model_roles}
     execution = {'command': 'candidates-change', 'args': {**change_args, 'max_operation_bytes': limit},
-                 'inputs': exec_inputs, 'warnings': warnings, **result}
+                 'inputs': exec_inputs, 'warnings': warnings, 'notes': notes, **result}
     candidates.write_text(out / 'execution.json', json.dumps(execution, ensure_ascii=False, indent=2) + '\n', track)
     result['outputs'] = sorted(result['outputs'] + ['execution.json'])
     return result

@@ -767,6 +767,109 @@ def test_window_candidates_rejects_union_maps_that_do_not_match_the_maps():
                           pitch_um=PITCH, window_um=2.0, max_operation_bytes=BIG)
 
 
+# --- change-roi/T8b: combinations that only one model has go into that model's union only -------------------------------
+
+def _one_sided_pair_sets():
+    ref = _fake_dataset('R', [('a', 'lateral_short', 'E1', 'E2', 'M1', ()),
+                             ('x', 'lateral_short', 'E3', 'E4', 'M1', ('csv_area_mismatch',)),      # only the reference has it
+                             ('g', 'lateral_short', 'E9', 'E10', 'M1', ()),                           # layer M1 here, M2 in the target
+                             ('d', 'lateral_short', 'E11', 'E12', 'M1', ()),                          # E12 is not in the target
+                             ('u', 'lateral_short', 'E13', 'E14', 'M1', ()), ('u2', 'lateral_short', 'E14', 'E13', 'M1', ())])
+    tgt = _fake_dataset('T', [('a', 'lateral_short', 'E1', 'E2', 'M1', ()),
+                             ('y', 'lateral_short', 'E5', 'E6', 'M2', ()),                            # only the target has it
+                             ('g', 'lateral_short', 'E9', 'E10', 'M2', ()),
+                             ('n', 'lateral_short', 'E7', 'E99', 'M1', ())])                          # E99 is not in the reference
+    electrodes = dict(ref_electrodes=['E1', 'E10', 'E11', 'E12', 'E13', 'E14', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E9'],
+                      tgt_electrodes=['E1', 'E10', 'E11', 'E13', 'E14', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E9', 'E99'])
+    return ref, tgt, electrodes
+
+
+def test_pair_cases_includes_one_sided_layer_changed_and_new_or_removed_electrode_cases():
+    """An electrode only one model has is still compared: the combination is a one-sided case with a flag, never excluded."""
+    ref, tgt, electrodes = _one_sided_pair_sets()
+    out = pair_cases(ref, tgt, diameter_um=5.0, **electrodes)
+    got = {p.case_key: (p.present_in, p.layer, p.layer_changed, p.flags) for p in out['pairs']}
+    assert got == {
+        'lateral_short|E1|M1|E2|M1|M1': ('both', 'M1', False, ()),
+        'lateral_short|E3|M1|E4|M1|M1': ('reference', 'M1', False, ('one_sided_case', 'reference:csv_area_mismatch')),
+        'lateral_short|E5|M1|E6|M1|M2': ('target', 'M2', False, ('one_sided_case',)),
+        'lateral_short|E10|M1|E9|M1|M1': ('reference', 'M1', True, ('layer_changed', 'one_sided_case')),
+        'lateral_short|E10|M1|E9|M1|M2': ('target', 'M2', True, ('layer_changed', 'one_sided_case')),
+        'lateral_short|E11|M1|E12|M1|M1': ('reference', 'M1', False, ('one_sided_case', 'removed_electrode')),   # E12 not in target
+        'lateral_short|E7|M1|E99|M1|M1': ('target', 'M1', False, ('new_electrode', 'one_sided_case'))}          # E99 not in reference
+    reasons = {(e['case_key'], e['side'], e['reason']) for e in out['cases_excluded']}
+    assert ('lateral_short|E13|M1|E14|M1|M1', 'reference', 'duplicate_case_key') in reasons
+    assert not any(e['reason'] in ('case_layer_mismatch', 'circuit_change_electrode_missing') for e in out['cases_excluded'])
+    stats = out['stats']
+    assert (stats['one_sided_included_reference'], stats['one_sided_included_target'], stats['layer_changed_included'],
+            stats['new_electrode_included'], stats['removed_electrode_included']) == (3, 3, 2, 1, 1)
+    assert stats['pairs'] == 7 and 'circuit_change_excluded' not in stats
+    assert {e['case_key'] for e in out['cases_only_in_reference']} >= {'lateral_short|E3|M1|E4|M1|M1'}
+
+
+def test_pair_cases_without_electrode_lists_keeps_the_previous_behaviour():
+    ref, tgt, _ = _one_sided_pair_sets()
+    out = pair_cases(ref, tgt, diameter_um=5.0)
+    assert [p.case_key for p in out['pairs']] == ['lateral_short|E1|M1|E2|M1|M1']
+    assert out['stats']['one_sided_included_reference'] == out['stats']['one_sided_included_target'] == 0
+    assert ('lateral_short|E10|M1|E9|M1|M1', 'reference', 'case_layer_mismatch') in {
+        (e['case_key'], e['side'], e['reason']) for e in out['cases_excluded']}
+
+
+def test_one_sided_hotspot_enters_only_its_own_union_and_is_appeared_or_disappeared():
+    shape_ref, shape_tgt = (260, 280), (270, 290)
+    offset = (6, -3)                       # reference p <-> target p + (dx, dy)
+    gone = rect(shape_ref, 60, 50, 14, 22)            # only the reference has it
+    new = rect(shape_tgt, 150, 170, 16, 20)           # only the target has it (target pixels)
+    same = rect(shape_ref, 200, 60, 10, 10)
+    pairs = [MaskPair('gone', 'M1', gone, None, flags=('one_sided_case',)),
+             MaskPair('new', 'M1', None, new, flags=('one_sided_case',)),
+             MaskPair('both', 'M1', same, np.roll(np.pad(same, ((0, 10), (0, 10))), (-3, 6), axis=(0, 1))[:shape_tgt[0], :shape_tgt[1]])]
+    kw = kwargs(shape_ref, shape_tgt, offset=offset)
+    maps = change_maps(pairs, max_operation_bytes=BIG, window_um=5.0, **kw)
+    r = change_map._round_px(0.2, PITCH)
+    domain = maps['D']
+    new_in_ref = change_map._shift_crop(new, offset[1], offset[0], 0, shape_ref[0], 0, shape_ref[1])
+    # reference union holds `gone` (+ the paired case), target union holds `new` (+ the paired case); never the other way round
+    assert maps['union_ref']['M1'][70, 60] and not maps['union_tgt']['M1'][70, 60]
+    assert maps['union_tgt']['M1'][new_in_ref][0] and not (maps['union_ref']['M1'] & new_in_ref).any()
+    # residual of a one-sided hotspot = hotspot ∩ erode(D, r): no dilation suppression because the other side is empty
+    assert int(maps['maps']['M1'][gone & domain].min()) >= 1
+    assert np.array_equal(maps['union_change']['M1'] & gone, gone & domain)
+    assert np.array_equal(maps['union_change']['M1'] & new_in_ref, new_in_ref & domain)
+    # bbox-local computation equals the whole-frame computation (explicit empty masks)
+    full = change_maps([MaskPair('gone', 'M1', gone, np.zeros(shape_tgt, bool)), MaskPair('new', 'M1', np.zeros(shape_ref, bool), new),
+                        pairs[2]], max_operation_bytes=BIG, window_um=5.0, **kw)
+    assert np.array_equal(full['maps']['M1'], maps['maps']['M1']) and np.array_equal(full['union_change']['M1'], maps['union_change']['M1'])
+    assert np.array_equal(full['union_ref']['M1'], maps['union_ref']['M1']) and np.array_equal(full['union_tgt']['M1'], maps['union_tgt']['M1'])
+    assert maps['stats']['pairs'] == 3 and r == 2
+    found = window_candidates(maps['maps'], maps['D'], **union_kw(maps), pitch_um=PITCH, window_um=5.0, max_operation_bytes=BIG)
+    top = found['candidates']
+    gains = [c for c in top if c['union_delta_um2'] > 0]
+    losses = [c for c in top if c['union_delta_um2'] < 0]
+    assert gains and losses and gains[0]['score_um2'] == pytest.approx(new_in_ref[domain].sum() * PITCH ** 2)
+    assert losses[0]['union_delta_um2'] == pytest.approx(-gone[domain].sum() * PITCH ** 2)
+    contrib = case_contributions(pairs, [gains[0], losses[0]], max_operation_bytes=BIG, **kw)['windows']
+    kinds = [{c['case_key']: (c['classification'], c['flags']) for c in w['contributing_cases']} for w in contrib]
+    assert kinds == [{'new': ('appeared', ['one_sided_case'])}, {'gone': ('disappeared', ['one_sided_case'])}]
+
+
+def test_layer_changed_pair_is_a_disappeared_in_one_layer_and_an_appeared_in_the_other():
+    shape = (200, 200)
+    block = rect(shape, 80, 80, 12, 12)
+    pairs = [MaskPair('k|L1', 'M1', block, None, flags=('layer_changed', 'one_sided_case'), layer_changed=True),
+             MaskPair('k|L2', 'M2', None, block, flags=('layer_changed', 'one_sided_case'), layer_changed=True)]
+    kw = kwargs(shape)
+    maps, found = run(pairs, **kw)
+    by_layer = {c['layer']: c for c in found['candidates']}
+    assert set(by_layer) == {'M1', 'M2'}
+    assert by_layer['M1']['union_delta_um2'] < 0 < by_layer['M2']['union_delta_um2']
+    contrib = case_contributions(pairs, [by_layer['M1'], by_layer['M2']], max_operation_bytes=BIG, **kw)['windows']
+    assert [(w['layer'], w['contributing_cases'][0]['classification'], w['contributing_cases'][0]['flags']) for w in contrib] == [
+        ('M1', 'disappeared', ['layer_changed', 'one_sided_case']), ('M2', 'appeared', ['layer_changed', 'one_sided_case'])]
+    assert pairs[0].present_in == 'reference' and pairs[1].present_in == 'target' and pairs[0].layer_changed
+
+
 @pytest.mark.skipif(not os.environ.get('SIMCOMPARE_ETX_PY'), reason='SIMCOMPARE_ETX_PY not set')
 def test_python39_result_is_identical():
     py = os.path.expanduser(os.environ['SIMCOMPARE_ETX_PY'])

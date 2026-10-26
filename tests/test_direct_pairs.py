@@ -142,6 +142,28 @@ def test_compare_windows_runs_on_the_direct_file_without_any_code_change(world, 
             assert row['window']['a']['union']['reasons'] == [] and row['window']['b']['union']['reasons'] == []
 
 
+@pytest.mark.parametrize('only, sign', [('target', 1), ('reference', -1)])
+def test_compare_windows_reads_a_one_sided_pair_without_endpoints_and_gives_the_group_union_delta(tmp_path, monkeypatch, only, sign):
+    """A combination only one model has: the direct pair has no endpoints / failure_type, so there is no named pair;
+    compare-windows (unchanged) finds both source groups and reports the group-union delta (target minus reference)."""
+    from test_change_candidates import one_sided_world
+    config = one_sided_world(tmp_path, monkeypatch, only)
+    out = tmp_path/'out'
+    assert main(cli_args(config, out, tmp_path/'dl1', top_k=1)) == 0
+    corr_path = out/'direct'/'roi_correspondence.json'
+    assert len(load(out, 'direct/roi_correspondence.json')['pairs']) == 1
+    windows = tmp_path/'windows'
+    assert compare_windows(SimpleNamespace(config=config), corr_path, windows) in (0, 3)
+    delta = load(windows, 'local_delta.json')
+    text = json.dumps(delta)
+    assert 'ambiguous_source_group' not in text and 'no_source_group' not in text
+    row = next(r for r in delta['rows'] if r['diameter_um'] == 5.0 and r['window_size_um'] == 10.0)
+    assert row['named_pair'] is None and row['group_a'] and row['group_b']
+    assert row['window']['a']['union']['status'] == row['window']['b']['union']['status'] == 'available'
+    value = row['window']['delta']['union']['value']
+    assert row['window']['delta']['union']['status'] == 'available' and value*sign > 0, value
+
+
 # --- blocked and uncertain ---------------------------------------------------------------------------------------------
 
 def test_failed_alignment_blocks_every_direct_pair(world, tmp_path):

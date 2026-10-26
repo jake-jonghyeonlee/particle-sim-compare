@@ -98,14 +98,16 @@ def test_roi_section_lists_ranking_attributes_and_contributions(aligned):
     for case in top['contributing_cases']:
         assert case['case_key'] in html and case['change_kind'] in html
     assert 'union_unchanged_pair_changed' in html
-    assert 'union_basis: paired_cases_only' in html and 'Δ_union' in html
+    assert 'union_basis: paired_and_one_sided_cases' in html and 'Δ_union' in html
+    assert '2b. 합집합에 포함한 조합' in html and '<td>one_sided_included_target</td>' in html
+    assert '<th>present_in</th>' in html and '<th>layer_changed</th>' in html
 
 
 def test_payload_records_the_report_and_union_basis(aligned):
     report = aligned.payload['alignment_report']
     assert report == {'path': 'alignment.html', 'bytes': (aligned.out/'alignment.html').stat().st_size,
                       'downscaled': False, 'crops_omitted': []}
-    assert aligned.payload['union_basis'] == 'paired_cases_only'
+    assert aligned.payload['union_basis'] == 'paired_and_one_sided_cases'
 
 
 def test_same_input_twice_gives_the_same_html(world, tmp_path, aligned):

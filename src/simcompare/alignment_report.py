@@ -55,6 +55,8 @@ REASON_TEXT = {
     'dice_below_min': '최적 offset 의 Dice 가 --align-min-dice 보다 낮습니다.',
     'search_bound_hit': '최적 offset 이 탐색 반경 가장자리에 닿았습니다.'}
 
+CASE_FLAGS = ('new_electrode', 'removed_electrode')      # 기여 case 표의 전극 표시 칸에 싣는 flag
+
 FLAG_TEXT = {
     'window_partially_unobserved': '창의 일부가 비교 영역 밖입니다.',
     'union_unchanged_pair_changed': '합집합은 그대로인데 조합만 바뀐 곳입니다.',
@@ -418,23 +420,44 @@ def _roi_text(rank, query, window):
             ('union_area_target_um2', query['union_area_target_um2']), ('observed_fraction', query['observed_fraction']),
             ('flags', _Raw('<br>'.join('<code>' + escape(f) + '</code> ' + escape(FLAG_TEXT.get(f, '')) for f in flags) or '—')),
             ('cnt_change_um2_by_layer', query['cnt_change_um2_by_layer'])]
-    cases = [(c['case_key'], c['change_kind'], c['residual_um2'], c['iou_global'], c['iou_local']) for c in query['contributing_cases']]
+    cases = [(c['case_key'], c['change_kind'], c['residual_um2'], c['iou_global'], c['iou_local'],
+              c.get('present_in', 'both'), c.get('layer_changed', False),
+              _Raw(', '.join('<code>' + escape(f) + '</code>' for f in c.get('flags', ()) if f in CASE_FLAGS) or '—'))
+             for c in query['contributing_cases']]
     title = ('<h3>순위 %d · 층 %s · 중심 %s µm · <code>%s</code></h3>'
              % (rank, escape(str(window['layer'])), escape(_json(query['center_xy_um'])), escape(str(query['region_id']))))
-    return title, _table(['항목', '값'], head) + _table(['기여 조합 case_key', 'change_kind', 'residual_um2', 'iou_global', 'iou_local'], cases)
+    return title, _table(['항목', '값'], head) + _table(
+        ['기여 조합 case_key', 'change_kind', 'residual_um2', 'iou_global', 'iou_local', 'present_in', 'layer_changed',
+         'electrode_flags'], cases)
+
+
+def _pairing_summary(stats):
+    """합집합에 포함·제외한 조합 수(``pair_cases`` stats)."""
+    keys = ('pairs', 'one_sided_included_reference', 'one_sided_included_target', 'layer_changed_included',
+            'new_electrode_included', 'removed_electrode_included')
+    rows = [(key, stats.get(key, 0)) for key in keys]
+    rows.append(('excluded_by_reason', _Raw('<code>' + escape(_json(stats.get('excluded_by_reason', {}))) + '</code>')))
+    return ('<h2>2b. 합집합에 포함한 조합</h2>'
+            '<p class="note">한쪽 모델에만 있거나 층이 바뀐 조합은 그쪽 합집합에만 들어갑니다. '
+            '전극이 한쪽 모델에만 있는 조합도 포함하며 new_electrode / removed_electrode 로 표시합니다.</p>'
+            + _table(['항목', '값'], rows))
 
 
 def _footnotes():
     return ('<h2>6. 각주</h2><ul class="note">'
             '<li>순위는 층별 합집합 변화(<code>score_um2</code>, 6회차 Δ_union 과 같은 기준)이다. 층 사이 합집합은 만들지 않는다.</li>'
             '<li>조합별 잔차 합(<code>sum_residual_um2</code>)과 변경 case 수(<code>changed_case_count</code>)는 순위가 아니라 속성이다.</li>'
-            '<li>union 은 짝지어진 조합만으로 계산한다(<code>union_basis: paired_cases_only</code>). 한쪽에만 있는 case 는 들어가지 않는다.</li>'
+            '<li>union 은 짝지어진 조합과 한쪽 조합으로 계산한다(<code>union_basis: paired_and_one_sided_cases</code>). '
+            '한쪽 모델에만 있거나 층이 바뀐 조합(<code>present_in</code>, <code>layer_changed</code>)의 hotspot 은 그쪽 합집합에만 들어가고 '
+            '변경 종류는 appeared / disappeared 이다. 전극이 한쪽 모델에만 있어도 비교 대상이며, 그 조합에는 flag '
+            '<code>new_electrode</code>(target 에만 있는 전극) 또는 <code>removed_electrode</code>(reference 에만 있는 전극)가 붙는다.</li>'
             '<li>한 ROI 의 직접 쌍들은 중심을 공유한다(같은 창에 기여한 조합마다 쌍이 하나씩이다).</li>'
             '<li>열지도는 블록 축소한 값이다: 합집합 변화는 블록 안 변화 칸 수, 조합별 잔차 합은 블록 안 최댓값(겹친 조합 수).</li>'
             '</ul>')
 
 
-def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=None, skipped_reason=None):
+def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=None, skipped_reason=None,
+                         pairing_stats=None):
     """alignment: ``alignment.json`` 문서(dict). queries: reference_to_target 질의 목록(순위 순), windows: 같은 순서의 창 후보.
 
     source: ``ImageSource`` (``collect`` 를 마친 것) 또는 None(그림 없음). skipped_reason: 그림을 만들지 않은 이유(문장).
@@ -442,6 +465,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     limit = MAX_HTML_BYTES if max_bytes is None else max_bytes
     n_images = 0
     prefix = [_summary(alignment), _alternatives(alignment)]
+    if pairing_stats is not None:
+        prefix.append(_pairing_summary(pairing_stats))
     # 3. 층별 전체 겹침
     prefix.append('<h2>3. 층별 전체 겹침 (정렬 전 / 정렬 후)</h2>')
     if source is None:

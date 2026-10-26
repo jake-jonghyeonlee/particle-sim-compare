@@ -505,29 +505,39 @@ def test_blocked_rows_stay_linked_and_make_a_partial_run(tmp_path):
     assert payload['funnel']['directions'][0]['exported_ready'] == 0
 
 
-def test_electrode_set_difference_warns_lists_the_one_sided_case_and_exits_three(tmp_path, capsys):
-    """Same-role electrodes keep their names across models; a new or removed electrode means the circuit changed.
-    The run continues (the planted change is still found), warns, lists the case that only one side has, exits 3."""
+def test_electrode_set_difference_is_an_info_note_and_the_new_electrode_case_is_compared(tmp_path, capsys):
+    """An electrode only one model has (D, target) is still compared: its combination is a one-sided `appeared` case with
+    the flag new_electrode. The electrode-list difference is an info note (candidate_queries_v1 notes + execution.json),
+    not a warning, and does not make the exit code 3 (T8b contract correction; before: warning, exit 3, case left out)."""
     datas, assignments = {}, {}
     for side in ('reference', 'target'):
         datas[side], assignments[side] = build_product(tmp_path, side, extra_target_case=True)
     config = write_config(tmp_path, datas, assignments, map_spec={'diameter_um': 5})
     out = tmp_path/'out'
     capsys.readouterr()
-    assert main(cli_args(config, out, tmp_path/'dl1', top_k=1)) == 3
+    assert main(cli_args(config, out, tmp_path/'dl1', top_k=2)) == 0
     printed = json.loads(capsys.readouterr().out)
     payload = load(out)
-    differs = [w for w in payload['warnings'] if w['code'] == 'electrode_set_differs']
-    assert differs == [{'code': 'electrode_set_differs', 'electrode_set_basis': 'dl1_electrode_folders',
-                        'reference_only': [], 'target_only': ['D']}]
+    note = {'code': 'electrode_set_differs', 'severity': 'info', 'electrode_set_basis': 'dl1_electrode_folders',
+            'reference_only': [], 'target_only': ['D']}
+    assert [n for n in payload['notes'] if n['code'] == 'electrode_set_differs'] == [note]
+    assert [n for n in load(out, 'execution.json')['notes'] if n['code'] == 'electrode_set_differs'] == [note]
     assert payload['electrode_set_basis'] == 'dl1_electrode_folders'
-    assert load(out, 'execution.json')['warnings'] == payload['warnings'] and 'electrode_set_differs' in printed['reasons']
-    assert [w['code'] for w in payload['warnings']] == ['electrode_set_differs']       # nothing else is partial
-    assert payload['status'] == 'partial' and payload['alignment']['status'] == 'aligned'
+    assert payload['warnings'] == [] and 'electrode_set_differs' not in printed['reasons']
+    assert payload['status'] == 'available' and payload['alignment']['status'] == 'aligned'
     only_target = payload['change_map']['cases_only_in_target']
     assert [c['case_key'] for c in only_target] == ['lateral_short|A|L1|D|L1|L1'] and payload['change_map']['cases_only_in_reference'] == []
+    assert payload['change_map']['cases_excluded'] == []
+    assert payload['change_map']['pairing']['new_electrode_included'] == 1
+    first, second = queries(payload, 'target_to_reference')[:2]
+    assert [(c['case_key'], c['change_kind'], c['present_in']) for c in first['contributing_cases']] == [
+        ('lateral_short|A|L1|D|L1|L1', 'appeared', 'target')]
+    assert {'one_sided_case', 'new_electrode'} <= set(first['contributing_cases'][0]['flags'])
+    assert first['union_delta_um2'] > 0 and first['status'] == 'ready'
+    direct = load(out, 'direct/direct_pairs_sidecar.json')['pairs']
+    assert any(item['one_sided_case'] and 'new_electrode' in item['flags'] for item in direct.values())
     for direction in payload['directions']:                                      # the planted change is still reported
-        query = direction['queries'][0]
+        query = direction['queries'][1]
         assert {c['case_key'] for c in query['contributing_cases']} == {'lateral_short|A|L1|B|L1|L1', 'lateral_short|A|L1|C|L1|L1'}
         assert query['status'] == 'ready' and query['n_rois'] == query['n_rois_ready'] == 2
     same = json.loads((out/'candidate_queries_v1.json').read_text())['funnel']['index_coverage']
@@ -613,17 +623,19 @@ def test_one_sided_cnt_gives_no_cnt_change_and_a_flag(world, tmp_path):
 
 
 def test_electrode_set_compares_dl1_folders_not_case_endpoints(tmp_path_factory, capsys):
-    # (a) a folder only the target has, identical cases: warns and exits 3
+    # (a) a folder only the target has, identical cases: an info note only, exit 0
     base = tmp_path_factory.mktemp('folder_only')
     datas, assignments = {}, {}
     for side in ('reference', 'target'):
         datas[side], assignments[side] = build_product(base, side, dl1_electrodes=['A', 'B', 'C'] + (['E'] if side == 'target' else []))
     config = write_config(base, datas, assignments, map_spec={'diameter_um': 5})
     capsys.readouterr()
-    assert main(cli_args(config, base/'out', base/'dl1', top_k=1)) == 3
+    assert main(cli_args(config, base/'out', base/'dl1', top_k=1)) == 0
     payload = load(base/'out')
-    assert [w for w in payload['warnings'] if w['code'] == 'electrode_set_differs'] == [
-        {'code': 'electrode_set_differs', 'electrode_set_basis': 'dl1_electrode_folders', 'reference_only': [], 'target_only': ['E']}]
+    assert [n for n in payload['notes'] if n['code'] == 'electrode_set_differs'] == [
+        {'code': 'electrode_set_differs', 'severity': 'info', 'electrode_set_basis': 'dl1_electrode_folders',
+         'reference_only': [], 'target_only': ['E']}]
+    assert payload['warnings'] == []
     assert payload['change_map']['cases_only_in_target'] == [] and payload['change_map']['cases_only_in_reference'] == []
     # (b) a case only the target has, but the folders match: no warning, exit 0
     base = tmp_path_factory.mktemp('case_only')
@@ -695,6 +707,102 @@ def test_a_union_changing_move_outranks_a_union_unchanged_move_at_the_command_le
     assert both[0]['region_id'] == top[0]['region_id'] and 'union_unchanged_pair_changed' in both[1]['flags']
     assert abs(both[1]['center_xy_um'][0]-CHANGE_CENTRE_UM[0]) <= 5.0 and both[1]['changed_case_count'] == 2
     assert len(load(three, 'direct/roi_correspondence.json')['pairs']) == 1 + 2        # one case + two cases
+
+
+# --- T8b: a combination only one model has goes into that model's union only ---------------------------------------------
+
+# Same physical place: reference row = target row + 4, column - 7. Away from the frame edge so a 10 um window is not clipped.
+AD_BLOB = {'target': (160, 120, 15, 30), 'reference': (164, 113, 15, 30)}
+AD_KEY = 'lateral_short|A|L1|D|L1|L1'
+
+
+def one_sided_world(base, monkeypatch, only, *, electrode_in_other_model=True):
+    """AD (electrodes A, D) exists in the `only` model alone. D has a DL1 folder in that model, and in the other one only
+    when `electrode_in_other_model` (False: the electrode itself is new in target / removed from reference)."""
+    import test_change_candidates as me
+    original = me.hotspot_masks
+
+    def patched(side, extra_target_case=False):
+        masks = original(side, False)
+        if side == only:
+            masks[CASE_AD] = rect(*AD_BLOB[side])
+        return masks
+    monkeypatch.setattr(me, 'hotspot_masks', patched)
+    datas, assignments = {}, {}
+    for side in ('reference', 'target'):
+        has_d = side == only or electrode_in_other_model
+        datas[side], assignments[side] = build_product(base, side, dl1_electrodes=['A', 'B', 'C'] + (['D'] if has_d else []))
+    return write_config(base, datas, assignments, map_spec={'diameter_um': 5})
+
+
+@pytest.mark.parametrize('only, sign, kind', [('target', 1, 'appeared'), ('reference', -1, 'disappeared')])
+def test_one_sided_combination_is_ranked_by_its_own_models_union(tmp_path, monkeypatch, only, sign, kind):
+    config = one_sided_world(tmp_path, monkeypatch, only)
+    out = tmp_path/'out'
+    assert main(cli_args(config, out, tmp_path/'dl1', top_k=1)) == 0
+    payload = load(out)
+    assert payload['union_basis'] == 'paired_and_one_sided_cases' and payload['warnings'] == []
+    stats = payload['change_map']['pairing']
+    assert stats[f'one_sided_included_{only}'] == 1 and stats['new_electrode_included'] == stats['removed_electrode_included'] == 0
+    assert stats['layer_changed_included'] == 0
+    owner = 'target_to_reference' if only == 'target' else 'reference_to_target'
+    other = 'reference_to_target' if only == 'target' else 'target_to_reference'
+    mine, theirs = queries(payload, owner)[0], queries(payload, other)[0]
+    assert mine['union_delta_um2'] == pytest.approx(sign*4.5) and mine['score_um2'] == pytest.approx(4.5)   # 15 x 30 px x 0.01 um2
+    assert mine['changed_case_count'] == 1
+    assert [(c['case_key'], c['change_kind'], c['present_in'], c['layer_changed']) for c in mine['contributing_cases']] == [
+        (AD_KEY, kind, only, False)]
+    assert 'one_sided_case' in mine['contributing_cases'][0]['flags']
+    assert mine['one_sided_cases'] == [{'case_key': AD_KEY, 'present_in': only, 'layer_changed': False}] == theirs['one_sided_cases']
+    assert mine['status'] == 'ready' and mine['n_rois'] == mine['n_rois_ready'] == 1
+    # the other direction has no case context: no manual row, no roi link, an informational reason only
+    assert theirs['n_rois'] == 0 and theirs['roi_ids'] == [] and theirs['status'] == 'blocked' and theirs['reasons'] == ['no_case_in_this_model']
+    assert theirs['union_delta_um2'] == mine['union_delta_um2']
+    assert len(load(out, f'{only}_export/review_rois.json')['rois']) == 1
+    assert load(out, f"{'reference' if only == 'target' else 'target'}_export/review_rois.json")['rois'] == []
+    # the single direct pair has no endpoints / failure_type on either side
+    corr = load(out, 'direct/roi_correspondence.json')
+    assert len(corr['pairs']) == 1
+    pair = corr['pairs'][0]
+    assert pair['status'] == 'ready'
+    for key in ('a', 'b'):                  # validate_correspondence writes an omitted optional field as null
+        assert pair[key].get('endpoints') is None and pair[key].get('failure_type') is None
+    assert pair['a']['analysis_layer'] == pair['b']['analysis_layer'] == 'L1'
+    assert {k: pair['a'][k] for k in ('source_id', 'process_step_id', 'exposure_id', 'unit_id')} == {
+        'source_id': 'SOURCE', 'process_step_id': 'STEP', 'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT'} == {
+        k: pair['b'][k] for k in ('source_id', 'process_step_id', 'exposure_id', 'unit_id')}
+    assert (pair['a'].get('roi_id') is not None) == (only == 'reference')
+    assert (pair['b'].get('roi_id') is not None) == (only == 'target')
+    item = load(out, 'direct/direct_pairs_sidecar.json')['pairs'][pair['pair_id']]
+    assert item['one_sided_case'] is True and item['present_in'] == only and item['layer_changed'] is False
+    assert item['change_kind'] == kind and item['union_delta_um2'] == pytest.approx(sign*4.5)
+    assert load(out)['direct']['pairs_ready'] == 1
+
+
+@pytest.mark.parametrize('only, flag, kind, sign', [('target', 'new_electrode', 'appeared', 1),
+                                                    ('reference', 'removed_electrode', 'disappeared', -1)])
+def test_an_electrode_only_one_model_has_is_compared_and_flagged(tmp_path, monkeypatch, only, flag, kind, sign):
+    """Contract correction: no `circuit_change_electrode_missing` exclusion. The combination enters the union of the model
+    that has it, is a candidate and a direct pair, and carries new_electrode / removed_electrode everywhere it is shown."""
+    config = one_sided_world(tmp_path, monkeypatch, only, electrode_in_other_model=False)
+    out = tmp_path/'out'
+    assert main(cli_args(config, out, tmp_path/'dl1', top_k=1)) == 0                # electrode_set_differs alone: exit 0
+    payload = load(out)
+    assert payload['warnings'] == [] and payload['change_map']['cases_excluded'] == []
+    assert [(n['reference_only'], n['target_only']) for n in payload['notes'] if n['code'] == 'electrode_set_differs'] == [
+        ([], ['D']) if only == 'target' else (['D'], [])]
+    stats = payload['change_map']['pairing']
+    assert stats[f'one_sided_included_{only}'] == 1 and stats[f'{flag}_included'] == 1 and 'circuit_change_excluded' not in stats
+    top = queries(payload, 'target_to_reference' if only == 'target' else 'reference_to_target')[0]
+    assert top['union_delta_um2'] == pytest.approx(sign*4.5)
+    case = top['contributing_cases'][0]
+    assert (case['case_key'], case['change_kind'], case['present_in']) == (AD_KEY, kind, only) and flag in case['flags']
+    html = (out/'alignment.html').read_text(encoding='utf-8')
+    assert flag in html and f'<td>{only}</td>' in html
+    pair = load(out, 'direct/roi_correspondence.json')['pairs'][0]
+    assert pair['status'] == 'ready'
+    item = load(out, 'direct/direct_pairs_sidecar.json')['pairs'][pair['pair_id']]
+    assert item['one_sided_case'] is True and flag in item['flags'] and item['change_kind'] == kind
 
 
 # --- the single-file runner: same bytes on the ETX interpreter (Python 3.9) --------------------------------------------
