@@ -136,10 +136,10 @@ def test_compare_windows_runs_on_the_direct_file_without_any_code_change(world, 
     for row in small:                                                   # both sides found their one source group
         assert row['window']['a']['union']['status'] == row['window']['b']['union']['status'] == 'available'
     for row in five:
-        if row['window_size_um'] == 20.0:   # the 20 um window sticks out of the 40 x 42 um frame: geometry, not matching
-            # which of the tied windows represents the merged region now follows the centre order, so the window may
-            # or may not stick out; whatever the reasons are, they are geometry only
-            assert set(row['window']['a']['union']['reasons']) <= {'partial_observation', 'window_clipped'}
+        if row['window_size_um'] == 20.0:   # a 20 um window is half the 40 x 42 um frame
+            # The representative window of the merged region (the one with the smallest centre among the tied windows)
+            # lies inside the 40 x 42 um frame, so there is no geometry reason at all on either side.
+            assert row['window']['a']['union']['reasons'] == [] and row['window']['b']['union']['reasons'] == []
 
 
 # --- blocked and uncertain ---------------------------------------------------------------------------------------------
@@ -152,8 +152,10 @@ def test_failed_alignment_blocks_every_direct_pair(world, tmp_path):
     corr = load(out, 'direct/roi_correspondence.json')
     # Without alignment the layout shift itself is a change; which ROI ranks first (and how many cases it has) follows
     # the union-change score, so only the invariants are asserted.
+    # One pair per (selected ROI, contributing case); the same physical pair arrives from both directions as one entry.
+    queries = load(out)['directions'][0]['queries']
     n = len(corr['pairs'])
-    assert n >= 1
+    assert n == sum(len(q['contributing_cases']) for q in queries) >= 1
     assert all(p['status'] == 'blocked' and p['reasons'] == ['alignment_failed'] for p in corr['pairs'])
     payload = load(out)
     assert payload['direct']['pairs_ready'] == 0 and payload['direct']['pairs_blocked'] == n

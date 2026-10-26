@@ -19,13 +19,14 @@ from pathlib import Path
 
 import numpy as np
 
-from . import candidates, change_map
+from . import alignment_report, candidates, change_map
 from .numeric_schema import NumericContractError
 
 DIAMETER_UM = 5
 ROI_SOURCE = 'cnt_change'
 ALIGNMENT_SCHEMA = 'cnt_alignment_v1'
 ELECTRODE_SET_BASIS = 'dl1_electrode_folders'
+UNION_BASIS = 'paired_cases_only'      # 합집합·순위는 짝지어진 조합만으로 계산한다(한쪽에만 있는 case 는 빠진다)
 DIRECT_SOURCE = {'kind': 'template_match', 'method': 'cnt_alignment_v1', 'version': '1'}
 DIRECT_SIDECAR_SCHEMA = 'direct_pairs_sidecar_v1'
 DIRECT_LIMITATION = 'compare-windows does not verify these input hashes'
@@ -389,8 +390,17 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         candidates.write_text(out / name, text, track)
         outputs.append(name)
 
+    def emit_bytes(name, data):
+        track(out / name)
+        (out / name).write_bytes(data)
+        outputs.append(name)
+
     emit('alignment.json', json.dumps(alignment_doc, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n')
     offset_px = (int(alignment['offset_xy_px'][0]), int(alignment['offset_xy_px'][1]))
+    # alignment.html 의 그림: 만들기 전에 메모리 추정으로 허용 여부를 정한다(넘으면 표만 쓰고 경고, 계산은 그대로).
+    images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved)
+    report_source = (alignment_report.ImageSource(cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
+                                                  tgt.frame.valid, offset_px) if images_ok else None)
     if alignment['status'] != 'aligned':
         warnings.append({'code': 'alignment_' + ('failed' if alignment['status'] == 'alignment_failed_identity_used'
                                                  else 'uncertain'),
@@ -422,7 +432,6 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         union_tgt=maps['union_tgt'], pitch_um=pitch, window_um=window_um, max_operation_bytes=limit,
         origin_xy_um=(ref.frame.origin_xy_um[0], ref.frame.origin_xy_um[1]), reserved_bytes=reserved)
     map_stats = maps['stats']
-    del maps
     by_id, merged = {}, []
     ref_bbox = tuple(float(v) for v in ref.frame.bbox_um)
     for layer in sorted({c['layer'] for c in found['candidates']}):
@@ -436,6 +445,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                m['representative'].center_xy_um[0], m['representative'].center_xy_um[1]))
     kept = merged[:top_k]
     windows = [by_id[m['representative'].region_id] for m in kept]
+    if report_source is not None:      # alignment.html 용 열지도 블록·창 crop 만 남기고 큰 지도는 놓는다
+        report_source.collect(maps, windows)
+    del maps
 
     # --- 5. 기여 case (두 번째 패스) + CNT 변경 면적
     contrib = change_map.case_contributions(
@@ -543,7 +555,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 'query_id': candidates._query_id(direction, rep.region_id), 'product_id': item.product_id,
                 'design_version': item.design_version, 'frame_id': item.frame_id,
                 'center_xy_um': list(entry['center']), 'window_um': window_um, 'region_id': rep.region_id,
-                'merged_from': [m.region_id for m in members], 'max_count': None, 'area_um2': rep.area_um2,
+                'merged_from': [m.region_id for m in members],
+                # RegionInfo.max_count 는 내부적으로 sum_residual 셀 수다. 취약점 max_count 와 뜻이 달라 payload 에 쓰지 않는다.
+                'max_count': None, 'area_um2': rep.area_um2,
                 'layers': sorted({m.layer for m in members}), 'flags': flags,
                 'status': 'ready' if ready else 'blocked', 'reasons': sorted(reasons),
                 'roi_ids': sorted(r['roi_id'] for r in rows), 'n_rois': len(rows), 'n_rois_ready': len(ready),
@@ -604,8 +618,21 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         warnings.append({'code': 'direct_pairs_blocked', 'count': direct_blocked, 'reasons': dict(sorted(counts.items())),
                          'detail': 'these pairs are blocked; use the DL2 route (reference_export / target_export) for them'})
 
+    # --- alignment.html: 정렬이 실패·불확실해도 항상 쓴다. 그림 생성을 허용하지 않았으면 표만 쓰고 경고(exit 3)
+    skipped = None
+    if report_source is None:
+        need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape)
+        skipped = f'estimated {need} bytes + {reserved} reserved > operation limit {limit}'
+        warnings.append({'code': 'alignment_report_images_skipped', 'estimated_bytes': need, 'reserved_bytes': reserved,
+                         'max_operation_bytes': limit})
+    report_html, report_info = alignment_report.build_alignment_html(
+        alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped)
+    report_source = None
+    emit_bytes('alignment.html', report_html)
+    alignment_report_doc = {k: report_info[k] for k in ('path', 'bytes', 'downscaled', 'crops_omitted')}
+
     # --- 9~12. 문서
-    inputs = {'config_sha256': cfg.get('_config_sha256'),
+    inputs ={'config_sha256': cfg.get('_config_sha256'),
               'reference': {**sides['reference'].input_record, 'product_ids': sides['reference'].product_ids},
               'target': {**sides['target'].input_record, 'product_ids': sides['target'].product_ids},
               'cnt': {name: {'product_id': products[name].product_id, 'files_sha256': _sha_json(cnt[name]['files']),
@@ -649,7 +676,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                               'cases_excluded': pairing['cases_excluded'],
                               'cases_only_in_reference': pairing['cases_only_in_reference'],
                               'cases_only_in_target': pairing['cases_only_in_target']},
-               'electrode_set_basis': ELECTRODE_SET_BASIS,
+               'electrode_set_basis': ELECTRODE_SET_BASIS, 'union_basis': UNION_BASIS,
+               'alignment_report': alignment_report_doc,
                'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'direct': direct_summary,
                'warnings': warnings, 'notes': notes, 'match_inputs': match_inputs, 'dl2_model_roles': dl2_model_roles,
                'match_files': {d: {k: f'{v}/review_rois.json' for k, v in item.items()}

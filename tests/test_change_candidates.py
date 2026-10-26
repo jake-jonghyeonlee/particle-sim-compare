@@ -657,6 +657,46 @@ def test_window_checks_run_before_any_output_is_started(world, tmp_path, monkeyp
         assert 'invalid_candidates_change_argument' in capsys.readouterr().err and not out.exists()
 
 
+# --- T7/T7b review follow-up (adv:2): the ranking, at command level -------------------------------------------------------
+
+def test_a_union_changing_move_outranks_a_union_unchanged_move_at_the_command_level(tmp_path, monkeypatch):
+    """Two planted changes: (1) B's hotspot moves to C at CHANGE (the per-layer union is unchanged: score 0) and (2) the
+    target alone gets a new hotspot blob of B at another place (the union changes: score = the blob area). --top-k 1 must
+    select (2); --top-k 3 lists (2) first and (1) second, flagged union_unchanged_pair_changed."""
+    import test_change_candidates as me
+    original = me.hotspot_masks
+    blob = rect(250, 200, 15, 20)                  # target frame; reference frame = minus OFFSET -> rows 254.., cols 193..
+
+    def with_blob(side, extra_target_case=False):
+        masks = original(side, extra_target_case)
+        if side == 'target':
+            masks[CASE_AB] = masks[CASE_AB] | blob
+        return masks
+    monkeypatch.setattr(me, 'hotspot_masks', with_blob)
+    datas, assignments = {}, {}
+    for side in ('reference', 'target'):
+        datas[side], assignments[side] = build_product(tmp_path, side)
+    config = write_config(tmp_path, datas, assignments, map_spec={'diameter_um': 5})
+    blob_centre = (50.0+(193+10)*PITCH, 50.0+(254+7.5)*PITCH)
+    one = tmp_path/'one'
+    main(cli_args(config, one, tmp_path/'dl1', top_k=1))
+    top = queries(load(one), 'reference_to_target')
+    assert len(top) == 1 and top[0]['score_um2'] == pytest.approx(3.0) and top[0]['score_basis'] == 'union_change'   # 15 x 20 px x 0.01 um2
+    assert abs(top[0]['center_xy_um'][0]-blob_centre[0]) <= 5.0 and abs(top[0]['center_xy_um'][1]-blob_centre[1]) <= 5.0
+    assert top[0]['sum_residual_um2'] == pytest.approx(3.0) and top[0]['changed_case_count'] == 1
+    assert top[0]['union_delta_um2'] == pytest.approx(3.0)
+    assert [c['change_kind'] for c in top[0]['contributing_cases']] == ['appeared']
+    assert 'union_unchanged_pair_changed' not in top[0]['flags']
+    assert len(load(one, 'direct/roi_correspondence.json')['pairs']) == 1
+    three = tmp_path/'three'
+    main(cli_args(config, three, tmp_path/'dl1', top_k=3))
+    both = queries(load(three), 'reference_to_target')
+    assert [round(q['score_um2'], 6) for q in both] == [3.0, 0]
+    assert both[0]['region_id'] == top[0]['region_id'] and 'union_unchanged_pair_changed' in both[1]['flags']
+    assert abs(both[1]['center_xy_um'][0]-CHANGE_CENTRE_UM[0]) <= 5.0 and both[1]['changed_case_count'] == 2
+    assert len(load(three, 'direct/roi_correspondence.json')['pairs']) == 1 + 2        # one case + two cases
+
+
 # --- the single-file runner: same bytes on the ETX interpreter (Python 3.9) --------------------------------------------
 
 # execution.json and the other files hold no interpreter, host or timestamp field, so every output file is compared;
@@ -675,8 +715,9 @@ def test_runner_output_on_python39_equals_the_current_interpreter(world, tmp_pat
         text = (tmp_path/label/'job.log').read_text(encoding='utf-8')
         assert 'candidates-change exit 3' in text, (done.stderr, text[-2000:])
         outputs[label] = digests(out)
-    assert outputs['current'] == outputs['etx39'] and len(outputs['current']) == 11
-    for name in ('direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json'):    # same bytes on 3.9 and 3.11
+    assert outputs['current'] == outputs['etx39'] and len(outputs['current']) == 12
+    for name in ('direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json', 'alignment.html'):   # same bytes on 3.9 and 3.11
+        assert name in outputs['current']
         assert outputs['current'][name] == outputs['etx39'][name]
     assert not ENVIRONMENT_FIELDS
     in_tree = tmp_path/'in_tree'
