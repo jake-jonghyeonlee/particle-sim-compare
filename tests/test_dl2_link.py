@@ -188,13 +188,13 @@ def index_sources(env, index_name, kind):
     path = env['cand'] / f'{index_name}_index_export' / 'review_rois.json'
     if kind == 'single_export':
         return 'single_export'
-    product_ids = None if kind == 'null_products' else [index_name]
+    product_ids = None if kind == 'null_products' else ['elsewhere'] if kind == 'absent_product' else [index_name]
+    export_sha = '2' * 64 if kind == 'template' else sha(path)      # 'template': a per-product template export, not *_index_export
     other = {'export_sha256': 'e' * 64, 'patch_set_sha256s': ['a' * 64], 'product_ids': ['elsewhere']}
-    return [{'export_sha256': sha(path), 'patch_set_sha256s': [], 'product_ids': product_ids}, other]
+    return [{'export_sha256': export_sha, 'patch_set_sha256s': [], 'product_ids': product_ids}, other]
 
 
-def fake_batch(env, direction, name=None, *, sources='sources', tail=True, **overrides):
-    """psdl2_search_batch_v1 as ``psdl2.search --all-ready`` writes it: every key of the DL2 table."""
+def batch_rankings(env, direction, tail=True):
     query_name, index_name = DIRECTIONS[direction]
     centres = R2T if direction == 'reference_to_target' else T2R
     frame = {'reference': 'reference_frame', 'target': 'target_frame'}[index_name]
@@ -212,6 +212,13 @@ def fake_batch(env, direction, name=None, *, sources='sources', tail=True, **ove
                                    'center_xy_um': list(centres[0]), 'search_scope': scope})
         rankings.append({'query_roi_id': row['roi_id'], 'query_product_id': row['product_id'], 'query_export_sha256': query_sha,
                          'candidates': candidates})
+    return rankings, query_sha
+
+
+def fake_batch(env, direction, name=None, *, sources='sources', tail=True, **overrides):
+    """psdl2_search_batch_v1 as ``psdl2.search --all-ready`` writes it: every key of the DL2 table."""
+    index_name = DIRECTIONS[direction][1]
+    rankings, query_sha = batch_rankings(env, direction, tail)
     payload = {'schema_version': BATCH, 'checkpoint_fingerprint': 'c' * 64, 'view_fingerprint': 'd' * 64,
                'index_sources': index_sources(env, index_name, sources),
                'inputs': {'query_export_sha256': query_sha, 'query_dataset_sha256': None, 'index_sha256': 'f' * 64},
@@ -280,12 +287,14 @@ def test_accept_writes_pair_level_correspondence_and_sidecar_that_compare_window
     sidecar = load_json(out / 'confirmed_pairs_sidecar.json')
     match = sidecar['inputs']['matches']['reference_to_target']
     assert match['match_schema'] == BATCH and match['sha256'] == sha(path)
-    assert match['index_export_verification'] == ('unverifiable_single_export' if sources == 'single_export' else 'index_sources')
+    assert match['index_export_verification'] == ('unverifiable_single_export' if sources == 'single_export' else 'candidates_index_export')
+    assert match['rankings_skipped_other_direction'] == 0 and match['warnings'] == []
     if sources == 'sources':
-        assert match['matched_sources'][0]['export_sha256'] == sha(env['cand'] / 'target_index_export' / 'review_rois.json')
-        assert match['matched_sources'][0]['product_ids'] == ['target']
+        assert match['index_sources_kind'] == 'sources'
+        assert match['index_sources_used'] == [{'export_sha256': sha(env['cand'] / 'target_index_export' / 'review_rois.json'),
+                                                'patch_set_sha256s': [], 'product_ids': ['target']}]
     else:
-        assert match['index_sources'] == 'single_export'
+        assert match['index_sources_kind'] == 'single_export' and match['index_sources_used'] == []
     record = sidecar['pairs'][first['pair_id']]['candidates'][0]
     assert record['match_schema'] == BATCH and record['rank'] == 1 and record['search_scope'] == 'primary'
     assert record['candidate_roi_id'] == 'idx_1' and record['score'] is None
@@ -331,11 +340,6 @@ def test_hash_mismatches_exit_two_and_write_nothing(env, capsys):
     payload['rankings'][0]['query_export_sha256'] = '0' * 64               # a ranking from another query export
     path.write_text(json.dumps(payload), encoding='utf-8')
     assert_rejected(env, {'reference_to_target': path}, rows, capsys, 'match_input_hash_mismatch', 'query_export_sha256')
-    stale_index = fake_batch(env, 'reference_to_target', name='stale.json')
-    payload = load_json(stale_index)
-    payload['index_sources'][0]['export_sha256'] = '1' * 64                # no source equals the candidates index export
-    stale_index.write_text(json.dumps(payload), encoding='utf-8')
-    assert_rejected(env, {'reference_to_target': stale_index}, rows, capsys, 'match_input_hash_mismatch', 'index_sources')
     no_hash = fake_batch(env, 'reference_to_target', name='nohash.json')
     payload = load_json(no_hash)
     payload['inputs']['query_export_sha256'] = None
@@ -382,3 +386,108 @@ def test_both_schemas_can_be_mixed_between_directions(env):
     assert run(env, matches, rows) == 0
     sidecar = load_json(env['tmp'] / 'out' / 'confirmed_pairs_sidecar.json')['inputs']['matches']
     assert sidecar['reference_to_target']['match_schema'] == BATCH and 'match_schema' not in sidecar['target_to_reference']
+
+
+# ---- T10b: the index check follows the DL2 database flow (per-product template export), not the *_index_export hash -------
+
+def test_template_export_database_is_usable_with_the_product_ids_only_grade(env, capsys):
+    path = fake_batch(env, 'reference_to_target', sources='template')
+    code, captured = listing(env, {'reference_to_target': path}, capsys)
+    shown = json.loads(captured.out)
+    assert code == 0 and shown['n_candidates'] == 4 * len(query_rows(env, 'reference_to_target'))
+    assert {c['index_export_verification'] for c in shown['candidates']} == {'product_ids_only'}
+    assert shown['batch_directions']['reference_to_target']['index_export_verification'] == 'product_ids_only'
+    assert shown['batch_directions']['reference_to_target']['index_sources_kind'] == 'sources'
+    rows = decisions(env, [[cid(env, 'reference_to_target', 1), 'accept', '']])
+    assert run(env, {'reference_to_target': path}, rows) == 0
+    out = env['tmp'] / 'out'
+    sidecar = load_json(out / 'confirmed_pairs_sidecar.json')
+    match = sidecar['inputs']['matches']['reference_to_target']
+    assert match['index_export_verification'] == 'product_ids_only'
+    assert match['index_sources_used'][0]['export_sha256'] == '2' * 64 and match['index_sources_used'][0]['product_ids'] == ['target']
+    assert next(iter(sidecar['pairs'].values()))['candidates'][0]['index_export_verification'] == 'product_ids_only'
+    windows = env['tmp'] / 'windows'
+    assert main(['compare-windows', '--config', str(env['config']), '--correspondence', str(out / 'roi_correspondence.json'),
+                 '--window-sizes', '2', '--out', str(windows)]) in (0, 3)
+    assert load_json(windows / 'local_delta.json')['rows']
+
+
+def test_matching_index_export_hash_gets_the_candidates_index_export_grade(env, capsys):
+    path = fake_batch(env, 'reference_to_target', sources='sources')
+    code, captured = listing(env, {'reference_to_target': path}, capsys)
+    shown = json.loads(captured.out)
+    assert code == 0
+    assert {c['index_export_verification'] for c in shown['candidates']} == {'candidates_index_export'}
+    assert shown['batch_directions']['reference_to_target']['index_export_verification'] == 'candidates_index_export'
+
+
+def test_single_export_is_listed_as_unverifiable(env, capsys):
+    path = fake_batch(env, 'reference_to_target', sources='single_export')
+    code, captured = listing(env, {'reference_to_target': path}, capsys)
+    shown = json.loads(captured.out)
+    assert code == 0 and shown['batch_directions']['reference_to_target'] == {
+        'index_sources_kind': 'single_export', 'index_export_verification': 'unverifiable_single_export',
+        'rankings_skipped_other_direction': 0, 'warnings': []}
+    assert {c['index_export_verification'] for c in shown['candidates']} == {'unverifiable_single_export'}
+
+
+@pytest.mark.parametrize('sources', ['null_products', 'absent_product'])
+def test_index_product_not_covered_by_any_source_makes_candidates_unusable_without_exit_two(env, capsys, sources):
+    path = fake_batch(env, 'reference_to_target', sources=sources)
+    code, captured = listing(env, {'reference_to_target': path}, capsys)
+    shown = json.loads(captured.out)
+    assert code == 0 and shown['n_candidates'] == 0
+    assert shown['batch_directions']['reference_to_target']['index_export_verification'] == 'no_source_for_index_product'
+    assert {u['reason'] for u in shown['unavailable_candidates'] if u['rank'] <= 4} == {'candidate_product_unverifiable'}
+
+
+def both_directions_batch(env, name='both.json', *, sources='template', extra=None):
+    """One psdl2_search_batch_v1 holding the rankings of both directions (one DL2 query dataset), as DL2 writes it."""
+    first, first_sha = batch_rankings(env, 'reference_to_target', tail=False)
+    second, second_sha = batch_rankings(env, 'target_to_reference', tail=False)
+    merged = index_sources(env, 'target', sources) + index_sources(env, 'reference', sources)
+    payload = {'schema_version': BATCH, 'checkpoint_fingerprint': 'c' * 64, 'view_fingerprint': 'd' * 64,
+               'index_sources': merged, 'inputs': {'query_export_sha256': None, 'query_dataset_sha256': '9' * 64, 'index_sha256': 'f' * 64},
+               'arguments': {'topk': 3}, 'results': [], 'rankings': first + second + (extra or [])}
+    path = env['tmp'] / name
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    return path
+
+
+def test_one_envelope_with_both_directions_feeds_each_direction_its_own_rankings(env, capsys):
+    path = both_directions_batch(env)
+    matches = {'reference_to_target': path, 'target_to_reference': path}
+    code, captured = listing(env, matches, capsys)
+    shown = json.loads(captured.out)
+    assert code == 0
+    for direction in matches:
+        n_own, n_other = len(query_rows(env, direction)), len(query_rows(env, 'target_to_reference' if direction == 'reference_to_target' else 'reference_to_target'))
+        info = shown['batch_directions'][direction]
+        assert info['rankings_skipped_other_direction'] == n_other and info['warnings'] == []
+        assert sum(1 for c in shown['candidates'] if c['direction'] == direction) == 4 * n_own
+    rows = decisions(env, [[cid(env, 'reference_to_target', 1), 'accept', ''], [cid(env, 'target_to_reference', 1), 'accept', '']])
+    assert run(env, matches, rows) == 0
+    sidecar = load_json(env['tmp'] / 'out' / 'confirmed_pairs_sidecar.json')['inputs']['matches']
+    assert sidecar['reference_to_target']['rankings_skipped_other_direction'] == len(query_rows(env, 'target_to_reference'))
+    assert sidecar['target_to_reference']['rankings_skipped_other_direction'] == len(query_rows(env, 'reference_to_target'))
+
+
+def test_ranking_matching_neither_direction_is_still_an_error(env, capsys):
+    stray = [{'query_roi_id': 'stray', 'query_product_id': 'reference', 'query_export_sha256': '0' * 64, 'candidates': []}]
+    path = both_directions_batch(env, name='stray.json', extra=stray)
+    rows = decisions(env, [[cid(env, 'reference_to_target', 1), 'accept', '']])
+    assert_rejected(env, {'reference_to_target': path, 'target_to_reference': path}, rows, capsys,
+                    'match_input_hash_mismatch', 'query_export_sha256')
+
+
+def test_direction_without_any_ranking_gets_a_warning(env, capsys):
+    path = both_directions_batch(env, name='one_sided.json')
+    payload = load_json(path)
+    reference_hash = sha(env['cand'] / 'reference_export' / 'review_rois.json')
+    payload['rankings'] = [r for r in payload['rankings'] if r['query_export_sha256'] == reference_hash]
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    code, captured = listing(env, {'reference_to_target': path, 'target_to_reference': path}, capsys)
+    shown = json.loads(captured.out)
+    assert code == 0
+    assert shown['batch_directions']['target_to_reference']['warnings'] == ['no_rankings_for_direction']
+    assert shown['batch_directions']['reference_to_target']['warnings'] == []

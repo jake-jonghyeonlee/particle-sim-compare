@@ -42,13 +42,13 @@ Windows zip·wheel은 T9에서 다시 만들지 않았다. Windows에서 `candid
 | 요청 | 상태 | 내용 |
 |---|---|---|
 | R1 `mask_derivation` | **완료(T10)** | `candidates-change`가 질의 export 2개·index export 2개 폴더마다 `mask_derivation.json`을 쓴다(`export-template-rois`와 같은 writer·규칙, 필수 인수 `--mask-derivation-rule between_stack_order_v1`). 경로는 `candidate_queries_v1.json`의 `mask_derivation_files`. DL2 `parse_mask_derivation` 규칙은 테스트 안에 다시 구현해 검사했다(DL2 코드를 import하지 않음) |
-| R2 index export | 충족(T6) | `*_index_export/review_rois.json` |
+| R2 변경점을 `review_roi_v1` manual 행으로 | 충족(T6) | DL2 원문 그대로 변경점이 `review_roi_v1` 행인 `reference_export/`·`target_export/`로, 검색 대상은 `*_index_export/review_rois.json`으로 나간다 |
 | R3 `psdl2_search_batch_v1` 읽기 | **완료(T10)** | `confirm-pairs --match`가 배치 봉투를 읽는다(질의 해시 `rankings[i].query_export_sha256`, `index_sources[].export_sha256`·`product_ids`, `search_scope`). NCC 경로는 바이트·동작 그대로 |
 | R3e 출력 | **확인** | `roi_correspondence_v1`은 쌍 단위(a=reference, b=target, producer `manual`)이고 `compare-windows`가 그대로 읽는다. 사이드카에 `match_schema`, `rank`, `search_scope`, index source 해시를 남긴다 |
 | R4 | 보류 | 이번 Run에서 하지 않는다 |
 | R5 DL2 pin | 대기 | DL2 병합 뒤 T11에서 `docs/handoff/README.md`의 pin을 갱신한다. T10은 고치지 않았다 |
 
-해석이 갈린 곳: `index_sources == "single_export"`일 때 봉투에 export 해시가 없다(`inputs.index_sha256`은 index 체크포인트 파일의 해시다). 이 경우 index export 해시는 대조하지 못하고 후보 제품 id만 config 제품과 대조한다. 사이드카 `index_export_verification=unverifiable_single_export`로 남는다. DL2가 이 경우에도 export 해시를 싣도록 바뀌면 `confirm_pairs._batch_index_sources`에서 대조를 켠다.
+T10b 수정(T10 리뷰 FAIL blk:1): DL2 문서의 DB 는 제품별 template export 이므로 `index_sources[].export_sha256`이 `*_index_export` 해시와 같을 수 없다. 후보 제품 검증은 `product_ids` 기준이고 해시 대조는 등급(`candidates_index_export`/`product_ids_only`/`unverifiable_single_export`)으로만 남는다. 일치 source 가 없다는 이유로 종료 2 를 내지 않는다. 한 봉투에 두 방향 질의가 들어 있어도 같은 파일을 두 `--match`에 줄 수 있다. `index_sources == "single_export"`일 때는 봉투에 export 해시가 없어 대조하지 못한다(`inputs.index_sha256`은 index 체크포인트 파일의 해시다). DL2가 이 경우에도 export 해시를 싣도록 바뀌면 `confirm_pairs._index_grade`에서 대조를 켠다.
 
 ## compare ↔ DL2 최종 연결 체크 목록
 

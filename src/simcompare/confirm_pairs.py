@@ -276,39 +276,42 @@ def _load_match(direction, path, cands, datasets, problems):
             'inputs': {'query_export_sha256': inputs.get('query_export_sha256'), 'index_export_sha256': inputs.get('index_export_sha256')}}
 
 
-def _batch_index_sources(direction, result, index_sha, label, problems):
-    """psdl2_search_batch_v1 의 index_sources 를 candidates 의 index export 해시와 대조한다.
-
-    반환: (검증된 제품 집합 또는 None, 사이드카 요약). 집합이 None 이면 index_sources 가 "single_export" 라서 export 해시를
-    대조할 수 없다는 뜻이다(DL2 문서는 이 경우 export 해시를 싣지 않는다). 그 후보는 제품 id 만 검사한다."""
+def _parse_index_sources(result, label, problems):
+    """psdl2_search_batch_v1 의 index_sources 를 검사한다. 반환: 'single_export' 또는 source 목록(형식 오류면 빈 목록)."""
     sources = result.get('index_sources')
     if sources == 'single_export':
-        return None, {'index_sources': 'single_export', 'index_export_verification': 'unverifiable_single_export'}
+        return 'single_export'
     if not isinstance(sources, list) or not sources:
         problems.add('match_index_sources_invalid', f'{label}: index_sources must be "single_export" or a non-empty list')
-        return set(), None
-    matched, verified, malformed = [], set(), False
+        return []
+    parsed = []
     for position, source in enumerate(sources):
         product_ids = source.get('product_ids', 0) if isinstance(source, dict) else 0
         if (not isinstance(source, dict) or not isinstance(source.get('export_sha256'), str)
                 or not isinstance(source.get('patch_set_sha256s'), list)
                 or not (product_ids is None or (isinstance(product_ids, list) and all(isinstance(p, str) for p in product_ids)))):
             problems.add('match_index_sources_invalid', f'{label}: index_sources[{position}]')
-            malformed = True
             continue
-        if source['export_sha256'] == index_sha:
-            matched.append({'export_sha256': source['export_sha256'], 'patch_set_sha256s': list(source['patch_set_sha256s']),
-                            'product_ids': None if product_ids is None else list(product_ids)})
-            if product_ids is not None:
-                verified.update(product_ids)
-    if index_sha is not None and not matched and not malformed:
-        problems.add('match_input_hash_mismatch',
-                     f'{label}: no index_sources[].export_sha256 equals the candidates index export for {direction}')
-    return verified, {'index_sources': 'sources', 'index_export_verification': 'index_sources',
-                      'index_export_sha256': index_sha, 'matched_sources': matched}
+        parsed.append({'export_sha256': source['export_sha256'], 'patch_set_sha256s': list(source['patch_set_sha256s']),
+                       'product_ids': None if product_ids is None else list(product_ids)})
+    return parsed
 
 
-def _batch_candidate_problem(entry, direction_products, verified):
+def _index_grade(parsed, product, index_sha):
+    """index 제품의 검증 등급과 그 제품을 담은 source 들. 등급 None 이면 제품을 담은 source 가 없다(후보 unusable).
+
+    해시 대조는 등급으로만 남긴다: DL2 문서 흐름의 DB 는 제품별 template export 이므로 candidates 의 *_index_export 와
+    해시가 같지 않아도 정상이다."""
+    if parsed == 'single_export':
+        return 'unverifiable_single_export', []
+    used = [s for s in parsed if s['product_ids'] is not None and product in s['product_ids']]
+    if not used:
+        return None, []
+    same = any(s['export_sha256'] == index_sha for s in used)
+    return ('candidates_index_export' if same else 'product_ids_only'), used
+
+
+def _batch_candidate_problem(entry, direction_products, grade):
     """후보 하나가 쓸 수 없는 사유 코드(쓸 수 있으면 None)."""
     query_product, index_product = direction_products
     if entry['search_scope'] not in SEARCH_SCOPES:
@@ -317,7 +320,7 @@ def _batch_candidate_problem(entry, direction_products, verified):
         return 'candidate_same_product'
     if entry['product_id'] != index_product:
         return 'candidate_product_not_configured'
-    if verified is not None and entry['product_id'] not in verified:
+    if grade is None:
         return 'candidate_product_unverifiable'
     return None
 
@@ -332,29 +335,36 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
     side = cands['directions'][direction]
     query_sha, index_sha = (side['query'] or {}).get('sha256'), (side['index'] or {}).get('sha256')
     inputs = result.get('inputs') if isinstance(result.get('inputs'), dict) else {}
-    verified, source_summary = _batch_index_sources(direction, result, index_sha, label, problems)
+    parsed_sources = _parse_index_sources(result, label, problems)
     products = (datasets[query_name]['product'], datasets[index_name]['product'])
+    grade, used_sources = _index_grade(parsed_sources, products[1], index_sha)
+    other_side = cands['directions'][next(d for d in DIRECTION_NAMES if d != direction)]
+    other_query_sha = (other_side['query'] or {}).get('sha256')
     query_rows = (side['query'] or {}).get('rows', {})
     index_rows = (side['index'] or {}).get('rows', {})
     table, unusable, unusable_candidates, seen_queries = {}, {}, {}, set()
+    skipped_other_direction = 0
     for position, ranking in enumerate(result['rankings']):
         where = f'{label} rankings[{position}]'
         roi_id = ranking.get('query_roi_id') if isinstance(ranking, dict) else None
         if not isinstance(roi_id, str) or not roi_id or not isinstance(ranking.get('candidates'), list):
             problems.add('match_result_without_query_roi_id', where)
             continue
-        if roi_id in seen_queries:
-            problems.add('match_duplicate_query_roi_id', f'{where}: {roi_id}')
-            continue
-        seen_queries.add(roi_id)
         recorded = ranking.get('query_export_sha256')      # 데이터셋 질의에서는 inputs.query_export_sha256 이 null 이다
         if recorded is None:
             recorded = inputs.get('query_export_sha256')
         if recorded is None:
             problems.add('match_input_hash_missing', f'{where}: query_export_sha256')
         elif query_sha is not None and recorded != query_sha:
+            if other_query_sha is not None and recorded == other_query_sha:
+                skipped_other_direction += 1             # DL2 실행기는 두 방향 질의를 한 봉투에 쓴다: 반대 방향 ranking
+                continue
             problems.add('match_input_hash_mismatch', f'{where}: query_export_sha256 does not equal the candidates query export for {direction}')
             continue
+        if roi_id in seen_queries:
+            problems.add('match_duplicate_query_roi_id', f'{where}: {roi_id}')
+            continue
+        seen_queries.add(roi_id)
         qrow = query_rows.get(roi_id)
         if qrow is None or qrow.get('status') != 'ready':
             problems.add('query_roi_not_ready_in_export', f'{where}: {roi_id}')
@@ -378,7 +388,7 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
             if cid in table or cid in unusable_candidates:
                 problems.add('match_duplicate_candidate_id', cid)
                 continue
-            reason = _batch_candidate_problem(entry, products, verified)
+            reason = _batch_candidate_problem(entry, products, grade)
             if reason is not None:
                 unusable_candidates[cid] = {'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
                                             'candidate_product_id': entry['product_id'], 'search_scope': entry['search_scope'],
@@ -390,13 +400,18 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
                           'query_frame_id': qrow.get('frame_id'),
                           'flags': {'supplementary': True} if entry['search_scope'] == 'supplementary' else {},
                           'score_gap': None, 'shared_with': [], 'template_sha256': None, 'reasons': [], 'query_row': qrow,
-                          'match_schema': BATCH_SCHEMA, 'search_scope': entry['search_scope'], 'candidate_roi_id': entry['roi_id']}
+                          'match_schema': BATCH_SCHEMA, 'search_scope': entry['search_scope'], 'candidate_roi_id': entry['roi_id'],
+                          'index_export_verification': grade}
     arguments = result.get('arguments') if isinstance(result.get('arguments'), dict) else {}
+    warnings = [] if seen_queries else ['no_rankings_for_direction']
     extra = {'match_schema': BATCH_SCHEMA, 'checkpoint_fingerprint': result.get('checkpoint_fingerprint'),
              'view_fingerprint': result.get('view_fingerprint'), 'arguments': arguments,
-             **(source_summary or {}), 'index_sha256': inputs.get('index_sha256')}
+             'index_sources_kind': 'single_export' if parsed_sources == 'single_export' else 'sources',
+             'index_sources_used': used_sources, 'index_export_verification': grade or 'no_source_for_index_product',
+             'index_export_sha256': index_sha, 'rankings_skipped_other_direction': skipped_other_direction,
+             'warnings': warnings, 'index_sha256': inputs.get('index_sha256')}
     return {'direction': direction, 'path': str(path), 'sha256': sha, 'table': table, 'unusable': unusable,
-            'unusable_candidates': unusable_candidates, 'n_queries': len(result['rankings']), 'index_rows': index_rows,
+            'unusable_candidates': unusable_candidates, 'n_queries': len(seen_queries), 'index_rows': index_rows,
             'implementation_revision': None, 'window_um': None, 'topk': arguments.get('topk'), 'self_check': None,
             'inputs': {'query_export_sha256': query_sha, 'index_export_sha256': index_sha}, 'match_schema': BATCH_SCHEMA,
             'sidecar_extra': extra}
@@ -590,7 +605,7 @@ def _provenance(item, decision, matches):
             'query_center_xy_um': item['query_center_xy_um'], 'match_reasons': item['reasons'],
             'decision': decision['decision'], 'decision_note': decision['note'],
             'match_file_sha256': match['sha256'], 'implementation_revision': match['implementation_revision'],
-            **({k: item[k] for k in ('match_schema', 'search_scope', 'candidate_roi_id')} if item.get('match_schema') else {})}
+            **({k: item[k] for k in ('match_schema', 'search_scope', 'candidate_roi_id', 'index_export_verification')} if item.get('match_schema') else {})}
 
 
 def _write_text(path, text, track):
@@ -709,6 +724,7 @@ def list_candidates(cfg, candidates_dir, matches):
                      'flags': {k: v for k, v in sorted(item['flags'].items()) if k != 'score_gap'}}
             if item.get('match_schema'):
                 entry['search_scope'] = item['search_scope']
+                entry['index_export_verification'] = item['index_export_verification']
             listing['candidates'].append(entry)
         for roi_id, reasons in sorted(match['unusable'].items()):
             listing['unavailable_queries'].append({'direction': direction, 'query_roi_id': roi_id, 'reasons': reasons})
@@ -716,6 +732,10 @@ def list_candidates(cfg, candidates_dir, matches):
             unavailable_candidates.append(item)
     if any(m.get('match_schema') for m in loaded.values()):
         listing['unavailable_candidates'] = unavailable_candidates
+        listing['batch_directions'] = {
+            name: {key: m['sidecar_extra'][key] for key in ('index_sources_kind', 'index_export_verification',
+                                                            'rankings_skipped_other_direction', 'warnings')}
+            for name, m in sorted(loaded.items()) if m.get('match_schema')}
     listing['n_candidates'] = len(listing['candidates'])
     return listing
 

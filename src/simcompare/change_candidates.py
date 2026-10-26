@@ -51,7 +51,7 @@ def _finite(label, value, *, minimum=None, positive=False, unit_interval=False):
 
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
-                   mask_derivation_rule=template_export.RULE_VERSION):
+                   mask_derivation_rule):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
     if not Path(cnt_root).is_dir():
