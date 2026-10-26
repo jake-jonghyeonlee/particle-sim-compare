@@ -4,6 +4,7 @@ The reference bytes come from the code at BASELINE (1650cac): `git archive 1650c
 config is run with that code in a subprocess. Both runs read the same input folders, so absolute input paths match.
 """
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,7 @@ BASELINE = '1650cac'
 REPO = Path(__file__).resolve().parents[1]
 DRIVER = ("import sys; sys.path.insert(0, sys.argv[1]); from simcompare.cli import main; "
           "sys.exit(main(['candidates', '--config', sys.argv[2], '--min-count', sys.argv[3], '--window-um', '10', "
-          "'--merge-overlap', '0.5', '--out', sys.argv[4]]))")
+          "'--merge-overlap', '0.5', '--out', sys.argv[4], *sys.argv[5:]]))")
 
 
 def baseline_src(tmp_path):
@@ -36,7 +37,7 @@ def digests(folder):
             for p in sorted(Path(folder).rglob('*')) if p.is_file()}
 
 
-def assert_same_bytes(tmp_path, config, k):
+def assert_same_bytes(tmp_path, config, k, extra=(), codes_allowed=(0, 3)):
     src = baseline_src(tmp_path)
     # The exporter records `git rev-parse HEAD` of its checkout (producer_commit). Both trees run outside git
     # ('producer_not_in_git_checkout') so that only code differences can change a byte.
@@ -45,9 +46,9 @@ def assert_same_bytes(tmp_path, config, k):
     old, new = tmp_path/'old_out', tmp_path/'new_out'
     codes = []
     for tree, out in ((src, old), (current, new)):
-        done = subprocess.run([sys.executable, '-c', DRIVER, str(tree), str(config), str(k), str(out)],
+        done = subprocess.run([sys.executable, '-c', DRIVER, str(tree), str(config), str(k), str(out), *extra],
                               capture_output=True, text=True)
-        assert done.returncode in (0, 3), done.stderr
+        assert done.returncode in codes_allowed, done.stderr
         codes.append(done.returncode)
     assert codes[0] == codes[1]
     before, after = digests(old), digests(new)
@@ -60,6 +61,66 @@ def test_numeric_v2_output_bytes_match_baseline(tmp_path):
 
 def test_real_hotspot_v1_output_bytes_match_baseline(tmp_path):
     assert_same_bytes(tmp_path, real_config(tmp_path), 1)
+
+
+def test_real_hotspot_v1_without_electrode_roles_output_bytes_match_baseline(tmp_path):
+    """T3 adv:3: the role gate path (blocked rows, warnings, exit 3) writes the same bytes as before the refactor."""
+    assert_same_bytes(tmp_path, real_config(tmp_path, roles=None), 1)
+    assert (tmp_path/'new_out'/'candidate_queries_v1.json').read_text().count('electrode_role_required_for_matching') > 0
+
+
+@pytest.mark.parametrize('kind', ['numeric', 'real'])
+def test_max_candidates_one_output_bytes_match_baseline(tmp_path, kind):
+    """T3 adv:3: --max-candidates cuts queries after the merge; the cut and its funnel row are unchanged by the refactor."""
+    config = demo(tmp_path)/'config.yaml' if kind == 'numeric' else real_config(tmp_path)
+    assert_same_bytes(tmp_path, config, 4 if kind == 'numeric' else 1, extra=('--max-candidates', '1'))
+    funnel = (tmp_path/'new_out'/'funnel.json').read_text()
+    assert '"max_candidates": 1' in funnel
+
+
+def test_slim_rows_carry_identity_and_normalised_centre_without_changing_the_files(tmp_path):
+    """T3 adv:1: the rows export_manual_rows hands back carry source_identity and the exporter's normalised centre."""
+    from simcompare import candidates, pipeline
+    from simcompare.roi_export import AssetMemo
+    cfg = pipeline.load_numeric_config(real_config(tmp_path))
+    side = candidates.prepare_side(cfg, 'reference', 1)
+    case = side.dataset.cases[0]
+    frame = side.dataset.frames[case.identity.frame_id]
+    centre = [frame.bbox_um[0]+0.55, frame.bbox_um[1]+0.35]
+    from dataclasses import asdict
+    request = {**asdict(case.identity), 'center_xy_um': centre, 'endpoints': [asdict(e) for e in case.endpoints],
+               'failure_type': case.failure_type}
+    track, cleanup = candidates.output_tracker()
+    result, path, payload, blocked = candidates.export_manual_rows(cfg, side, [request], tmp_path/'rows', 1, track,
+                                                                    AssetMemo(), 0)
+    row = payload['rois'][0]
+    assert row['source_identity'] == asdict(case.identity) and row['center_xy_um'] == centre
+    assert row['failure_type'] == case.failure_type and row['analysis_layer'] == case.analysis_layer
+    on_disk = json.loads((tmp_path/'rows'/'review_rois.json').read_text())['rois'][0]
+    assert on_disk['source_identity'] == row['source_identity'] and on_disk['center_xy_um'] == row['center_xy_um']
+    assert set(row) < set(on_disk)          # the slim row is a subset of the full one; the file keeps everything else
+
+
+def test_map_region_ids_without_maps_is_an_explicit_error_and_index_export_works_without_maps(tmp_path):
+    """T3 adv:2: a side prepared without electrode maps cannot export map regions; manual/index exports do not need them."""
+    from simcompare import candidates, pipeline
+    from simcompare.numeric_schema import NumericContractError
+    from simcompare.roi_export import AssetMemo
+    cfg = pipeline.load_numeric_config(real_config(tmp_path))
+    lean = candidates.prepare_side(cfg, 'reference', 1)
+    track, cleanup = candidates.output_tracker()
+    with pytest.raises(NumericContractError) as caught:
+        candidates._do_export(cfg, lean, {'map_region_ids': ['any']}, tmp_path/'regions', None, 1, track, AssetMemo(), 0)
+    assert caught.value.code == 'map_regions_require_maps' and not (tmp_path/'regions').exists()
+    full = candidates._prepare(cfg, 'reference', 1, 1)
+    rows = []
+    for index, side in enumerate((lean, full)):
+        track, cleanup = candidates.output_tracker()
+        candidates.export_index(cfg, side, tmp_path/f'real_idx{index}', 1, track, AssetMemo(), 0, min_count=None if side is lean else 1)
+        rows.append(side.index['rows'])
+    assert lean.maps is None and full.maps is not None
+    assert rows[0] and rows[0] == rows[1] and all(r['status'] == 'ready' for r in rows[0])
+    assert candidates.index_coverage(lean) == candidates.index_coverage(full)
 
 
 def region(region_id, cx, count, area=1.0, score=None):

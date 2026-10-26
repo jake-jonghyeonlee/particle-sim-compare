@@ -171,12 +171,17 @@ def _role_gate(side, rows):
 
 def _slim_rows(rows):
     """The fields of an export row the funnel and the coverage tables read, sharing the row's own objects: the full rows
-    (assets, frame, provenance) are not kept once the file is written."""
+    (assets, frame, provenance) are not kept once the file is written.
+
+    ``source_identity``, ``center_xy_um`` (as the exporter normalised it), ``failure_type`` and ``analysis_layer`` let a caller
+    that asked for manual rows find them again by key. Slim rows are never serialised by ``candidates``."""
     slim = []
     for row in rows:
         assets = row.get('source_assets')
         slim.append({'roi_id': row['roi_id'], 'status': row['status'], 'reasons': row['reasons'],
-                     'source_region_id': row.get('source_region_id'),
+                     'source_region_id': row.get('source_region_id'), 'source_identity': row.get('source_identity'),
+                     'center_xy_um': row.get('center_xy_um'), 'failure_type': row.get('failure_type'),
+                     'analysis_layer': row.get('analysis_layer'),
                      'source_assets': None if assets is None else {'layouts': [{'endpoint': item.get('endpoint')}
                                                                                for item in assets.get('layouts', [])]}})
     return slim
@@ -248,7 +253,11 @@ def _do_export(cfg, side, selections, folder, min_count, diameter_um, track, mem
     반환: (결과, export 경로, payload(rois 포함), role gate가 막은 행 수).
     """
     from simcompare import pipeline
+    from simcompare.numeric_schema import NumericContractError
     from simcompare.roi_export import export_hooks, export_review_rois
+    if 'map_region_ids' in selections and side.maps is None:
+        raise NumericContractError('map_regions_require_maps',
+                                   f'{side.name}: map_region_ids were selected but the side was prepared without electrode maps')
     blocked = [0]
 
     def gate(rows):

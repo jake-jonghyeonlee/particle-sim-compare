@@ -108,7 +108,7 @@ def test_four_planted_changes_are_top_candidates_with_expected_classes():
         inside = [c for c in found['candidates'] if covers(c, whole)]
         assert inside, kind
         chosen[kind] = inside[0]
-    result = case_contributions(pairs, list(chosen.values()), **kw)
+    result = case_contributions(pairs, list(chosen.values()), max_operation_bytes=BIG, **kw)
     for index, kind in enumerate(chosen):
         window = result['windows'][index]
         names = [c['case_key'] for c in window['contributing_cases']]
@@ -244,7 +244,8 @@ def test_candidate_fields_flags_and_order():
     wpx = found['window_px']
     y0, x0 = top['window_origin_px']
     assert top['center_xy_um'] == [round((x0 + wpx / 2) * PITCH, 6), round((y0 + wpx / 2) * PITCH, 6)]
-    shifted = window_candidates(maps['maps'], maps['D'], pitch_um=PITCH, window_um=5.0, origin_xy_um=(50.0, 70.0))
+    shifted = window_candidates(maps['maps'], maps['D'], pitch_um=PITCH, window_um=5.0, max_operation_bytes=BIG,
+                                origin_xy_um=(50.0, 70.0))
     assert shifted['candidates'][0]['center_xy_um'] == [round(50.0 + top['center_xy_um'][0], 6),
                                                          round(70.0 + top['center_xy_um'][1], 6)]
 
@@ -261,8 +262,9 @@ def test_results_are_deterministic():
     assert first == second
     assert all(np.array_equal(first_maps['maps'][k], second_maps['maps'][k]) for k in first_maps['maps'])
     top = first['candidates'][:3]
-    assert case_contributions(pairs, top, **kw) == case_contributions(pairs, top, **kw)
-    json.dumps(case_contributions(pairs, top, **kw), sort_keys=True, allow_nan=False)
+    assert (case_contributions(pairs, top, max_operation_bytes=BIG, **kw)
+            == case_contributions(pairs, top, max_operation_bytes=BIG, **kw))
+    json.dumps(case_contributions(pairs, top, max_operation_bytes=BIG, **kw), sort_keys=True, allow_nan=False)
     json.dumps(first, sort_keys=True, allow_nan=False)
 
 
@@ -277,7 +279,7 @@ def test_crop_contribution_equals_whole_frame_residual():
     for cand in found['candidates'][:6]:
         y0, x0 = cand['window_origin_px']
         want = int(maps['maps']['M1'][y0:y0 + wpx, x0:x0 + wpx].sum())
-        got = case_contributions([pair], [cand], **kw)['windows'][0]['contributing_cases']
+        got = case_contributions([pair], [cand], max_operation_bytes=BIG, **kw)['windows'][0]['contributing_cases']
         assert [round(g['residual_um2'] / PITCH ** 2) for g in got] == [want]
         assert round(cand['score_um2'] / PITCH ** 2) == want
 
@@ -406,10 +408,12 @@ def test_shape_mismatch_and_bad_windows_raise():
                     **kwargs(shape))
     assert caught.value.code == 'invalid_change_map_input'
     with pytest.raises(NumericContractError) as caught:
-        window_candidates({'M1': np.zeros((50, 50), np.uint32)}, np.ones(shape, bool), pitch_um=PITCH, window_um=2.0)
+        window_candidates({'M1': np.zeros((50, 50), np.uint32)}, np.ones(shape, bool), pitch_um=PITCH, window_um=2.0,
+                          max_operation_bytes=BIG)
     assert caught.value.code == 'invalid_change_map_input'
     with pytest.raises(NumericContractError) as caught:
-        window_candidates({'M1': np.zeros(shape, np.uint32)}, np.ones(shape, bool), pitch_um=PITCH, window_um=10.0)
+        window_candidates({'M1': np.zeros(shape, np.uint32)}, np.ones(shape, bool), pitch_um=PITCH, window_um=10.0,
+                          max_operation_bytes=BIG)
     assert caught.value.code == 'invalid_change_map_input'          # 창이 frame 보다 크다
 
 
@@ -425,7 +429,7 @@ def test_counter_and_integral_overflow_are_explicit(monkeypatch):
     assert int(out['maps']['M1'].max()) == 3
     monkeypatch.setattr(change_map, 'INTEGRAL_LIMIT', 3 * 40 * 40)
     with pytest.raises(NumericContractError) as caught:
-        window_candidates(out['maps'], out['D'], pitch_um=PITCH, window_um=1.0)
+        window_candidates(out['maps'], out['D'], pitch_um=PITCH, window_um=1.0, max_operation_bytes=BIG)
     assert caught.value.code == 'change_map_counter_overflow'
 
 
@@ -445,6 +449,206 @@ def test_to_region_infos_feed_merge_regions_with_scalar_scores():
     best = merged[0]['representative']
     assert best.score == max(i.score for i in infos)
     assert len(merged) == 2
+
+
+# --- change-roi/T6: T5 review follow-ups ----------------------------------------------------------------------------
+
+def _full_frame_oracle(pairs, ref_valid, tgt_valid, offset, tolerance_px):
+    """adv:7 oracle: the residual of every pair computed on the whole frame, no bounding-box shortcut."""
+    dx, dy = offset
+    height, width = ref_valid.shape
+    domain = change_map._erode(change_map._comparison_domain(ref_valid, tgt_valid, dy, dx), tolerance_px)
+    maps = {}
+    for pair in pairs:
+        a, b = pair.load()
+        res = change_map._residual(a, change_map._shift_crop(b, dy, dx, 0, height, 0, width), domain, tolerance_px)
+        maps.setdefault(pair.layer, np.zeros(ref_valid.shape, np.uint32))
+        maps[pair.layer] += res
+    return domain, maps
+
+
+@pytest.mark.parametrize('seed, offset, tolerance_um', [(1, (0, 0), 0.0), (2, (7, -5), 0.2), (3, (-9, 4), 0.3),
+                                                        (4, (0, 3), 0.1), (5, (30, -25), 0.2)])
+def test_bbox_limited_residual_is_bit_identical_to_the_full_frame_computation(seed, offset, tolerance_um):
+    rng = np.random.default_rng(seed)
+    ref_shape, tgt_shape = (150, 160), (170, 140)
+    ref_valid, tgt_valid = np.ones(ref_shape, bool), np.ones(tgt_shape, bool)
+    ref_valid[20:40, 30:60] = False
+    tgt_valid[100:130, 10:50] = False
+    pairs = []
+    for i in range(7):
+        a, b = np.zeros(ref_shape, bool), np.zeros(tgt_shape, bool)
+        if i % 4 != 0:                                           # 어떤 쌍은 한쪽이 완전히 비어 있다
+            a[rng.integers(0, 150, 40), rng.integers(0, 160, 40)] = True
+            a[0:3, 0:3] = True                                   # frame 모서리에 닿는 형상
+        if i % 4 != 1:
+            b[rng.integers(0, 170, 40), rng.integers(0, 140, 40)] = True
+            b[-3:, -3:] = True
+        pairs.append(MaskPair(f'c{i}', 'M1' if i % 2 else 'M2', a, b))
+    pairs.append(MaskPair('empty', 'M1', np.zeros(ref_shape, bool), np.zeros(tgt_shape, bool)))
+    kw = kwargs(ref_shape, tgt_shape, offset, tolerance_um, ref_valid, tgt_valid)
+    out = change_maps(pairs, max_operation_bytes=BIG, **kw)
+    domain, want = _full_frame_oracle(pairs, ref_valid, tgt_valid, offset, out['stats']['tolerance_px'])
+    assert np.array_equal(out['D'], domain)
+    assert sorted(out['maps']) == sorted(want)
+    for layer in want:
+        assert out['maps'][layer].dtype == np.uint32 and np.array_equal(out['maps'][layer], want[layer])
+    assert out['stats']['residual_pixels'] == sum(int(m.sum()) for m in want.values())
+
+
+def test_thin_shape_one_pixel_off_at_a_small_target_frame_border_scores_zero():
+    shape = (100, 100)
+    tgt_valid = np.ones(shape, bool)
+    tgt_valid[:, 90:] = False                     # 작은 target frame: 열 90 부터는 관측 불가
+    a, b = np.zeros(shape, bool), np.zeros(shape, bool)
+    a[20:60, 89] = True                           # reference 의 얇은 선은 D 의 마지막 열에 있다
+    # target 의 같은 선은 한 칸 어긋난 열 90(관측 밖)에 있어 target 마스크에는 보이지 않는다(b 는 비어 있다)
+    kw = kwargs(shape, tgt_valid=tgt_valid)
+    quiet = change_maps([MaskPair('c', 'M1', a, b)], max_operation_bytes=BIG, **kw)
+    assert int(quiet['maps']['M1'].sum()) == 0     # erode(D, r) 가 D 경계 r px 띠의 거짓 잔차를 없앤다
+    assert quiet['stats']['domain_pixels'] < quiet['stats']['domain_pixels_before_erosion']
+    exact = change_maps([MaskPair('c', 'M1', a, b)], max_operation_bytes=BIG, **{**kw, 'tolerance_um': 0.0})
+    assert int(exact['maps']['M1'].sum()) == 40    # r=0 이면 기존 계산과 같다
+    # 경계에서 먼 진짜 변경은 그대로 남는다
+    b2 = b.copy()
+    b2[10:20, 10:20] = True
+    kept = change_maps([MaskPair('c', 'M1', a, b2)], max_operation_bytes=BIG, **kw)
+    assert int(kept['maps']['M1'].sum()) == 100
+    assert quiet['D'].sum() == (quiet['stats']['domain_pixels'])
+    found = window_candidates(kept['maps'], kept['D'], pitch_um=PITCH, window_um=2.0, max_operation_bytes=BIG)
+    assert found['candidates'] and all(c['observed_fraction'] <= 1 for c in found['candidates'])
+
+
+def _fake_dataset(product, entries, **context):
+    """entries: (tag, failure, e1, e2, layer, extra) — a lazily-read dataset like pair_cases expects."""
+    class Records(Mapping):
+        def __init__(self, reasons, status):
+            self.reasons, self.status = reasons, status
+
+        def __iter__(self):
+            return iter([5.0])
+
+        def __len__(self):
+            return 1
+
+        def header(self, diameter):
+            return SimpleNamespace(input_status=self.status, reasons=tuple(self.reasons))
+
+        def __getitem__(self, diameter):
+            return SimpleNamespace(mask=np.zeros((4, 4), bool))
+
+    ids = dict(process_step_id='S', exposure_id='E', unit_id='U', source_contract_version='v1')
+    ids.update(context)
+    cases = []
+    for tag, failure, e1, e2, layer, reasons in entries:
+        cases.append(SimpleNamespace(
+            identity=SimpleNamespace(product_id=product, design_version=product + '_v', case_id=tag, **ids),
+            failure_type=failure,
+            endpoints=(SimpleNamespace(electrode_id=e1, actual_layer='M1'), SimpleNamespace(electrode_id=e2, actual_layer='M1')),
+            analysis_layer=layer, records=Records(reasons, 'observed')))
+    return SimpleNamespace(cases=cases)
+
+
+def test_pair_flags_other_side_duplicate_short_only_and_context_warning():
+    ref = _fake_dataset('R', [('a', 'lateral_short', 'E1', 'E2', 'M1', ('csv_area_mismatch',)),
+                             ('b', 'lateral_short', 'E3', 'E4', 'M1', ()),
+                             ('c', 'open', 'E5', 'E6', 'M1', ()),
+                             ('d', 'lateral_short', 'E7', 'E8', 'M1', ())])
+    tgt = _fake_dataset('T', [('a', 'lateral_short', 'E1', 'E2', 'M1', ('csv_area_mismatch',)),
+                             ('b', 'lateral_short', 'E3', 'E4', 'M1', ()), ('b2', 'lateral_short', 'E4', 'E3', 'M1', ()),
+                             ('c', 'open', 'E5', 'E6', 'M1', ()),
+                             ('d', 'lateral_short', 'E7', 'E8', 'M1', ())], exposure_id='E-other')
+    out = pair_cases(ref, tgt, diameter_um=5.0)
+    flags = {p.case_key: p.flags for p in out['pairs']}
+    assert flags['lateral_short|E1|M1|E2|M1|M1'] == ('reference:csv_area_mismatch', 'target:csv_area_mismatch')
+    assert flags['lateral_short|E7|M1|E8|M1|M1'] == ()
+    assert 'lateral_short|E3|M1|E4|M1|M1' not in flags                       # 중복이 있는 키는 쌍이 아니다
+    reasons = {(e['case_key'], e['side'], e['reason']) for e in out['cases_excluded']}
+    assert ('lateral_short|E3|M1|E4|M1|M1', 'target', 'duplicate_case_key') in reasons
+    assert ('lateral_short|E3|M1|E4|M1|M1', 'reference', 'duplicate_case_key_on_other_side') in reasons
+    assert ('open|E5|M1|E6|M1|M1', 'reference', 'map_requires_short_only') in reasons
+    assert ('open|E5|M1|E6|M1|M1', 'target', 'map_requires_short_only') in reasons
+    assert out['warnings'] == ['change_map_dataset_context_differs']
+    assert out['stats']['dataset_context']['target']['exposure_id'] == ['E-other']
+    assert out['stats']['dataset_context']['reference']['exposure_id'] == ['E']
+    same = pair_cases(ref, _fake_dataset('T', [('a', 'lateral_short', 'E1', 'E2', 'M1', ())]), diameter_um=5.0)
+    assert same['warnings'] == []
+
+
+def test_pair_flags_reach_the_contributing_cases():
+    shape = (120, 120)
+    a, b = np.zeros(shape, bool), np.zeros(shape, bool)
+    b[40:50, 40:50] = True
+    pair = MaskPair('c', 'M1', a, b, flags=('reference:csv_area_mismatch',))
+    plain = MaskPair('d', 'M1', a.copy(), b.copy())
+    kw = kwargs(shape)
+    maps, found = run([pair, plain], **kw)
+    got = case_contributions([pair, plain], found['candidates'][:1], max_operation_bytes=BIG, **kw)
+    cases = {c['case_key']: c for c in got['windows'][0]['contributing_cases']}
+    assert cases['c']['flags'] == ['reference:csv_area_mismatch'] and cases['d']['flags'] == []
+
+
+def test_case_contributions_admission_is_the_first_stage_only_and_does_not_load_masks():
+    shape = (120, 130)
+    kw = kwargs(shape)
+    pair = MaskPair('c', 'M1', np.zeros(shape, bool), np.ones(shape, bool))
+    maps, found = run([pair], **kw)
+    window = found['candidates'][:1]
+    need = estimate_change_map_bytes(shape, shape, 1, 0, 2)
+    assert case_contributions([pair], window, max_operation_bytes=need, **kw)['stats']['estimated_bytes'] == need
+    with pytest.raises(NumericContractError) as caught:
+        case_contributions([pair], window, max_operation_bytes=need - 1, **kw)
+    assert caught.value.code == 'oversized_real_operation'
+
+    class Boom:
+        case_key, layer = 'c', 'M1'
+
+        def load(self):
+            raise AssertionError('mask loaded before admission')
+
+    with pytest.raises(NumericContractError):
+        case_contributions([Boom()], window, max_operation_bytes=10, **kw)
+
+
+def test_required_operation_limit_has_no_default():
+    shape = (60, 60)
+    maps = change_maps([MaskPair('c', 'M1', np.zeros(shape, bool), np.ones(shape, bool))], max_operation_bytes=BIG,
+                       **kwargs(shape))
+    with pytest.raises(TypeError):
+        window_candidates(maps['maps'], maps['D'], pitch_um=PITCH, window_um=2.0)
+    with pytest.raises(TypeError):
+        case_contributions([], [], **kwargs(shape))
+
+
+def test_previous_pair_arrays_are_released_before_the_next_pair_is_read():
+    import gc
+    import weakref
+    shape = (80, 80)
+    refs = []
+
+    class Probe:
+        layer = 'M1'
+
+        def __init__(self, key):
+            self.case_key = key
+
+        def load(self):
+            if refs:                              # 이전 쌍의 배열이 아직 살아 있으면 안 된다
+                gc.collect()
+                assert all(r() is None for r in refs), 'previous pair arrays still referenced'
+            a, b = np.zeros(shape, bool), np.zeros(shape, bool)
+            b[10:20, 10:20] = True
+            refs.extend([weakref.ref(a), weakref.ref(b)])
+            return a, b
+
+    kw = kwargs(shape)
+    pairs = [Probe('p0'), Probe('p1'), Probe('p2')]
+    out = change_maps(pairs, max_operation_bytes=BIG, **kw)
+    assert out['stats']['pairs_with_change_by_layer'] == {'M1': 3}
+    refs.clear()
+    found = window_candidates(out['maps'], out['D'], pitch_um=PITCH, window_um=2.0, max_operation_bytes=BIG)
+    got = case_contributions(pairs, found['candidates'][:1], max_operation_bytes=BIG, **kw)
+    assert [c['case_key'] for c in got['windows'][0]['contributing_cases']] == ['p0', 'p1', 'p2']
 
 
 @pytest.mark.skipif(not os.environ.get('SIMCOMPARE_ETX_PY'), reason='SIMCOMPARE_ETX_PY not set')

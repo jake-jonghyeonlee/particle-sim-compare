@@ -40,13 +40,17 @@ def _bad(detail):
 # --------------------------------------------------------------------------- A1. 쌍 만들기
 
 class CasePair:
-    """한 case 의 reference·target 대표 record. mask 는 ``load()`` 에서만 읽는다(캐시하지 않는다)."""
-    __slots__ = ('case_key', 'layer', 'ref_case', 'tgt_case', 'ref_diameter', 'tgt_diameter')
+    """한 case 의 reference·target 대표 record. mask 는 ``load()`` 에서만 읽는다(캐시하지 않는다).
 
-    def __init__(self, case_key, layer, ref_case, tgt_case, ref_diameter, tgt_diameter):
+    ``flags`` = 두 대표 record 헤더 reasons(예 ``csv_area_mismatch``)를 ``reference:``/``target:`` 접두로 모은 정렬 튜플.
+    쌍을 제외하지 않고 기여 case 에 표시만 한다."""
+    __slots__ = ('case_key', 'layer', 'ref_case', 'tgt_case', 'ref_diameter', 'tgt_diameter', 'flags')
+
+    def __init__(self, case_key, layer, ref_case, tgt_case, ref_diameter, tgt_diameter, flags=()):
         self.case_key, self.layer = case_key, layer
         self.ref_case, self.tgt_case = ref_case, tgt_case
         self.ref_diameter, self.tgt_diameter = ref_diameter, tgt_diameter
+        self.flags = tuple(flags)
 
     def load(self):
         a = self.ref_case.records[self.ref_diameter].mask
@@ -58,10 +62,11 @@ class CasePair:
 
 class MaskPair:
     """이미 메모리에 있는 mask 쌍(합성 입력·테스트용). ``CasePair`` 와 같은 인터페이스."""
-    __slots__ = ('case_key', 'layer', 'a', 'b')
+    __slots__ = ('case_key', 'layer', 'a', 'b', 'flags')
 
-    def __init__(self, case_key, layer, a, b):
+    def __init__(self, case_key, layer, a, b, flags=()):
         self.case_key, self.layer, self.a, self.b = case_key, layer, a, b
+        self.flags = tuple(flags)
 
     def load(self):
         return self.a, self.b
@@ -84,24 +89,29 @@ def _header(records, diameter):
 
 
 def _observation(case, diameter_um):
-    """(대표 지름 key, 제외 사유 또는 None). 누락(missing)과 관측 면적 0(observed)을 구분한다."""
+    """(대표 지름 key, 제외 사유 또는 None, 헤더 reasons). 누락(missing)과 관측 면적 0(observed)을 구분한다."""
     wanted = diameter_key(diameter_um)
     found = next((d for d in case.records if diameter_key(d) == wanted), None)
     if found is None:
-        return None, 'representative_diameter_missing'
+        return None, 'representative_diameter_missing', ()
     head = _header(case.records, found)
+    reasons = tuple(head.reasons)
     if head.input_status == 'observed':
-        return found, None
+        return found, None, reasons
     if head.input_status == 'not_applicable':
-        return found, 'not_applicable'
+        return found, 'not_applicable', reasons
     if 'case_geometry_unconfirmed' in head.reasons:
-        return found, 'geometry_unconfirmed'
-    return found, 'mask_missing'
+        return found, 'geometry_unconfirmed', reasons
+    return found, 'mask_missing', reasons
 
 
 def _product(dataset):
     ids = sorted({case.identity.product_id for case in dataset.cases})
     return ids[0] if len(ids) == 1 else ','.join(ids)
+
+
+SHORT_FAILURE_TYPES = ('lateral_short', 'vertical_short')   # electrode_map 의 short-only 관례(G7b)
+CONTEXT_FIELDS = ('process_step_id', 'exposure_id', 'unit_id', 'source_contract_version')
 
 
 def _group(dataset):
@@ -111,14 +121,26 @@ def _group(dataset):
     return groups
 
 
+def _context(dataset):
+    out = {}
+    for field in CONTEXT_FIELDS:
+        values = {getattr(case.identity, field, None) for case in dataset.cases}
+        out[field] = sorted(v for v in values if v is not None)
+    return out
+
+
 def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
     """결합 키 = (불량명, 정렬된 (전극, 층) 두 개) 로 두 dataset 의 case 를 짝짓는다. product_id·design_version 등은 키가 아니다.
 
     같은 키인데 analysis_layer 가 다르면 ``case_layer_mismatch``(공통 layer 가 하나도 없을 때), 한쪽에만 있으면
     ``cases_only_in_*``. 같은 (키, analysis_layer) 가 한 dataset 에 둘 이상이면 ``duplicate_case_key`` 로 둘 다 제외한다.
     양쪽 대표 지름 record 가 관측(면적 0 포함)일 때만 쌍을 만든다. mask 는 읽지 않는다.
+    한쪽에 중복이 있으면 반대편의 단일 case 도 ``duplicate_case_key_on_other_side`` 로 제외 목록에 남긴다(둘 다 쌍에서 빠진다).
+    lateral_short·vertical_short 가 아닌 case 는 ``map_requires_short_only`` 로 제외한다(electrode_map 관례).
+    두 dataset 의 process_step_id·exposure_id·unit_id·source_contract_version 은 ``stats['dataset_context']`` 에 적고
+    다르면 ``warnings`` 에 ``change_map_dataset_context_differs`` 를 넣는다.
     반환: ``{'pairs': [CasePair], 'cases_excluded': [{case_key, side, product, reason}], 'cases_only_in_reference': [...],
-    'cases_only_in_target': [...], 'stats': {...}}``(모두 case_key 순 정렬).
+    'cases_only_in_target': [...], 'warnings': [...], 'stats': {...}}``(목록은 case_key 순 정렬).
     """
     ref_groups, tgt_groups = _group(ref_dataset), _group(tgt_dataset)
     ref_product, tgt_product = _product(ref_dataset), _product(tgt_dataset)
@@ -134,6 +156,12 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
     for key in sorted(set(ref_groups) | set(tgt_groups)):
         failure_type, endpoints = key
         ref_layers, tgt_layers = ref_groups.get(key, {}), tgt_groups.get(key, {})
+        if failure_type not in SHORT_FAILURE_TYPES:
+            for side, layers in (('reference', ref_layers), ('target', tgt_layers)):
+                for layer in sorted(layers):
+                    for _ in layers[layer]:
+                        exclude(_key_text(failure_type, endpoints, layer), side, 'map_requires_short_only')
+            continue
         if not ref_layers:
             for layer in sorted(tgt_layers):
                 for _ in tgt_layers[layer]:
@@ -150,19 +178,21 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
             in_ref, in_tgt = ref_layers.get(layer, []), tgt_layers.get(layer, [])
             if layer in common:
                 if len(in_ref) > 1 or len(in_tgt) > 1:
-                    if len(in_ref) > 1:
-                        exclude(text, 'reference', 'duplicate_case_key')
-                    if len(in_tgt) > 1:
-                        exclude(text, 'target', 'duplicate_case_key')
+                    for side, mine, other in (('reference', in_ref, in_tgt), ('target', in_tgt, in_ref)):
+                        if len(mine) > 1:
+                            exclude(text, side, 'duplicate_case_key')
+                        elif len(other) > 1:
+                            exclude(text, side, 'duplicate_case_key_on_other_side')
                     continue
-                ref_d, ref_reason = _observation(in_ref[0], diameter_um)
-                tgt_d, tgt_reason = _observation(in_tgt[0], diameter_um)
+                ref_d, ref_reason, ref_head = _observation(in_ref[0], diameter_um)
+                tgt_d, tgt_reason, tgt_head = _observation(in_tgt[0], diameter_um)
                 if ref_reason:
                     exclude(text, 'reference', ref_reason)
                 if tgt_reason:
                     exclude(text, 'target', tgt_reason)
                 if not ref_reason and not tgt_reason:
-                    pairs.append(CasePair(text, layer, in_ref[0], in_tgt[0], ref_d, tgt_d))
+                    flags = sorted({f'reference:{r}' for r in ref_head} | {f'target:{r}' for r in tgt_head})
+                    pairs.append(CasePair(text, layer, in_ref[0], in_tgt[0], ref_d, tgt_d, flags))
             elif not common:
                 if in_ref:
                     exclude(text, 'reference', 'case_layer_mismatch')
@@ -180,11 +210,13 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um):
     reasons = {}
     for item in excluded:
         reasons[item['reason']] = reasons.get(item['reason'], 0) + 1
+    context = {'reference': _context(ref_dataset), 'target': _context(tgt_dataset)}
+    warnings = ['change_map_dataset_context_differs'] if context['reference'] != context['target'] else []
     return {'pairs': pairs, 'cases_excluded': excluded, 'cases_only_in_reference': only_ref,
-            'cases_only_in_target': only_tgt,
+            'cases_only_in_target': only_tgt, 'warnings': warnings,
             'stats': {'pairs': len(pairs), 'excluded_entries': len(excluded), 'excluded_by_reason': reasons,
                       'only_in_reference': len(only_ref), 'only_in_target': len(only_tgt),
-                      'diameter_um': float(diameter_um)}}
+                      'diameter_um': float(diameter_um), 'dataset_context': context}}
 
 
 # --------------------------------------------------------------------------- A5/A6. admission·검증
@@ -290,8 +322,30 @@ def _dilate(mask, r):
     return out
 
 
+def _erode(mask, r):
+    """8-이웃 침식 r 회(반지름 r 인 정사각 침식). frame 밖은 관측 불가(False)로 본다."""
+    out = mask
+    for _ in range(r):
+        nxt = out.copy()
+        nxt[:, 1:] &= out[:, :-1]
+        nxt[:, :-1] &= out[:, 1:]
+        nxt[:, 0] = False
+        nxt[:, -1] = False
+        out = nxt
+    for _ in range(r):
+        nxt = out.copy()
+        nxt[1:] &= out[:-1]
+        nxt[:-1] &= out[1:]
+        nxt[0] = False
+        nxt[-1] = False
+        out = nxt
+    return out
+
+
 def _residual(a, b, domain, r):
-    """R = ((A \\ dilate(B', r)) ∪ (B' \\ dilate(A, r))) ∩ D. r = 0 이면 (A XOR B') ∩ D."""
+    """R = ((A \\ dilate(B', r)) ∪ (B' \\ dilate(A, r))) ∩ domain. r = 0 이면 (A XOR B') ∩ domain.
+
+    ``domain`` 은 호출자가 ``erode(D, r)`` 로 넘긴다: D 경계 r px 띠에서는 상대 쪽 형상이 관측 밖이라 거짓 잔차가 생긴다."""
     if r == 0:
         res = a ^ b
     else:
@@ -303,6 +357,29 @@ def _residual(a, b, domain, r):
 def _comparison_domain(ref_valid, tgt_valid, dy, dx):
     shifted = _shift_crop(tgt_valid, dy, dx, 0, ref_valid.shape[0], 0, ref_valid.shape[1])
     return ref_valid & shifted
+
+
+def _extent(mask, shift):
+    """mask(행 또는 열 any 결과)가 True 인 칸을 덮는 [시작, 끝) 구간에 ``shift`` 를 더한 값. 없으면 None."""
+    index = np.flatnonzero(mask)
+    return None if index.size == 0 else (int(index[0]) + shift, int(index[-1]) + 1 + shift)
+
+
+def _pair_bbox(a, b, dy, dx, height, width, margin):
+    """A ∪ B'(= target b 를 reference 좌표로 옮긴 것)의 bbox 를 ``margin`` 만큼 넓혀 frame 으로 자른 (y0, y1, x0, x1). 둘 다 비면 None."""
+    boxes = []
+    ya, xa = _extent(a.any(axis=1), 0), _extent(a.any(axis=0), 0)
+    if ya is not None:
+        boxes.append((ya[0], ya[1], xa[0], xa[1]))
+    yb, xb = _extent(b.any(axis=1), -dy), _extent(b.any(axis=0), -dx)
+    if yb is not None:
+        y0, y1, x0, x1 = max(yb[0], 0), min(yb[1], height), max(xb[0], 0), min(xb[1], width)
+        if y0 < y1 and x0 < x1:
+            boxes.append((y0, y1, x0, x1))
+    if not boxes:
+        return None
+    return (max(min(b[0] for b in boxes) - margin, 0), min(max(b[1] for b in boxes) + margin, height),
+            max(min(b[2] for b in boxes) - margin, 0), min(max(b[3] for b in boxes) + margin, width))
 
 
 def _load_checked(pair, ref_shape, tgt_shape):
@@ -340,23 +417,35 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     for layer, count in per_layer.items():
         if count >= COUNTER_LIMIT:
             raise NumericContractError('change_map_counter_overflow', f'layer {layer}: {count} cases >= 2^32')
-    domain = _comparison_domain(ref_valid, tgt_valid, dy, dx)
+    full_domain = _comparison_domain(ref_valid, tgt_valid, dy, dx)
+    domain_before = int(np.count_nonzero(full_domain))
+    domain = _erode(full_domain, r)
+    del full_domain
     maps = {layer: np.zeros(ref_valid.shape, dtype=np.uint32) for layer in layers}
     changed = {layer: 0 for layer in layers}
     residual_pixels = 0
+    height, width = ref_valid.shape
     for pair in pairs:
         a, b = _load_checked(pair, ref_valid.shape, tgt_valid.shape)
-        moved = _shift_crop(b, dy, dx, 0, ref_valid.shape[0], 0, ref_valid.shape[1])
-        res = _residual(a, moved, domain, r)
-        count = int(np.count_nonzero(res))
-        if count:
-            maps[pair.layer] += res
-            changed[pair.layer] += 1
-            residual_pixels += count
+        # R 는 A ∪ B' 위에서만 0 이 아니다: 그 bbox 를 r(+1) 넓힌 영역에서 계산하면 frame 전체 계산과 비트 단위로 같다.
+        box = _pair_bbox(a, b, dy, dx, height, width, r + 1)
+        if box is not None:
+            y0, y1, x0, x1 = box
+            res = _residual(a[y0:y1, x0:x1], _shift_crop(b, dy, dx, y0, y1, x0, x1), domain[y0:y1, x0:x1], r)
+            count = int(np.count_nonzero(res))
+            if count:
+                target = maps[pair.layer][y0:y1, x0:x1]
+                np.add(target, res, out=target, casting='unsafe')
+                changed[pair.layer] += 1
+                residual_pixels += count
+            del res
+        a = b = None   # 다음 쌍을 읽기 전에 이전 쌍 배열을 놓는다
     return {'maps': maps, 'D': domain,
             'stats': {'pairs': len(pairs), 'pairs_by_layer': per_layer, 'pairs_with_change_by_layer': changed,
                       'residual_pixels': residual_pixels, 'tolerance_px': r, 'offset_px': [dx, dy],
-                      'domain_pixels': int(np.count_nonzero(domain)), 'frame_pixels': int(domain.size),
+                      'domain_pixels': int(np.count_nonzero(domain)),
+                      'domain_pixels_before_erosion': domain_before,
+                      'frame_pixels': int(domain.size),
                       'estimated_bytes': need, 'pitch_um': float(pitch_um), 'tolerance_um': float(tolerance_um)}}
 
 
@@ -392,12 +481,13 @@ def _local_max_grid(grid):
     return keep
 
 
-def window_candidates(maps, D, *, pitch_um, window_um, origin_xy_um=(0.0, 0.0), max_operation_bytes=None):
+def window_candidates(maps, D, *, pitch_um, window_um, max_operation_bytes, origin_xy_um=(0.0, 0.0)):
     """층별 W×W 창 합(``score_um2 = 창 합 × pitch²``)과 극대 창 후보.
 
     W = round(window_um / pitch_um) px, stride = max(1, W // 4). 후보 = stride 격자에서 8-이웃 격자점보다 크거나 같고
     점수 > 0 인 점. ``observed_fraction = |D ∩ 창| / W²`` 가 1 미만이면 플래그 ``window_partially_unobserved``.
     중심 = ``origin + (왼쪽 위 칸 + W/2) * pitch``(candidates.window_bounds 가 쓰는 창 중심과 같은 물리 좌표, reference frame).
+    D 는 ``change_maps`` 가 돌려준 erode(D, r) 이다(관측 불가 띠를 뺀 영역). ``max_operation_bytes`` 는 필수다(한도 없음은 None 을 명시).
     층 사이 합집합 점수는 만들지 않는다. 정렬: score 내림차순 → layer → center x → center y.
     반환: ``{'candidates': [...], 'window_px', 'stride_px', 'window_um'}``.
     """
@@ -485,7 +575,7 @@ def _classify(a_w, b_w, w_px, pitch_um):
 
 
 def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, pitch_um, tolerance_um,
-                       max_operation_bytes=None):
+                       max_operation_bytes):
     """선정된 창(``window_candidates`` 후보 dict 목록)마다, 창 안 R > 0 인 case 를 기여 case 로 모으고 변경 종류를 분류한다.
 
     case 를 한 장씩 다시 읽는다(두 번째 패스). 창 둘레 r 픽셀을 포함한 잘라낸 영역에서 잔차를 계산하므로 frame 전체
@@ -509,10 +599,10 @@ def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, 
         if y0 < 0 or x0 < 0 or y0 + w > height or x0 + w > width:
             raise _bad(f'window {window.get("center_xy_um")} lies outside the frame {ref_valid.shape}')
     layers = sorted({window['layer'] for window in windows})
-    widest = max((window['window_px'] for window in windows), default=0)
-    need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), widest, r)
+    # 이 패스는 층별 uint32 지도와 적분 영상을 만들지 않는다: 1단계 추정(window_px=0)만 검사한다.
+    need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), 0, r)
     _check_admission(need, max_operation_bytes)
-    domain = _comparison_domain(ref_valid, tgt_valid, dy, dx)
+    domain = _erode(_comparison_domain(ref_valid, tgt_valid, dy, dx), r)
     by_layer = {}
     for index, window in enumerate(windows):
         by_layer.setdefault(window['layer'], []).append(index)
@@ -536,7 +626,9 @@ def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, 
                 continue
             entry = {'case_key': pair.case_key, 'residual_um2': count * pitch_um * pitch_um}
             entry.update(_classify(a_c[inner] & d_c[inner], b_c[inner] & d_c[inner], w, pitch_um))
+            entry['flags'] = list(getattr(pair, 'flags', ()))
             found[index].append(entry)
+        a = b = a_c = b_c = None   # 다음 쌍을 읽기 전에 이전 쌍 배열(과 그 view)을 놓는다
     out = []
     for index, window in enumerate(windows):
         found[index].sort(key=lambda e: (-e['residual_um2'], e['case_key']))

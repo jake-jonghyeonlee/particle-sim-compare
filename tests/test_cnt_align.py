@@ -444,8 +444,10 @@ def test_identifiability_valid_hole_hides_the_distinguishing_dots():
     tgt_valid[:, 95:] = False                                           # target 의 두 번째 점은 valid 구멍 안
     kw = dict(pitch_um=1.0, search_um=40.0, min_dice=0.0, layer_tolerance_um=5.0, max_operation_bytes=BIG)
     out = _assert_identifiability({'layers': {'M1': ref}, 'valid': np.ones((100, 150), bool)},
-                                  {'layers': {'M1': tgt}, 'valid': tgt_valid}, kw, (20, 0), ['peak_plateau'], False)
+                                  {'layers': {'M1': tgt}, 'valid': tgt_valid}, kw, (20, 0), [], False)
     assert out['offset_xy_px'] == [-10, 0] and out['peak_ratio'] == 1.0   # 동점이면 |d| 최소
+    # 주기 때문에 멀리 떨어진 동률은 plateau 가 아니다: best 를 포함하는 연결 성분만 본다(T5 후속 adv:9)
+    assert 'peak_plateau' not in out['reasons'] and out['best_plateau_extent_px'] == [0, 0] and out['best_plateau_px'] == 1
 
 
 def test_identifiability_period_shorter_than_search_radius():
@@ -511,6 +513,39 @@ def test_load_cnt_layers_crops_each_layer_without_cross_layer_union(tmp_path):
     assert empty['layers'] == {} and empty['warnings'][0]['status'] == 'cnt_not_provided'
     missing = load_cnt_layers(tmp_path, 'NOPE', frame)
     assert missing['layers'] == {} and missing['warnings'][0]['status'] == 'product_folder_missing'
+
+
+def test_missing_layers_give_a_result_before_valid_shapes_are_checked():
+    """change-roi/T6 (T5 adv:8): the T4 behaviour — an input without CNT layers is a result, whatever its valid looks like."""
+    odd_valid = np.ones((5,), bool)                                     # 2-D 가 아니어도 층이 없으면 결과다
+    other = {'layers': {'M1': np.ones((9, 9), bool)}, 'valid': np.ones((9, 9), bool)}
+    for ref, tgt, reason in (({'layers': {}, 'valid': odd_valid}, other, 'cnt_missing_reference'),
+                             (other, {'valid': odd_valid}, 'cnt_missing_target')):
+        out = align_products(ref, tgt, **KW)
+        assert out['status'] == 'alignment_failed_identity_used' and reason in out['reasons']
+        assert out['offset_xy_px'] == [0, 0]
+    both = align_products({'layers': {}, 'valid': odd_valid}, {'layers': {}, 'valid': odd_valid}, **KW)
+    assert both['reasons'] == ['cnt_missing_reference', 'cnt_missing_target']
+    with pytest.raises(NumericContractError):                           # 층이 있으면 모양 검사는 그대로
+        align_products({'layers': {'M1': np.ones((9, 9), bool)}, 'valid': odd_valid}, other, **KW)
+
+
+def test_plateau_is_judged_on_the_component_that_contains_the_best_offset():
+    """change-roi/T6 (T5 adv:9): periodic ties far from the best are not a plateau; a real flat top still is."""
+    ref, tgt, kw, truth = plateau_case()
+    flat = align_products(ref, tgt, **kw)
+    assert max(abs(flat['offset_xy_px'][0] - truth[0]), abs(flat['offset_xy_px'][1] - truth[1])) <= 1   # 평탄한 꼭대기 안
+    assert 'peak_plateau' in flat['reasons'] and max(flat['best_plateau_extent_px']) >= cnt_align.PLATEAU_MIN_EXTENT_PX
+    assert flat['best_plateau_px'] > 1
+    row = np.zeros((40, 120), bool)                                     # x 주기 10 인 점들 → 같은 값이 멀리서 반복된다
+    row[::7, 5::10] = True
+    shifted = np.roll(row, 20, axis=1)
+    periodic = align_products({'layers': {'M1': row}, 'valid': np.ones(row.shape, bool)},
+                              {'layers': {'M1': shifted}, 'valid': np.ones(row.shape, bool)},
+                              pitch_um=1.0, search_um=30.0, min_dice=0.0, layer_tolerance_um=5.0,
+                              max_operation_bytes=10 ** 11)
+    assert 'peak_plateau' not in periodic['reasons']
+    assert periodic['best_plateau_extent_px'] == [0, 0] and periodic['best_plateau_px'] == 1
 
 
 @pytest.mark.skipif(not os.environ.get('SIMCOMPARE_ETX_PY'), reason='SIMCOMPARE_ETX_PY not set')

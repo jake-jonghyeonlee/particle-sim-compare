@@ -128,6 +128,22 @@ def _edge_mask(circle):
     return circle & outside
 
 
+def _component(mask, seed):
+    """``seed``(mask 안의 한 칸)를 포함하는 8-연결 성분의 bool 배열."""
+    out = np.zeros(mask.shape, dtype=bool)
+    out[seed] = True
+    stack = [seed]
+    height, width = mask.shape
+    while stack:
+        y, x = stack.pop()
+        for ny in range(max(y - 1, 0), min(y + 2, height)):
+            for nx in range(max(x - 1, 0), min(x + 2, width)):
+                if mask[ny, nx] and not out[ny, nx]:
+                    out[ny, nx] = True
+                    stack.append((ny, nx))
+    return out
+
+
 def _local_max(values, cand):
     work = np.where(cand, values, -1)
     padded = np.pad(work, 1, constant_values=-1)
@@ -188,6 +204,15 @@ def align_products(ref, tgt, *, pitch_um, search_um, min_dice, layer_tolerance_u
         raise NumericContractError(
             'invalid_alignment_input',
             f'search radius {search_px} px < {MIN_SEARCH_PX} px (search_um={search_um}, pitch_um={pitch_um}); raise --search-um')
+    result = _empty_result(pitch_um, search_um, search_px)
+    reasons = []
+    ref_layers, tgt_layers = dict(ref.get('layers') or {}), dict(tgt.get('layers') or {})
+    if not ref_layers:
+        reasons.append('cnt_missing_reference')
+    if not tgt_layers:
+        reasons.append('cnt_missing_target')
+    if reasons:   # 층이 없는 입력은 valid 모양을 검사하기 전에 결과로 돌려준다(실패는 예외가 아니라 결과)
+        return _finish(result, reasons)
     for side, product in (('reference', ref), ('target', tgt)):
         valid_shape = np.shape(product['valid'])
         if len(valid_shape) != 2:
@@ -197,15 +222,6 @@ def align_products(ref, tgt, *, pitch_um, search_um, min_dice, layer_tolerance_u
                 raise NumericContractError(
                     'invalid_alignment_input',
                     f'{side} layer {name} shape {np.shape(layer)} != valid shape {valid_shape}')
-    result = _empty_result(pitch_um, search_um, search_px)
-    reasons = []
-    ref_layers, tgt_layers = dict(ref.get('layers') or {}), dict(tgt.get('layers') or {})
-    if not ref_layers:
-        reasons.append('cnt_missing_reference')
-    if not tgt_layers:
-        reasons.append('cnt_missing_target')
-    if reasons:
-        return _finish(result, reasons)
 
     valid_ref, valid_tgt = np.asarray(ref['valid'], dtype=bool), np.asarray(tgt['valid'], dtype=bool)
     excluded, used, a_masks, b_masks = [], [], {}, {}
@@ -267,10 +283,12 @@ def align_products(ref, tgt, *, pitch_um, search_um, min_dice, layer_tolerance_u
     result['overlap_area_um2'] = _r6(int(support[by + r, bx + r]) * pitch_um * pitch_um)
 
     # 최댓값 동률 집합: 크기와 퍼짐(px). 주기 동률·점 크기 차이로 생기는 plateau 를 드러낸다.
+    # best 를 포함하는 8-연결 성분만 본다(주기 때문에 멀리 떨어진 동률은 plateau 가 아니다).
     tied = cand & (inter == best_i)
-    ty, tx = dy[tied], dx[tied]
+    component = _component(tied, (by + r, bx + r))
+    ty, tx = dy[component], dx[component]
     extent = [int(tx.max() - tx.min()), int(ty.max() - ty.min())]
-    result['best_plateau_px'] = int(tied.sum())
+    result['best_plateau_px'] = int(component.sum())
     result['best_plateau_extent_px'] = extent
     if max(extent) >= PLATEAU_MIN_EXTENT_PX:
         reasons.append('peak_plateau')

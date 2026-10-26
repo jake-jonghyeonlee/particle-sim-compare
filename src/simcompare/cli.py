@@ -86,6 +86,19 @@ def _parser() -> argparse.ArgumentParser:
     cand.add_argument("--max-candidates", type=int,
                       help="방향(제품)별 질의 수 상한. 명시할 때만 적용하며 잘린 수를 funnel에 기록")
     cand.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
+    change = _korean_help(sub.add_parser(
+        "candidates-change", add_help=False,
+        help="두 제품(real_hotspot_v1)의 CNT 정렬 + 5 µm hotspot 변경 지도 → 변경 위치 질의 ROI와 DL2 export(모든 인수 필수, 기본값 없음)"))
+    change.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference·target 각각 real_hotspot_v1 단일 제품·단일 frame)")
+    change.add_argument("--cnt-from-dl1-root", required=True, help="두 제품의 cno/ CNT 층 PNG가 있는 DL1 PNG root (제품 폴더 = product_id)")
+    change.add_argument("--align-search-um", required=True, type=float, help="CNT 정렬 탐색 반경 µm (>= 2 x pitch)")
+    change.add_argument("--align-min-dice", required=True, type=float, help="정렬 최소 Dice [0, 1]. 미만이면 aligned_uncertain")
+    change.add_argument("--align-layer-tolerance-um", required=True, type=float, help="층별·4분면 offset 이 전역 offset 과 달라도 되는 거리 µm")
+    change.add_argument("--change-tolerance-um", required=True, type=float, help="변경 판정 허용 이동 거리 µm (이 안의 이동은 변경으로 세지 않음)")
+    change.add_argument("--window-um", required=True, type=float, help="변경 창 한 변(µm)")
+    change.add_argument("--merge-overlap", required=True, type=float, help="두 창의 intersection/min(area) 병합 기준 (0,1]")
+    change.add_argument("--top-k", required=True, type=int, help="방향(reference_to_target / target_to_reference)별 질의 수")
+    change.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     confirm = _korean_help(sub.add_parser(
         "confirm-pairs", add_help=False,
         help="사용자가 decisions.csv 로 accept 한 NCC/DL2 후보만 roi_correspondence_v1 로 변환(점수는 사이드카에만)"))
@@ -216,6 +229,17 @@ def main(argv: list[str] | None = None) -> int:
                                                merge_overlap=args.merge_overlap, max_candidates=args.max_candidates)
             _print(result)
             return result["exit_code"]
+        if args.command == "candidates-change":
+            # candidates 와 같다: 출력 폴더는 새 것이어야 하고 run_candidates_change 가 이 실행이 만든 파일만 정리한다.
+            from simcompare import change_candidates, pipeline
+            cfg = pipeline.load_numeric_config(args.config)
+            result = change_candidates.run_candidates_change(
+                cfg, Path(args.out), cnt_from_dl1_root=args.cnt_from_dl1_root, align_search_um=args.align_search_um,
+                align_min_dice=args.align_min_dice, align_layer_tolerance_um=args.align_layer_tolerance_um,
+                change_tolerance_um=args.change_tolerance_um, window_um=args.window_um,
+                merge_overlap=args.merge_overlap, top_k=args.top_k)
+            _print(result)
+            return result["exit_code"]
         if args.command == "confirm-pairs":
             # 출력 폴더는 새 것이어야 하며 run_confirm_pairs 가 이 실행이 만든 파일만 정리한다(공용 오류 핸들러 제외).
             from simcompare import confirm_pairs, pipeline
@@ -271,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
-        if args.command in ("import-electrode-assets", "candidates", "confirm-pairs"):
+        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "confirm-pairs"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2
