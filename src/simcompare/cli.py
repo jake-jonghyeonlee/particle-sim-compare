@@ -185,9 +185,10 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare.adapters.real_hotspot import import_hotspots
             if args.expected_cases and args.expected_cases_from_roots:
                 parser.error("--expected-cases와 --expected-cases-from-roots는 함께 쓸 수 없습니다")
-            result = import_hotspots(Path(args.root), Path(args.out),
-                                     expected_cases=Path(args.expected_cases) if args.expected_cases else None,
-                                     expected_case_roots=([Path(r) for r in args.expected_cases_from_roots]
+            # 원문 문자열 그대로 넘긴다: 경로가 없을 때 오류 메시지가 사용자가 적은 문자열을 보여 준다.
+            result = import_hotspots(args.root, Path(args.out),
+                                     expected_cases=args.expected_cases if args.expected_cases else None,
+                                     expected_case_roots=(list(args.expected_cases_from_roots)
                                                           if args.expected_cases_from_roots is not None else None))
             _print(result)
             return 0 if result['status'] == 'available' else 3

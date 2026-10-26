@@ -64,6 +64,9 @@ def _files():
     return files
 
 
+EXTRACT_FALLBACKS = []   # (시도한 폴더, 예외 문자열): 앞선 폴더에 풀지 못해 다음 폴더로 넘어간 이유
+
+
 def _extract():
     """simcompare와 yaml 패키지를 실제 폴더에 푼다(바이트 그대로). 이미 같은 내용이 있으면 재사용한다. 풀린 위치를 돌려준다."""
     files = _files()
@@ -82,6 +85,7 @@ def _extract():
             return root
         except OSError as exc:
             errors.append(f"{base}: {exc}")
+            EXTRACT_FALLBACKS.append((str(base), str(exc)))
     raise RuntimeError("cannot extract the simcompare package anywhere: " + "; ".join(errors))
 
 
@@ -102,6 +106,31 @@ class _Tee:
         return False
 
 
+PATH_FLAGS = {"--root", "--out", "--config", "--expected-cases", "--expected-cases-from-roots", "--numeric-data-dir",
+              "--condition-assignment", "--cnt-from-dl1-root", "--candidates", "--decisions", "--match"}
+
+
+def _resolved_args(args):
+    """경로를 받는 옵션마다 `옵션 원문 -> 해석된 절대 경로`를 만든다(상대 경로는 이미 chdir한 BASE_DIR 기준)."""
+    lines, flag = [], None
+    for arg in (str(a) for a in args):
+        if arg.startswith("--"):
+            flag = arg if arg in PATH_FLAGS else None
+        elif flag is not None:
+            value = arg.split("=", 1)[1] if flag == "--match" and "=" in arg else arg
+            lines.append(f"{flag} {arg!r} -> {os.path.abspath(os.path.expanduser(value))}")
+    return lines
+
+
+def _startup_lines(base, source, launched_cwd):
+    """실행 환경을 한 번에 보여 주는 시작 정보. 로그 파일을 못 열어도 stderr에 같은 내용이 남는다."""
+    return [f"[simcompare_job] runner {globals().get('__file__')}",
+            f"[simcompare_job] payload_sha256={PAYLOAD_SHA256}",
+            f"[simcompare_job] BASE_DIR requested={BASE_DIR!r} resolved={base}; relative paths resolve from {base} ({source});"
+            f" launched in {launched_cwd}",
+            f"[simcompare_job] LOG_FILE requested={LOG_FILE!r}; WORK_DIR requested={WORK_DIR!r}"]
+
+
 def run_jobs(jobs):
     root = _extract()
     sys.path.insert(0, str(root))
@@ -116,9 +145,16 @@ def run_jobs(jobs):
     import PIL
     print(f"[simcompare_job] {stamp()} python {sys.version.split()[0]} | numpy {numpy.__version__} | Pillow {PIL.__version__}"
           f" | simcompare from {simcompare.__file__}", file=sys.stderr, flush=True)
+    print(f"[simcompare_job] payload_sha256={PAYLOAD_SHA256}", file=sys.stderr, flush=True)
+    for fallback_base, reason in EXTRACT_FALLBACKS:
+        print(f"[simcompare_job] cannot extract into {fallback_base}: {reason}; trying the next folder",
+              file=sys.stderr, flush=True)
+    print(f"[simcompare_job] WORK_DIR requested={WORK_DIR!r}; package extracted to {root}", file=sys.stderr, flush=True)
     for name, args in jobs:
         argv = [str(name), *(str(a) for a in args)]
         print(f"[simcompare_job] {stamp()} start {' '.join(argv)}", file=sys.stderr, flush=True)
+        for line in _resolved_args(args):
+            print(f"[simcompare_job]   {line}", file=sys.stderr, flush=True)
         started = time.time()
         sys.argv = ["simcompare", *argv]
         try:
@@ -142,16 +178,29 @@ def _base_dir():
 
 
 def _main():
-    base, source = _base_dir()
-    launched_cwd = os.getcwd()
-    os.chdir(base)
+    # 시작 정보는 BASE_DIR 처리와 로그 파일 열기보다 먼저 stderr로 낸다(그 둘이 실패해도 남는다).
+    for line in (f"[simcompare_job] runner {globals().get('__file__')}", f"[simcompare_job] payload_sha256={PAYLOAD_SHA256}",
+                 f"[simcompare_job] BASE_DIR requested={BASE_DIR!r}; LOG_FILE requested={LOG_FILE!r}; WORK_DIR requested={WORK_DIR!r}"):
+        print(line, file=sys.stderr, flush=True)
+    try:
+        base, source = _base_dir()
+        launched_cwd = os.getcwd()
+        os.chdir(base)
+    except OSError as exc:
+        print(f"[simcompare_job] cannot use BASE_DIR {BASE_DIR!r}: {exc}", file=sys.stderr, flush=True)
+        raise SystemExit(2)
     log = None
     if LOG_FILE:
-        Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
-        log = open(LOG_FILE, "a", buffering=1, encoding="utf-8")
+        try:
+            Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+            log = open(LOG_FILE, "a", buffering=1, encoding="utf-8")
+        except OSError as exc:
+            print(f"[simcompare_job] cannot open LOG_FILE {LOG_FILE!r} (resolved {os.path.abspath(LOG_FILE)}): {exc}",
+                  file=sys.stderr, flush=True)
+            raise SystemExit(2)
         sys.stdout, sys.stderr = _Tee(sys.__stdout__, log), _Tee(sys.__stderr__, log)
-    print(f"[simcompare_job] relative paths resolve from {base} ({source}); launched in {launched_cwd};"
-          f" runner {globals().get('__file__')}", file=sys.stderr, flush=True)
+    for line in _startup_lines(base, source, launched_cwd):
+        print(line, file=sys.stderr, flush=True)
     try:
         run_jobs(JOBS)
     except SystemExit:

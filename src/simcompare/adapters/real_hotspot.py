@@ -211,9 +211,46 @@ def _discover_cases(root: Path):
     return found, images_dirs
 
 
+class InputPathMissingError(FileNotFoundError):
+    """A user-supplied input path does not exist. Stays a FileNotFoundError; carries a stable error code."""
+
+    def __init__(self, code: str, detail: str):
+        super().__init__(2, detail)
+        self.code, self.detail = code, detail
+
+    def __str__(self):
+        return f'{self.code}: {self.detail}'
+
+
+def _require_existing(value, argument: str, code: str) -> Path:
+    path = Path(value)
+    if not path.exists():
+        raise InputPathMissingError(code, f'{argument} 경로가 없습니다: {value} (resolved: {os.path.abspath(path)})')
+    return path
+
+
+EXPECTED_CASES_FILENAME = 'expected_cases.txt'
+
+
+def _expected_cases_text(expected: list, source: dict) -> str:
+    """expected_cases.txt: one case name per line in manifest order, after # header lines (comments are skipped on re-read)."""
+    header = ['# expected_cases for this import (same list and order as manifest.json expected_cases)',
+              f"# source: {source['kind']}"]
+    if 'roots' in source:
+        header.append('# roots: ' + ', '.join(source['roots']))
+    header.append('# limitation: ' + source.get('limitation', 'cases absent from the provided list are not detected'))
+    return '\n'.join(header + list(expected)) + '\n'
+
+
 def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None,
                     expected_case_roots: list | None = None, max_input_pixels: int = 100_000_000):
     """Import discovered cases one mask at a time into a versioned manifest."""
+    _require_existing(root, '--root', 'real_hotspot_root_missing')
+    if expected_cases is not None:
+        _require_existing(expected_cases, '--expected-cases', 'expected_cases_file_missing')
+    if expected_case_roots is not None:
+        for extra in expected_case_roots:
+            _require_existing(extra, '--expected-cases-from-roots', 'expected_case_root_missing')
     root, out = Path(root).resolve(strict=True), Path(out).resolve()
     if not root.is_dir():
         raise NumericContractError('real_hotspot_root_required', str(root))
@@ -410,8 +447,17 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
         manifest['source_payload_hash'] = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
         manifest['manifest_hash_recipe'] = 'sha256(canonical JSON before source_payload_hash; sort_keys, compact separators, UTF-8)'
         (staging / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+        if expected is not None:
+            # Written next to the manifest but kept out of manifest source_files, so manifest bytes and hash do not change.
+            with open(staging / EXPECTED_CASES_FILENAME, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(_expected_cases_text(expected, expected_source))
         os.replace(staging, out)
         print(f'import-hotspots: wrote {asset_bytes} bytes of compressed mask assets ({MASK_ENCODING})', file=sys.stderr)
+        if expected is None:
+            print('expected_cases: none (coverage unconfirmed; stage-4 ROIs will be blocked)', file=sys.stderr)
+        else:
+            roots_text = ', '.join(expected_source['roots']) if 'roots' in expected_source else '-'
+            print(f"expected_cases: {len(expected)} (source={expected_source['kind']}; roots={roots_text})", file=sys.stderr)
         return {'status': 'partial', 'manifest': str(out/'manifest.json'), 'cases': len(cases),
                 'diagnostics': len(diagnostics), 'is_synthetic': False, 'source_payload_hash': manifest['source_payload_hash']}
     except Exception:
