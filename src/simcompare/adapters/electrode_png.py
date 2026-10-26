@@ -281,7 +281,7 @@ def load_cnt_layers(root, model, frame):
         result['files'].append({'layer': layer, 'relative_path': rel, 'sha256': _sha(data)})
     for layer in sorted(paths):
         if len(paths[layer]) > 1:
-            result['warnings'].append({'status': 'duplicate_cnt_mask_same_name', 'model': model,
+            result['warnings'].append({'status': 'duplicate_cnt_layer_name', 'model': model,
                                        'layer': layer, 'files': paths[layer]})
     return result
 

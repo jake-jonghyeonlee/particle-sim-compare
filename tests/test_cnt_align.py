@@ -59,11 +59,31 @@ def ambiguous_case():
     tgt = {'layers': {'M1': tgt_a}, 'valid': np.ones((25, 25), bool)}
     return ref, tgt, dict(pitch_um=1.0, search_um=8.0, min_dice=0.0, layer_tolerance_um=0.5,
                           max_operation_bytes=10 ** 11), (6, 0)
+
+
+def plateau_case():
+    """ref 는 한 칸 점, target 은 같은 점을 3x3 으로 키운 것(점 크기만 다름) → 최댓값 동률 plateau."""
+    rng = np.random.default_rng(5)
+    ref = np.zeros((300, 300), bool)
+    for gy in range(1, 36):
+        for gx in range(1, 36):
+            if rng.random() < 0.25:
+                ref[gy * 8, gx * 8] = True
+    tgt = np.zeros((320, 330), bool)
+    ys, xs = np.nonzero(ref)
+    for oy in (-1, 0, 1):
+        for ox in (-1, 0, 1):
+            tgt[ys + 3 + oy, xs + 23 + ox] = True
+    return ({'layers': {'M1': ref}, 'valid': np.ones((300, 300), bool)},
+            {'layers': {'M1': tgt}, 'valid': np.ones((320, 330), bool)},
+            dict(pitch_um=0.1, search_um=10.0, min_dice=0.0, layer_tolerance_um=0.5,
+                 max_operation_bytes=10 ** 11), (23, 3))
 '''
 _ns = {}
 exec(CASE_SRC, _ns)
 random_world, cut = _ns['random_world'], _ns['cut']
 identifiable_case, ambiguous_case = _ns['identifiable_case'], _ns['ambiguous_case']
+plateau_case = _ns['plateau_case']
 
 
 def pair(world, ref0, tgt0, shape_r, shape_t, names=('M1', 'M2', 'V')):
@@ -151,6 +171,28 @@ def test_layer_moving_alone_is_flagged_but_result_is_best_effort():
     assert out['per_layer']['V']['offset_xy_um'] == [round((dx + 30) * 0.1, 6), round((dy - 12) * 0.1, 6)]
 
 
+def brute_best(a, b, r, min_support=0.5):
+    """전수 탐색 기대값: 지지(두 valid=전부 True 인 겹침) >= min_support * 면적인 |d| <= r 중 교집합 최대, 동률은 |d| 최소 → (dy, dx)."""
+    best = None
+    h, w = a.shape
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            if dy * dy + dx * dx > r * r:
+                continue
+            ys, ye = max(0, -dy), min(h, b.shape[0] - dy)
+            xs, xe = max(0, -dx), min(w, b.shape[1] - dx)
+            if ys >= ye or xs >= xe:
+                continue
+            support = (ye - ys) * (xe - xs)
+            if support < min_support * min(a.size, b.size):
+                continue
+            inter = int((a[ys:ye, xs:xe] & b[ys + dy:ye + dy, xs + dx:xe + dx]).sum())
+            key = (-inter, dy * dy + dx * dx, dy, dx)
+            if best is None or key < best[0]:
+                best = (key, [dx, dy])
+    return best[1]
+
+
 def test_valid_hole_and_support_exclusion_and_search_bound():
     world = random_world(31)
     dx, dy = 8, -5
@@ -167,6 +209,7 @@ def test_valid_hole_and_support_exclusion_and_search_bound():
     wide = align_products(ref, tgt, pitch_um=1.0, search_um=80.0, min_dice=0.0, layer_tolerance_um=5.0,
                           max_operation_bytes=BIG)
     assert wide['offset_xy_px'] != [-60, 0]
+    assert wide['offset_xy_px'] == brute_best(base[0][:, 0:100], base[0][:, 60:160], 80)
     assert wide['overlap_area_um2'] >= 0.5 * 160 * 100
     # 탐색 경계
     ref0 = (300, 300)
@@ -258,6 +301,186 @@ def test_admission_passes_at_the_limit_and_refuses_one_byte_below():
     assert estimate_alignment_bytes((2400, 2400), (2400, 2400), 300, 3) > 1e9 * 0.3
 
 
+def test_admission_includes_quadrant_temporaries():
+    ref_shape, tgt_shape, r, layers = (150, 140), (130, 160), 100, 3
+    ny, nx = cnt_align._fft_size(ref_shape[0], tgt_shape[0], r), cnt_align._fft_size(ref_shape[1], tgt_shape[1], r)
+    real, cplx, window = ny * nx * 8, ny * (nx // 2 + 1) * 16, (2 * r + 1) ** 2
+    boolean = (2 * (layers + 1) * (ref_shape[0] * ref_shape[1] + tgt_shape[0] * tgt_shape[1])
+               + (layers + 2) * ref_shape[0] * ref_shape[1])
+    expect = boolean + 2 * real + (2 * layers + 2) * cplx + 4 * cplx + (layers + 6) * window * 8
+    assert estimate_alignment_bytes(ref_shape, tgt_shape, r, layers) == expect
+
+
+def _tie_case():
+    """참 offset (60, 0). M1 은 유일하게 식별하고, V 층은 -40 과 60 에서 정확히 같은 교집합을 낸다(주기 100 px 같은 동률)."""
+    rng = np.random.default_rng(12)
+    ref_m1 = rng.random((300, 300)) < 0.012
+    ref_m1[150:, 150:] = False                       # 오른쪽 아래 분면에는 V 층만 있다
+    tgt_m1 = np.zeros((300, 400), bool)
+    tgt_m1[:, 60:360] = ref_m1
+    ref_v, tgt_v = np.zeros((300, 300), bool), np.zeros((300, 400), bool)
+    for y in range(160, 290, 7):
+        ref_v[y, 200] = True
+        tgt_v[y, 260] = True                         # 200 + 60
+        tgt_v[y, 160] = True                         # 200 - 40
+    return ({'layers': {'M1': ref_m1, 'V': ref_v}, 'valid': np.ones((300, 300), bool)},
+            {'layers': {'M1': tgt_m1, 'V': tgt_v}, 'valid': np.ones((300, 400), bool)})
+
+
+def test_periodic_ties_in_layer_and_quadrant_diagnostics_do_not_raise_false_reasons():
+    ref, tgt = _tie_case()
+    out = align_products(ref, tgt, **KW)
+    assert out['offset_xy_px'] == [60, 0]
+    assert out['status'] == 'aligned', out['reasons']
+    assert out['per_layer']['V']['offset_xy_um'] == [6.0, 0.0]             # 동률이면 전역 best 를 고른다
+    assert out['quadrant_offsets_um']['bottom_right'] == [6.0, 0.0]
+    assert 'layer_offsets_disagree' not in out['reasons'] and 'residual_nonuniform' not in out['reasons']
+
+
+def test_residual_nonuniform_positive_when_one_quadrant_moves_differently():
+    rng = np.random.default_rng(21)
+    ref = rng.random((300, 300)) < 0.012
+    tgt = np.zeros((330, 360), bool)
+    dx, dy = 10, 5
+    for (y0, y1, x0, x1, extra) in [(0, 150, 0, 150, 0), (0, 150, 150, 300, 0), (150, 300, 0, 150, 0),
+                                    (150, 300, 150, 300, 20)]:
+        tgt[y0 + dy:y1 + dy, x0 + dx + extra:x1 + dx + extra] |= ref[y0:y1, x0:x1]
+    out = align_products({'layers': {'M1': ref}, 'valid': np.ones((300, 300), bool)},
+                         {'layers': {'M1': tgt}, 'valid': np.ones((330, 360), bool)}, **KW)
+    assert out['offset_xy_px'] == [dx, dy]
+    assert out['status'] == 'aligned_uncertain' and 'residual_nonuniform' in out['reasons']
+    assert out['quadrant_offsets_um']['bottom_right'] == [round((dx + 20) * 0.1, 6), round(dy * 0.1, 6)]
+    assert out['quadrant_offsets_um']['top_left'] == [round(dx * 0.1, 6), round(dy * 0.1, 6)]
+
+
+def test_dice_below_min_positive():
+    world = random_world(5)
+    rng = np.random.default_rng(99)
+    ref0 = (180, 190)
+    ref, tgt = pair(world, ref0, tgt_origin(ref0, -22, 17), (400, 400), (400, 400))
+    for layer in tgt['layers'].values():
+        ys, xs = np.nonzero(layer)
+        pick = rng.permutation(len(ys))[: int(0.4 * len(ys))]
+        layer[ys[pick], xs[pick]] = False
+        layer[rng.integers(0, 400, len(pick)), rng.integers(0, 400, len(pick))] = True
+    out = align_products(ref, tgt, **{**KW, 'min_dice': 0.95})
+    assert out['offset_xy_px'] == [-22, 17] and out['dice_best'] < 0.95
+    assert 'dice_below_min' in out['reasons'] and out['status'] == 'aligned_uncertain'
+    assert 'dice_below_min' not in align_products(ref, tgt, **{**KW, 'min_dice': 0.1})['reasons']
+
+
+def test_dot_size_difference_gives_a_recorded_plateau():
+    ref, tgt, kw, truth = plateau_case()
+    out = align_products(ref, tgt, **kw)
+    assert out['best_plateau_px'] == 9 and out['best_plateau_extent_px'] == [2, 2]
+    assert out['reasons'] == ['peak_plateau'] and out['status'] == 'aligned_uncertain'
+    assert max(abs(out['offset_xy_px'][0] - truth[0]), abs(out['offset_xy_px'][1] - truth[1])) <= 1
+    exact = align_products(*identifiable_case()[:2], **identifiable_case()[2])
+    assert exact['best_plateau_px'] == 1 and exact['best_plateau_extent_px'] == [0, 0]
+    assert 'peak_plateau' not in exact['reasons']
+
+
+def test_alternatives_only_list_peaks_with_nonzero_intersection():
+    a, b = np.zeros((60, 60), bool), np.zeros((60, 60), bool)
+    a[20, 20], b[25, 28] = True, True
+    out = align_products({'layers': {'M1': a}, 'valid': np.ones((60, 60), bool)},
+                         {'layers': {'M1': b}, 'valid': np.ones((60, 60), bool)}, **{**KW, 'search_um': 3.0})
+    assert out['offset_xy_px'] == [8, 5]
+    assert out['alternatives'] == [] and out['peak_ratio'] is None
+    ref, tgt, kw, _ = ambiguous_case()
+    assert all(alt['dice'] > 0 for alt in align_products(ref, tgt, **kw)['alternatives'])
+
+
+def test_search_edge_peaks_are_marked():
+    ref, tgt, kw, truth = ambiguous_case()
+    out = align_products(ref, tgt, **{**kw, 'search_um': 6.0})       # 참 offset (6, 0) 이 탐색 원 위에 있다
+    edge = [alt for alt in out['alternatives'] if alt['offset_xy_px'] == [6, 0]]
+    assert edge and edge[0]['at_search_edge'] is True
+    inner = align_products(ref, tgt, **kw)
+    assert all(alt['at_search_edge'] is False for alt in inner['alternatives'] if alt['offset_xy_px'] == [6, 0])
+    assert all('at_search_edge' in v for v in align_products(*identifiable_case()[:2], **identifiable_case()[2])
+               ['pattern_period_vectors_um'])
+    circle = cnt_align._grid(3)[2] <= 9
+    edge_mask = cnt_align._edge_mask(circle)
+    assert not edge_mask[3, 3] and edge_mask[3, 6] and edge_mask[0, 3] and not edge_mask[0, 0]
+
+
+def _assert_identifiability(ref, tgt, kw, truth, expect_reasons, truth_is_best):
+    first = align_products(ref, tgt, **kw)
+    assert first == align_products(ref, tgt, **kw)                      # 결정적
+    assert 'peak_ambiguous' in first['reasons'] and first['status'] == 'aligned_uncertain'
+    for reason in expect_reasons:
+        assert reason in first['reasons'], first['reasons']
+    listed = [first['offset_xy_px']] + [alt['offset_xy_px'] for alt in first['alternatives']]
+    assert list(truth) in listed
+    assert (first['offset_xy_px'] == list(truth)) == truth_is_best
+    json.dumps(first, sort_keys=True, allow_nan=False)
+    return first
+
+
+def test_identifiability_non_integer_period_crop():
+    # 점 간격 33.5 px 를 정수로 반올림한 열 → 67 px 주기. 세계는 x = 0 에서 시작하므로 target crop 의 왼쪽 30 px 는 비어 있다.
+    rng = np.random.default_rng(8)
+    rows, width, dx, dy = 260, 700, 50, 3
+    bits = rng.random((rows + 80, 2)) < 0.5
+    world = np.zeros((rows + 80, width + 200), bool)
+    for k in range(27):
+        world[:, int(np.round(33.5 * k))] = bits[:, k % 2]
+    ref = world[10:10 + rows, 20:20 + width]
+    padded = np.pad(world, ((20, 0), (80, 0)))
+    tgt = padded[10 - dy + 20:10 - dy + 20 + rows, 20 - dx + 80:20 - dx + 80 + width]
+    out = _assert_identifiability({'layers': {'M1': ref}, 'valid': np.ones(ref.shape, bool)},
+                                  {'layers': {'M1': tgt}, 'valid': np.ones(tgt.shape, bool)}, KW, (dx, dy), [], True)
+    assert out['peak_ratio'] < 1.2
+    assert [-84, 3] in [alt['offset_xy_px'] for alt in out['alternatives']]
+
+
+def test_identifiability_valid_hole_hides_the_distinguishing_dots():
+    ref, tgt = np.zeros((100, 150), bool), np.zeros((100, 150), bool)
+    for y in range(10, 95, 8):
+        ref[y, 50] = ref[y, 80] = True
+        tgt[y, 70] = tgt[y, 100] = True
+    tgt_valid = np.ones((100, 150), bool)
+    tgt_valid[:, 95:] = False                                           # target 의 두 번째 점은 valid 구멍 안
+    kw = dict(pitch_um=1.0, search_um=40.0, min_dice=0.0, layer_tolerance_um=5.0, max_operation_bytes=BIG)
+    out = _assert_identifiability({'layers': {'M1': ref}, 'valid': np.ones((100, 150), bool)},
+                                  {'layers': {'M1': tgt}, 'valid': tgt_valid}, kw, (20, 0), ['peak_plateau'], False)
+    assert out['offset_xy_px'] == [-10, 0] and out['peak_ratio'] == 1.0   # 동점이면 |d| 최소
+
+
+def test_identifiability_period_shorter_than_search_radius():
+    rng = np.random.default_rng(9)
+    bits = rng.random((300, 10)) < 0.3
+    ref = np.tile(bits, (1, 30))                                        # x 주기 10 px, 탐색 반경 40 px
+    tgt = np.roll(ref, 13, axis=1)                                      # 참 offset (13, 0)
+    kw = dict(pitch_um=1.0, search_um=40.0, min_dice=0.0, layer_tolerance_um=5.0, max_operation_bytes=BIG)
+    out = _assert_identifiability({'layers': {'M1': ref}, 'valid': np.ones(ref.shape, bool)},
+                                  {'layers': {'M1': tgt}, 'valid': np.ones(tgt.shape, bool)}, kw, (13, 0), [], False)
+    assert out['offset_xy_px'] == [3, 0]                                # 겹침이 가장 큰 주기 동치 offset
+
+
+@pytest.mark.parametrize('override', [
+    {'search_um': 0.1}, {'search_um': 0.0}, {'pitch_um': 0.0}, {'pitch_um': -0.1}, {'search_um': -1.0}])
+def test_invalid_alignment_input_is_an_explicit_error(override):
+    ref, tgt = pair(random_world(3), (0, 0), (0, 0), (60, 60), (60, 60))
+    with pytest.raises(NumericContractError) as caught:
+        align_products(ref, tgt, **{**KW, **override})
+    assert caught.value.code == 'invalid_alignment_input'
+
+
+def test_layer_and_valid_shape_mismatch_raise():
+    ref, tgt = pair(random_world(3), (0, 0), (0, 0), (60, 60), (60, 60))
+    bad = {'layers': {**tgt['layers'], 'M1': tgt['layers']['M1'][:50]}, 'valid': tgt['valid']}
+    with pytest.raises(NumericContractError) as caught:
+        align_products(ref, bad, **KW)
+    assert caught.value.code == 'invalid_alignment_input' and 'M1' in str(caught.value)
+    with pytest.raises(NumericContractError) as caught:
+        align_products(ref, {'layers': tgt['layers'], 'valid': np.ones((60,), bool)}, **KW)
+    assert caught.value.code == 'invalid_alignment_input'
+    edge = align_products(ref, tgt, **{**KW, 'search_um': 0.2})          # r = 2 px 는 허용
+    assert edge['search_px'] == 2
+
+
 def _png(path, shape, pixels, extra=()):
     full = np.zeros(shape, dtype=bool)
     for y, x in tuple(pixels) + tuple(extra):
@@ -280,7 +503,7 @@ def test_load_cnt_layers_crops_each_layer_without_cross_layer_union(tmp_path):
     assert {tuple(p) for p in np.argwhere(out['layers']['M1'])} == {(3, 4), (5, 6)}
     assert {tuple(p) for p in np.argwhere(out['layers']['V'])} == {(10, 20)}
     assert {tuple(p) for p in np.argwhere(out['layers']['CNT'])} == {(30, 40)}
-    assert [w['status'] for w in out['warnings']] == ['duplicate_cnt_mask_same_name']
+    assert [w['status'] for w in out['warnings']] == ['duplicate_cnt_layer_name']
     assert out['warnings'][0]['layer'] == 'M1'
     assert len(out['files']) == 4 and all(len(f['sha256']) == 64 for f in out['files'])
     (tmp_path / 'EMPTY' / 'cno').mkdir(parents=True)
@@ -291,7 +514,7 @@ def test_load_cnt_layers_crops_each_layer_without_cross_layer_union(tmp_path):
 
 
 @pytest.mark.skipif(not os.environ.get('SIMCOMPARE_ETX_PY'), reason='SIMCOMPARE_ETX_PY not set')
-@pytest.mark.parametrize('name', ['identifiable_case', 'ambiguous_case'])
+@pytest.mark.parametrize('name', ['identifiable_case', 'ambiguous_case', 'plateau_case'])
 def test_python39_result_is_identical(name):
     py = os.path.expanduser(os.environ['SIMCOMPARE_ETX_PY'])
     code = (CASE_SRC + '\nimport json, sys\nsys.path.insert(0, %r)\n' % SRC +
@@ -299,7 +522,8 @@ def test_python39_result_is_identical(name):
             'ref, tgt, kw, _ = %s()\n' % name +
             'print(json.dumps(align_products(ref, tgt, **kw), sort_keys=True))\n')
     done = subprocess.run([py, '-c', code], capture_output=True, text=True, check=True, timeout=600)
-    ref, tgt, kw, _ = {'identifiable_case': identifiable_case, 'ambiguous_case': ambiguous_case}[name]()
+    ref, tgt, kw, _ = {'identifiable_case': identifiable_case, 'ambiguous_case': ambiguous_case,
+                       'plateau_case': plateau_case}[name]()
     here = json.dumps(align_products(ref, tgt, **kw), sort_keys=True)
     assert done.stdout.strip() == here
     assert math.isfinite(json.loads(here)['dice_best'])
