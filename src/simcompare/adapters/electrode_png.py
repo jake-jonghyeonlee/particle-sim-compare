@@ -249,6 +249,43 @@ def _check_frame(frame):
                      f'!= hotspot frame origin {HOTSPOT_ORIGIN_UM} pitch {LAYOUT_PITCH_UM}')
 
 
+def load_cnt_layers(root, model, frame):
+    """층별 CNT 형상(검정=형상)을 frame 크기로 crop 해 읽는다. layer 사이 합집합은 만들지 않는다.
+
+    모델 폴더 = product_id. 폴더나 ``cno`` 가 없거나 비면 ``layers == {}`` 와 경고를 돌려준다(오류 아님).
+    같은 layer 이름 파일이 둘 이상이면 경고하고 그 layer 안에서만 합집합한다.
+    """
+    root = Path(root)
+    _check_frame(frame)
+    result = {'layers': {}, 'files': [], 'warnings': []}
+    if not (root / model).is_dir():
+        result['warnings'].append({'status': 'product_folder_missing', 'model': model})
+        return result
+    scan = _scan_dl1_model(root, model)
+    result['warnings'].extend(scan['warnings'])
+    if not scan['cno']:
+        result['warnings'].append({'status': 'cnt_not_provided', 'model': model})
+        return result
+    paths = {}
+    for item in scan['cno']:
+        rel = item['relative_path']
+        data = resolve_path(root, item['fs_rel']).read_bytes()
+        marked, _ = _decode(data, rel)
+        cropped = _crop(marked, frame.shape_yx, rel)
+        layer = item['layer']
+        if layer in result['layers']:
+            result['layers'][layer] |= cropped
+        else:
+            result['layers'][layer] = cropped.copy()
+        paths.setdefault(layer, []).append(rel)
+        result['files'].append({'layer': layer, 'relative_path': rel, 'sha256': _sha(data)})
+    for layer in sorted(paths):
+        if len(paths[layer]) > 1:
+            result['warnings'].append({'status': 'duplicate_cnt_mask_same_name', 'model': model,
+                                       'layer': layer, 'files': paths[layer]})
+    return result
+
+
 def _load_dataset(numeric_data_dir, manifest_path, condition_assignment):
     root = Path(numeric_data_dir)
     try:
