@@ -232,7 +232,13 @@ def test_alignment_finds_the_known_offset_and_planted_change_is_the_top_query(fi
     assert len(queries(payload, 'reference_to_target')) == 1
     assert first_run.code == 3                           # top_k (3) is not filled: only one place changed
     assert [w['code'] for w in payload['warnings']] == ['top_k_not_filled', 'top_k_not_filled']
-    assert top['score_layer'] == 'L1' and top['score_um2'] > 0 and top['observed_fraction'] == 1.0
+    # The planted change moves a shape from electrode B's case to C's case at the same place: the per-layer union of
+    # hotspots is unchanged (score 0) while the per-pair residual is not.
+    assert top['score_layer'] == 'L1' and top['observed_fraction'] == 1.0
+    assert top['score_basis'] == 'union_change' and top['score_um2'] == 0
+    assert top['sum_residual_um2'] > 0 and top['changed_case_count'] == 2
+    assert top['union_delta_um2'] == top['union_area_target_um2']-top['union_area_reference_um2']
+    assert 'union_unchanged_pair_changed' in top['flags']
 
 
 def test_target_direction_centre_is_reference_centre_plus_offset(first_run):
@@ -571,14 +577,18 @@ def test_reserved_bytes_default_keeps_the_old_admission_and_rejects_bad_values()
     need = change_map.estimate_change_map_bytes(valid.shape, valid.shape, 0, 10, 0)
     maps = {'L1': np.zeros(valid.shape, np.uint32)}
     kwargs = dict(pitch_um=0.1, window_um=1.0)
-    change_map.window_candidates({}, valid, max_operation_bytes=need, **kwargs)
-    change_map.window_candidates({}, valid, max_operation_bytes=need, reserved_bytes=0, **kwargs)
+    none = dict(union_change={}, union_ref={}, union_tgt={})
+    change_map.window_candidates({}, valid, max_operation_bytes=need, **none, **kwargs)
+    change_map.window_candidates({}, valid, max_operation_bytes=need, reserved_bytes=0, **none, **kwargs)
     with pytest.raises(NumericContractError) as caught:
-        change_map.window_candidates({}, valid, max_operation_bytes=need, reserved_bytes=1, **kwargs)
+        change_map.window_candidates({}, valid, max_operation_bytes=need, reserved_bytes=1, **none, **kwargs)
     assert caught.value.code == 'oversized_real_operation'
     for bad in (-1, 1.5, True):
         with pytest.raises(NumericContractError):
-            change_map.window_candidates(maps, valid, max_operation_bytes=need * 10, reserved_bytes=bad, **kwargs)
+            change_map.window_candidates(maps, valid, max_operation_bytes=need * 10, reserved_bytes=bad,
+                                         union_change={'L1': np.zeros(valid.shape, bool)},
+                                         union_ref={'L1': np.zeros(valid.shape, bool)},
+                                         union_tgt={'L1': np.zeros(valid.shape, bool)}, **kwargs)
     layers = {'CNT1': rect(10, 10, 5, 5, (60, 60))}
     side = {'valid': valid, 'layers': layers}
     align = dict(pitch_um=0.1, search_um=0.5, min_dice=0.1, layer_tolerance_um=0.1)

@@ -32,6 +32,10 @@ def rect(shape, y, x, h, w):
     return m
 
 
+def union_kw(maps):
+    return {k: maps[k] for k in ('union_change', 'union_ref', 'union_tgt')}
+
+
 def representative_case():
     shape = (300, 300)
     rng = np.random.default_rng(5)
@@ -48,7 +52,8 @@ def representative_case():
     tgt_valid = np.ones(shape, bool)
     kw = dict(ref_valid=ref_valid, tgt_valid=tgt_valid, offset_px=(0, 0), pitch_um=0.1, tolerance_um=0.2)
     maps = change_maps(pairs, max_operation_bytes=10 ** 12, window_um=5.0, **kw)
-    found = window_candidates(maps['maps'], maps['D'], pitch_um=0.1, window_um=5.0, max_operation_bytes=10 ** 12)
+    found = window_candidates(maps['maps'], maps['D'], **union_kw(maps), pitch_um=0.1, window_um=5.0,
+                              max_operation_bytes=10 ** 12)
     top = found['candidates'][:6]
     contrib = case_contributions(pairs, top, max_operation_bytes=10 ** 12, **kw)
     return {'stats': maps['stats'], 'candidates': top, 'contributions': contrib['windows'],
@@ -57,6 +62,7 @@ def representative_case():
 _ns = {}
 exec(CASE_SRC, _ns)
 rect = _ns['rect']
+union_kw = _ns['union_kw']
 representative_case = _ns['representative_case']
 
 
@@ -68,7 +74,8 @@ def kwargs(shape_ref, shape_tgt=None, offset=(0, 0), tolerance=0.2, ref_valid=No
 
 def run(pairs, window_um=5.0, **kw):
     maps = change_maps(pairs, max_operation_bytes=BIG, window_um=window_um, **kw)
-    found = window_candidates(maps['maps'], maps['D'], pitch_um=PITCH, window_um=window_um, max_operation_bytes=BIG)
+    found = window_candidates(maps['maps'], maps['D'], **union_kw(maps), pitch_um=PITCH, window_um=window_um,
+                              max_operation_bytes=BIG)
     return maps, found
 
 
@@ -244,8 +251,8 @@ def test_candidate_fields_flags_and_order():
     wpx = found['window_px']
     y0, x0 = top['window_origin_px']
     assert top['center_xy_um'] == [round((x0 + wpx / 2) * PITCH, 6), round((y0 + wpx / 2) * PITCH, 6)]
-    shifted = window_candidates(maps['maps'], maps['D'], pitch_um=PITCH, window_um=5.0, max_operation_bytes=BIG,
-                                origin_xy_um=(50.0, 70.0))
+    shifted = window_candidates(maps['maps'], maps['D'], **union_kw(maps), pitch_um=PITCH, window_um=5.0,
+                                max_operation_bytes=BIG, origin_xy_um=(50.0, 70.0))
     assert shifted['candidates'][0]['center_xy_um'] == [round(50.0 + top['center_xy_um'][0], 6),
                                                          round(70.0 + top['center_xy_um'][1], 6)]
 
@@ -368,9 +375,11 @@ def test_admission_passes_at_the_limit_and_refuses_one_byte_below():
     assert caught.value.code == 'oversized_real_operation'
     assert str(need) in str(caught.value) and str(need - 1) in str(caught.value)
     window_need = estimate_change_map_bytes(shape, shape, 1, 50, 0)
-    assert window_candidates(ok['maps'], ok['D'], pitch_um=PITCH, window_um=5.0, max_operation_bytes=window_need)
+    assert window_candidates(ok['maps'], ok['D'], **union_kw(ok), pitch_um=PITCH, window_um=5.0,
+                             max_operation_bytes=window_need)
     with pytest.raises(NumericContractError) as caught:
-        window_candidates(ok['maps'], ok['D'], pitch_um=PITCH, window_um=5.0, max_operation_bytes=window_need - 1)
+        window_candidates(ok['maps'], ok['D'], **union_kw(ok), pitch_um=PITCH, window_um=5.0,
+                          max_operation_bytes=window_need - 1)
     assert caught.value.code == 'oversized_real_operation'
     assert estimate_change_map_bytes((2400, 2400), (2400, 2400), 2, 200, 2) > estimate_change_map_bytes(
         (2400, 2400), (2400, 2400), 2, 0, 2) > 0
@@ -408,11 +417,15 @@ def test_shape_mismatch_and_bad_windows_raise():
                     **kwargs(shape))
     assert caught.value.code == 'invalid_change_map_input'
     with pytest.raises(NumericContractError) as caught:
-        window_candidates({'M1': np.zeros((50, 50), np.uint32)}, np.ones(shape, bool), pitch_um=PITCH, window_um=2.0,
+        window_candidates({'M1': np.zeros((50, 50), np.uint32)}, np.ones(shape, bool),
+                          union_change={'M1': np.zeros((50, 50), bool)}, union_ref={'M1': np.zeros((50, 50), bool)},
+                          union_tgt={'M1': np.zeros((50, 50), bool)}, pitch_um=PITCH, window_um=2.0,
                           max_operation_bytes=BIG)
     assert caught.value.code == 'invalid_change_map_input'
     with pytest.raises(NumericContractError) as caught:
-        window_candidates({'M1': np.zeros(shape, np.uint32)}, np.ones(shape, bool), pitch_um=PITCH, window_um=10.0,
+        window_candidates({'M1': np.zeros(shape, np.uint32)}, np.ones(shape, bool),
+                          union_change={'M1': np.zeros(shape, bool)}, union_ref={'M1': np.zeros(shape, bool)},
+                          union_tgt={'M1': np.zeros(shape, bool)}, pitch_um=PITCH, window_um=10.0,
                           max_operation_bytes=BIG)
     assert caught.value.code == 'invalid_change_map_input'          # 창이 frame 보다 크다
 
@@ -429,7 +442,8 @@ def test_counter_and_integral_overflow_are_explicit(monkeypatch):
     assert int(out['maps']['M1'].max()) == 3
     monkeypatch.setattr(change_map, 'INTEGRAL_LIMIT', 3 * 40 * 40)
     with pytest.raises(NumericContractError) as caught:
-        window_candidates(out['maps'], out['D'], pitch_um=PITCH, window_um=1.0, max_operation_bytes=BIG)
+        window_candidates(out['maps'], out['D'], **union_kw(out), pitch_um=PITCH, window_um=1.0,
+                          max_operation_bytes=BIG)
     assert caught.value.code == 'change_map_counter_overflow'
 
 
@@ -458,13 +472,19 @@ def _full_frame_oracle(pairs, ref_valid, tgt_valid, offset, tolerance_px):
     dx, dy = offset
     height, width = ref_valid.shape
     domain = change_map._erode(change_map._comparison_domain(ref_valid, tgt_valid, dy, dx), tolerance_px)
-    maps = {}
+    maps, union = {}, {}
     for pair in pairs:
         a, b = pair.load()
-        res = change_map._residual(a, change_map._shift_crop(b, dy, dx, 0, height, 0, width), domain, tolerance_px)
+        shifted_b = change_map._shift_crop(b, dy, dx, 0, height, 0, width)
+        res = change_map._residual(a, shifted_b, domain, tolerance_px)
         maps.setdefault(pair.layer, np.zeros(ref_valid.shape, np.uint32))
         maps[pair.layer] += res
-    return domain, maps
+        u_a, u_b = union.setdefault(pair.layer, [np.zeros(ref_valid.shape, bool), np.zeros(ref_valid.shape, bool)])
+        u_a |= a
+        u_b |= shifted_b
+    union = {layer: (u_a, u_b, change_map._residual(u_a, u_b, domain, tolerance_px))
+             for layer, (u_a, u_b) in union.items()}
+    return domain, maps, union
 
 
 @pytest.mark.parametrize('seed, offset, tolerance_um', [(1, (0, 0), 0.0), (2, (7, -5), 0.2), (3, (-9, 4), 0.3),
@@ -488,11 +508,15 @@ def test_bbox_limited_residual_is_bit_identical_to_the_full_frame_computation(se
     pairs.append(MaskPair('empty', 'M1', np.zeros(ref_shape, bool), np.zeros(tgt_shape, bool)))
     kw = kwargs(ref_shape, tgt_shape, offset, tolerance_um, ref_valid, tgt_valid)
     out = change_maps(pairs, max_operation_bytes=BIG, **kw)
-    domain, want = _full_frame_oracle(pairs, ref_valid, tgt_valid, offset, out['stats']['tolerance_px'])
+    domain, want, want_union = _full_frame_oracle(pairs, ref_valid, tgt_valid, offset, out['stats']['tolerance_px'])
     assert np.array_equal(out['D'], domain)
     assert sorted(out['maps']) == sorted(want)
     for layer in want:
         assert out['maps'][layer].dtype == np.uint32 and np.array_equal(out['maps'][layer], want[layer])
+        u_ref, u_tgt, u_change = want_union[layer]          # the union maps are bit-identical to the full-frame ones
+        assert np.array_equal(out['union_ref'][layer], u_ref) and np.array_equal(out['union_tgt'][layer], u_tgt)
+        assert np.array_equal(out['union_change'][layer], u_change)
+        assert out['stats']['union_change_pixels_by_layer'][layer] == int(u_change.sum())
     assert out['stats']['residual_pixels'] == sum(int(m.sum()) for m in want.values())
 
 
@@ -515,7 +539,8 @@ def test_thin_shape_one_pixel_off_at_a_small_target_frame_border_scores_zero():
     kept = change_maps([MaskPair('c', 'M1', a, b2)], max_operation_bytes=BIG, **kw)
     assert int(kept['maps']['M1'].sum()) == 100
     assert quiet['D'].sum() == (quiet['stats']['domain_pixels'])
-    found = window_candidates(kept['maps'], kept['D'], pitch_um=PITCH, window_um=2.0, max_operation_bytes=BIG)
+    found = window_candidates(kept['maps'], kept['D'], **union_kw(kept), pitch_um=PITCH, window_um=2.0,
+                              max_operation_bytes=BIG)
     assert found['candidates'] and all(c['observed_fraction'] <= 1 for c in found['candidates'])
 
 
@@ -646,9 +671,100 @@ def test_previous_pair_arrays_are_released_before_the_next_pair_is_read():
     out = change_maps(pairs, max_operation_bytes=BIG, **kw)
     assert out['stats']['pairs_with_change_by_layer'] == {'M1': 3}
     refs.clear()
-    found = window_candidates(out['maps'], out['D'], pitch_um=PITCH, window_um=2.0, max_operation_bytes=BIG)
+    found = window_candidates(out['maps'], out['D'], **union_kw(out), pitch_um=PITCH, window_um=2.0,
+                              max_operation_bytes=BIG)
     got = case_contributions(pairs, found['candidates'][:1], max_operation_bytes=BIG, **kw)
     assert [c['case_key'] for c in got['windows'][0]['contributing_cases']] == ['p0', 'p1', 'p2']
+
+
+# --- change-roi/T7b: the rank score is the per-layer union change -----------------------------------------------------
+
+def _top_representative(found, window_um=5.0):
+    infos = to_region_infos(found['candidates'], 'P', 'v1', 'f')
+    merged = merge_regions(infos, window_um, 0.5, rank_key=change_map.region_rank_key)
+    by_id = {region_id_for(c['layer'], c['center_xy_um']): c for c in found['candidates']}
+    return [by_id[m['representative'].region_id] for m in merged]
+
+
+def test_dense_centre_with_small_union_change_ranks_below_one_large_move_at_the_edge():
+    shape = (300, 300)
+    # centre: 10 pairs, every one pushed 3 px right (> tolerance 2 px): 10 x 40 residual cells, union change only 40 cells
+    pairs = [MaskPair(f'centre{i}', 'M1', rect(shape, 140, 140, 20, 20), rect(shape, 140, 143, 20, 20))
+             for i in range(10)]
+    # edge: one pair moves a 10 x 10 block by 20 px: union change 200 cells, residual sum 200
+    pairs.append(MaskPair('edge', 'M1', rect(shape, 60, 60, 10, 10), rect(shape, 60, 80, 10, 10)))
+    maps, found = run(pairs, **kwargs(shape))
+    ranked = _top_representative(found)
+    assert len(ranked) == 2
+    edge, centre = ranked
+    assert edge['center_xy_um'][0] < 10.0 and centre['center_xy_um'][0] > 10.0       # the edge block ranks first
+    assert edge['score_um2'] == pytest.approx(200 * PITCH ** 2) and edge['score_basis'] == 'union_change'
+    assert centre['score_um2'] == pytest.approx(40 * PITCH ** 2)
+    assert centre['sum_residual_um2'] == pytest.approx(400 * PITCH ** 2)
+    assert centre['sum_residual_um2'] > edge['sum_residual_um2']
+    assert edge['sum_residual_um2'] == pytest.approx(200 * PITCH ** 2)
+    assert centre['flags'] == [] and edge['flags'] == []
+    # the per-pair sum stays in the map: 10 pairs x 40 cells (+ the edge pair's 200)
+    assert int(maps['maps']['M1'].sum()) == 10 * 40 + 200
+    assert [c['score_um2'] for c in found['candidates']] == sorted((c['score_um2'] for c in found['candidates']),
+                                                                   reverse=True)
+
+
+def test_union_unchanged_while_a_pair_moved_scores_zero_keeps_flag_and_ranks_last():
+    shape = (300, 300)
+    p, q = (40, 40), (200, 200)
+    pairs = [MaskPair('Z', 'M1', rect(shape, p[0], p[1], 15, 15), rect(shape, p[0], p[1], 15, 15)),    # covers P always
+             MaskPair('Y', 'M1', rect(shape, q[0], q[1], 15, 15), rect(shape, q[0], q[1], 15, 15)),    # covers Q always
+             MaskPair('X', 'M1', rect(shape, p[0], p[1], 15, 15), rect(shape, q[0], q[1], 15, 15)),    # P -> Q
+             MaskPair('W', 'M2', np.zeros(shape, bool), rect(shape, 100, 100, 12, 12))]               # a real union change
+    maps, found = run(pairs, **kwargs(shape))
+    assert not maps['union_change']['M1'].any()
+    ranked = _top_representative(found)
+    assert [c['layer'] for c in ranked] == ['M2', 'M1', 'M1']
+    assert ranked[0]['score_um2'] > 0 and ranked[0]['flags'] == []
+    for item in ranked[1:]:
+        assert item['score_um2'] == 0 and item['sum_residual_um2'] > 0
+        assert item['flags'] == ['union_unchanged_pair_changed']
+        assert item['union_delta_um2'] == 0 and item['union_area_reference_um2'] == item['union_area_target_um2'] > 0
+    contrib = case_contributions(pairs, ranked[1:], max_operation_bytes=BIG, **kwargs(shape))['windows']
+    kinds = [{c['case_key']: c['classification'] for c in w['contributing_cases']} for w in contrib]
+    assert sorted(kinds, key=lambda k: sorted(k.values())) == [{'X': 'appeared'}, {'X': 'disappeared'}]
+
+
+def test_union_delta_is_positive_when_the_target_gains_hotspots():
+    shape = (200, 200)
+    grow = [MaskPair('g', 'M1', np.zeros(shape, bool), rect(shape, 80, 80, 10, 10))]
+    shrink = [MaskPair('s', 'M1', rect(shape, 80, 80, 10, 10), np.zeros(shape, bool))]
+    gained = run(grow, **kwargs(shape))[1]['candidates'][0]
+    lost = run(shrink, **kwargs(shape))[1]['candidates'][0]
+    assert gained['union_delta_um2'] == pytest.approx(100 * PITCH ** 2) and gained['union_delta_um2'] > 0
+    assert gained['union_area_reference_um2'] == 0 and gained['union_area_target_um2'] == pytest.approx(100 * PITCH ** 2)
+    assert lost['union_delta_um2'] == pytest.approx(-100 * PITCH ** 2) and lost['union_delta_um2'] < 0
+
+
+def test_zero_tolerance_union_change_is_the_xor_of_the_unions_inside_the_domain():
+    rng = np.random.default_rng(11)
+    shape = (120, 130)
+    valid = np.ones(shape, bool)
+    valid[30:50, 40:60] = False
+    pairs = [MaskPair(f'c{i}', 'M1' if i % 2 else 'M2', rng.random(shape) < 0.05, rng.random(shape) < 0.05)
+             for i in range(6)]
+    out = change_maps(pairs, max_operation_bytes=BIG, **kwargs(shape, ref_valid=valid, tolerance=0.0))
+    for layer in ('M1', 'M2'):
+        u_a = np.any([p.a for p in pairs if p.layer == layer], axis=0)
+        u_b = np.any([p.b for p in pairs if p.layer == layer], axis=0)
+        assert np.array_equal(out['union_ref'][layer], u_a) and np.array_equal(out['union_tgt'][layer], u_b)
+        assert np.array_equal(out['union_change'][layer], (u_a ^ u_b) & out['D'])
+        assert out['union_change'][layer].dtype == bool
+
+
+def test_window_candidates_rejects_union_maps_that_do_not_match_the_maps():
+    shape = (60, 60)
+    maps = {'M1': np.zeros(shape, np.uint32)}
+    flat = {'M1': np.zeros(shape, bool)}
+    with pytest.raises(NumericContractError):
+        window_candidates(maps, np.ones(shape, bool), union_change={}, union_ref=flat, union_tgt=flat,
+                          pitch_um=PITCH, window_um=2.0, max_operation_bytes=BIG)
 
 
 @pytest.mark.skipif(not os.environ.get('SIMCOMPARE_ETX_PY'), reason='SIMCOMPARE_ETX_PY not set')

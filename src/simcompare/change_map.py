@@ -28,6 +28,8 @@ COUNTER_LIMIT = 2 ** 32
 INTEGRAL_LIMIT = 2 ** 64
 CANDIDATE_BYTES = 1024          # 후보 dict 하나(파이썬 객체)의 보수적 추정
 FLAG_PARTIAL = 'window_partially_unobserved'
+FLAG_UNION_UNCHANGED = 'union_unchanged_pair_changed'
+SCORE_BASIS = 'union_change'
 CLASSES = ('shifted', 'reshaped', 'appeared', 'disappeared', 'mixed_undetermined')
 
 _INVALID = 'invalid_change_map_input'
@@ -230,9 +232,10 @@ def estimate_change_map_bytes(ref_shape, tgt_shape, n_layers, window_px, toleran
         현재 case: target 원본 + A + B' + R             = ht + 3*hr                  (bool)
         팽창(r > 0): 팽창 2장 + 단계 임시 2장            = 4*hr                       (bool)
         층별 uint32 지도                                = 4*L*hr
+        층별 합집합 bool 4장(U_ref, U_tgt', RU, 팽창 임시) = 4*L*hr
     2단계(window_candidates, w > 0 일 때): ny = H_ref-w+1, nx = W_ref-w+1, nwin = ny*nx, stride = max(1, w//4),
         ng = ceil(ny/stride)*ceil(nx/stride)
-        지도 L장 + D                                    = 4*L*hr + hr
+        지도 L장 + D + 층별 합집합 bool 3장(RU, U_ref, U_tgt') = 4*L*hr + 3*L*hr + hr
         적분 uint64 1장                                 = (H_ref+1)*(W_ref+1)*8
         창 합 + 덧셈 임시 2장 + 관측 수 1장              = 4*nwin*8
         격자 복사·패딩·bool 임시                         = 32*ng
@@ -242,15 +245,15 @@ def estimate_change_map_bytes(ref_shape, tgt_shape, n_layers, window_px, toleran
     ht = int(tgt_shape[0]) * int(tgt_shape[1])
     layers = max(int(n_layers), 0)
     dilation = 4 * hr if tolerance_px > 0 else 0
-    first = 3 * hr + ht + ht + 3 * hr + dilation + 4 * layers * hr
+    first = 3 * hr + ht + ht + 3 * hr + dilation + 4 * layers * hr + 4 * layers * hr
     if int(window_px) <= 0:
         return int(first)
     w = int(window_px)
     ny, nx = max(int(ref_shape[0]) - w + 1, 0), max(int(ref_shape[1]) - w + 1, 0)
     stride = max(1, w // 4)
     grid = -(-ny // stride) * -(-nx // stride)
-    second = (4 * layers * hr + hr + (int(ref_shape[0]) + 1) * (int(ref_shape[1]) + 1) * 8 + 4 * ny * nx * 8
-              + 32 * grid + CANDIDATE_BYTES * grid * layers)
+    second = (4 * layers * hr + 3 * layers * hr + hr + (int(ref_shape[0]) + 1) * (int(ref_shape[1]) + 1) * 8
+              + 4 * ny * nx * 8 + 32 * grid + CANDIDATE_BYTES * grid * layers)
     return int(max(first, second))
 
 
@@ -427,16 +430,23 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     domain = _erode(full_domain, r)
     del full_domain
     maps = {layer: np.zeros(ref_valid.shape, dtype=np.uint32) for layer in layers}
+    union_ref = {layer: np.zeros(ref_valid.shape, dtype=bool) for layer in layers}
+    union_tgt = {layer: np.zeros(ref_valid.shape, dtype=bool) for layer in layers}
     changed = {layer: 0 for layer in layers}
     residual_pixels = 0
     height, width = ref_valid.shape
     for pair in pairs:
         a, b = _load_checked(pair, ref_valid.shape, tgt_valid.shape)
         # R 는 A ∪ B' 위에서만 0 이 아니다: 그 bbox 를 r(+1) 넓힌 영역에서 계산하면 frame 전체 계산과 비트 단위로 같다.
+        # 합집합 U_ref |= A, U_tgt' |= B' 도 같은 bbox 안에서만 바뀐다(bbox 밖은 A, B' 모두 비었다).
         box = _pair_bbox(a, b, dy, dx, height, width, r + 1)
         if box is not None:
             y0, y1, x0, x1 = box
-            res = _residual(a[y0:y1, x0:x1], _shift_crop(b, dy, dx, y0, y1, x0, x1), domain[y0:y1, x0:x1], r)
+            b_c = _shift_crop(b, dy, dx, y0, y1, x0, x1)
+            union_ref[pair.layer][y0:y1, x0:x1] |= a[y0:y1, x0:x1]
+            union_tgt[pair.layer][y0:y1, x0:x1] |= b_c
+            res = _residual(a[y0:y1, x0:x1], b_c, domain[y0:y1, x0:x1], r)
+            b_c = None
             count = int(np.count_nonzero(res))
             if count:
                 target = maps[pair.layer][y0:y1, x0:x1]
@@ -445,8 +455,12 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
                 residual_pixels += count
             del res
         a = b = None   # 다음 쌍을 읽기 전에 이전 쌍 배열을 놓는다
-    return {'maps': maps, 'D': domain,
+    # 층별 합집합 잔차: 조합별 잔차와 같은 허용 폭·팽창·침식(domain = erode(D, r))
+    union_change = {layer: _residual(union_ref[layer], union_tgt[layer], domain, r) for layer in layers}
+    union_pixels = {layer: int(np.count_nonzero(union_change[layer])) for layer in layers}
+    return {'maps': maps, 'D': domain, 'union_change': union_change, 'union_ref': union_ref, 'union_tgt': union_tgt,
             'stats': {'pairs': len(pairs), 'pairs_by_layer': per_layer, 'pairs_with_change_by_layer': changed,
+                      'union_change_pixels_by_layer': union_pixels,
                       'residual_pixels': residual_pixels, 'tolerance_px': r, 'offset_px': [dx, dy],
                       'domain_pixels': int(np.count_nonzero(domain)),
                       'domain_pixels_before_erosion': domain_before,
@@ -486,15 +500,27 @@ def _local_max_grid(grid):
     return keep
 
 
-def window_candidates(maps, D, *, pitch_um, window_um, max_operation_bytes, origin_xy_um=(0.0, 0.0),
-                      reserved_bytes=0):
-    """층별 W×W 창 합(``score_um2 = 창 합 × pitch²``)과 극대 창 후보.
+def _grid_sums(arr, w, stride):
+    """``_window_sums(arr, w)[::stride, ::stride]`` 와 같은 값. 전체 해상도 창 합 배열을 만들지 않고 적분 영상에서 바로 뽑는다."""
+    ii = _integral(arr)
+    return ((ii[w:, w:][::stride, ::stride] + ii[:-w, :-w][::stride, ::stride])
+            - (ii[:-w, w:][::stride, ::stride] + ii[w:, :-w][::stride, ::stride]))
 
+
+def window_candidates(maps, D, *, union_change, union_ref, union_tgt, pitch_um, window_um, max_operation_bytes,
+                      origin_xy_um=(0.0, 0.0), reserved_bytes=0):
+    """층별 W×W 창의 합집합 변화 면적(``score_um2 = RU 셀 수 × pitch²``)과 극대 창 후보.
+
+    순위 점수 ``score_um2`` 는 창 안 층별 합집합 잔차 RU(``change_maps`` 의 ``union_change``) 셀 수다(``score_basis`` =
+    ``union_change``). 속성: ``sum_residual_um2`` = 창 안 조합별 잔차 지도(``maps``) 합 × pitch²,
+    ``union_area_reference_um2``·``union_area_target_um2`` = 창 안 erode(D, r) 안의 U_ref·U_tgt' 면적,
+    ``union_delta_um2`` = target − reference(부호 있음).
     W = round(window_um / pitch_um) px, stride = max(1, W // 4). 후보 = stride 격자에서 8-이웃 격자점보다 크거나 같고
-    점수 > 0 인 점. ``observed_fraction = |D ∩ 창| / W²`` 가 1 미만이면 플래그 ``window_partially_unobserved``.
+    RU 점수 > 0 인 점, 그리고 RU 점수가 0 이고 sum_residual > 0 인 격자 국소 최대(합집합은 그대로인데 조합만 바뀐 곳;
+    플래그 ``union_unchanged_pair_changed``). ``observed_fraction = |D ∩ 창| / W²`` 가 1 미만이면 플래그 ``window_partially_unobserved``.
     중심 = ``origin + (왼쪽 위 칸 + W/2) * pitch``(candidates.window_bounds 가 쓰는 창 중심과 같은 물리 좌표, reference frame).
     D 는 ``change_maps`` 가 돌려준 erode(D, r) 이다(관측 불가 띠를 뺀 영역). ``max_operation_bytes`` 는 필수다(한도 없음은 None 을 명시).
-    층 사이 합집합 점수는 만들지 않는다. 정렬: score 내림차순 → layer → center x → center y.
+    층 사이 합집합 점수는 만들지 않는다. 정렬: score 내림차순 → sum_residual 내림차순 → layer → center x → center y.
     반환: ``{'candidates': [...], 'window_px', 'stride_px', 'window_um'}``.
     """
     _check_scalar(pitch_um, window_um=window_um)
@@ -503,30 +529,49 @@ def window_candidates(maps, D, *, pitch_um, window_um, max_operation_bytes, orig
     height, width = domain.shape
     if w < 1 or w > height or w > width:
         raise _bad(f'window {w} px does not fit the frame {domain.shape}')
-    for layer, arr in maps.items():
-        if np.shape(arr) != domain.shape:
-            raise _bad(f'map {layer} shape {np.shape(arr)} != D shape {domain.shape}')
+    for name, group in (('map', maps), ('union_change', union_change), ('union_ref', union_ref),
+                        ('union_tgt', union_tgt)):
+        if set(group) != set(maps):
+            raise _bad(f'{name} layers {sorted(group)} != map layers {sorted(maps)}')
+        for layer, arr in group.items():
+            if np.shape(arr) != domain.shape:
+                raise _bad(f'{name} {layer} shape {np.shape(arr)} != D shape {domain.shape}')
     _check_admission(estimate_change_map_bytes(domain.shape, domain.shape, len(maps), w, 0), max_operation_bytes,
                      reserved_bytes)
     stride = max(1, w // 4)
     ox, oy = float(origin_xy_um[0]), float(origin_xy_um[1])
-    observed = _window_sums(domain, w)[::stride, ::stride].copy()
+    observed = _grid_sums(domain, w, stride)
+    area = pitch_um * pitch_um
     out = []
     for layer in sorted(maps):
-        sums = _window_sums(maps[layer], w)
-        grid = sums[::stride, ::stride]
-        del sums
-        for gy, gx in np.argwhere(_local_max_grid(grid)):
+        grid_u = _grid_sums(union_change[layer], w, stride)
+        grid_c = _grid_sums(maps[layer], w, stride)
+        keep = _local_max_grid(grid_u) | ((grid_u == 0) & _local_max_grid(grid_c))
+        points = np.argwhere(keep)
+        if not len(points):
+            continue
+        grid_ref = _grid_sums(np.asarray(union_ref[layer], dtype=bool) & domain, w, stride)
+        grid_tgt = _grid_sums(np.asarray(union_tgt[layer], dtype=bool) & domain, w, stride)
+        for gy, gx in points:
             y, x = int(gy) * stride, int(gx) * stride
             count = int(observed[gy, gx])
+            score, residual = int(grid_u[gy, gx]), int(grid_c[gy, gx])
+            n_ref, n_tgt = int(grid_ref[gy, gx]), int(grid_tgt[gy, gx])
+            flags = [] if count == w * w else [FLAG_PARTIAL]
+            if score == 0:
+                flags.append(FLAG_UNION_UNCHANGED)
             out.append({
                 'layer': layer,
                 'center_xy_um': [round(ox + (x + w / 2.0) * pitch_um, 6), round(oy + (y + w / 2.0) * pitch_um, 6)],
-                'score_um2': int(grid[gy, gx]) * pitch_um * pitch_um,
+                'score_um2': score * area, 'score_basis': SCORE_BASIS,
+                'sum_residual_um2': residual * area, 'sum_residual_cells': residual,
+                'union_area_reference_um2': n_ref * area, 'union_area_target_um2': n_tgt * area,
+                'union_delta_um2': (n_tgt - n_ref) * area,
                 'observed_fraction': count / float(w * w),
-                'flags': [] if count == w * w else [FLAG_PARTIAL],
+                'flags': flags,
                 'window_origin_px': [y, x], 'window_px': w})
-    out.sort(key=lambda c: (-c['score_um2'], c['layer'], c['center_xy_um'][0], c['center_xy_um'][1]))
+    out.sort(key=lambda c: (-c['score_um2'], -c['sum_residual_cells'], c['layer'], c['center_xy_um'][0],
+                            c['center_xy_um'][1]))
     return {'candidates': out, 'window_px': w, 'stride_px': stride, 'window_um': float(window_um)}
 
 
@@ -536,20 +581,22 @@ def region_id_for(layer, center_xy_um):
 
 
 def region_rank_key(info):
-    """``candidates.merge_regions(..., rank_key=...)`` 용: 점수 내림차순 → layer → region_id."""
-    return -info.score, info.layer, info.region_id
+    """``candidates.merge_regions(..., rank_key=...)`` 용: score(합집합 변화) 내림차순 → sum_residual 내림차순 → layer →
+    center → region_id. sum_residual 의 정수 셀 수는 ``RegionInfo.max_count`` 에 싣는다."""
+    return (-info.score, -info.max_count, info.layer, info.center_xy_um[0], info.center_xy_um[1], info.region_id)
 
 
 def to_region_infos(candidates, product_id, design_version, frame_id, frame_bbox_um=None):
-    """후보를 ``candidates.RegionInfo`` 로 바꾼다. ``score`` 에는 스칼라(score_um2)만 싣고, area_um2 = score_um2.
+    """후보를 ``candidates.RegionInfo`` 로 바꾼다. ``score`` 에는 스칼라(score_um2 = 합집합 변화 면적)만 싣고,
+    area_um2 = score_um2, ``max_count`` = 창 안 조합별 잔차 합(정수 셀 수; 두 번째 순위 키).
 
     frame_bbox_um 을 주지 않으면 frame 가장자리 판정이 꺼진다(무한 bbox).
     """
     from .candidates import RegionInfo
     bbox = tuple(frame_bbox_um) if frame_bbox_um is not None else (-math.inf, -math.inf, math.inf, math.inf)
     return [RegionInfo(region_id_for(c['layer'], c['center_xy_um']), (product_id, design_version, frame_id),
-                       (c['center_xy_um'][0], c['center_xy_um'][1]), 0, c['score_um2'], c['layer'], bbox,
-                       c['score_um2']) for c in candidates]
+                       (c['center_xy_um'][0], c['center_xy_um'][1]), c['sum_residual_cells'], c['score_um2'],
+                       c['layer'], bbox, c['score_um2']) for c in candidates]
 
 
 # --------------------------------------------------------------------------- A4. 기여 case 와 분류

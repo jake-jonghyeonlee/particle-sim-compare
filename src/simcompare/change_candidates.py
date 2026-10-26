@@ -158,6 +158,19 @@ def _cnt_change_by_layer(window, ref_layers, tgt_layers, ref_valid, tgt_valid, o
     return out
 
 
+# --------------------------------------------------------------------------- 순위 속성
+
+ATTRIBUTE_KEYS = ('score_basis', 'sum_residual_um2', 'changed_case_count', 'union_area_reference_um2',
+                  'union_area_target_um2', 'union_delta_um2')
+
+
+def _window_attributes(window, n_cases):
+    """질의·사이드카에 같이 싣는 순위 속성. 순위 점수 score_um2 는 합집합 변화 면적, 나머지는 속성이다."""
+    return {'score_basis': window['score_basis'], 'sum_residual_um2': window['sum_residual_um2'],
+            'changed_case_count': n_cases, 'union_area_reference_um2': window['union_area_reference_um2'],
+            'union_area_target_um2': window['union_area_target_um2'], 'union_delta_um2': window['union_delta_um2']}
+
+
 # --------------------------------------------------------------------------- 직접 대응 (DL2 건너뛰기)
 
 def _valid_at(frame, center):
@@ -211,6 +224,7 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
                 flags = sorted(set(window['flags']) | set(contribution['flags']))
                 found[pair_id] = {'pair_id': pair_id, 'a': a, 'b': b, 'directions': {direction},
                                   'score_um2': rep.score, 'score_layer': rep.layer, 'region_id': rep.region_id,
+                                  **_window_attributes(window, len(contrib[i]['contributing_cases'])),
                                   'observed_fraction': window['observed_fraction'], 'flags': flags,
                                   'change_kind': contribution['classification'],
                                   'residual_um2': contribution['residual_um2'], 'iou_global': contribution['iou_global'],
@@ -224,7 +238,7 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
                        if not _valid_at(frame, side['center_xy_um'])]
             reasons = ['position_outside_valid_domain_' + name for name in reasons]
         record['status'], record['reasons'] = ('blocked' if reasons else 'ready'), reasons
-    return sorted(found.values(), key=lambda r: (-r['score_um2'], r['a']['analysis_layer'],
+    return sorted(found.values(), key=lambda r: (-r['score_um2'], -r['sum_residual_um2'], r['a']['analysis_layer'],
                                                   r['a']['center_xy_um'][0], r['a']['center_xy_um'][1], r['pair_id']))
 
 
@@ -247,6 +261,7 @@ def _direct_documents(records, alignment, commit, inputs):
             'status': r['status'], 'reasons': r['reasons'], 'offset_xy_um': list(alignment['offset_xy_um']),
             'alignment_status': alignment['status'], 'alignment_reasons': list(alignment['reasons']),
             'peak_ratio': alignment['peak_ratio'], 'score_um2': r['score_um2'], 'score_layer': r['score_layer'],
+            **{k: r[k] for k in ATTRIBUTE_KEYS},
             'region_id': r['region_id'], 'change_kind': r['change_kind'], 'residual_um2': r['residual_um2'],
             'iou_global': r['iou_global'], 'iou_local': r['iou_local'], 'local_shift_um': r['local_shift_um'],
             'observed_fraction': r['observed_fraction'], 'flags': r['flags'], 'directions': sorted(r['directions'])}
@@ -403,7 +418,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                   pitch_um=pitch, tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit,
                                   window_um=window_um, reserved_bytes=reserved)
     found = change_map.window_candidates(
-        maps['maps'], maps['D'], pitch_um=pitch, window_um=window_um, max_operation_bytes=limit,
+        maps['maps'], maps['D'], union_change=maps['union_change'], union_ref=maps['union_ref'],
+        union_tgt=maps['union_tgt'], pitch_um=pitch, window_um=window_um, max_operation_bytes=limit,
         origin_xy_um=(ref.frame.origin_xy_um[0], ref.frame.origin_xy_um[1]), reserved_bytes=reserved)
     map_stats = maps['stats']
     del maps
@@ -416,7 +432,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             by_id[info.region_id] = candidate
         merged.extend(candidates.merge_regions(infos, window_um, args['merge_overlap'],
                                                rank_key=change_map.region_rank_key))
-    merged.sort(key=lambda m: (-m['representative'].score, m['representative'].layer,
+    merged.sort(key=lambda m: (-m['representative'].score, -m['representative'].max_count, m['representative'].layer,
                                m['representative'].center_xy_um[0], m['representative'].center_xy_um[1]))
     kept = merged[:top_k]
     windows = [by_id[m['representative'].region_id] for m in kept]
@@ -531,7 +547,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 'layers': sorted({m.layer for m in members}), 'flags': flags,
                 'status': 'ready' if ready else 'blocked', 'reasons': sorted(reasons),
                 'roi_ids': sorted(r['roi_id'] for r in rows), 'n_rois': len(rows), 'n_rois_ready': len(ready),
-                'score_um2': rep.score, 'score_layer': rep.layer, 'observed_fraction': window['observed_fraction'],
+                'score_um2': rep.score, 'score_basis': window['score_basis'], 'score_layer': rep.layer,
+                **_window_attributes(window, len(contrib[i]['contributing_cases'])),
+                'observed_fraction': window['observed_fraction'],
                 'contributing_cases': [
                     {'case_key': c['case_key'], 'residual_um2': c['residual_um2'], 'change_kind': c['classification'],
                      'iou_global': c['iou_global'], 'iou_local': c['iou_local'],
@@ -640,7 +658,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                'policy': {'roi_source': 'cnt_alignment_plus_hotspot_xor_residual_windows',
                           'merge': 'per_layer_window_overlap_intersection_over_min_area_union_find_region_id_order',
                           'window': 'square_centered_at_window_center_in_reference_coordinates',
-                          'representative': 'score_um2_desc_layer_asc_region_id_asc',
+                          'representative': 'score_um2_desc_sum_residual_um2_desc_layer_asc_center_asc_region_id_asc',
+                          'score_basis': change_map.SCORE_BASIS,
                           'roi_per_contributing_case': 'one_manual_roi_per_(window, contributing_case)',
                           'wiring_change_um2': 'not_computed_here',
                           'mutual_one_way': 'not_computed_here',
