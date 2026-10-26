@@ -94,7 +94,7 @@ def hotspot_masks(side, extra_target_case=False):
     return masks
 
 
-def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False, dl1_electrodes=None):
+def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False, dl1_electrodes=None, layer_stack=None):
     """hotspot tree -> import-hotspots -> import-electrode-assets -> one data_dir; returns (data_dir, assignment).
 
     The DL1 root also gets one electrode folder per electrode name (default: A, B, C and D when the target has the extra
@@ -106,9 +106,10 @@ def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_ca
         folder = root/'images'/case
         (folder/'result').mkdir(parents=True)
         save_black(folder/'1.png', pattern(1))
-        save_black(folder/'2.png', pattern({CASE_AB: 2, CASE_AC: 3, CASE_AD: 4}[case]))
-        Image.fromarray(mask.astype(np.uint8)*255).save(folder/'hotspot_lateral_short05.png')
-        with (folder/'result/lateral_short.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+        save_black(folder/'2.png', pattern({CASE_AB: 2, CASE_AC: 3, CASE_AD: 4}.get(case, 5)))
+        defect = case.split('-')[0]
+        Image.fromarray(mask.astype(np.uint8)*255).save(folder/f'hotspot_{defect}05.png')
+        with (folder/f'result/{defect}.csv').open('w', newline='', encoding='utf-8-sig') as handle:
             writer = csv.writer(handle)
             writer.writerow(['defect_size(um)', 'Area(um2)'])
             writer.writerow(['5', f'{int(mask.sum())*PITCH*PITCH:.2f}'])
@@ -120,7 +121,7 @@ def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_ca
     (imported/'pairs.csv').write_text('pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\n' + pairs)
     assignment = {'product_id': product, 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
                   'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'pairs.csv',
-                  'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
+                  'layer_stack': layer_stack or [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
     if roles is not None:
         assignment['electrode_roles'] = {**roles, **({'D': 'data'} if CASE_AD in masks else {})}
     assignment_path = base/f'assignment_{side}.json'

@@ -198,31 +198,46 @@ def _direct_side(case, center, rows_by_key, frame):
     return side, identity
 
 
-def _dataset_filters(dataset, layer):
-    """한쪽 조합에서 case 가 없는 쪽 side 의 group 필터: 그 쪽 dataset 의 (같은 층) case 들이 하나의 값을 공유할 때만 쓴다.
-    값이 여럿이면 필터를 비워 둔다(compare-windows 가 모호함을 ``ambiguous_source_group_*`` 로 알린다)."""
-    cases = [c for c in dataset.cases if c.analysis_layer == layer] or list(dataset.cases)
-    out = {}
-    for field in ('source_id', 'process_step_id', 'exposure_id'):
-        values = {getattr(c.identity, field, None) for c in cases}
+def _layer_cases(dataset, layer):
+    return [c for c in dataset.cases if c.analysis_layer == layer]
+
+
+def _dataset_filters(dataset, layer, present_case=None):
+    """한쪽 조합에서 case 가 없는 쪽 side 의 group 필터. (필터, 정해지지 못한 필드가 있는지)를 돌려준다.
+
+    그 쪽 dataset 의 (같은 층) case 들이 하나의 값을 공유하면 그 값을 쓴다. 값이 여럿이면 case 가 있는 쪽(``present_case``)의
+    값이 그 집합 안에 있을 때 그 값을 쓴다. 그래도 정해지지 않으면 비우고 unresolved 로 알린다."""
+    cases = _layer_cases(dataset, layer) or list(dataset.cases)
+    out, unresolved = {}, False
+    fields = (('source_id', lambda c: getattr(c.identity, 'source_id', None)),
+              ('process_step_id', lambda c: getattr(c.identity, 'process_step_id', None)),
+              ('exposure_id', lambda c: getattr(c.identity, 'exposure_id', None)),
+              ('unit_id', lambda c: c.metadata.get('unit_id')))
+    for field, getter in fields:
+        values = {getter(c) for c in cases}
         if len(values) == 1 and None not in values:
             out[field] = next(iter(values))
-    units = {c.metadata.get('unit_id') for c in cases}
-    if len(units) == 1 and None not in units:
-        out['unit_id'] = next(iter(units))
-    return out
+        elif len(values) > 1:
+            hint = getter(present_case) if present_case is not None else None
+            if hint is not None and hint in values:
+                out[field] = hint
+            else:
+                unresolved = True
+    return out, unresolved
 
 
-def _direct_side_one_sided(case, layer, center, rows_by_key, item):
+def _direct_side_one_sided(case, layer, center, rows_by_key, item, other_case=None):
     """한쪽 조합의 side: endpoints·failure_type 을 쓰지 않는다(반대 모델에 그 case 가 없어 named_pair 를 찾을 수 없다).
-    analysis_layer 는 그 조합의 층, 필터는 case 가 있는 쪽은 그 case identity, 없는 쪽은 dataset 값이다."""
+    analysis_layer 는 그 조합의 층, 필터는 case 가 있는 쪽은 그 case identity, 없는 쪽은 dataset 값이다.
+    (side, identity, 필터 미결정 여부)를 돌려준다."""
     side = {'product_id': item.product_id, 'design_version': item.design_version, 'frame_id': item.frame_id,
             'center_xy_um': list(center), 'analysis_layer': layer}
     if case is None:
+        filters, unresolved = _dataset_filters(item.side.dataset, layer, other_case)
         identity = {'product_id': item.product_id, 'design_version': item.design_version, 'frame_id': item.frame_id,
-                    **_dataset_filters(item.side.dataset, layer)}
+                    **filters}
         side.update({k: v for k, v in identity.items() if k not in ('product_id', 'design_version', 'frame_id')})
-        return side, identity
+        return side, identity, unresolved
     identity = asdict(case.identity)
     for field in ('source_id', 'process_step_id', 'exposure_id'):
         side[field] = identity[field]
@@ -232,7 +247,7 @@ def _direct_side_one_sided(case, layer, center, rows_by_key, item):
     row = rows_by_key.get(_row_key(identity, case.failure_type, case.analysis_layer, center, item.frame))
     if row is not None and row.get('status') == 'ready':
         side['roi_id'] = row['roi_id']
-    return side, identity
+    return side, identity, False
 
 
 def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_index):
@@ -252,12 +267,19 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
             for contribution in contrib[i]['contributing_cases']:
                 pair = pair_by_key[contribution['case_key']]
                 present_in = pair.present_in
+                absent, unresolved = [], []
                 if present_in == 'both':
                     a, a_identity = _direct_side(pair.ref_case, a_center, rows_index['reference'], ref.frame)
                     b, b_identity = _direct_side(pair.tgt_case, b_center, rows_index['target'], tgt.frame)
                 else:
-                    a, a_identity = _direct_side_one_sided(pair.ref_case, pair.layer, a_center, rows_index['reference'], ref)
-                    b, b_identity = _direct_side_one_sided(pair.tgt_case, pair.layer, b_center, rows_index['target'], tgt)
+                    a, a_identity, a_unresolved = _direct_side_one_sided(
+                        pair.ref_case, pair.layer, a_center, rows_index['reference'], ref, pair.tgt_case)
+                    b, b_identity, b_unresolved = _direct_side_one_sided(
+                        pair.tgt_case, pair.layer, b_center, rows_index['target'], tgt, pair.ref_case)
+                    unresolved = [name for name, flag in (('a', a_unresolved), ('b', b_unresolved)) if flag]
+                    # 반대 모델에 그 층의 case 가 하나도 없으면 compare-windows 에 맡기지 않고 여기서 blocked 로 쓴다
+                    absent = [name for name, case, item in (('a', pair.ref_case, ref), ('b', pair.tgt_case, tgt))
+                              if case is None and not _layer_cases(item.side.dataset, pair.layer)]
                 digest = _sha_json({
                     'a': [sorted(a_identity.items()), a['analysis_layer'], a.get('failure_type'), _cell(a_center, ref.frame)],
                     'b': [sorted(b_identity.items()), b['analysis_layer'], b.get('failure_type'), _cell(b_center, tgt.frame)]})
@@ -265,8 +287,9 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
                 if pair_id in found:
                     found[pair_id]['directions'].add(direction)
                     continue
-                flags = sorted(set(window['flags']) | set(contribution['flags']))
-                found[pair_id] = {'pair_id': pair_id, 'a': a, 'b': b, 'directions': {direction},
+                flags = sorted(set(window['flags']) | set(contribution['flags'])
+                               | {'filter_unresolved_' + name for name in unresolved})
+                found[pair_id] = {'pair_id': pair_id, 'a': a, 'b': b, 'directions': {direction}, 'layer_absent': absent,
                                   'score_um2': rep.score, 'score_layer': rep.layer, 'region_id': rep.region_id,
                                   **_window_attributes(window, len(contrib[i]['contributing_cases'])),
                                   'observed_fraction': window['observed_fraction'], 'flags': flags,
@@ -283,6 +306,7 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
             reasons = [name for name, frame, side in (('a', ref.frame, record['a']), ('b', tgt.frame, record['b']))
                        if not _valid_at(frame, side['center_xy_um'])]
             reasons = ['position_outside_valid_domain_' + name for name in reasons]
+        reasons += ['one_sided_layer_absent_' + name for name in record['layer_absent']]
         record['status'], record['reasons'] = ('blocked' if reasons else 'ready'), reasons
     return sorted(found.values(), key=lambda r: (-r['score_um2'], -r['sum_residual_um2'], r['a']['analysis_layer'],
                                                   r['a']['center_xy_um'][0], r['a']['center_xy_um'][1], r['pair_id']))
@@ -689,7 +713,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     alignment_report_doc = {k: report_info[k] for k in ('path', 'bytes', 'downscaled', 'crops_omitted')}
 
     # --- 9~12. 문서
-    inputs ={'config_sha256': cfg.get('_config_sha256'),
+    inputs = {'config_sha256': cfg.get('_config_sha256'),
               'reference': {**sides['reference'].input_record, 'product_ids': sides['reference'].product_ids},
               'target': {**sides['target'].input_record, 'product_ids': sides['target'].product_ids},
               'cnt': {name: {'product_id': products[name].product_id, 'files_sha256': _sha_json(cnt[name]['files']),

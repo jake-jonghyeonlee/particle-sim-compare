@@ -499,6 +499,9 @@ def test_stage5_accepts_slim_and_old_form_exports_alike(candidates_run, tmp_path
         assert cli.main(argv) in (0, 3)
     first = json.loads((tmp_path/'slim/confirm/roi_correspondence.json').read_text(encoding='utf-8'))
     second = json.loads((tmp_path/'old/confirm/roi_correspondence.json').read_text(encoding='utf-8'))
+    for payload in (first, second):   # labelled_at is the wall clock (seconds) of each confirm-pairs run: the only field allowed to differ
+        for pair in payload['pairs']:
+            pair['source'].pop('labelled_at', None)
     assert first == second and first['pairs']
 
 

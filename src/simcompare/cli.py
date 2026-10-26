@@ -299,7 +299,13 @@ def main(argv: list[str] | None = None) -> int:
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2
-        # numeric 계약 오류에는 완성 리포트 대신 실패 marker만 쓴다.
+        if args.command == "import-hotspots":
+            from simcompare.adapters.real_hotspot import InputPathMissingError
+            if isinstance(exc, InputPathMissingError):
+                # 입력 경로를 고치고 같은 --out 으로 다시 실행할 수 있게 --out 폴더·error.json·execution.json 을 만들지 않는다.
+                print(f"오류: {exc}", file=sys.stderr)
+                return 2
+        # numeric 계약 오류에는 완성 리포트 대신 실패 마커만 쓴다.
         if args.command in ("compare", "electrode-map", "export-review-rois", "validate-data", "import-hotspots", "compare-windows", "report"):
             error = {"status":"unavailable","reasons":[getattr(exc,"code","input_or_config_error")],
                      "detail":str(exc),"command":args.command,"outputs":[],"exit_code":2}

@@ -123,7 +123,9 @@ def test_base_dir_changes_resolution_and_is_logged(tmp_path, python):
 def test_unwritable_work_dir_falls_back_and_says_so(tmp_path, python):
     ref, _ = _roots(tmp_path)
     log = tmp_path / 'job.log'
-    bad = '/dev/null/simcompare_work'   # a path below a file: mkdir fails with an OSError on every platform
+    blocker = tmp_path / 'not_a_dir'
+    blocker.write_text('x', encoding='utf-8')
+    bad = str(blocker / 'simcompare_work')   # a path below a regular file: mkdir fails with an OSError on every platform
     script = _make_runner(tmp_path / 'runner', [('import-hotspots', ['--root', str(ref), '--out', str(tmp_path / 'o')])],
                           log_file=str(log), work_dir=bad)
     result = _run(python, script, tmp_path)
@@ -150,6 +152,15 @@ def test_missing_expected_cases_root_stops_with_code_2_and_names_the_argument(tm
             f'(resolved: {tmp_path.resolve() / missing})') in text
     assert 'import-hotspots exit 2' in text
     assert not (tmp_path / 'o' / 'manifest.json').exists()
+    # C1: a missing input path leaves no --out folder, error.json or execution.json behind
+    assert not (tmp_path / 'o').exists()
+    # fixing the path and running again with the same --out succeeds
+    (tmp_path / 'data' / 'input' / 'hotspot').mkdir(parents=True)
+    (tmp_path / 'tgt').rename(tmp_path / 'data' / 'input' / 'hotspot' / 'NOPE')
+    rerun = _run(python, script, tmp_path)
+    assert rerun.returncode in (0, 3), rerun.stderr
+    assert (tmp_path / 'o' / 'manifest.json').is_file()
+    assert not (tmp_path / 'o' / 'error.json').exists()
 
 
 # ---- function level -------------------------------------------------------------------------------------------------

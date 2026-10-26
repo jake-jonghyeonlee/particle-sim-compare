@@ -16,7 +16,7 @@ from simcompare import candidates, change_candidates, cnt_align
 from simcompare.cli import main
 from simcompare.correspondence import load_correspondence, validate_correspondence
 from test_change_candidates import (  # noqa: F401  (world is a module-scoped fixture of the other test module)
-    CASE_AB, CASE_AC, OFFSET, PITCH, PRODUCTS, build_product, cli_args, digests, load, run_change, sha, world, write_config)
+    CASE_AB, CASE_AC, OFFSET, PITCH, PRODUCTS, build_product, cli_args, digests, load, rect, run_change, sha, world, write_config)
 
 DIRECTIONS = ['reference_to_target', 'target_to_reference']
 SOURCE = {'kind': 'template_match', 'method': 'cnt_alignment_v1', 'version': '1'}
@@ -153,8 +153,13 @@ def test_compare_windows_reads_a_one_sided_pair_without_endpoints_and_gives_the_
     corr_path = out/'direct'/'roi_correspondence.json'
     assert len(load(out, 'direct/roi_correspondence.json')['pairs']) == 1
     windows = tmp_path/'windows'
-    assert compare_windows(SimpleNamespace(config=config), corr_path, windows) in (0, 3)
+    code = compare_windows(SimpleNamespace(config=config), corr_path, windows)
     delta = load(windows, 'local_delta.json')
+    # C7: the exit code is fixed. 3 comes from incomplete rows only (other diameters / the 20 um window), not from the pair
+    assert code == 3 and delta['reasons'] == ['incomplete_local_delta'], (code, delta['reasons'])
+    # the cause: the synthetic hotspots carry only the 5 um diameter, so every other diameter row is unavailable
+    assert {r['diameter_um'] for r in delta['rows'] if r['status'] != 'available'} and \
+        all(r['diameter_um'] != 5.0 for r in delta['rows'] if r['status'] != 'available')
     text = json.dumps(delta)
     assert 'ambiguous_source_group' not in text and 'no_source_group' not in text
     row = next(r for r in delta['rows'] if r['diameter_um'] == 5.0 and r['window_size_um'] == 10.0)
@@ -235,3 +240,84 @@ def test_centre_outside_the_target_valid_domain_blocks_only_that_side(world, tmp
     pairs = load(out, 'direct/roi_correspondence.json')['pairs']
     assert pairs and all(p['status'] == 'blocked' and p['reasons'] == ['position_outside_valid_domain_b'] for p in pairs)
     assert load(out)['direct']['pairs_blocked'] == len(pairs)
+
+
+# --- T9 C5/C6/C8: layer change, absent layer on the opposite model, unresolved group filter ------------------------------
+
+LAYER_CASE = 'vertical_short-A-L1-B-L2'
+STACKS = {'reference': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'},
+                        {'actual_layer': 'L2', 'stack_order': 2, 'density_process_layer': 'P2'}],
+          'target': [{'actual_layer': 'L1', 'stack_order': 2, 'density_process_layer': 'P1'},      # swapped stack order:
+                     {'actual_layer': 'L2', 'stack_order': 1, 'density_process_layer': 'P2'}]}     # analysis layer L2 -> L1
+
+
+def layer_change_world(base, monkeypatch):
+    """One vertical short whose analysis layer is L2 in the reference and L1 in the target (the stack order differs).
+    Neither model has a case in the other model's layer, so the layer change is two one-sided combinations (L2/L2 only in
+    the reference, L1/L1 only in the target; C8) and no union is built between layers."""
+    import test_change_candidates as me
+
+    def patched(side, extra_target_case=False):
+        # the two hotspots sit at different places so that the two combinations are two separate change windows
+        return {LAYER_CASE: rect(100, 100, 20, 40) if side == 'reference' else rect(250, 250, 20, 40)}
+    monkeypatch.setattr(me, 'hotspot_masks', patched)
+    datas, assignments = {}, {}
+    for side in ('reference', 'target'):
+        datas[side], assignments[side] = build_product(base, side, layer_stack=STACKS[side], dl1_electrodes=['A', 'B'])
+    return write_config(base, datas, assignments, map_spec={'diameter_um': 5})
+
+
+def test_layer_change_is_two_one_sided_combinations_and_both_direct_pairs_are_blocked_by_the_absent_layer(tmp_path, monkeypatch):
+    config = layer_change_world(tmp_path, monkeypatch)
+    out = tmp_path/'out'
+    assert main(cli_args(config, out, tmp_path/'dl1', top_k=2)) == 3
+    payload = load(out)
+    stats = payload['change_map']['pairing']
+    assert stats['layer_changed_included'] == 2 and stats['one_sided_included_reference'] == stats['one_sided_included_target'] == 1
+    pairs = load(out, 'direct/roi_correspondence.json')['pairs']
+    assert len(pairs) == 2, [(d['direction'], [(q['score_um2'], q['score_layer'], q['reasons'], q['center_xy_um'],
+                                                [c['case_key'] for c in q['contributing_cases']]) for q in d['queries']])
+                             for d in payload['directions']]
+    by_layer = {p['a']['analysis_layer']: p for p in pairs}
+    assert sorted(by_layer) == ['L1', 'L2']
+    # reference-only combination (layer L2): the target has no case in L2 -> side b is absent
+    assert by_layer['L2']['status'] == 'blocked' and by_layer['L2']['reasons'] == ['one_sided_layer_absent_b']
+    assert by_layer['L1']['status'] == 'blocked' and by_layer['L1']['reasons'] == ['one_sided_layer_absent_a']
+    assert payload['direct']['pairs_ready'] == 0 and payload['direct']['pairs_blocked'] == 2
+    warning = next(w for w in payload['warnings'] if w['code'] == 'direct_pairs_blocked')
+    assert warning['reasons'] == {'one_sided_layer_absent_a': 1, 'one_sided_layer_absent_b': 1}
+    sidecar = load(out, 'direct/direct_pairs_sidecar.json')['pairs']
+    assert {item['layer_changed'] for item in sidecar.values()} == {True} and {item['present_in'] for item in sidecar.values()} == {
+        'reference', 'target'}
+    windows = tmp_path/'windows'                    # compare-windows refuses blocked pairs; it is not left to analysis_layer_not_in_source_*
+    assert compare_windows(SimpleNamespace(config=config), out/'direct'/'roi_correspondence.json', windows) == 3
+    delta = load(windows, 'local_delta.json')
+    assert 'blocked_pairs_present' in delta['reasons'] and not delta['rows']
+
+
+def _fake_dataset(*cases):
+    return SimpleNamespace(cases=[SimpleNamespace(analysis_layer=layer, identity=SimpleNamespace(source_id='S', process_step_id=step,
+                                                                                               exposure_id='E'),
+                                                  metadata={'unit_id': 'U'}) for layer, step in cases])
+
+
+def test_opposite_filter_with_several_values_uses_the_present_cases_value_else_stays_empty_and_is_flagged():
+    dataset = _fake_dataset(('L1', 'STEP1'), ('L1', 'STEP2'), ('L2', 'STEP9'))
+    present = SimpleNamespace(identity=SimpleNamespace(source_id='S', process_step_id='STEP2', exposure_id='E'), metadata={'unit_id': 'U'})
+    filters, unresolved = change_candidates._dataset_filters(dataset, 'L1', present)
+    assert filters == {'source_id': 'S', 'process_step_id': 'STEP2', 'exposure_id': 'E', 'unit_id': 'U'} and not unresolved
+    other = SimpleNamespace(identity=SimpleNamespace(source_id='S', process_step_id='STEP3', exposure_id='E'), metadata={'unit_id': 'U'})
+    for hint in (None, other):                      # not in the opposite set, or no case on the present side: left empty
+        filters, unresolved = change_candidates._dataset_filters(dataset, 'L1', hint)
+        assert 'process_step_id' not in filters and unresolved
+        assert filters == {'source_id': 'S', 'exposure_id': 'E', 'unit_id': 'U'}
+    filters, unresolved = change_candidates._dataset_filters(dataset, 'L2', None)      # a single value needs no hint
+    assert filters['process_step_id'] == 'STEP9' and not unresolved
+
+
+def test_unresolved_filter_state_reaches_the_direct_pair_builder():
+    """_direct_side_one_sided hands the unresolved state to _direct_pairs, which writes filter_unresolved_<side> into the flags."""
+    item = SimpleNamespace(product_id='P', design_version='D', frame_id='F',
+                           side=SimpleNamespace(dataset=_fake_dataset(('L1', 'STEP1'), ('L1', 'STEP2'))), frame=None)
+    side, identity, unresolved = change_candidates._direct_side_one_sided(None, 'L1', [1.0, 2.0], {}, item, None)
+    assert unresolved and 'process_step_id' not in side and side['analysis_layer'] == 'L1'

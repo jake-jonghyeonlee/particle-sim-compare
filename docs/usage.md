@@ -14,9 +14,12 @@
 | 1 | `import-hotspots` | hotspot 폴더(모델별) | `data/imported/reference`, `target` | `pairs.csv`를 두 출력 폴더 안에 복사 |
 | 2 | `validate-data`, `compare` | `real.yaml` | `comparison.json`, `comparison.csv`, `comparison_masks.zip` | 3회차용 `assignment_<side>.json` 준비 |
 | 3 | `import-electrode-assets` | 전극 PNG, assignment JSON | `data/assets/reference`, `target` | 출력을 각 `data_dir`로 복사하고 `real.yaml`에 경로·sha256 기입 |
-| 4 | `candidates` | `real.yaml` | `data/candidates_k3` | `*_export/review_rois.json`을 DL2에 넘겨 매칭, 검토 시트로 `decisions.csv` 작성 |
-| 5 | `confirm-pairs` | DL2 결과, `decisions.csv` | `data/confirmed/roi_correspondence.json` | `--labelled-by`를 실제 ID로 |
-| 6 | `compare-windows` | 확정 쌍 | `data/local/local_delta.html` 등 | 없음 |
+| 4 | `candidates-change` | `real.yaml`, DL1 PNG root | `data/changes`(`alignment.html`, `direct/roi_correspondence.json`, `*_export`) | 인수 예시 값을 제품에 맞게 확인. 로그의 `candidates-change exit N`과 `alignment.html` 확인 |
+| (DL2) | 선택 | `data/changes/*_export/review_rois.json` | `data/dl2/ncc_*.json`, `decisions.csv` | 다른 제품 탐색이 필요할 때만 |
+| 5 | `confirm-pairs` (DL2 경로 전용) | DL2 결과, `decisions.csv` | `data/confirmed/roi_correspondence.json` | `--labelled-by`를 실제 ID로 |
+| 6 | `compare-windows` | 직접 대응 `data/changes/direct/roi_correspondence.json` (DL2 경로는 `data/confirmed/…`) | `data/local/local_delta.html` 등 | 없음 |
+
+순서: 1 import → 2 validate/compare → 3 전극 asset → 4 `candidates-change` → (선택 DL2 → 5 `confirm-pairs`) → 6 `compare-windows`. 직접 대응을 쓰면 DL2와 5회차를 건너뛴다. 변경점 ROI(`candidates-change`)가 4회차 ROI 선정을 대체했다. 예전 `candidates`(max_count, 취약점 ROI)는 ΔV 가중 설계가 끝날 때까지 보류다.
 
 수치를 새로 만드는 것은 2회차(면적)와 6회차(창별 ΔCA)이고 나머지는 입력을 준비하고 짝을 고르는 단계다. 6회차 `compare-windows`는 reference가 a, target이 b이며 방향은 b − a다.
 
@@ -27,7 +30,7 @@
 **실행기**: `bundles/etx/simcompare_job_<회차>_*.py` 여섯 개를 서버로 복사한다. 설정 예시는 `configs/etx/`에 있고 대응표는 [configs/etx/README.md](../configs/etx/README.md)에 있다. 각 파일은 맨 위 `EDIT BELOW` ~ `EDIT ABOVE` 블록만 고친다.
 
 - `JOBS`: `(명령, [인자...])` 목록. `python -m simcompare <명령> <인자...>`와 같다. 종료 코드 0·3이면 다음 작업으로 가고 그 밖이면 멈춘다.
-- `BASE_DIR`: `JOBS`·`LOG_FILE`·`WORK_DIR`의 상대 경로 기준 폴더. 비워 두면 실행기가 있는 폴더다. wrapper가 `.py`를 다른 곳에 복사해 실행한다면 절대 경로를 적는다. 로그 첫 줄 `relative paths resolve from ...`에서 실제 기준 폴더를 확인한다.
+- `BASE_DIR`: `JOBS`·`LOG_FILE`·`WORK_DIR`의 상대 경로 기준 폴더. 비워 두면 실행기가 있는 폴더다. wrapper가 `.py`를 다른 곳에 복사해 실행한다면 절대 경로를 적는다. 로그의 `BASE_DIR requested=... resolved=...; relative paths resolve from ...` 줄(시작 정보 몇 줄 안)에서 실제 기준 폴더를 확인한다. 작업마다 `--root`, `--config`, `--out` 같은 경로 인수가 `인수 '적은 값' -> 절대 경로` 줄로 찍힌다. 로그에는 `payload_sha256=`(묶인 코드 해시)와 numpy·Pillow 버전도 남고, 작업이 끝날 때마다 `<명령> exit N` 줄이 남는다.
 - 경로는 `data/...`처럼 쓴다. `/data`처럼 `/`로 시작하면 루트 아래 절대 경로가 되어 권한 오류가 난다.
 - 소스를 고친 뒤에는 `uv run python scripts/build_etx_stage_runners.py --overwrite`로 여섯 파일을 다시 만든다.
 
@@ -36,16 +39,17 @@
 1. 회차 1: 실행기 1. 두 모델을 각각 import하며 `--expected-cases-from-roots`로 다른 모델 root를 함께 준다. 기대 case 목록이 없으면 4회차의 모든 ROI가 `blocked`(`map_coverage_incomplete`)가 된다. 끝나면 `pairs.csv`를 `data/imported/reference/`와 `data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시는 거부).
 2. 회차 2: `configs/etx/real.stage2.example.yaml`을 `real.yaml`로 복사해 `data_dir`(서버 절대 경로)와 필요한 값을 고친 뒤 실행기 2(`validate-data`, `compare`)를 돌린다. 종료 코드 3은 partial 항목이 있다는 뜻이므로 `reasons`를 본다.
 3. 회차 3: `assignment_reference.json`, `assignment_target.json`을 만든다(`real.yaml`의 `condition_assignment`와 같은 내용, JSON에는 주석을 쓸 수 없다). 실행기 3을 돌리고 `--max-asset-memory-mb`는 예시값(16384)을 서버에 맞게 고친다. 끝나면 각 출력의 `review_assets.json`, `electrode_asset_import_record.json`, `assets/`를 해당 `data_dir`로 복사하고, `real.yaml`의 reference·target에 `asset_manifest`와 `electrode_import_record`(`{path, sha256}`)를 넣는다. sha256은 방금 복사한 파일 값이다. 전극 role은 `electrode_role_policy: electrode_id`로 pair 표의 전극 이름을 그대로 쓴다.
-4. 회차 4: 실행기 4(`candidates`). `--min-count`, `--window-um`, `--merge-overlap`은 필수이며 예시값을 쓴다. 결과의 `*_export/review_rois.json`, `*_index_export/review_rois.json`이 DL2 입력이고, `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 목록이다.
-5. DL2: DL2 저장소의 `bundles/etx/psdl2_job_baseline_ncc.py`를 같은 `BASE_DIR`에서 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 `*_sheet/sheet.html`을 만든다(torch 불필요, `--allow-unversioned-producer` 사용). 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`은 `accept` 또는 `reject`)를 쓴다.
-6. 회차 5: 실행기 5. 첫 작업이 `--list`로 `candidate_id` 목록을 로그에 찍고, 둘째 작업이 accept한 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다.
-7. 회차 6: 실행기 6(`compare-windows`, 창 10/20/30 µm, jitter 0.5, 정렬 지름 5 µm). `data/local/local_delta.html`에서 쌍별 결과를 본다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
+4. 회차 4: 실행기 4(`candidates-change`, 파일 이름은 `simcompare_job_4_candidates.py` 그대로). 두 제품의 CNT 3층을 한 offset으로 정렬하고 변경 위치 ROI를 방향별 top-k로 뽑는다. 모든 인수가 필수이며 EDIT 블록의 값은 **예시**다(탐색 반경 30 µm, 최소 Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 20 µm, 병합 0.5, top-k 20): 제품에 맞게 바꾼다. `--cnt-from-dl1-root`는 3회차와 같은 DL1 PNG root다. 끝나면 `data/changes/alignment.html`을 열어 정렬 상태(`aligned`/`aligned_uncertain`/`alignment_failed_identity_used`)와 변경 지도를 확인하고 로그의 `candidates-change exit N`을 본다(실행기는 3도 '계속'으로 처리한다). 존재하지 않는 DL1 root는 오류로 멈추지 않고 종료 코드 3(`alignment_failed`)이며 직접 쌍이 모두 blocked다. 상세는 [상세 레퍼런스](usage_reference.md)의 "ROI 선정".
+5. 6회차 입력 고르기: **직접 대응**을 쓰면 `data/changes/direct/roi_correspondence.json`이 6회차 입력이므로 DL2와 5회차를 건너뛴다. 다른 제품 탐색이 필요할 때만 아래 DL2 경로를 쓴다.
+6. (DL2 경로 전용) DL2: DL2 저장소의 `bundles/etx/psdl2_job_baseline_ncc.py`를 같은 `BASE_DIR`에서 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 `*_sheet/sheet.html`을 만든다(torch 불필요, `--allow-unversioned-producer` 사용). 입력은 `data/changes/*_export/review_rois.json`, `*_index_export/review_rois.json`이다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`은 `accept` 또는 `reject`)를 쓴다.
+7. (DL2 경로 전용) 회차 5: 실행기 5. 첫 작업이 `--list`로 `candidate_id` 목록을 로그에 찍고, 둘째 작업이 accept한 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다.
+8. 회차 6: 실행기 6(`compare-windows`, 창 10/20/30 µm, jitter 0.5, 정렬 지름 5 µm). 기본 `--correspondence`는 `data/changes/direct/roi_correspondence.json`이고, DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다. `data/local/local_delta.html`에서 쌍별 결과를 본다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
 
 통합 `report`는 아직 실자료 `compare` 출력을 읽지 못해(`missing_input_file`, 종료 코드 2) ETX 회차에 넣지 않았다.
 
 **회차 사이 수작업을 빠뜨리지 않는다**: 1회차 뒤 `pairs.csv` 복사, 3회차 뒤 import 결과 배치와 `electrode_import_record.sha256` 갱신.
 
-**처음부터 다시 할 때**: `--out`은 없는 경로여야 하고 3·4·5회차도 기존 출력 폴더를 거부하므로, 다음 폴더를 먼저 옮기거나 이름을 바꾼다: `data/imported/reference`, `data/imported/target`, `data/assets/reference`, `data/assets/target`, `data/candidates_k3`, `data/confirmed`. `data/local`은 6회차가 한 세대로 교체하므로 그대로 둬도 된다. 그다음 1회차부터 위 수작업까지 모두 다시 한다.
+**처음부터 다시 할 때**: `--out`은 없는 경로여야 하고 3·4·5회차도 기존 출력 폴더를 거부하므로, 다음 폴더를 먼저 옮기거나 이름을 바꾼다: `data/imported/reference`, `data/imported/target`, `data/assets/reference`, `data/assets/target`, `data/changes`, `data/confirmed`. `data/local`은 6회차가 한 세대로 교체하므로 그대로 둬도 된다. 그다음 1회차부터 위 수작업까지 모두 다시 한다.
 
 **실행기만 교체해서 이어갈 때**: 1회차 import 결과(`.npz`, 옛 `.npy`)는 그대로 읽힌다. 여섯 실행기를 새 파일로 바꾸고(`JOBS`, `BASE_DIR`은 다시 고친다) 2회차부터 다시 돈다. 이미 끝난 2회차 출력은 유효하지만, 새 실행기로 `compare`를 다시 돌려야 `comparison_masks.zip`이 생겨 6회차가 면적 계산을 건너뛴다. 4회차 이후 폴더는 새 경로를 쓴다.
 
@@ -59,7 +63,8 @@
 | 2 `validate-data` | 1~1.5분 | 1.1 GiB |
 | 2 `compare` | 10~12분 | 3.3~3.8 GiB |
 | 3 `import-electrode-assets` | 모델당 1.2~2.4분 | 0.57 GiB |
-| 4 `candidates` | 5~6.5분 | 1.2~1.3 GiB |
+| 4 `candidates` (보류된 취약점 ROI의 실측) | 5~6.5분 | 1.2~1.3 GiB |
+| 4 `candidates-change` | 실규모 실측 없음(합성 소형 자료만 확인) | 실규모 실측 없음 |
 | 5 `confirm-pairs` | 3.5~4.6분 | 0.9~1.25 GiB |
 | 6 `compare-windows` | 쌍 50개 5~5.5분, 쌍 200개 6~9.5분(2회차 `comparison_masks.zip` 사용) | 0.8~1.25 GiB |
 

@@ -162,7 +162,104 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 - 출력: `review_assets.json`, `assets/*.png`, `electrode_asset_import_record.json`(source_kind, polarity_basis, 파일별 hash, adapter 버전, input hash, 개수, 경고). 같은 입력은 바이트까지 같다.
 - **실자료 export**: `export-review-rois`는 mode=real에서 `map.input`에 `condition_assignment`, `asset_manifest`({path, sha256}), `electrode_import_record`({path, sha256}, 이 두 키만 허용)가 **모두** 있고 증거가 맞을 때만 real_hotspot_v1을 처리한다(`configured_dataset` → electrode-map 영역 → `review_roi_v1`; 영역은 `--min-count`/`map.min_count`가 있어야 생기고 hotspot 마스크 자체는 ROI가 되지 않는다). 두 파일은 `data_dir` 안에 있어야 한다(`import-electrode-assets` 출력을 data_dir로 복사). 수용 조건: 기록과 manifest가 `polarity_basis`를 가지며 계약 표의 출처 종류와 값이 같고, 모든 asset의 `value_semantics`가 `binary`/`binary_zero_is_marked`이며, manifest의 `source_manifest_hash`가 dataset input hash와 같고 기록의 `manifest_sha256`이 manifest 파일과 같다. 키가 하나라도 없거나 `polarity_basis`가 없으면 예전처럼 `unavailable`(`electrode_polarity_unknown`, `source_layout_assets_unconfirmed`, 종료 코드 3)이다. 출처 종류·`polarity_basis`가 표와 다르거나 지원하지 않는 `value_semantics`는 `blocked`(`electrode_polarity_unspecified`, 코드 3, ROI 없음), sha256·identity·기록 불일치는 이름 있는 오류(코드 2)다. 영역 coverage가 불완전하면(예: `import-hotspots --expected-cases` 없음) 그 ROI는 `map_coverage_incomplete`로 blocked다.
 
-## 취약 영역 후보 (candidates)
+## ROI 선정
+
+ROI 선정 방식은 둘이다. **변경점 ROI(`candidates-change`)가 현행이다.** 취약점 ROI(`candidates`, `max_count` 기준)는 코드와 문서를 남겨 두되 **보류**한다(ΔV 가중 설계가 끝날 때까지 쓰지 않는다). ETX 4회차 실행기(`simcompare_job_4_candidates.py`)는 `candidates-change`를 돈다.
+
+### 변경점 ROI (candidates-change) — 현행
+
+**목적.** 두 제품(reference, target)의 CNT 층을 한 offset으로 정렬한 뒤, 정렬로 설명되지 않는 5 µm hotspot 변경 위치를 순위로 뽑는다. 결과는 DL2에 넣을 질의 ROI이고, DL2 없이 6회차로 가는 직접 대응 파일도 함께 나온다.
+
+**흐름.**
+
+```text
+config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png, <제품>/<전극>/)
+        |                                              |
+        +--> hotspot 마스크 (5 µm) ---+                v
+        |                             |       CNT 3층(pcnt/gcnt/ocnt)을 한 offset으로 동시 정렬
+        |                             |                |  offset: p_target = p_reference + offset
+        |                             v                v
+        +------------------> 변경 지도 (짝 + 한쪽 조합, 층별 합집합 변화) 
+                                      |
+                                      v
+                    창(--window-um) 후보 -> 층별 병합(--merge-overlap) -> 방향별 top-k
+                                      |
+        +-----------------------------+-----------------------------+
+        v                                                           v
+ DL2 경로: *_export, *_index_export (review_roi_v1)         직접 경로: direct/roi_correspondence.json
+ (선택) DL2 -> 5회차 confirm-pairs                                   |
+        |                                                           |
+        +-------------------> 6회차 compare-windows <---------------+
+```
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare candidates-change --config config.yaml --cnt-from-dl1-root dl1 --align-search-um 30 --align-min-dice 0.3 --align-layer-tolerance-um 1 --change-tolerance-um 0.5 --window-um 20 --merge-overlap 0.5 --top-k 20 --out changes
+```
+
+**인수.** 모두 필수이며 기본값이 없다. 예시 값은 쓰기 쉬운 출발점일 뿐이고 제품에 맞게 바꾼다.
+
+| 인수 | 의미 | 예시 값과 근거 |
+|---|---|---|
+| `--config` | `numeric_config_v1` YAML. reference·target은 각각 real_hotspot_v1 단일 제품·단일 frame이다. 두 제품의 pixel pitch가 같아야 한다 | `real.yaml`(4회차 설정과 같다) |
+| `--cnt-from-dl1-root` | 두 제품의 `cno/` CNT 층 PNG와 전극 폴더가 있는 DL1 PNG root. 제품 폴더 이름 = `product_id`. 전극 폴더 이름은 두 모델의 전극 집합을 비교하는 데 쓴다 | 3회차 `--cnt-from-dl1-root`와 같은 root |
+| `--align-search-um` | CNT 정렬 탐색 반경(µm). pixel pitch의 2배 이상이어야 한다 | 30. 레이아웃 이동이 수 µm 안이라고 보고 여유를 둔 값이다. 2×2 반복 패턴의 주기보다 작게 잡아야 모호한 peak가 줄어든다 |
+| `--align-min-dice` | 정렬 최소 Dice `[0, 1]`. 이보다 낮으면 `aligned_uncertain`이다 | 0.3. 층 패턴이 성기면 낮추고, 정렬을 엄격히 보려면 올린다 |
+| `--align-layer-tolerance-um` | 층별·4분면 offset이 전역 offset과 달라도 되는 거리(µm) | 1. 이를 넘으면 `layer_offsets_disagree`(불확실) |
+| `--change-tolerance-um` | 변경 판정 허용 이동 거리(µm). 이 안의 이동은 변경으로 세지 않는다 | 0.5. 정렬 오차와 공정 변동을 합친 값으로 둔다 |
+| `--window-um` | 변경 창 한 변(µm) | 20. 6회차 창 10/20/30 µm 중 가운데 값이다 |
+| `--merge-overlap` | 두 창의 `intersection/min(area)`가 이 값 이상이면 층 안에서 병합한다. `(0, 1]` | 0.5 |
+| `--top-k` | 방향(`reference_to_target`, `target_to_reference`)별 질의 수 | 20. 설계자가 보는 ROI 수에 맞춘다 |
+| `--out` | 새 출력 폴더. 이미 있으면 아무것도 건드리지 않고 종료 코드 2 | `data/changes` |
+
+대표 지름은 5 µm 하나로 고정이다. `map.diameter_um`이 5가 아니면 `candidates_change_diameter_fixed_5um`(코드 2)이다.
+
+**점수와 순위.** 순위 점수 `score_um2`는 층별 hotspot **합집합의 변화 면적**이다. 합집합 변화 = (reference 합집합 XOR 정렬한 target 합집합) 가운데 `--change-tolerance-um` 이동으로 설명되지 않는 부분이다. 6회차 보고서의 Δ_union과 같은 기준이다. 조합별 잔차의 합(`sum_residual_um2`), 바뀐 조합 수(`changed_case_count`), `union_area_reference_um2`, `union_area_target_um2`, `union_delta_um2`는 **속성**이며 순위에 쓰지 않는다. CNT 층별 변경 면적은 `cnt_change_um2_by_layer`에 속성으로 남는다. 점수가 같으면 잔차 합, 층, 중심, region id 순이다. 배선 변경 면적(`wiring_change_um2`)은 계산하지 않는다(보류).
+
+**합집합에 들어가는 조합.** (1) 두 모델에 모두 있는 조합(짝). (2) 한쪽 모델에만 있는 조합: 그 모델의 합집합에만 들어간다(`one_sided_case`). (3) 층이 바뀐 조합: 쌍 하나(a=L1, b=L2)로 다루지 않고 한쪽 조합 두 개(L1은 L1 합집합, L2는 L2 합집합)로 다룬다. 층 사이 합집합은 만들지 않는다. (4) 한쪽 모델에만 있는 전극(배선)의 조합도 비교 대상이다: 새 전극은 `new_electrode`, 없어진 전극은 `removed_electrode` 표시가 붙고 `appeared`/`disappeared`로 분류된다. 두 모델의 DL1 전극 폴더 집합이 다르면 `electrode_set_differs`가 `notes`에 정보로 남는다(종료 코드에 영향이 없다).
+
+**한쪽 조합의 직접 쌍.** 직접 쌍의 한 side에 case가 없으면(반대 모델에 그 조합이 없음) `endpoints`와 `failure_type`을 쓰지 않고 `analysis_layer`와 group 필터(`source_id`, `process_step_id`, `exposure_id`, `unit_id`)만 쓴다. 필터 값은 반대 dataset의 같은 층 case가 하나의 값을 공유하면 그 값이고, 값이 여럿이면 case가 있는 쪽 case의 값이 그 집합 안에 있을 때 그 값이다. 그래도 정해지지 않으면 비우고 사이드카 `flags`에 `filter_unresolved_<a|b>`를 적는다. 반대 dataset에 그 층의 case가 **하나도 없으면** 그 쌍은 `blocked`이고 `reasons`는 `["one_sided_layer_absent_<a|b>"]`다(예: 층 변경 L1→L2에서 반대 모델에 L1 case가 전혀 없음). 이 쌍은 `compare-windows`의 `analysis_layer_not_in_source_*`에 맡기지 않고 여기서 막는다.
+
+**출력 폴더.** 같은 입력·인수는 같은 바이트를 만든다(경로는 출력 폴더 상대, 시각·호스트 없음).
+
+| 파일 | 내용 |
+|---|---|
+| `candidate_queries_v1.json` | 기존 스키마에 키를 더한 것(`roi_source=cnt_change`, `alignment`, `diameter_um`, `change_args`, `change_map`, `union_basis`, `alignment_report`, `direct`, 질의별 점수·속성; 아래 `docs/data_contract.md`) |
+| `alignment.json` | 정렬 결과(`cnt_alignment_v1`): offset, Dice, peak 비율, 대안 offset, 층별·4분면 offset |
+| `alignment.html` | 정렬 요약, 층별 겹침(정렬 전·후), 변경 지도 열지도, top-k ROI crop. 외부 참조 없이 `file://`로 열린다 |
+| `direct/roi_correspondence.json` | 6회차 `compare-windows`가 그대로 읽는 `roi_correspondence_v1`(DL2 건너뛰기) |
+| `direct/direct_pairs_sidecar.json` | `direct_pairs_sidecar_v1`: 쌍별 정렬 상태·점수·속성·불확실성 |
+| `reference_export/`, `target_export/` | 질의 `review_rois.json`(DL2 입력, manual 행) |
+| `reference_index_export/`, `target_index_export/` | 검색 대상 index export |
+| `funnel.json`, `funnel.csv` | 방향별 깔때기(`change_candidates` → `merged` → `top_k` → `exported_ready`)와 직접 쌍 수 |
+| `execution.json` | 실행 요약 |
+
+**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전 등. 2 = 입력·인수 오류(필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않는 `--cnt-from-dl1-root`도 종료 코드 3이다(`alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked). 로그의 `--cnt-from-dl1-root '...' -> <절대 경로>` 줄로 경로를 확인한다.
+
+**정렬 상태와 사유.**
+
+| 상태 | 사유 | 의미와 동작 |
+|---|---|---|
+| `aligned` | 없음 | 한 offset으로 정렬했고 모든 확인을 통과했다 |
+| `aligned_uncertain` | `peak_ambiguous`(2×2 같은 반복 패턴: 대안 offset과 점수가 비슷), `peak_plateau`, `layer_offsets_disagree`, `residual_nonuniform`, `dice_below_min`, `search_bound_hit`, `cnt_layer_set_mismatch`, `cnt_empty_<side>_<층>` | best-effort offset으로 계속 진행한다. 직접 쌍은 `ready`로 두고 불확실성은 사이드카 `alignment_reasons`에만 쓴다. `alignment.html`에 대안 offset이 보인다. 종료 코드 3 |
+| `alignment_failed_identity_used` | `no_usable_layers`, `no_overlap`, `cnt_missing_reference`, `cnt_missing_target` | offset 0으로 계속한다. 레이아웃 이동이 변경으로 잡히므로 모든 직접 쌍은 `blocked`(`alignment_failed`)이다. 종료 코드 3 |
+
+정렬 부호식은 `p_target = p_reference + offset`이다. target 방향 질의 중심 = reference 질의 중심 + (frame 원점 차이 + offset)이다.
+
+**한계.**
+
+- `compare-windows`는 `direct/` 파일이 가리키는 입력 해시(config, manifest, CNT 파일)를 검증하지 않는다. 사이드카 `limitations`에 같은 문장이 있다. 입력을 바꾼 뒤에는 4회차부터 다시 한다.
+- 반대 방향 질의의 `no_case_in_this_model`은 실패가 아니라 정보다. 한쪽 모델에만 있는 조합은 그 모델 방향에서만 case 맥락이 있으므로 반대 방향 질의는 ROI 행이 없고 `blocked`로 표시된다. 종료 코드에 영향이 없다.
+- 변경 지도 합집합은 층의 **모든** group(source·process_step·exposure·unit)을 모은다. `compare-windows`는 GroupKey 하나만 잡는다. 한 데이터셋에 group이 여럿이면 두 숫자가 다를 수 있다.
+- 합집합 기준에서 남은 차이: 중복 case key는 `duplicate_case_key`로 제외되고, 관측되지 않은 case는 합집합에 들어가지 않는다.
+- 한 ROI의 직접 쌍들은 중심을 공유한다(기여 case마다 쌍이 하나). `compare-windows`의 `duplicate_centres` 경고는 정상이다.
+- `alignment.html`의 PNG는 zlib 구현에 따라 압축 바이트가 달라질 수 있다. 환경(Python 3.9 / 3.11)이 다르면 이 파일의 sha256이 다를 수 있다. 다른 출력 파일은 바이트 단위로 같다(테스트).
+- 중간에 하드 실패하면 `alignment.html`은 없다. 정렬이 실패·불확실한 경우에는 항상 쓴다.
+- 층 사이 합집합을 만들지 않는다. 층이 바뀐 조합은 위처럼 한쪽 조합 둘이다.
+- 실데이터 규모, 메모리·시간, ETX Linux 실행은 아직 검증하지 않았다(`docs/plan/change_roi/README.md`).
+
+### 취약점 ROI (candidates) — 보류
+
+아래는 `max_count` 기준 취약점 ROI의 설명이다. ΔV 가중 설계가 끝날 때까지 **보류**한다. 변경점 ROI와 같은 출력 스키마(`candidate_queries_v1`)를 쓰지만 점수·순위가 다르다.
 
 두 제품(`config.reference`, `config.target`)의 electrode-map 영역을 **양방향**으로 뽑아 질의 ROI로 정리하고, 바로 매칭에 쓸 export와 깔때기 표를 만든다. 점수·CA·Δ·확정·`mutual/one_way`는 다루지 않는다(후속 Task).
 
@@ -270,7 +367,7 @@ JOBS = [
 ]
 ```
 
-1회차 `import-hotspots`에는 4회차 ROI를 `ready`로 만들기 위해 `--expected-cases`(case 이름을 줄마다 적은 txt, 아래 `import-hotspots` 설명)를 주어야 한다: 기대 case 목록이 없으면 coverage가 `unconfirmed`라 `source_coverage_status`가 `partial`이 되고 4회차의 **모든 ROI가 `blocked`(`map_coverage_incomplete`)**이며 DL2 쪽 질의가 0개다(T5 py3.8 파이프라인에서 확인; `docs/plan/scale_stage46/T5_benchmark.md`). 목록 없이 이미 import했다면 1회차부터 다시 한다. 다시 실행하려면 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다(`--out`은 없는 경로여야 하며 3·4·5회차도 기존 출력 폴더를 거부한다): `data/imported/reference`, `data/imported/target`, `data/assets/reference`, `data/assets/target`, `data/candidates_k3`, `data/confirmed`(`data/local`은 6회차가 한 세대로 교체하므로 그대로 두어도 된다). 그다음 1회차부터 순서대로 다시 하고, 회차 사이 수작업도 다시 한다: 1회차 뒤 `pairs.csv`를 새 `data/imported/reference`·`target` 안에 다시 복사하고, 3회차 뒤 3회차 안내대로 import 결과를 `data_dir`에 다시 두고 `real.yaml`의 `electrode_import_record.sha256`을 새 파일 값으로 고친다. 예시 실행기 JOBS는 목록 파일 대신 `--expected-cases-from-roots <다른 모델 root>`를 쓴다(기대 case = 두 모델 root에서 발견된 case 이름의 합집합; 두 모델 모두에 없는 case는 탐지할 수 없다).
+1회차 `import-hotspots`에는 4회차 ROI를 `ready`로 만들기 위해 `--expected-cases`(case 이름을 줄마다 적은 txt, 아래 `import-hotspots` 설명)를 주어야 한다: 기대 case 목록이 없으면 coverage가 `unconfirmed`라 `source_coverage_status`가 `partial`이 되고 4회차의 **모든 ROI가 `blocked`(`map_coverage_incomplete`)**이며 DL2 쪽 질의가 0개다(T5 py3.8 파이프라인에서 확인; `docs/plan/scale_stage46/T5_benchmark.md`). 목록 없이 이미 import했다면 1회차부터 다시 한다. 다시 실행하려면 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다(`--out`은 없는 경로여야 하며 3·4·5회차도 기존 출력 폴더를 거부한다): `data/imported/reference`, `data/imported/target`, `data/assets/reference`, `data/assets/target`, `data/changes`, `data/confirmed`(`data/local`은 6회차가 한 세대로 교체하므로 그대로 두어도 된다). 그다음 1회차부터 순서대로 다시 하고, 회차 사이 수작업도 다시 한다: 1회차 뒤 `pairs.csv`를 새 `data/imported/reference`·`target` 안에 다시 복사하고, 3회차 뒤 3회차 안내대로 import 결과를 `data_dir`에 다시 두고 `real.yaml`의 `electrode_import_record.sha256`을 새 파일 값으로 고친다. 예시 실행기 JOBS는 목록 파일 대신 `--expected-cases-from-roots <다른 모델 root>`를 쓴다(기대 case = 두 모델 root에서 발견된 case 이름의 합집합; 두 모델 모두에 없는 case는 탐지할 수 없다).
 
 1회차 뒤: `pairs.csv`를 `data/imported/reference/`와 `data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시 거부). `real.yaml`의 `data_dir`를 서버 절대 경로로 바꾸고, reference·target `condition_assignment`에 큰 자료용 한도를 넣는다:
 
@@ -316,20 +413,22 @@ JOBS = [
 
 3회차 뒤: 각 출력의 `review_assets.json`, `electrode_asset_import_record.json`, `assets/`를 해당 `data_dir`로 복사하고 `real.yaml`의 reference·target에 `asset_manifest`, `electrode_import_record`({path, sha256})를 넣는다(위 "전극 PNG → review_assets_v1" 절).
 
-4회차 — 후보(DL2 직전):
+4회차 — 변경점 ROI(`candidates-change`; 실행기 파일 이름은 그대로 `simcompare_job_4_candidates.py`):
 
 ```python
-JOBS = [("candidates", ["--config", "real.yaml", "--min-count", "3", "--window-um", "20",
-                        "--merge-overlap", "0.5", "--out", "data/candidates_k3"])]
+JOBS = [("candidates-change", ["--config", "real.yaml", "--cnt-from-dl1-root", "data/input/dl1",
+                               "--align-search-um", "30", "--align-min-dice", "0.3", "--align-layer-tolerance-um", "1",
+                               "--change-tolerance-um", "0.5", "--window-um", "20", "--merge-overlap", "0.5",
+                               "--top-k", "20", "--out", "data/changes"])]
 ```
 
-`--min-count`, `--window-um`, `--merge-overlap`은 필수이며 값은 예시다. 결과의 `*_export/review_rois.json`, `*_index_export/review_rois.json`이 DL2 입력이다. `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 role 목록이다.
+모든 인수는 필수이며 값은 예시다(제품에 맞게 바꾼다; 의미는 위 "ROI 선정" 절). `--cnt-from-dl1-root`는 3회차와 같은 DL1 root다. 결과: `data/changes/alignment.html`(정렬·변경 지도), `direct/roi_correspondence.json`(6회차 기본 입력), `*_export/review_rois.json`, `*_index_export/review_rois.json`(DL2 입력). `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 role 목록이다. 실행기는 종료 코드 3을 '계속'으로 처리하므로 로그의 `candidates-change exit N` 줄과 `reasons`를 직접 확인한다. 취약점 ROI(`candidates`)는 보류이며 이 회차에서 쓰지 않는다.
 
-DL2 — 위치 매칭(DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job_baseline_ncc.py`, 같은 `BASE_DIR`에서 실행): 4회차 결과로 두 방향 `baseline_ncc --all-ready`를 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 검토 시트 `data/dl2/*_sheet/sheet.html`을 만든다. torch는 필요 없다. ETX 실행기로 만든 export에는 `producer_commit`이 없으므로(git checkout이 아님, 사유는 export에 기록) DL2 실행기는 `--allow-unversioned-producer`를 쓴다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`=`accept`|`reject`)를 쓴다. `candidate_id` 목록은 5회차 첫 작업(`confirm-pairs --list`)이 로그에 찍는다.
+DL2 — 위치 매칭(**DL2 경로 전용**: 직접 대응을 쓰면 DL2와 5회차를 건너뛰고 6회차로 간다. 다른 제품 탐색이 필요할 때만 쓴다. DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job_baseline_ncc.py`, 같은 `BASE_DIR`에서 실행): 4회차 결과로 두 방향 `baseline_ncc --all-ready`를 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 검토 시트 `data/dl2/*_sheet/sheet.html`을 만든다. torch는 필요 없다. ETX 실행기로 만든 export에는 `producer_commit`이 없으므로(git checkout이 아님, 사유는 export에 기록) DL2 실행기는 `--allow-unversioned-producer`를 쓴다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`=`accept`|`reject`)를 쓴다. `candidate_id` 목록은 5회차 첫 작업(`confirm-pairs --list`)이 로그에 찍는다.
 
-5회차 — 확정 쌍 변환(`simcompare_job_5_confirm_pairs.py`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
+5회차 — 확정 쌍 변환(DL2 경로 전용, `simcompare_job_5_confirm_pairs.py`; `--candidates data/changes`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
 
-6회차 — 국부 ΔCA(`simcompare_job_6_compare_windows.py`): 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
+6회차 — 국부 ΔCA(`simcompare_job_6_compare_windows.py`): 기본 `--correspondence`는 4회차의 `data/changes/direct/roi_correspondence.json`이다(DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다). 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
 
 통합 보고서(`report`)는 아직 실자료 경로를 지원하지 않는다: 실자료 `compare`는 `comparison.json`/`comparison.csv`(조건 배정이 있으면 `real_hotspot_comparison_v2`, 없으면 `real_hotspot_comparison_v1`)만 쓰고, `report`는 합성 numeric_v2의 `comparison_fractions.csv` 등을 요구해 `missing_input_file`(종료 코드 2)로 멈춘다. 그래서 ETX 회차에 넣지 않았다. 쌍별 결과는 6회차 `local_delta.html`에서 본다.
 
