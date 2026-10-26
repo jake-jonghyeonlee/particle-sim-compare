@@ -175,7 +175,8 @@ def _build_chain(python, tmp):
     stage('6_compare_windows', _jobs('6_compare_windows'))
     # a wrong DL1 root: the stage-4 log alone must say which argument and which path is wrong
     wrong = _jobs('4_candidates', {**STAGE_ARGS, '--cnt-from-dl1-root': 'data/input/dl1_TYPO', '--out': 'data/changes_typo'})
-    stage('4_candidates', wrong, label='4_candidates_wrong_root')
+    # a later stage's job is appended to show that the runner stops at exit 2 and never starts it
+    stage('4_candidates', wrong + _jobs('6_compare_windows'), label='4_candidates_wrong_root')
     return SimpleNamespace(base=base, logs=logs, results=results, seconds=time.time() - started, python=python)
 
 
@@ -217,14 +218,16 @@ def test_stage_one_to_three_wrote_the_expected_folders(chain):
         assert (base / f'data/imported/{side}/manifest.json').is_file()
         assert (base / f'data/imported/{side}/expected_cases.txt').is_file()
         assert (base / f'data/assets/{side}/review_assets.json').is_file()
-    assert (base / 'outputs/numeric_real/comparison.json').is_file() or list((base / 'outputs/numeric_real').glob('*.json'))
+    assert (base / 'outputs/numeric_real/comparison.json').is_file()
 
 
 def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(chain):
     changes = chain.base / 'data/changes'
     for name in ('candidate_queries_v1.json', 'alignment.json', 'alignment.html', 'funnel.json', 'execution.json',
                  'direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json', 'reference_export/review_rois.json',
-                 'target_export/review_rois.json', 'reference_index_export/review_rois.json', 'target_index_export/review_rois.json'):
+                 'target_export/review_rois.json', 'reference_index_export/review_rois.json', 'target_index_export/review_rois.json',
+                 'reference_export/mask_derivation.json', 'target_export/mask_derivation.json',
+                 'reference_index_export/mask_derivation.json', 'target_index_export/mask_derivation.json'):
         assert (changes / name).is_file(), name
     payload = json.loads((changes / 'candidate_queries_v1.json').read_text(encoding='utf-8'))
     assert payload['roi_source'] == 'cnt_change' and payload['alignment']['status'] == 'aligned'
@@ -252,19 +255,17 @@ def test_stage_five_lists_the_dl2_candidates_of_the_change_folder(chain):
 
 
 def test_wrong_dl1_root_is_visible_in_the_stage_four_log_alone(chain):
-    """A DL1 root that does not exist is not a hard stop: the alignment fails (`alignment_failed`, `cnt_missing_*`), the run is
-    partial (exit 3, which the runner treats as 'continue') and every direct pair is blocked. The log alone shows the argument
-    with its resolved path and the reasons."""
+    """A DL1 root that does not exist is an input error: exit 2 before anything is written, the runner stops (the next stage's
+    job is never started) and no `--out` folder exists. The log alone shows the argument with its resolved path and the code."""
     label = '4_candidates_wrong_root'
     text = chain.logs[label]
     resolved = chain.base.resolve() / 'data/input/dl1_TYPO'
     assert f"--cnt-from-dl1-root 'data/input/dl1_TYPO' -> {resolved}" in text      # the argument and its resolved path
-    assert 'candidates-change exit 3' in text and chain.results[label].returncode == 0
-    assert '"alignment_failed"' in text and '"cnt_missing_reference"' in text and '"cnt_missing_target"' in text
-    assert '"pairs_ready": 0' in text and '"direct_pairs_blocked"' in text
-    reasons = {p['status'] for p in json.loads((chain.base / 'data/changes_typo/direct/roi_correspondence.json').read_text(
-        encoding='utf-8'))['pairs']}
-    assert reasons == {'blocked'}
+    assert 'cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: data/input/dl1_TYPO' in text
+    assert f'(resolved: {resolved})' in text
+    assert 'candidates-change exit 2' in text and chain.results[label].returncode == 2
+    assert 'compare-windows' not in ''.join(line for line in text.splitlines() if ' exit ' in line or ' start ' in line)
+    assert not (chain.base / 'data/changes_typo').exists()
 
 
 def test_chain_elapsed_time_is_reported(chain):

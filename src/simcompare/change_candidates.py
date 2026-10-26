@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import alignment_report, candidates, change_map
+from . import alignment_report, candidates, change_map, template_export
 from .numeric_schema import NumericContractError
 
 DIAMETER_UM = 5
@@ -50,9 +50,17 @@ def _finite(label, value, *, minimum=None, positive=False, unit_interval=False):
         raise _bad('invalid_candidates_change_argument', f'{label}는 (0, 1] 범위여야 합니다')
 
 
-def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k):
+def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
+                   mask_derivation_rule=template_export.RULE_VERSION):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
+    if not Path(cnt_root).is_dir():
+        raise _bad('cnt_dl1_root_missing',
+                   f'--cnt-from-dl1-root 경로가 없습니다: {cnt_root} (resolved: {Path(cnt_root).resolve()})')
+    if mask_derivation_rule is None:
+        raise _bad('mask_derivation_rule_required', f'--mask-derivation-rule: {template_export.RULE_VERSION}만 허용되며 기본값이 없습니다')
+    if mask_derivation_rule != template_export.RULE_VERSION:
+        raise _bad('mask_derivation_rule_unknown', f'{mask_derivation_rule!r}: {template_export.RULE_VERSION}만 허용')
     _finite('--align-search-um', search, positive=True)
     _finite('--align-min-dice', min_dice, minimum=0)
     if min_dice > 1:
@@ -205,25 +213,23 @@ def _layer_cases(dataset, layer):
 def _dataset_filters(dataset, layer, present_case=None):
     """한쪽 조합에서 case 가 없는 쪽 side 의 group 필터. (필터, 정해지지 못한 필드가 있는지)를 돌려준다.
 
-    그 쪽 dataset 의 (같은 층) case 들이 하나의 값을 공유하면 그 값을 쓴다. 값이 여럿이면 case 가 있는 쪽(``present_case``)의
-    값이 그 집합 안에 있을 때 그 값을 쓴다. 그래도 정해지지 않으면 비우고 unresolved 로 알린다."""
+    그 쪽 dataset 의 (같은 층) case 들의 group 튜플(source_id, process_step_id, exposure_id, unit_id) 집합이 하나뿐이면 그 튜플을 쓴다.
+    여럿이면 case 가 있는 쪽(``present_case``)의 튜플과 같은 튜플이 정확히 하나일 때만 그 튜플을 쓴다. 필드마다 따로 정하지 않는다.
+    그래도 정해지지 않으면 필터를 비우고 unresolved 로 알린다."""
     cases = _layer_cases(dataset, layer) or list(dataset.cases)
-    out, unresolved = {}, False
-    fields = (('source_id', lambda c: getattr(c.identity, 'source_id', None)),
-              ('process_step_id', lambda c: getattr(c.identity, 'process_step_id', None)),
-              ('exposure_id', lambda c: getattr(c.identity, 'exposure_id', None)),
-              ('unit_id', lambda c: c.metadata.get('unit_id')))
-    for field, getter in fields:
-        values = {getter(c) for c in cases}
-        if len(values) == 1 and None not in values:
-            out[field] = next(iter(values))
-        elif len(values) > 1:
-            hint = getter(present_case) if present_case is not None else None
-            if hint is not None and hint in values:
-                out[field] = hint
-            else:
-                unresolved = True
-    return out, unresolved
+    names = ('source_id', 'process_step_id', 'exposure_id', 'unit_id')
+
+    def group(case):
+        return (getattr(case.identity, 'source_id', None), getattr(case.identity, 'process_step_id', None),
+                getattr(case.identity, 'exposure_id', None), case.metadata.get('unit_id'))
+
+    groups = sorted({group(c) for c in cases}, key=lambda g: tuple(str(v) for v in g))
+    if len(groups) > 1:
+        hint = group(present_case) if present_case is not None else None
+        groups = [g for g in groups if g == hint]
+        if len(groups) != 1:
+            return {}, True
+    return {name: value for name, value in zip(names, groups[0]) if value is not None} if groups else {}, False
 
 
 def _direct_side_one_sided(case, layer, center, rows_by_key, item, other_case=None):
@@ -344,6 +350,32 @@ def _direct_documents(records, alignment, commit, inputs):
 
 # --------------------------------------------------------------------------- funnel
 
+def _derivation_rows(side, rows):
+    """export 행(슬림 행은 endpoints 를 갖지 않는다)을 template_export 의 writer 가 읽는 형태로 바꾼다.
+
+    endpoints·failure_type·analysis_layer 는 export 가 행에 쓴 값과 같은 출처인 dataset case(행의 source_identity 로 찾는다)에서 읽는다."""
+    by_identity = {tuple(sorted(asdict(c.identity).items())): c for c in side.dataset.cases}
+    out = []
+    for row in rows:
+        case = by_identity.get(tuple(sorted((row.get('source_identity') or {}).items())))
+        if case is None:
+            if row['status'] == 'ready':
+                raise _bad('mask_derivation_case_unresolved', f"{side.name}: {row['roi_id']}")
+            continue
+        out.append({'case_id': case.identity.case_id, 'status': row['status'], 'failure_type': case.failure_type,
+                    'analysis_layer': case.analysis_layer, 'endpoints': [asdict(e) for e in case.endpoints]})
+    return out
+
+
+def _stack_order(side):
+    """제품의 {actual_layer: stack_order}. condition_assignment.layer_stack 에서 읽는다(export-template-rois 의 layer_stack 과 같은 값)."""
+    assignment = side.section.get('condition_assignment') if isinstance(side.section, dict) else None
+    stack = assignment.get('layer_stack') if isinstance(assignment, dict) else None
+    if not isinstance(stack, list) or not stack:
+        raise _bad('mask_derivation_layer_stack_missing', f'{side.name}: condition_assignment.layer_stack')
+    return {row['actual_layer']: row['stack_order'] for row in stack}
+
+
 def _funnel(direction, n_candidates, n_merged, queries, top_k):
     kept = len(queries)
     ready = sum(q['status'] == 'ready' for q in queries)
@@ -369,19 +401,20 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k):
 # --------------------------------------------------------------------------- 실행
 
 def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um,
-                          change_tolerance_um, window_um, merge_overlap, top_k):
+                          change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
-    reference_index_export/, target_index_export/, direct/(roi_correspondence.json, direct_pairs_sidecar.json),
-    execution.json 을 쓴다.
+    reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
+    direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
 
-    폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값, 이미 있는 출력 경로, config 종류·지름,
+    폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값(없는 DL1 root, 규칙 값 포함),
+    이미 있는 출력 경로, config 종류·지름,
     side 준비 결과, 제품·frame 개수, pitch 불일치, 정렬 탐색 반경(>= 2 x pitch), 창 크기(>= pitch, frame 보다 크지 않음).
     CNT 읽기·정렬·메모리 한도(admission) 오류는 폴더를 만든 뒤에 나므로, 쓰는 도중 실패한 경우와 같이 이 실행이 만든
     파일과 폴더만 지운다. 이미 있는 출력 경로는 거부하고 건드리지 않는다.
     """
     from . import pipeline
     _validate_args(cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um, change_tolerance_um,
-                   window_um, merge_overlap, top_k)
+                   window_um, merge_overlap, top_k, mask_derivation_rule)
     out = Path(out)
     if out.exists() or out.is_symlink():
         raise _bad('output_dir_exists', str(out))
@@ -418,7 +451,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     args = {'cnt_from_dl1_root': str(cnt_from_dl1_root), 'align_search_um': align_search_um,
             'align_min_dice': align_min_dice, 'align_layer_tolerance_um': align_layer_tolerance_um,
             'change_tolerance_um': change_tolerance_um, 'window_um': window_um, 'merge_overlap': merge_overlap,
-            'top_k': top_k, 'max_operation_bytes': limit}
+            'top_k': top_k, 'max_operation_bytes': limit, 'mask_derivation_rule': mask_derivation_rule}
     track, cleanup = candidates.output_tracker()
     out.mkdir()
     track(out, is_dir=True)
@@ -582,6 +615,21 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             candidates.export_index(cfg, side, out / f'{name}_index_export', DIAMETER_UM, track, memo, reserved_for(name))
     memo = None
 
+    # --- 7b. DL2 질의·index export 폴더마다 mask_derivation.json (export-template-rois 와 같은 writer·규칙, ready 행의 case 만)
+    derivation_files = {}
+    for name, side in sides.items():
+        order = _stack_order(side)
+        for key, folder, rows, written in (
+                ('query', f'{name}_export', side.rows, side.export_path is not None),
+                ('index', f'{name}_index_export', side.index['rows'] if side.index else [],
+                 side.index is not None and side.index['path'] is not None)):
+            if not written:
+                derivation_files[(name, key)] = None
+                continue
+            document = template_export._mask_derivation(_derivation_rows(side, rows), order)
+            emit_bytes(f'{folder}/mask_derivation.json', template_export._json_bytes(document))
+            derivation_files[(name, key)] = f'{folder}/mask_derivation.json'
+
     # --- 8. 연결: 요청 키 → 반환 행
     directions, funnels, rows_index = [], [], {}
     n_candidates, n_merged = len(found['candidates']), len(merged)
@@ -723,6 +771,12 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             inputs[name]['export_sha256'] = candidates._sha256_file(side.export_path)
         if side.index is not None and side.index['path'] is not None:
             inputs[name]['index_export_sha256'] = candidates._sha256_file(side.index['path'])
+        for key, field in (('query', 'mask_derivation_sha256'), ('index', 'index_mask_derivation_sha256')):
+            if derivation_files[(name, key)] is not None:
+                inputs[name][field] = candidates._sha256_file(out / derivation_files[(name, key)])
+    mask_derivation_files = {direction: {'query': derivation_files[(query_name, 'query')],
+                                         'index': derivation_files[(index_name, 'index')]}
+                             for direction, query_name, index_name in candidates.DIRECTIONS}
     commit = next((s.export_payload.get('producer_commit') for s in sides.values() if s.export_payload), None)
     all_queries = [q for d in directions for q in d['queries']]
     # 반대 모델에만 있는 조합뿐인 방향 질의(NO_CASE_REASON)는 내보낼 ROI 가 원래 없으므로 완전성을 깨지 않는다.
@@ -765,6 +819,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                'warnings': warnings, 'notes': notes, 'match_inputs': match_inputs, 'dl2_model_roles': dl2_model_roles,
                'match_files': {d: {k: f'{v}/review_rois.json' for k, v in item.items()}
                                for d, item in match_inputs.items()},
+               'mask_derivation_rule': args['mask_derivation_rule'], 'mask_derivation_files': mask_derivation_files,
                'status': 'available' if complete else 'partial',
                'policy': {'roi_source': 'cnt_alignment_plus_hotspot_xor_residual_windows',
                           'merge': 'per_layer_window_overlap_intersection_over_min_area_union_find_region_id_order',
@@ -799,8 +854,11 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                                       'electrodes_covered', 'electrodes_total')}
                                  for n, c in coverage.items()},
               'direct': direct_summary,
-              'match_inputs': match_inputs, 'match_files': payload['match_files'], 'dl2_model_roles': dl2_model_roles}
-    execution = {'command': 'candidates-change', 'args': {**change_args, 'max_operation_bytes': limit},
+              'match_inputs': match_inputs, 'match_files': payload['match_files'],
+              'mask_derivation_rule': args['mask_derivation_rule'], 'mask_derivation_files': mask_derivation_files,
+              'dl2_model_roles': dl2_model_roles}
+    execution = {'command': 'candidates-change',
+                 'args': {**change_args, 'max_operation_bytes': limit, 'mask_derivation_rule': args['mask_derivation_rule']},
                  'inputs': exec_inputs, 'warnings': warnings, 'notes': notes, **result}
     candidates.write_text(out / 'execution.json', json.dumps(execution, ensure_ascii=False, indent=2) + '\n', track)
     result['outputs'] = sorted(result['outputs'] + ['execution.json'])

@@ -309,10 +309,25 @@ def test_opposite_filter_with_several_values_uses_the_present_cases_value_else_s
     other = SimpleNamespace(identity=SimpleNamespace(source_id='S', process_step_id='STEP3', exposure_id='E'), metadata={'unit_id': 'U'})
     for hint in (None, other):                      # not in the opposite set, or no case on the present side: left empty
         filters, unresolved = change_candidates._dataset_filters(dataset, 'L1', hint)
-        assert 'process_step_id' not in filters and unresolved
-        assert filters == {'source_id': 'S', 'exposure_id': 'E', 'unit_id': 'U'}
+        assert filters == {} and unresolved         # the whole filter is left empty, not field by field
     filters, unresolved = change_candidates._dataset_filters(dataset, 'L2', None)      # a single value needs no hint
     assert filters['process_step_id'] == 'STEP9' and not unresolved
+
+
+def _grouped_dataset(*groups):
+    return SimpleNamespace(cases=[SimpleNamespace(analysis_layer='L1', identity=SimpleNamespace(source_id=s, process_step_id=p,
+                                                                                               exposure_id='E'),
+                                                  metadata={'unit_id': 'U'}) for s, p in groups])
+
+
+def test_opposite_filter_takes_a_whole_group_tuple_or_nothing():
+    """Groups (S1,P1) and (S2,P2) with the hint (S1,P2): each field value exists in the set, but the tuple does not."""
+    dataset = _grouped_dataset(('S1', 'P1'), ('S2', 'P2'))
+    mixed = SimpleNamespace(identity=SimpleNamespace(source_id='S1', process_step_id='P2', exposure_id='E'), metadata={'unit_id': 'U'})
+    assert change_candidates._dataset_filters(dataset, 'L1', mixed) == ({}, True)
+    exact = SimpleNamespace(identity=SimpleNamespace(source_id='S2', process_step_id='P2', exposure_id='E'), metadata={'unit_id': 'U'})
+    assert change_candidates._dataset_filters(dataset, 'L1', exact) == (
+        {'source_id': 'S2', 'process_step_id': 'P2', 'exposure_id': 'E', 'unit_id': 'U'}, False)
 
 
 def test_unresolved_filter_state_reaches_the_direct_pair_builder():

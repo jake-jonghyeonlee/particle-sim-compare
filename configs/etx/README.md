@@ -13,7 +13,7 @@
 | 6 | `simcompare_job_6_compare_windows.py` | `real.yaml` | 기본 입력은 `data/changes/direct/roi_correspondence.json`. DL2 경로를 썼다면 `--correspondence`를 `data/confirmed/roi_correspondence.json`으로 바꾼다. `data/local/local_delta.html`에서 쌍별 ΔCA 확인 |
 
 - 실행 파일은 맨 위 EDIT 블록(`JOBS`, `LOG_FILE`, `WORK_DIR`)만 고친다. 여섯 파일의 묶인 코드는 같고 `JOBS`만 다르다.
-- 4회차 `candidates-change`의 인수는 모두 필수이며 기본값이 없다. 실행기 EDIT 블록의 값(탐색 반경 30 µm, 최소 Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 20 µm, 병합 0.5, top-k 20)은 **예시**이니 제품에 맞게 바꾼다. 의미는 `docs/usage_reference.md`의 "ROI 선정"에 있다. `--cnt-from-dl1-root`는 3회차와 같은 DL1 PNG root(`data/input/dl1`)다. 존재하지 않는 root는 종료 코드 3(`alignment_failed`)이며 실행기가 계속 진행하므로 로그의 `--cnt-from-dl1-root '…' -> <절대 경로>` 줄과 `candidates-change exit N`을 확인한다. 예전 `candidates`(max_count, 취약점 ROI)는 보류다.
+- 4회차 `candidates-change`의 인수는 모두 필수이며 기본값이 없다. 실행기 EDIT 블록의 값(탐색 반경 30 µm, 최소 Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 20 µm, 병합 0.5, top-k 20, `--mask-derivation-rule between_stack_order_v1`)은 **예시**이니 제품에 맞게 바꾼다. 탐색 반경의 최소값은 pixel pitch의 2배 이상(코드 검사)이고, 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값이다. 주기가 탐색 반경 안에 있으면 `peak_ambiguous`와 대안 offset으로 표시된다. 의미는 `docs/usage_reference.md`의 "ROI 선정"에 있다. `--cnt-from-dl1-root`는 3회차와 같은 DL1 PNG root(`data/input/dl1`)다. 존재하지 않는 root는 쓰기 전에 종료 코드 2(`cnt_dl1_root_missing`)이며 `--out`을 만들지 않고 실행기가 멈추므로 로그의 `오류:` 줄과 `--cnt-from-dl1-root '…' -> <절대 경로>` 줄을 확인한다. 예전 `candidates`(max_count, 취약점 ROI)는 보류다.
 - `assignment_<side>.json`은 `real.yaml`의 해당 `condition_assignment`와 똑같은 내용이다. JSON에는 주석을 쓸 수 없다.
 - role은 `electrode_role_policy: electrode_id`로 자동이다: `pairs.csv`의 모든 전극이 자기 이름을 role로 받는다. 4회차 `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 목록이다.
 - `UNSPECIFIED`는 "정해지지 않음" 이름표다. 실제 값을 알면 바꾼다. 빈 값은 오류다.

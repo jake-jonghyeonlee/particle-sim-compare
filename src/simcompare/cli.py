@@ -91,13 +91,15 @@ def _parser() -> argparse.ArgumentParser:
         help="두 제품(real_hotspot_v1)의 CNT 정렬 + 5 µm hotspot 변경 지도 → 변경 위치 질의 ROI와 DL2 export(모든 인수 필수, 기본값 없음)"))
     change.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference·target 각각 real_hotspot_v1 단일 제품·단일 frame)")
     change.add_argument("--cnt-from-dl1-root", required=True, help="두 제품의 cno/ CNT 층 PNG가 있는 DL1 PNG root (제품 폴더 = product_id)")
-    change.add_argument("--align-search-um", required=True, type=float, help="CNT 정렬 탐색 반경 µm (>= 2 x pitch)")
+    change.add_argument("--align-search-um", required=True, type=float, help="CNT 정렬 탐색 반경 µm. 최소값은 pixel pitch의 2배 이상(코드 검사). 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값(예시 30 µm). 주기가 탐색 반경 안에 있으면 peak_ambiguous 와 대안 offset 으로 표시된다")
     change.add_argument("--align-min-dice", required=True, type=float, help="정렬 최소 Dice [0, 1]. 미만이면 aligned_uncertain")
     change.add_argument("--align-layer-tolerance-um", required=True, type=float, help="층별·4분면 offset 이 전역 offset 과 달라도 되는 거리 µm")
     change.add_argument("--change-tolerance-um", required=True, type=float, help="변경 판정 허용 이동 거리 µm (이 안의 이동은 변경으로 세지 않음)")
     change.add_argument("--window-um", required=True, type=float, help="변경 창 한 변(µm)")
     change.add_argument("--merge-overlap", required=True, type=float, help="두 창의 intersection/min(area) 병합 기준 (0,1]")
     change.add_argument("--top-k", required=True, type=int, help="방향(reference_to_target / target_to_reference)별 질의 수")
+    change.add_argument("--mask-derivation-rule", required=True,
+                        help="DL2 mask_derivation 규칙: between_stack_order_v1 만 허용(기본값 없음). 질의·index export 폴더마다 mask_derivation.json 을 쓴다")
     change.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     confirm = _korean_help(sub.add_parser(
         "confirm-pairs", add_help=False,
@@ -237,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 cfg, Path(args.out), cnt_from_dl1_root=args.cnt_from_dl1_root, align_search_um=args.align_search_um,
                 align_min_dice=args.align_min_dice, align_layer_tolerance_um=args.align_layer_tolerance_um,
                 change_tolerance_um=args.change_tolerance_um, window_um=args.window_um,
-                merge_overlap=args.merge_overlap, top_k=args.top_k)
+                merge_overlap=args.merge_overlap, top_k=args.top_k, mask_derivation_rule=args.mask_derivation_rule)
             _print(result)
             return result["exit_code"]
         if args.command == "confirm-pairs":

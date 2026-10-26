@@ -193,7 +193,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 ```
 
 ```bat
-.venv-cmd\Scripts\python.exe -m simcompare candidates-change --config config.yaml --cnt-from-dl1-root dl1 --align-search-um 30 --align-min-dice 0.3 --align-layer-tolerance-um 1 --change-tolerance-um 0.5 --window-um 20 --merge-overlap 0.5 --top-k 20 --out changes
+.venv-cmd\Scripts\python.exe -m simcompare candidates-change --config config.yaml --cnt-from-dl1-root dl1 --align-search-um 30 --align-min-dice 0.3 --align-layer-tolerance-um 1 --change-tolerance-um 0.5 --window-um 20 --merge-overlap 0.5 --top-k 20 --mask-derivation-rule between_stack_order_v1 --out changes
 ```
 
 **인수.** 모두 필수이며 기본값이 없다. 예시 값은 쓰기 쉬운 출발점일 뿐이고 제품에 맞게 바꾼다.
@@ -202,13 +202,14 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 |---|---|---|
 | `--config` | `numeric_config_v1` YAML. reference·target은 각각 real_hotspot_v1 단일 제품·단일 frame이다. 두 제품의 pixel pitch가 같아야 한다 | `real.yaml`(4회차 설정과 같다) |
 | `--cnt-from-dl1-root` | 두 제품의 `cno/` CNT 층 PNG와 전극 폴더가 있는 DL1 PNG root. 제품 폴더 이름 = `product_id`. 전극 폴더 이름은 두 모델의 전극 집합을 비교하는 데 쓴다 | 3회차 `--cnt-from-dl1-root`와 같은 root |
-| `--align-search-um` | CNT 정렬 탐색 반경(µm). pixel pitch의 2배 이상이어야 한다 | 30. 레이아웃 이동이 수 µm 안이라고 보고 여유를 둔 값이다. 2×2 반복 패턴의 주기보다 작게 잡아야 모호한 peak가 줄어든다 |
+| `--align-search-um` | CNT 정렬 탐색 반경(µm). 최소값은 pixel pitch의 2배 이상이다(코드 검사) | 30. 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값이다. 주기가 탐색 반경 안에 있으면 `peak_ambiguous`와 대안 offset으로 표시된다 |
 | `--align-min-dice` | 정렬 최소 Dice `[0, 1]`. 이보다 낮으면 `aligned_uncertain`이다 | 0.3. 층 패턴이 성기면 낮추고, 정렬을 엄격히 보려면 올린다 |
 | `--align-layer-tolerance-um` | 층별·4분면 offset이 전역 offset과 달라도 되는 거리(µm) | 1. 이를 넘으면 `layer_offsets_disagree`(불확실) |
 | `--change-tolerance-um` | 변경 판정 허용 이동 거리(µm). 이 안의 이동은 변경으로 세지 않는다 | 0.5. 정렬 오차와 공정 변동을 합친 값으로 둔다 |
 | `--window-um` | 변경 창 한 변(µm) | 20. 6회차 창 10/20/30 µm 중 가운데 값이다 |
 | `--merge-overlap` | 두 창의 `intersection/min(area)`가 이 값 이상이면 층 안에서 병합한다. `(0, 1]` | 0.5 |
 | `--top-k` | 방향(`reference_to_target`, `target_to_reference`)별 질의 수 | 20. 설계자가 보는 ROI 수에 맞춘다 |
+| `--mask-derivation-rule` | DL2 `mask_derivation` 규칙. `between_stack_order_v1`만 허용한다(없거나 다른 값이면 종료 코드 2: `mask_derivation_rule_required`·`mask_derivation_rule_unknown`) | `between_stack_order_v1` |
 | `--out` | 새 출력 폴더. 이미 있으면 아무것도 건드리지 않고 종료 코드 2 | `data/changes` |
 
 대표 지름은 5 µm 하나로 고정이다. `map.diameter_um`이 5가 아니면 `candidates_change_diameter_fixed_5um`(코드 2)이다.
@@ -217,7 +218,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 
 **합집합에 들어가는 조합.** (1) 두 모델에 모두 있는 조합(짝). (2) 한쪽 모델에만 있는 조합: 그 모델의 합집합에만 들어간다(`one_sided_case`). (3) 층이 바뀐 조합: 쌍 하나(a=L1, b=L2)로 다루지 않고 한쪽 조합 두 개(L1은 L1 합집합, L2는 L2 합집합)로 다룬다. 층 사이 합집합은 만들지 않는다. (4) 한쪽 모델에만 있는 전극(배선)의 조합도 비교 대상이다: 새 전극은 `new_electrode`, 없어진 전극은 `removed_electrode` 표시가 붙고 `appeared`/`disappeared`로 분류된다. 두 모델의 DL1 전극 폴더 집합이 다르면 `electrode_set_differs`가 `notes`에 정보로 남는다(종료 코드에 영향이 없다).
 
-**한쪽 조합의 직접 쌍.** 직접 쌍의 한 side에 case가 없으면(반대 모델에 그 조합이 없음) `endpoints`와 `failure_type`을 쓰지 않고 `analysis_layer`와 group 필터(`source_id`, `process_step_id`, `exposure_id`, `unit_id`)만 쓴다. 필터 값은 반대 dataset의 같은 층 case가 하나의 값을 공유하면 그 값이고, 값이 여럿이면 case가 있는 쪽 case의 값이 그 집합 안에 있을 때 그 값이다. 그래도 정해지지 않으면 비우고 사이드카 `flags`에 `filter_unresolved_<a|b>`를 적는다. 반대 dataset에 그 층의 case가 **하나도 없으면** 그 쌍은 `blocked`이고 `reasons`는 `["one_sided_layer_absent_<a|b>"]`다(예: 층 변경 L1→L2에서 반대 모델에 L1 case가 전혀 없음). 이 쌍은 `compare-windows`의 `analysis_layer_not_in_source_*`에 맡기지 않고 여기서 막는다.
+**한쪽 조합의 직접 쌍.** 직접 쌍의 한 side에 case가 없으면(반대 모델에 그 조합이 없음) `endpoints`와 `failure_type`을 쓰지 않고 `analysis_layer`와 group 필터(`source_id`, `process_step_id`, `exposure_id`, `unit_id`)만 쓴다. 필터는 필드마다 따로 정하지 않고 group 튜플 `(source_id, process_step_id, exposure_id, unit_id)` 단위로 정한다. 반대 dataset의 같은 층 case가 튜플 하나만 가지면 그 튜플이고, 튜플이 여럿이면 case가 있는 쪽 case의 튜플과 같은 튜플이 정확히 하나일 때 그 튜플이다. 그래도 정해지지 않으면 필터를 비우고 사이드카 `flags`에 `filter_unresolved_<a|b>`를 적는다. 반대 dataset에 그 층의 case가 **하나도 없으면** 그 쌍은 `blocked`이고 `reasons`는 `["one_sided_layer_absent_<a|b>"]`다(예: 층 변경 L1→L2에서 반대 모델에 L1 case가 전혀 없음). 이 쌍은 `compare-windows`의 `analysis_layer_not_in_source_*`에 맡기지 않고 여기서 막는다.
 
 **출력 폴더.** 같은 입력·인수는 같은 바이트를 만든다(경로는 출력 폴더 상대, 시각·호스트 없음).
 
@@ -228,12 +229,20 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | `alignment.html` | 정렬 요약, 층별 겹침(정렬 전·후), 변경 지도 열지도, top-k ROI crop. 외부 참조 없이 `file://`로 열린다 |
 | `direct/roi_correspondence.json` | 6회차 `compare-windows`가 그대로 읽는 `roi_correspondence_v1`(DL2 건너뛰기) |
 | `direct/direct_pairs_sidecar.json` | `direct_pairs_sidecar_v1`: 쌍별 정렬 상태·점수·속성·불확실성 |
-| `reference_export/`, `target_export/` | 질의 `review_rois.json`(DL2 입력, manual 행) |
-| `reference_index_export/`, `target_index_export/` | 검색 대상 index export |
+| `reference_export/`, `target_export/` | 질의 `review_rois.json`(DL2 입력, manual 행)과 `mask_derivation.json` |
+| `reference_index_export/`, `target_index_export/` | 검색 대상 index export(`review_rois.json`)와 `mask_derivation.json` |
 | `funnel.json`, `funnel.csv` | 방향별 깔때기(`change_candidates` → `merged` → `top_k` → `exported_ready`)와 직접 쌍 수 |
 | `execution.json` | 실행 요약 |
 
-**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전 등. 2 = 입력·인수 오류(필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않는 `--cnt-from-dl1-root`도 종료 코드 3이다(`alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked). 로그의 `--cnt-from-dl1-root '...' -> <절대 경로>` 줄로 경로를 확인한다.
+**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전 등. 2 = 입력·인수 오류(필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류, 없는 `--cnt-from-dl1-root`, `--mask-derivation-rule` 누락·오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않거나 폴더가 아닌 `--cnt-from-dl1-root`는 **쓰기 전에** 종료 코드 2다: `오류: cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: <입력> (resolved: <절대 경로>)`. `--out`은 만들어지지 않고 ETX 실행기는 멈춘다(종료 2는 '계속'이 아니다). root는 있는데 모델 폴더나 `cno/`가 없으면 지금처럼 정렬 실패(종료 코드 3: `alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked)다.
+
+**`mask_derivation.json`(R1).** DL2는 `1.png`/`2.png`를 case 처리 마스크로 보고, 두 제품의 마스크가 같은 방식으로 만들어졌을 때만 비교한다. 그 사실을 질의 export 2개와 index export 2개 폴더마다 `mask_derivation.json`(`psdl2_mask_derivation_v1`)으로 동봉한다. 형식·규칙은 `export-template-rois`와 같은 writer를 쓴다: 규칙 `between_stack_order_v1`, vertical 은 위 전극 마스크에서 두 끝 층 사이 층(제품의 `condition_assignment.layer_stack` 기준)을 제거, lateral 은 제거 없음(`processed_endpoint: null`), CNT 는 DL1 `cno` 합집합, VIA 미사용. 항목은 그 폴더 `review_rois.json`의 **ready 행** case(failure_type + 정렬한 endpoints)마다 하나다. blocked 행과 한쪽 조합(반대 모델에 case가 없어 행이 없음)은 항목이 없다(DL2 `mask_derivation_case_missing`은 ready 행에만 적용된다). 경로는 `candidate_queries_v1.json`의 `mask_derivation_files`(방향별 `query`/`index`)와 `execution.json`의 `outputs`에 있다. DL2 `psdl2_dataset_v1` 매니페스트의 `mask_derivation` 값으로 출력 폴더 기준 상대 경로를 그대로 쓴다:
+
+```json
+{"schema_version": "psdl2_dataset_v1",
+ "sources": [{"export": "target_index_export/review_rois.json", "export_sha256": "<64 hex>",
+              "mask_derivation": "target_index_export/mask_derivation.json"}]}
+```
 
 **정렬 상태와 사유.**
 
@@ -305,6 +314,10 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
 - `decisions.csv`: UTF-8, 헤더 `candidate_id,decision,note` 정확히 이 세 열(다른 열은 거부), `decision` = `accept` 또는 `reject`. 적지 않은 후보는 **미결정**이며 어떤 출력의 쌍에도 들어가지 않는다. 같은 id 중복, accept·reject 충돌, 모르는 id, 결과가 `unavailable`인 질의의 id, match 파일을 주지 않은 방향의 id는 이름 있는 오류(코드 2)이고 문제를 모두 나열한 뒤 아무것도 쓰지 않는다.
 - `--labelled-by`, `--mutual-tolerance-um`은 **필수이며 기본값이 없다**. `--match`는 방향마다 선택이지만 하나 이상 필요하다. 출력 폴더는 새 경로여야 한다.
 - match 파일 검사(전부 코드 2): `schema_version == psdl2_baseline_ncc_v1`, `mode == all_ready`, `self_check`가 있으면 `passed: true`, `inputs.query_export_sha256`/`index_export_sha256`가 candidates 폴더의 해당 방향 질의 export·index export와 같음, `candidate_product_id`가 반대 제품과 같음, 모든 질의가 export의 ready ROI. 후보의 제품·design·frame이 config 데이터셋과 맞지 않으면 파일 단위 거부(코드 2). 후보 중심이 frame 밖, 반대 데이터셋에 analysis layer 없음, 두 frame의 pixel pitch 다름은 **그 쌍만** `status=blocked`(사유 코드)로 파일에 들어가 `compare-windows`가 보고한다. 같은 두 중심의 중복은 경고만 한다.
+- **DL2 배치 봉투 `psdl2_search_batch_v1`(T10).** `--match`의 파일은 `schema_version`으로 갈린다. `psdl2_baseline_ncc_v1`은 위 설명 그대로이고, `psdl2_search_batch_v1`(`python -m psdl2.search --all-ready`가 방향마다 쓰는 파일)은 `rankings[i]`의 질의 `query_roi_id`와 후보 `rank`, `roi_id`, `product_id`, `frame_id`, `center_xy_um`, `search_scope`를 읽는다. `candidate_id`는 같은 형태이고 `rank`는 봉투의 순위다(primary 뒤에 supplementary를 이어 센다). 점수는 봉투에 없어 `null`이다. 두 형식을 방향마다 섞어 써도 된다.
+  - 해시(전부 코드 2, 아무것도 쓰지 않음): `rankings[i].query_export_sha256`(없으면 `inputs.query_export_sha256`)이 candidates 폴더의 그 방향 질의 export와 다르면 `match_input_hash_mismatch`, 둘 다 없으면 `match_input_hash_missing`. `index_sources`가 배열이면 `export_sha256`이 candidates의 그 방향 index export와 같은 source가 있어야 한다(`match_input_hash_mismatch`; 모양 오류는 `match_index_sources_invalid`). `index_sources`가 `"single_export"`이면 봉투에 export 해시가 없어 대조하지 못하고, 후보 제품 id만 config 제품과 대조한다(사이드카 `index_export_verification=unverifiable_single_export`).
+  - 후보별 사용 불가(`--list`의 `unavailable_candidates`에 사유와 함께 보이고, accept 하면 `candidate_match_unavailable`로 종료 코드 2): `candidate_product_unverifiable`(일치하는 source의 `product_ids`가 `null`이거나 후보 제품이 없음), `candidate_product_not_configured`(config의 reference/target에 없는 제품), `candidate_same_product`(질의와 같은 제품), `unsupported_search_scope`(`primary`/`supplementary` 외). `search_scope=supplementary` 후보는 목록에 보이며 `search_scope`와 `flags.supplementary`가 표시된다.
+  - 출력은 NCC 경로와 같은 쌍 단위 `roi_correspondence.json`(a=reference, `producer.kind=manual`)이다. 사이드카의 `inputs.matches.<direction>`에 `match_schema`, `index_sources`/`matched_sources`, `checkpoint_fingerprint`, `view_fingerprint`, `arguments`가, 쌍의 `candidates[]`에 `match_schema`, `rank`, `search_scope`, `candidate_roi_id`가 더해진다.
 - 방향: `target_to_reference` 후보는 **뒤집어서** 항상 a = reference, b = target 이다. 질의 쪽 side는 질의 export 행(endpoints·failure_type·roi_id 포함)에서 그대로 가져오고, 후보 쪽 side는 후보 중심·frame·반대 index export의 design_version·질의의 `analysis_layer`만 가진다(endpoints·roi_id·failure_type 없음).
 - `source = {kind: manual, labelled_by, labelled_at}`(UTC, 한 실행에서 한 번). `pair_id`는 방향·질의 roi_id·rank·후보 중심의 해시이며 `labelled_at`에는 의존하지 않는다.
 - `mutual`/`one_way`: 반대 방향에서 accept 된 쌍의 a·b 중심이 모두 `--mutual-tolerance-um` 이내면 `mutual`, 아니면 `one_way`(표시만 한다). 두 방향이 같은 대응을 accept 했으면 쌍은 **하나**만 내보내고(pair_id가 작은 쪽) 사이드카에 `merged_with`를 적는다. 반대 방향의 reject·미결정 후보는 `opposite_candidates_within_tolerance`에 정보로만 남는다. 병합은 두 쌍의 분석층(a·b 양쪽)이 같고, failure_type이 양쪽에 있으면 같을 때만 한다. 맥락이 다르면 `mutual` 표시는 두되 **두 쌍 모두 내보내고** 사이드카에 `mutual_context_differs: true`를 적는다(accept 한 측정은 버리지 않는다).

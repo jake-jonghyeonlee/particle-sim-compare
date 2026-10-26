@@ -22,6 +22,8 @@ from .numeric_schema import NumericContractError
 DIRECTIONS = (('reference_to_target', 'reference', 'target'), ('target_to_reference', 'target', 'reference'))
 DIRECTION_NAMES = tuple(d[0] for d in DIRECTIONS)
 NCC_SCHEMA = 'psdl2_baseline_ncc_v1'
+BATCH_SCHEMA = 'psdl2_search_batch_v1'
+SEARCH_SCOPES = ('primary', 'supplementary')
 SIDECAR_SCHEMA = 'confirmed_pairs_sidecar_v1'
 FUNNEL_SCHEMA = 'confirm_funnel_v1'
 DECISION_COLUMNS = ('candidate_id', 'decision', 'note')
@@ -195,6 +197,8 @@ def _load_match(direction, path, cands, datasets, problems):
     if result is None:
         return None
     label = f'{direction}({path})'
+    if isinstance(result, dict) and result.get('schema_version') == BATCH_SCHEMA:
+        return _load_batch_match(direction, path, result, sha, cands, datasets, problems)
     if not isinstance(result, dict) or result.get('schema_version') != NCC_SCHEMA:
         problems.add('match_schema_version_unsupported', f'{label}: {result.get("schema_version") if isinstance(result, dict) else None!r}')
         return None
@@ -272,6 +276,132 @@ def _load_match(direction, path, cands, datasets, problems):
             'inputs': {'query_export_sha256': inputs.get('query_export_sha256'), 'index_export_sha256': inputs.get('index_export_sha256')}}
 
 
+def _batch_index_sources(direction, result, index_sha, label, problems):
+    """psdl2_search_batch_v1 의 index_sources 를 candidates 의 index export 해시와 대조한다.
+
+    반환: (검증된 제품 집합 또는 None, 사이드카 요약). 집합이 None 이면 index_sources 가 "single_export" 라서 export 해시를
+    대조할 수 없다는 뜻이다(DL2 문서는 이 경우 export 해시를 싣지 않는다). 그 후보는 제품 id 만 검사한다."""
+    sources = result.get('index_sources')
+    if sources == 'single_export':
+        return None, {'index_sources': 'single_export', 'index_export_verification': 'unverifiable_single_export'}
+    if not isinstance(sources, list) or not sources:
+        problems.add('match_index_sources_invalid', f'{label}: index_sources must be "single_export" or a non-empty list')
+        return set(), None
+    matched, verified, malformed = [], set(), False
+    for position, source in enumerate(sources):
+        product_ids = source.get('product_ids', 0) if isinstance(source, dict) else 0
+        if (not isinstance(source, dict) or not isinstance(source.get('export_sha256'), str)
+                or not isinstance(source.get('patch_set_sha256s'), list)
+                or not (product_ids is None or (isinstance(product_ids, list) and all(isinstance(p, str) for p in product_ids)))):
+            problems.add('match_index_sources_invalid', f'{label}: index_sources[{position}]')
+            malformed = True
+            continue
+        if source['export_sha256'] == index_sha:
+            matched.append({'export_sha256': source['export_sha256'], 'patch_set_sha256s': list(source['patch_set_sha256s']),
+                            'product_ids': None if product_ids is None else list(product_ids)})
+            if product_ids is not None:
+                verified.update(product_ids)
+    if index_sha is not None and not matched and not malformed:
+        problems.add('match_input_hash_mismatch',
+                     f'{label}: no index_sources[].export_sha256 equals the candidates index export for {direction}')
+    return verified, {'index_sources': 'sources', 'index_export_verification': 'index_sources',
+                      'index_export_sha256': index_sha, 'matched_sources': matched}
+
+
+def _batch_candidate_problem(entry, direction_products, verified):
+    """후보 하나가 쓸 수 없는 사유 코드(쓸 수 있으면 None)."""
+    query_product, index_product = direction_products
+    if entry['search_scope'] not in SEARCH_SCOPES:
+        return 'unsupported_search_scope'
+    if entry['product_id'] == query_product:
+        return 'candidate_same_product'
+    if entry['product_id'] != index_product:
+        return 'candidate_product_not_configured'
+    if verified is not None and entry['product_id'] not in verified:
+        return 'candidate_product_unverifiable'
+    return None
+
+
+def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
+    """psdl2_search_batch_v1 한 방향. 반환 형태는 NCC 경로(_load_match)와 같고 unusable_candidates 가 더해진다."""
+    query_name, index_name = next((q, i) for d, q, i in DIRECTIONS if d == direction)
+    label = f'{direction}({path})'
+    if not isinstance(result.get('rankings'), list):
+        problems.add('match_rankings_required', label)
+        return None
+    side = cands['directions'][direction]
+    query_sha, index_sha = (side['query'] or {}).get('sha256'), (side['index'] or {}).get('sha256')
+    inputs = result.get('inputs') if isinstance(result.get('inputs'), dict) else {}
+    verified, source_summary = _batch_index_sources(direction, result, index_sha, label, problems)
+    products = (datasets[query_name]['product'], datasets[index_name]['product'])
+    query_rows = (side['query'] or {}).get('rows', {})
+    index_rows = (side['index'] or {}).get('rows', {})
+    table, unusable, unusable_candidates, seen_queries = {}, {}, {}, set()
+    for position, ranking in enumerate(result['rankings']):
+        where = f'{label} rankings[{position}]'
+        roi_id = ranking.get('query_roi_id') if isinstance(ranking, dict) else None
+        if not isinstance(roi_id, str) or not roi_id or not isinstance(ranking.get('candidates'), list):
+            problems.add('match_result_without_query_roi_id', where)
+            continue
+        if roi_id in seen_queries:
+            problems.add('match_duplicate_query_roi_id', f'{where}: {roi_id}')
+            continue
+        seen_queries.add(roi_id)
+        recorded = ranking.get('query_export_sha256')      # 데이터셋 질의에서는 inputs.query_export_sha256 이 null 이다
+        if recorded is None:
+            recorded = inputs.get('query_export_sha256')
+        if recorded is None:
+            problems.add('match_input_hash_missing', f'{where}: query_export_sha256')
+        elif query_sha is not None and recorded != query_sha:
+            problems.add('match_input_hash_mismatch', f'{where}: query_export_sha256 does not equal the candidates query export for {direction}')
+            continue
+        qrow = query_rows.get(roi_id)
+        if qrow is None or qrow.get('status') != 'ready':
+            problems.add('query_roi_not_ready_in_export', f'{where}: {roi_id}')
+            continue
+        centre = _centre(qrow.get('center_xy_um'))
+        if centre is None or ranking.get('query_product_id') != products[0]:
+            problems.add('match_query_does_not_match_export', f'{where}: {roi_id}')
+            continue
+        if not ranking['candidates']:
+            unusable[roi_id] = ['no_candidates']
+            continue
+        for entry in ranking['candidates']:
+            rank = entry.get('rank') if isinstance(entry, dict) else None
+            cand_centre = _centre(entry.get('center_xy_um')) if isinstance(entry, dict) else None
+            if (type(rank) is not int or rank < 1 or cand_centre is None or not isinstance(entry.get('frame_id'), str)
+                    or not isinstance(entry.get('product_id'), str) or not isinstance(entry.get('roi_id'), str)
+                    or not isinstance(entry.get('search_scope'), str)):
+                problems.add('match_candidate_malformed', f'{where}: rank={rank!r}')
+                continue
+            cid = candidate_id(direction, roi_id, rank)
+            if cid in table or cid in unusable_candidates:
+                problems.add('match_duplicate_candidate_id', cid)
+                continue
+            reason = _batch_candidate_problem(entry, products, verified)
+            if reason is not None:
+                unusable_candidates[cid] = {'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
+                                            'candidate_product_id': entry['product_id'], 'search_scope': entry['search_scope'],
+                                            'reason': reason}
+                continue
+            table[cid] = {'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
+                          'score': None, 'center_xy_um': cand_centre, 'frame_id': entry['frame_id'],
+                          'product_id': entry['product_id'], 'query_center_xy_um': centre,
+                          'query_frame_id': qrow.get('frame_id'),
+                          'flags': {'supplementary': True} if entry['search_scope'] == 'supplementary' else {},
+                          'score_gap': None, 'shared_with': [], 'template_sha256': None, 'reasons': [], 'query_row': qrow,
+                          'match_schema': BATCH_SCHEMA, 'search_scope': entry['search_scope'], 'candidate_roi_id': entry['roi_id']}
+    arguments = result.get('arguments') if isinstance(result.get('arguments'), dict) else {}
+    extra = {'match_schema': BATCH_SCHEMA, 'checkpoint_fingerprint': result.get('checkpoint_fingerprint'),
+             'view_fingerprint': result.get('view_fingerprint'), 'arguments': arguments,
+             **(source_summary or {}), 'index_sha256': inputs.get('index_sha256')}
+    return {'direction': direction, 'path': str(path), 'sha256': sha, 'table': table, 'unusable': unusable,
+            'unusable_candidates': unusable_candidates, 'n_queries': len(result['rankings']), 'index_rows': index_rows,
+            'implementation_revision': None, 'window_um': None, 'topk': arguments.get('topk'), 'self_check': None,
+            'inputs': {'query_export_sha256': query_sha, 'index_export_sha256': index_sha}, 'match_schema': BATCH_SCHEMA,
+            'sidecar_extra': extra}
+
+
 def _read_decisions(path, problems):
     try:
         data = Path(path).read_bytes()
@@ -318,7 +448,9 @@ def _classify_decisions(decisions, matches, problems):
             continue
         match = matches[direction]
         if cid not in match['table']:
-            if roi_id in match['unusable']:
+            if cid in match.get('unusable_candidates', {}):
+                problems.add('candidate_match_unavailable', f'{where}: {cid} ({match["unusable_candidates"][cid]["reason"]})')
+            elif roi_id in match['unusable']:
                 problems.add('candidate_match_unavailable', f'{where}: {cid} ({", ".join(match["unusable"][roi_id])})')
             else:
                 problems.add('unknown_candidate_id', f'{where}: {cid}')
@@ -457,7 +589,8 @@ def _provenance(item, decision, matches):
             'candidate_center_xy_um': item['center_xy_um'], 'candidate_frame_id': item['frame_id'],
             'query_center_xy_um': item['query_center_xy_um'], 'match_reasons': item['reasons'],
             'decision': decision['decision'], 'decision_note': decision['note'],
-            'match_file_sha256': match['sha256'], 'implementation_revision': match['implementation_revision']}
+            'match_file_sha256': match['sha256'], 'implementation_revision': match['implementation_revision'],
+            **({k: item[k] for k in ('match_schema', 'search_scope', 'candidate_roi_id')} if item.get('match_schema') else {})}
 
 
 def _write_text(path, text, track):
@@ -563,18 +696,26 @@ def list_candidates(cfg, candidates_dir, matches):
     _, _, loaded = _prepare(cfg, candidates_dir, matches, problems)
     problems.raise_if_any()
     listing = {'candidate_id_format': '<direction>:<query_roi_id>:r<rank>', 'candidates': [], 'unavailable_queries': []}
+    unavailable_candidates = []
     for direction in DIRECTION_NAMES:
         match = loaded.get(direction)
         if match is None:
             continue
         for cid in sorted(match['table']):
             item = match['table'][cid]
-            listing['candidates'].append({'candidate_id': cid, 'direction': direction, 'query_roi_id': item['query_roi_id'],
-                                          'rank': item['rank'], 'candidate_product_id': item['product_id'],
-                                          'candidate_frame_id': item['frame_id'], 'candidate_center_xy_um': item['center_xy_um'],
-                                          'flags': {k: v for k, v in sorted(item['flags'].items()) if k != 'score_gap'}})
+            entry = {'candidate_id': cid, 'direction': direction, 'query_roi_id': item['query_roi_id'],
+                     'rank': item['rank'], 'candidate_product_id': item['product_id'],
+                     'candidate_frame_id': item['frame_id'], 'candidate_center_xy_um': item['center_xy_um'],
+                     'flags': {k: v for k, v in sorted(item['flags'].items()) if k != 'score_gap'}}
+            if item.get('match_schema'):
+                entry['search_scope'] = item['search_scope']
+            listing['candidates'].append(entry)
         for roi_id, reasons in sorted(match['unusable'].items()):
             listing['unavailable_queries'].append({'direction': direction, 'query_roi_id': roi_id, 'reasons': reasons})
+        for cid, item in sorted(match.get('unusable_candidates', {}).items()):
+            unavailable_candidates.append(item)
+    if any(m.get('match_schema') for m in loaded.values()):
+        listing['unavailable_candidates'] = unavailable_candidates
     listing['n_candidates'] = len(listing['candidates'])
     return listing
 
@@ -651,8 +792,8 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
                           'undecided_and_rejected': 'never_in_correspondence'},
                'inputs': {'config_sha256': cfg.get('_config_sha256'),
                           'candidates_payload_sha256': cands['payload_sha256'], 'decisions_sha256': decisions['sha256'],
-                          'matches': {name: {k: m[k] for k in ('path', 'sha256', 'implementation_revision', 'window_um', 'topk',
-                                                               'self_check', 'inputs')}
+                          'matches': {name: {**{k: m[k] for k in ('path', 'sha256', 'implementation_revision', 'window_um', 'topk',
+                                                                   'self_check', 'inputs')}, **m.get('sidecar_extra', {})}
                                       for name, m in sorted(matches_loaded.items())}},
                'pairs': pair_records, 'merged_away': merged_away, 'warnings': normalised['warnings']}
     created_files, created_dirs = [], []
@@ -729,8 +870,10 @@ def _funnel(matches, chosen, entries, kept, merged):
                 blocked_total[code] = blocked_total.get(code, 0)+1
         dropped = sum(1 for _, pair in built if pair['pair_id'] in merged)
         ready = sum(1 for item, pair in kept if item['direction'] == direction and pair['status'] == 'ready')
-        stages = [{'stage': 'candidates_in_match_file', 'count': len(ids), 'reasons': {'queries_without_candidates': len(match['unusable'])}
-                   if match['unusable'] else {}},
+        stage_reasons = {'queries_without_candidates': len(match['unusable'])} if match['unusable'] else {}
+        if match.get('unusable_candidates'):
+            stage_reasons['unusable_candidates'] = len(match['unusable_candidates'])
+        stages = [{'stage': 'candidates_in_match_file', 'count': len(ids), 'reasons': stage_reasons},
                   {'stage': 'decided_accept', 'count': accept, 'reasons': {}},
                   {'stage': 'decided_reject', 'count': reject, 'reasons': {}},
                   {'stage': 'undecided', 'count': len(ids)-accept-reject, 'reasons': {}},

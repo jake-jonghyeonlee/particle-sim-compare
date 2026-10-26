@@ -39,7 +39,8 @@ ROLES = {'A': 'gate', 'B': 'data', 'C': 'data'}
 CHANGE = (slice(300, 320), slice(300, 330))
 CHANGE_CENTRE_UM = (50.0+315*PITCH, 50.0+310*PITCH)      # centre of CHANGE in reference coordinates
 PRODUCTS = {'reference': 'PROD_R', 'target': 'PROD_T'}
-ARGS = dict(search=3, min_dice=0.3, layer_tol=0.5, change_tol=0.2, window=10, overlap=0.5, top_k=3)
+ARGS = dict(search=3, min_dice=0.3, layer_tol=0.5, change_tol=0.2, window=10, overlap=0.5, top_k=3,
+            rule='between_stack_order_v1')
 
 
 def rect(y, x, h, w, shape=SHAPE):
@@ -193,7 +194,7 @@ def cli_args(config, out, dl1, **kw):
             '--align-search-um', str(a['search']), '--align-min-dice', str(a['min_dice']),
             '--align-layer-tolerance-um', str(a['layer_tol']), '--change-tolerance-um', str(a['change_tol']),
             '--window-um', str(a['window']), '--merge-overlap', str(a['overlap']), '--top-k', str(a['top_k']),
-            '--out', str(out)]
+            *(['--mask-derivation-rule', a['rule']] if a['rule'] is not None else []), '--out', str(out)]
 
 
 def run_change(world, out, **kw):
@@ -824,7 +825,7 @@ def test_runner_output_on_python39_equals_the_current_interpreter(world, tmp_pat
         text = (tmp_path/label/'job.log').read_text(encoding='utf-8')
         assert 'candidates-change exit 3' in text, (done.stderr, text[-2000:])
         outputs[label] = digests(out)
-    assert outputs['current'] == outputs['etx39'] and len(outputs['current']) == 12
+    assert outputs['current'] == outputs['etx39'] and len(outputs['current']) == 16        # + four mask_derivation.json
     for name in ('direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json', 'alignment.html'):   # same bytes on 3.9 and 3.11
         assert name in outputs['current']
         assert outputs['current'][name] == outputs['etx39'][name]
