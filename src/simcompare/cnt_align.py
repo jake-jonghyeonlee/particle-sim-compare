@@ -193,8 +193,13 @@ def _finish(result, reasons):
     return result
 
 
-def align_products(ref, tgt, *, pitch_um, search_um, min_dice, layer_tolerance_um, max_operation_bytes):
-    """Align ``tgt`` to ``ref``. Failure is a result (identity offset), never an exception; admission and invalid input raise."""
+def align_products(ref, tgt, *, pitch_um, search_um, min_dice, layer_tolerance_um, max_operation_bytes,
+                   reserved_bytes=0):
+    """Align ``tgt`` to ``ref``. Failure is a result (identity offset), never an exception; admission and invalid input raise.
+
+    ``reserved_bytes``: bytes the caller already holds (datasets, CNT layers, valid); subtracted from the limit."""
+    if type(reserved_bytes) is not int or reserved_bytes < 0:
+        raise NumericContractError('invalid_alignment_input', f'reserved_bytes must be a non-negative int, got {reserved_bytes!r}')
     if not isinstance(pitch_um, numbers.Real) or not math.isfinite(pitch_um) or pitch_um <= 0:
         raise NumericContractError('invalid_alignment_input', f'pitch_um must be positive, got {pitch_um!r}')
     if not isinstance(search_um, numbers.Real) or not math.isfinite(search_um) or search_um < 0:
@@ -246,10 +251,11 @@ def align_products(ref, tgt, *, pitch_um, search_um, min_dice, layer_tolerance_u
 
     need = estimate_alignment_bytes(valid_ref.shape, valid_tgt.shape, search_px, len(used))
     result['estimated_bytes'] = need
-    if need > max_operation_bytes:
+    if need > max_operation_bytes - reserved_bytes:
+        held = f' (+ {reserved_bytes} reserved)' if reserved_bytes else ''
         raise NumericContractError(
             'oversized_real_operation',
-            f'{need} > {max_operation_bytes}; lower --search-um, align a smaller frame, or raise the operation limit')
+            f'{need}{held} > {max_operation_bytes}; lower --search-um, align a smaller frame, or raise the operation limit')
 
     r = search_px
     size = (_fft_size(valid_ref.shape[0], valid_tgt.shape[0], r), _fft_size(valid_ref.shape[1], valid_tgt.shape[1], r))

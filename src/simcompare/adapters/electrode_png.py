@@ -191,6 +191,17 @@ def _scan_dl1_model(root: Path, model: str, prefix: str = ''):
     return {'electrodes': electrodes, 'cno': cno, 'warnings': warnings}
 
 
+def list_dl1_electrodes(root, model):
+    """DL1 root 의 모델 폴더(``<root>/<model>/<electrode>/``)에서 전극 폴더 이름을 정렬해 돌려준다(``cno`` 제외).
+
+    전극 PNG 가 하나도 없는 폴더는 세지 않는다. 모델 폴더가 없으면 빈 목록이다. 이름 규칙 위반은 ``_scan_dl1_model`` 과 같은 오류다.
+    """
+    root = Path(root)
+    if not (root / model).is_dir():
+        return []
+    return sorted(_scan_dl1_model(root, model)['electrodes'])
+
+
 def _check_stack_order(model, scan, stack_order):
     """With an order file every present name must match (casefold); collisions reject. Without one they warn."""
     names = sorted({r['layer'] for slot in scan['electrodes'].values() for r in slot.values()} |

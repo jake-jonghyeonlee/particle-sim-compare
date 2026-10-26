@@ -25,6 +25,10 @@ from .numeric_schema import NumericContractError
 DIAMETER_UM = 5
 ROI_SOURCE = 'cnt_change'
 ALIGNMENT_SCHEMA = 'cnt_alignment_v1'
+ELECTRODE_SET_BASIS = 'dl1_electrode_folders'
+DIRECT_SOURCE = {'kind': 'template_match', 'method': 'cnt_alignment_v1', 'version': '1'}
+DIRECT_SIDECAR_SCHEMA = 'direct_pairs_sidecar_v1'
+DIRECT_LIMITATION = 'compare-windows does not verify these input hashes'
 
 
 def _bad(code, detail=''):
@@ -131,10 +135,12 @@ def _sha_json(value):
 # --------------------------------------------------------------------------- CNT 변경 면적
 
 def _cnt_change_by_layer(window, ref_layers, tgt_layers, ref_valid, tgt_valid, offset_px, pitch):
-    """창 안, 정렬 후 CNT 층별 XOR 면적(µm²). 두 valid 가 겹치는 칸에서만 센다. CNT 가 없으면 {}."""
-    names = sorted(set(ref_layers) | set(tgt_layers))
-    if not names:
+    """창 안, 정렬 후 CNT 층별 XOR 면적(µm²). 두 valid 가 겹치는 칸에서만 센다.
+
+    한쪽 CNT 층이 비면 비교할 수 없으므로 {} 이다(호출자가 질의 flag ``cnt_change_unavailable`` 을 단다)."""
+    if not ref_layers or not tgt_layers:
         return {}
+    names = sorted(set(ref_layers) | set(tgt_layers))
     dx, dy = offset_px
     y0, x0 = window['window_origin_px']
     w = window['window_px']
@@ -150,6 +156,104 @@ def _cnt_change_by_layer(window, ref_layers, tgt_layers, ref_valid, tgt_valid, o
             b = np.zeros((w, w), bool)
         out[name] = round(int(np.count_nonzero((a ^ b) & domain)) * pitch * pitch, 6)
     return out
+
+
+# --------------------------------------------------------------------------- 직접 대응 (DL2 건너뛰기)
+
+def _valid_at(frame, center):
+    ix, iy = _cell(center, frame)
+    height, width = frame.valid.shape
+    return 0 <= ix < width and 0 <= iy < height and bool(frame.valid[iy, ix])
+
+
+def _direct_side(case, center, rows_by_key, frame):
+    """roi_correspondence_v1 의 한 side. source/process_step/exposure/unit 은 기여 case 값으로 채워 group 모호성을 막는다."""
+    identity = asdict(case.identity)
+    side = {'product_id': identity['product_id'], 'design_version': identity['design_version'],
+            'frame_id': identity['frame_id'], 'center_xy_um': list(center), 'analysis_layer': case.analysis_layer,
+            'failure_type': case.failure_type, 'endpoints': [asdict(e) for e in case.endpoints]}
+    for field in ('source_id', 'process_step_id', 'exposure_id'):
+        side[field] = identity[field]
+    unit_id = case.metadata.get('unit_id')
+    if unit_id:
+        side['unit_id'] = unit_id
+    row = rows_by_key.get(_row_key(identity, case.failure_type, case.analysis_layer, center, frame))
+    if row is not None and row.get('status') == 'ready':       # DL2 는 blocked ROI 를 색인하지 않으므로 ready 행만 잇는다
+        side['roi_id'] = row['roi_id']
+    return side, identity
+
+
+def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_index):
+    """(선정 ROI, 기여 case) 하나당 쌍 하나. 두 방향의 ROI 는 a=reference / b=target 으로 정규화한 뒤 같은 키를 하나로 합친다.
+
+    a 중심 = reference 쪽 ROI 중심, b 중심 = a + (원점 차이 + offset)(``_shift_um``, T6 의 target 방향 중심과 같은 식).
+    ready 쌍의 reasons 는 비어 있다: 정렬 불확실성은 사이드카에만 쓴다(bind_pairs 는 reasons 가 있으면 blocked 로 바꾼다).
+    """
+    failed = alignment['status'] == 'alignment_failed_identity_used'
+    found = {}
+    for query_name in ('reference', 'target'):
+        direction = plan[query_name]['direction']
+        for entry in plan[query_name]['entries']:
+            rep, window, i = entry['merge']['representative'], entry['window'], entry['index']
+            a_center = entry['ref_center']
+            b_center = [round(a_center[0] + shift[0], 6), round(a_center[1] + shift[1], 6)]
+            for contribution in contrib[i]['contributing_cases']:
+                pair = pair_by_key[contribution['case_key']]
+                a, a_identity = _direct_side(pair.ref_case, a_center, rows_index['reference'], ref.frame)
+                b, b_identity = _direct_side(pair.tgt_case, b_center, rows_index['target'], tgt.frame)
+                digest = _sha_json({
+                    'a': [sorted(a_identity.items()), a['analysis_layer'], a['failure_type'], _cell(a_center, ref.frame)],
+                    'b': [sorted(b_identity.items()), b['analysis_layer'], b['failure_type'], _cell(b_center, tgt.frame)]})
+                pair_id = 'direct_' + digest[:16]
+                if pair_id in found:
+                    found[pair_id]['directions'].add(direction)
+                    continue
+                flags = sorted(set(window['flags']) | set(contribution['flags']))
+                found[pair_id] = {'pair_id': pair_id, 'a': a, 'b': b, 'directions': {direction},
+                                  'score_um2': rep.score, 'score_layer': rep.layer, 'region_id': rep.region_id,
+                                  'observed_fraction': window['observed_fraction'], 'flags': flags,
+                                  'change_kind': contribution['classification'],
+                                  'residual_um2': contribution['residual_um2'], 'iou_global': contribution['iou_global'],
+                                  'iou_local': contribution['iou_local'],
+                                  'local_shift_um': contribution['local_shift_um']}
+    for record in found.values():
+        if failed:
+            reasons = ['alignment_failed']
+        else:
+            reasons = [name for name, frame, side in (('a', ref.frame, record['a']), ('b', tgt.frame, record['b']))
+                       if not _valid_at(frame, side['center_xy_um'])]
+            reasons = ['position_outside_valid_domain_' + name for name in reasons]
+        record['status'], record['reasons'] = ('blocked' if reasons else 'ready'), reasons
+    return sorted(found.values(), key=lambda r: (-r['score_um2'], r['a']['analysis_layer'],
+                                                  r['a']['center_xy_um'][0], r['a']['center_xy_um'][1], r['pair_id']))
+
+
+def _direct_documents(records, alignment, commit, inputs):
+    """(roi_correspondence_v1 문서, direct_pairs_sidecar_v1 문서). 시각·경로·호스트를 넣지 않아 출력이 결정적이다."""
+    from . import correspondence
+    payload = correspondence.validate_correspondence({
+        'schema_version': correspondence.SCHEMA_VERSION,
+        'producer': {'kind': 'template_match', 'version': '1', 'commit': commit, 'created_at': None},
+        'pairs': [{'pair_id': r['pair_id'], 'a': r['a'], 'b': r['b'], 'source': dict(DIRECT_SOURCE),
+                   'status': r['status'], 'reasons': r['reasons']} for r in records],
+        'notes': ['candidates-change direct pairs: b centre = a centre + alignment offset (see direct_pairs_sidecar.json)']})
+    payload.pop('warnings')
+    summary = {k: alignment[k] for k in ('status', 'reasons', 'offset_xy_um', 'offset_xy_px', 'dice_best', 'peak_ratio',
+                                         'pattern_period_vectors_um')}
+    summary['alternatives'] = list(alignment['alternatives'])[:5]
+    pairs = {}
+    for r in records:
+        pairs[r['pair_id']] = {
+            'status': r['status'], 'reasons': r['reasons'], 'offset_xy_um': list(alignment['offset_xy_um']),
+            'alignment_status': alignment['status'], 'alignment_reasons': list(alignment['reasons']),
+            'peak_ratio': alignment['peak_ratio'], 'score_um2': r['score_um2'], 'score_layer': r['score_layer'],
+            'region_id': r['region_id'], 'change_kind': r['change_kind'], 'residual_um2': r['residual_um2'],
+            'iou_global': r['iou_global'], 'iou_local': r['iou_local'], 'local_shift_um': r['local_shift_um'],
+            'observed_fraction': r['observed_fraction'], 'flags': r['flags'], 'directions': sorted(r['directions'])}
+    sidecar = {'schema_version': DIRECT_SIDECAR_SCHEMA, 'method': DIRECT_SOURCE['method'],
+               'sign': 'p_target = p_reference + offset', 'alignment': summary, 'inputs': inputs,
+               'limitations': [DIRECT_LIMITATION], 'pairs': pairs}
+    return payload, sidecar
 
 
 # --------------------------------------------------------------------------- funnel
@@ -181,9 +285,12 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k):
 def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um,
                           change_tolerance_um, window_um, merge_overlap, top_k):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
-    reference_index_export/, target_index_export/, execution.json 을 쓴다.
+    reference_index_export/, target_index_export/, direct/(roi_correspondence.json, direct_pairs_sidecar.json),
+    execution.json 을 쓴다.
 
-    입력·설정 오류는 폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알린다. 쓰는 도중 실패하면 이 실행이 만든
+    폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값, 이미 있는 출력 경로, config 종류·지름,
+    side 준비 결과, 제품·frame 개수, pitch 불일치, 정렬 탐색 반경(>= 2 x pitch), 창 크기(>= pitch, frame 보다 크지 않음).
+    CNT 읽기·정렬·메모리 한도(admission) 오류는 폴더를 만든 뒤에 나므로, 쓰는 도중 실패한 경우와 같이 이 실행이 만든
     파일과 폴더만 지운다. 이미 있는 출력 경로는 거부하고 건드리지 않는다.
     """
     from . import pipeline
@@ -214,6 +321,13 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         raise _bad('candidates_change_pitch_mismatch', f'{pitch} != {tgt.frame.pixel_pitch_um}')
     if float(align_search_um) < 2 * pitch - 1e-9:
         raise _bad('invalid_alignment_input', f'--align-search-um {align_search_um} < 2 x pitch ({2 * pitch})')
+    window_px = change_map._round_px(window_um, pitch)
+    height, width = ref.frame.valid.shape
+    if window_um < pitch - 1e-9 or window_px < 1:
+        raise _bad('invalid_candidates_change_argument', f'--window-um {window_um} < pitch ({pitch})')
+    if window_px > height or window_px > width:
+        raise _bad('invalid_candidates_change_argument',
+                   f'--window-um {window_um} ({window_px} px) does not fit the reference frame ({height} x {width} px)')
     limit = _operation_limit(sides)
     args = {'cnt_from_dl1_root': str(cnt_from_dl1_root), 'align_search_um': align_search_um,
             'align_min_dice': align_min_dice, 'align_layer_tolerance_um': align_layer_tolerance_um,
@@ -230,7 +344,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
 
 
 def _run(cfg, out, track, sides, products, pitch, limit, args):
-    from .adapters.electrode_png import load_cnt_layers
+    from .adapters.electrode_png import list_dl1_electrodes, load_cnt_layers
     from .adapters.real_hotspot import MAP_SLIM_ROW_BYTES, dataset_held_bytes
     from .roi_export import AssetMemo
     from . import cnt_align
@@ -240,11 +354,16 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
 
     # --- 2. CNT 정렬 (실패해도 진행: offset (0, 0))
     cnt = {name: load_cnt_layers(args['cnt_from_dl1_root'], item.product_id, item.frame) for name, item in products.items()}
+    # 이미 보유 중인 것(두 dataset, 양쪽 CNT 층 bool, 양쪽 valid)은 단계별 admission 한도에서 뺀다.
+    held = (sum(dataset_held_bytes(side.dataset) for side in sides.values())
+            + sum(int(layer.nbytes) for name in cnt for layer in cnt[name]['layers'].values())
+            + int(ref.frame.valid.nbytes) + int(tgt.frame.valid.nbytes))
+    reserved = int(held)
     alignment = cnt_align.align_products(
         {'valid': ref.frame.valid, 'layers': cnt['reference']['layers']},
         {'valid': tgt.frame.valid, 'layers': cnt['target']['layers']},
         pitch_um=pitch, search_um=args['align_search_um'], min_dice=args['align_min_dice'],
-        layer_tolerance_um=args['align_layer_tolerance_um'], max_operation_bytes=limit)
+        layer_tolerance_um=args['align_layer_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved)
     cnt_inputs = {name: {'product_id': products[name].product_id, 'files': cnt[name]['files'],
                          'warnings': cnt[name]['warnings']} for name in products}
     alignment_doc = {**alignment, 'schema_version': ALIGNMENT_SCHEMA, 'pitch_um': pitch, 'cnt_inputs': cnt_inputs,
@@ -273,17 +392,19 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         warnings.append({'code': code})
     # 같은 역할의 전극은 두 모델에서 같은 이름이다. 전극이 늘거나 줄었으면 회로 자체가 바뀐 것이라 비교 대상이 아니다:
     # 경고만 남기고 계산은 계속한다. 한쪽 전극만 관여하는 case 는 cases_only_in_* 에 남고 ROI 후보가 되지 않는다.
-    names = {name: {ep.electrode_id for case in sides[name].dataset.cases for ep in case.endpoints} for name in sides}
+    # 기준은 case endpoints 가 아니라 DL1 root 의 모델별 전극 폴더 이름이다(기대 case 는 두 모델의 합집합이라
+    # case 목록으로는 전극 추가·삭제가 가려지거나 거짓 경고가 난다).
+    names = {name: set(list_dl1_electrodes(args['cnt_from_dl1_root'], products[name].product_id)) for name in products}
     if names['reference'] != names['target']:
-        warnings.append({'code': 'electrode_set_differs',
+        warnings.append({'code': 'electrode_set_differs', 'electrode_set_basis': ELECTRODE_SET_BASIS,
                          'reference_only': sorted(names['reference'] - names['target']),
                          'target_only': sorted(names['target'] - names['reference'])})
     maps = change_map.change_maps(pairs, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px,
                                   pitch_um=pitch, tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit,
-                                  window_um=window_um)
+                                  window_um=window_um, reserved_bytes=reserved)
     found = change_map.window_candidates(
         maps['maps'], maps['D'], pitch_um=pitch, window_um=window_um, max_operation_bytes=limit,
-        origin_xy_um=(ref.frame.origin_xy_um[0], ref.frame.origin_xy_um[1]))
+        origin_xy_um=(ref.frame.origin_xy_um[0], ref.frame.origin_xy_um[1]), reserved_bytes=reserved)
     map_stats = maps['stats']
     del maps
     by_id, merged = {}, []
@@ -303,7 +424,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # --- 5. 기여 case (두 번째 패스) + CNT 변경 면적
     contrib = change_map.case_contributions(
         pairs, windows, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
-        tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit)['windows']
+        tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved)['windows']
     cnt_change = [_cnt_change_by_layer(w, cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
                                        tgt.frame.valid, offset_px, pitch) for w in windows]
 
@@ -328,7 +449,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                           'failure_type': case.failure_type})
                 if key not in keys:
                     keys.append(key)
-            entries.append({'merge': merge, 'window': window, 'center': center, 'keys': keys, 'index': i})
+            entries.append({'merge': merge, 'window': window, 'center': center, 'keys': keys, 'index': i,
+                            'ref_center': [float(rep.center_xy_um[0]), float(rep.center_xy_um[1])]})
         plan[query_name] = {'direction': direction, 'index_name': index_name, 'entries': entries,
                             'requests': [requests[k] for k in sorted(requests)]}
 
@@ -359,7 +481,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     memo = None
 
     # --- 8. 연결: 요청 키 → 반환 행
-    directions, funnels = [], []
+    directions, funnels, rows_index = [], [], {}
     n_candidates, n_merged = len(found['candidates']), len(merged)
     for direction, query_name, index_name in candidates.DIRECTIONS:
         side, item = sides[query_name], products[query_name]
@@ -370,6 +492,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 continue
             rows_by_key[_row_key(row['source_identity'], row.get('failure_type'), row.get('analysis_layer'), center,
                                  item.frame)] = row
+        rows_index[query_name] = rows_by_key
         queries = []
         for entry in plan[query_name]['entries']:
             rep, members, window = entry['merge']['representative'], entry['merge']['members'], entry['window']
@@ -398,6 +521,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 flags.append('merged_member_window_clipped')
             if len(rows) > len(ready) and ready:
                 flags.append('roi_rows_partially_blocked')
+            if not cnt_change[i]:
+                flags.append('cnt_change_unavailable')
             queries.append({
                 'query_id': candidates._query_id(direction, rep.region_id), 'product_id': item.product_id,
                 'design_version': item.design_version, 'frame_id': item.frame_id,
@@ -449,6 +574,18 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                              'reasons': sorted(coverage[name]['blocked_reasons']),
                              'missing_by_role_layer': coverage[name]['missing_by_role_layer']})
 
+    # --- 직접 대응 쌍 (DL2 건너뛰기): 파일은 아래 문서 단계에서 쓴다. blocked 쌍은 경고로 남겨 종료 코드 3 이 된다.
+    direct_records = _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_index)
+    direct_ready = sum(r['status'] == 'ready' for r in direct_records)
+    direct_blocked = len(direct_records) - direct_ready
+    if direct_blocked:
+        counts = {}
+        for r in direct_records:
+            for code in r['reasons']:
+                counts[code] = counts.get(code, 0) + 1
+        warnings.append({'code': 'direct_pairs_blocked', 'count': direct_blocked, 'reasons': dict(sorted(counts.items())),
+                         'detail': 'these pairs are blocked; use the DL2 route (reference_export / target_export) for them'})
+
     # --- 9~12. 문서
     inputs = {'config_sha256': cfg.get('_config_sha256'),
               'reference': {**sides['reference'].input_record, 'product_ids': sides['reference'].product_ids},
@@ -465,7 +602,17 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     complete = (not warnings and all(q['status'] == 'ready' and q['n_rois'] == q['n_rois_ready'] for q in all_queries)
                 and all(s.status == 'available' for s in sides.values()))
     funnel_doc = {'schema_version': 'candidate_funnel_v1', 'directions': funnels, 'top_k': top_k,
-                  'top_k_scope': 'per_direction', 'index_coverage': coverage}
+                  'top_k_scope': 'per_direction', 'index_coverage': coverage,
+                  'direct_pairs_ready': direct_ready, 'direct_pairs_blocked': direct_blocked}
+    exec_inputs = {'config_sha256': inputs['config_sha256'],
+                   'reference': {k: sides['reference'].input_record.get(k)
+                                 for k in ('manifest_sha256', 'asset_manifest', 'electrode_import_record')},
+                   'target': {k: sides['target'].input_record.get(k)
+                              for k in ('manifest_sha256', 'asset_manifest', 'electrode_import_record')},
+                   'cnt': inputs['cnt']}
+    direct_doc, direct_sidecar = _direct_documents(direct_records, alignment, commit, exec_inputs)
+    direct_summary = {'correspondence': 'direct/roi_correspondence.json', 'sidecar': 'direct/direct_pairs_sidecar.json',
+                      'pairs_ready': direct_ready, 'pairs_blocked': direct_blocked}
     match_inputs = {direction: {'query': f'{query_name}_export', 'index': f'{index_name}_index_export'}
                     for direction, query_name, index_name in candidates.DIRECTIONS}
     roles = set()
@@ -484,8 +631,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                               'cases_excluded': pairing['cases_excluded'],
                               'cases_only_in_reference': pairing['cases_only_in_reference'],
                               'cases_only_in_target': pairing['cases_only_in_target']},
-               'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'warnings': warnings, 'notes': notes,
-               'match_inputs': match_inputs, 'dl2_model_roles': dl2_model_roles,
+               'electrode_set_basis': ELECTRODE_SET_BASIS,
+               'inputs': inputs, 'directions': directions, 'funnel': funnel_doc, 'direct': direct_summary,
+               'warnings': warnings, 'notes': notes, 'match_inputs': match_inputs, 'dl2_model_roles': dl2_model_roles,
                'match_files': {d: {k: f'{v}/review_rois.json' for k, v in item.items()}
                                for d, item in match_inputs.items()},
                'status': 'available' if complete else 'partial',
@@ -501,6 +649,10 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     emit('funnel.json', json.dumps(funnel_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     candidates.write_funnel_csv(out / 'funnel.csv', funnels, coverage, track)
     outputs.append('funnel.csv')
+    (out / 'direct').mkdir()
+    track(out / 'direct', is_dir=True)
+    emit('direct/roi_correspondence.json', json.dumps(direct_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+    emit('direct/direct_pairs_sidecar.json', json.dumps(direct_sidecar, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     for name, side in sides.items():
         if side.export_path is not None:
             for item in sorted(Path(p).name for p in side.exported.get('outputs', [])):
@@ -516,15 +668,10 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
               'index_coverage': {n: {k: c[k] for k in ('dataset_cases', 'index_rois_ready', 'index_rois_blocked',
                                                       'electrodes_covered', 'electrodes_total')}
                                  for n, c in coverage.items()},
+              'direct': direct_summary,
               'match_inputs': match_inputs, 'match_files': payload['match_files'], 'dl2_model_roles': dl2_model_roles}
     execution = {'command': 'candidates-change', 'args': {**change_args, 'max_operation_bytes': limit},
-                 'inputs': {'config_sha256': inputs['config_sha256'],
-                            'reference': {k: sides['reference'].input_record.get(k)
-                                          for k in ('manifest_sha256', 'asset_manifest', 'electrode_import_record')},
-                            'target': {k: sides['target'].input_record.get(k)
-                                       for k in ('manifest_sha256', 'asset_manifest', 'electrode_import_record')},
-                            'cnt': inputs['cnt']},
-                 'warnings': warnings, **result}
+                 'inputs': exec_inputs, 'warnings': warnings, **result}
     candidates.write_text(out / 'execution.json', json.dumps(execution, ensure_ascii=False, indent=2) + '\n', track)
     result['outputs'] = sorted(result['outputs'] + ['execution.json'])
     return result

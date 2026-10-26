@@ -254,11 +254,15 @@ def estimate_change_map_bytes(ref_shape, tgt_shape, n_layers, window_px, toleran
     return int(max(first, second))
 
 
-def _check_admission(need, limit):
-    if limit is not None and need > limit:
+def _check_admission(need, limit, reserved_bytes=0):
+    """``reserved_bytes``: 호출자가 이미 보유 중인 바이트(두 dataset, CNT 층, valid 등). 한도에서 뺀다."""
+    if type(reserved_bytes) is not int or reserved_bytes < 0:
+        raise _bad(f'reserved_bytes must be a non-negative int, got {reserved_bytes!r}')
+    if limit is not None and need > limit - reserved_bytes:
+        held = f' (+ {reserved_bytes} reserved)' if reserved_bytes else ''
         raise NumericContractError(
             'oversized_real_operation',
-            f'{need} > {limit}; use a smaller frame or window, lower --tolerance-um, or raise the operation limit')
+            f'{need}{held} > {limit}; use a smaller frame or window, lower --tolerance-um, or raise the operation limit')
 
 
 def _round_px(value_um, pitch_um):
@@ -393,13 +397,14 @@ def _load_checked(pair, ref_shape, tgt_shape):
 
 
 def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolerance_um, max_operation_bytes,
-                window_um=None):
+                window_um=None, reserved_bytes=0):
     """analysis_layer 별 ``uint32`` 변경 지도(R 누적), 비교 영역 D, 통계를 돌려준다.
 
     pairs_iter: ``layer``·``case_key``·``load()`` 를 가진 쌍(``CasePair``/``MaskPair``)의 iterable. 쌍마다 한 번만 읽는다.
     r = round(tolerance_um / pitch_um) px(반올림은 .5 올림). 팽창은 frame 전체에서 하고 D 로 자른다.
     window_um 을 주면 admission 이 창 후보 단계(적분 영상)까지 포함해 검사한다. 한도를 넘으면 할당 전에
     ``oversized_real_operation``. 층의 쌍 수가 2^32 이상이면 ``change_map_counter_overflow``.
+    reserved_bytes: 호출자가 이미 보유한 바이트. 한도에서 뺀 값과 비교한다(기본 0 = 이전 동작).
     반환: ``{'maps': {layer: uint32 지도}, 'D': bool, 'stats': {...}}``.
     """
     _check_scalar(pitch_um, tolerance_um, window_um)
@@ -410,7 +415,7 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     r = _round_px(tolerance_um, pitch_um)
     window_px = 0 if window_um is None else _round_px(window_um, pitch_um)
     need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), window_px, r)
-    _check_admission(need, max_operation_bytes)
+    _check_admission(need, max_operation_bytes, reserved_bytes)
     per_layer = {layer: 0 for layer in layers}
     for pair in pairs:
         per_layer[pair.layer] += 1
@@ -481,7 +486,8 @@ def _local_max_grid(grid):
     return keep
 
 
-def window_candidates(maps, D, *, pitch_um, window_um, max_operation_bytes, origin_xy_um=(0.0, 0.0)):
+def window_candidates(maps, D, *, pitch_um, window_um, max_operation_bytes, origin_xy_um=(0.0, 0.0),
+                      reserved_bytes=0):
     """층별 W×W 창 합(``score_um2 = 창 합 × pitch²``)과 극대 창 후보.
 
     W = round(window_um / pitch_um) px, stride = max(1, W // 4). 후보 = stride 격자에서 8-이웃 격자점보다 크거나 같고
@@ -500,7 +506,8 @@ def window_candidates(maps, D, *, pitch_um, window_um, max_operation_bytes, orig
     for layer, arr in maps.items():
         if np.shape(arr) != domain.shape:
             raise _bad(f'map {layer} shape {np.shape(arr)} != D shape {domain.shape}')
-    _check_admission(estimate_change_map_bytes(domain.shape, domain.shape, len(maps), w, 0), max_operation_bytes)
+    _check_admission(estimate_change_map_bytes(domain.shape, domain.shape, len(maps), w, 0), max_operation_bytes,
+                     reserved_bytes)
     stride = max(1, w // 4)
     ox, oy = float(origin_xy_um[0]), float(origin_xy_um[1])
     observed = _window_sums(domain, w)[::stride, ::stride].copy()
@@ -575,7 +582,7 @@ def _classify(a_w, b_w, w_px, pitch_um):
 
 
 def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, pitch_um, tolerance_um,
-                       max_operation_bytes):
+                       max_operation_bytes, reserved_bytes=0):
     """선정된 창(``window_candidates`` 후보 dict 목록)마다, 창 안 R > 0 인 case 를 기여 case 로 모으고 변경 종류를 분류한다.
 
     case 를 한 장씩 다시 읽는다(두 번째 패스). 창 둘레 r 픽셀을 포함한 잘라낸 영역에서 잔차를 계산하므로 frame 전체
@@ -601,7 +608,7 @@ def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, 
     layers = sorted({window['layer'] for window in windows})
     # 이 패스는 층별 uint32 지도와 적분 영상을 만들지 않는다: 1단계 추정(window_px=0)만 검사한다.
     need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), 0, r)
-    _check_admission(need, max_operation_bytes)
+    _check_admission(need, max_operation_bytes, reserved_bytes)
     domain = _erode(_comparison_domain(ref_valid, tgt_valid, dy, dx), r)
     by_layer = {}
     for index, window in enumerate(windows):

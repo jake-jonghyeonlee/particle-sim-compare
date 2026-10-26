@@ -94,8 +94,11 @@ def hotspot_masks(side, extra_target_case=False):
     return masks
 
 
-def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False):
-    """hotspot tree -> import-hotspots -> import-electrode-assets -> one data_dir; returns (data_dir, assignment)."""
+def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False, dl1_electrodes=None):
+    """hotspot tree -> import-hotspots -> import-electrode-assets -> one data_dir; returns (data_dir, assignment).
+
+    The DL1 root also gets one electrode folder per electrode name (default: A, B, C and D when the target has the extra
+    case); candidates-change compares those folder names to decide whether the electrode set differs."""
     product = PRODUCTS[side]
     root = base/f'hotspot_{side}'
     masks = hotspot_masks(side, extra_target_case)
@@ -137,6 +140,10 @@ def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_ca
                  '--cnt-from-dl1-root', str(dl1), '--source-version', 'layout_v1', '--max-asset-memory-mb', '512',
                  '--out', str(adapter)])
     assert code == 0
+    if dl1_electrodes is None:
+        dl1_electrodes = ['A', 'B', 'C'] + (['D'] if CASE_AD in masks else [])
+    for electrode in dl1_electrodes:      # written after the import: only the folder names matter to candidates-change
+        save_black(dl1/product/electrode/'1-L1.png', rect(0, 0, 4, 4))
     data = base/f'data_{side}'
     shutil.copytree(imported, data)
     (data/'assets').mkdir(exist_ok=True)
@@ -505,7 +512,9 @@ def test_electrode_set_difference_warns_lists_the_one_sided_case_and_exits_three
     printed = json.loads(capsys.readouterr().out)
     payload = load(out)
     differs = [w for w in payload['warnings'] if w['code'] == 'electrode_set_differs']
-    assert differs == [{'code': 'electrode_set_differs', 'reference_only': [], 'target_only': ['D']}]
+    assert differs == [{'code': 'electrode_set_differs', 'electrode_set_basis': 'dl1_electrode_folders',
+                        'reference_only': [], 'target_only': ['D']}]
+    assert payload['electrode_set_basis'] == 'dl1_electrode_folders'
     assert load(out, 'execution.json')['warnings'] == payload['warnings'] and 'electrode_set_differs' in printed['reasons']
     assert [w['code'] for w in payload['warnings']] == ['electrode_set_differs']       # nothing else is partial
     assert payload['status'] == 'partial' and payload['alignment']['status'] == 'aligned'
@@ -517,6 +526,125 @@ def test_electrode_set_difference_warns_lists_the_one_sided_case_and_exits_three
         assert query['status'] == 'ready' and query['n_rois'] == query['n_rois_ready'] == 2
     same = json.loads((out/'candidate_queries_v1.json').read_text())['funnel']['index_coverage']
     assert same['target']['dataset_cases'] == 3 and same['reference']['dataset_cases'] == 2
+
+
+# --- T6 review follow-ups (adv:1..4) ---------------------------------------------------------------------------------
+
+def test_held_bytes_are_reserved_from_every_stage_limit(world, tmp_path, monkeypatch, capsys):
+    """Each stage gets reserved_bytes (datasets + CNT layers + valid). A limit that only the unreserved need fits is refused;
+    need + reserved per stage is accepted."""
+    from simcompare import change_map, cnt_align
+    seen = {}
+
+    def spy(module, name, need_of):
+        original = getattr(module, name)
+
+        def wrapper(*args, **kwargs):
+            result = original(*args, **kwargs)
+            seen[name] = (need_of(result, kwargs), kwargs['reserved_bytes'])
+            return result
+        monkeypatch.setattr(module, name, wrapper)
+    spy(cnt_align, 'align_products', lambda r, kw: r['estimated_bytes'])
+    spy(change_map, 'change_maps', lambda r, kw: r['stats']['estimated_bytes'])
+    spy(change_map, 'window_candidates',
+        lambda r, kw: change_map.estimate_change_map_bytes((SHAPE[0], SHAPE[1]), (SHAPE[0], SHAPE[1]), 3, r['window_px'], 0))
+    spy(change_map, 'case_contributions', lambda r, kw: r['stats']['estimated_bytes'])
+    assert run_change(world, tmp_path/'first') == 3
+    assert set(seen) == {'align_products', 'change_maps', 'window_candidates', 'case_contributions'}
+    assert all(reserved > 0 for _, reserved in seen.values())
+    assert len({reserved for _, reserved in seen.values()}) == 1
+    unreserved = max(need for need, _ in seen.values())
+    exact = max(need + reserved for need, reserved in seen.values())
+    capsys.readouterr()
+    monkeypatch.setattr(change_candidates, '_operation_limit', lambda sides: unreserved)
+    refused = tmp_path/'refused'
+    assert run_change(world, refused) == 2 and not refused.exists()
+    assert 'oversized_real_operation' in capsys.readouterr().err
+    monkeypatch.setattr(change_candidates, '_operation_limit', lambda sides: exact)
+    assert run_change(world, tmp_path/'accepted') == 3
+
+
+def test_reserved_bytes_default_keeps_the_old_admission_and_rejects_bad_values():
+    from simcompare import change_map, cnt_align
+    from simcompare.numeric_schema import NumericContractError
+    valid = np.ones((60, 60), bool)
+    need = change_map.estimate_change_map_bytes(valid.shape, valid.shape, 0, 10, 0)
+    maps = {'L1': np.zeros(valid.shape, np.uint32)}
+    kwargs = dict(pitch_um=0.1, window_um=1.0)
+    change_map.window_candidates({}, valid, max_operation_bytes=need, **kwargs)
+    change_map.window_candidates({}, valid, max_operation_bytes=need, reserved_bytes=0, **kwargs)
+    with pytest.raises(NumericContractError) as caught:
+        change_map.window_candidates({}, valid, max_operation_bytes=need, reserved_bytes=1, **kwargs)
+    assert caught.value.code == 'oversized_real_operation'
+    for bad in (-1, 1.5, True):
+        with pytest.raises(NumericContractError):
+            change_map.window_candidates(maps, valid, max_operation_bytes=need * 10, reserved_bytes=bad, **kwargs)
+    layers = {'CNT1': rect(10, 10, 5, 5, (60, 60))}
+    side = {'valid': valid, 'layers': layers}
+    align = dict(pitch_um=0.1, search_um=0.5, min_dice=0.1, layer_tolerance_um=0.1)
+    probe = cnt_align.align_products(side, side, max_operation_bytes=10**12, **align)
+    cnt_align.align_products(side, side, max_operation_bytes=probe['estimated_bytes'], **align)
+    with pytest.raises(NumericContractError) as caught:
+        cnt_align.align_products(side, side, max_operation_bytes=probe['estimated_bytes'], reserved_bytes=1, **align)
+    assert caught.value.code == 'oversized_real_operation'
+
+
+def test_one_sided_cnt_gives_no_cnt_change_and_a_flag(world, tmp_path):
+    only_reference = tmp_path/'dl1_ref_only'
+    shutil.copytree(world.dl1/PRODUCTS['reference'], only_reference/PRODUCTS['reference'])
+    out = tmp_path/'out'
+    assert run_change(world, out, dl1=only_reference) == 3
+    payload = load(out)
+    assert payload['alignment']['status'] == 'alignment_failed_identity_used'
+    for direction in payload['directions']:
+        assert direction['queries']
+        for query in direction['queries']:
+            assert query['cnt_change_um2_by_layer'] == {} and 'cnt_change_unavailable' in query['flags']
+
+
+def test_electrode_set_compares_dl1_folders_not_case_endpoints(tmp_path_factory, capsys):
+    # (a) a folder only the target has, identical cases: warns and exits 3
+    base = tmp_path_factory.mktemp('folder_only')
+    datas, assignments = {}, {}
+    for side in ('reference', 'target'):
+        datas[side], assignments[side] = build_product(base, side, dl1_electrodes=['A', 'B', 'C'] + (['E'] if side == 'target' else []))
+    config = write_config(base, datas, assignments, map_spec={'diameter_um': 5})
+    capsys.readouterr()
+    assert main(cli_args(config, base/'out', base/'dl1', top_k=1)) == 3
+    payload = load(base/'out')
+    assert [w for w in payload['warnings'] if w['code'] == 'electrode_set_differs'] == [
+        {'code': 'electrode_set_differs', 'electrode_set_basis': 'dl1_electrode_folders', 'reference_only': [], 'target_only': ['E']}]
+    assert payload['change_map']['cases_only_in_target'] == [] and payload['change_map']['cases_only_in_reference'] == []
+    # (b) a case only the target has, but the folders match: no warning, exit 0
+    base = tmp_path_factory.mktemp('case_only')
+    datas, assignments = {}, {}
+    for side in ('reference', 'target'):
+        datas[side], assignments[side] = build_product(base, side, extra_target_case=True, dl1_electrodes=['A', 'B', 'C', 'D'])
+    config = write_config(base, datas, assignments, map_spec={'diameter_um': 5})
+    capsys.readouterr()
+    assert main(cli_args(config, base/'out', base/'dl1', top_k=1)) == 0
+    payload = load(base/'out')
+    assert payload['warnings'] == [] and [c['case_key'] for c in payload['change_map']['cases_only_in_target']] == [
+        'lateral_short|A|L1|D|L1|L1']
+
+
+def test_list_dl1_electrodes_names_only(tmp_path):
+    from simcompare.adapters.electrode_png import list_dl1_electrodes
+    root = tmp_path/'dl1'
+    for folder in ('B', 'A', 'cno'):
+        save_black(root/'M'/folder/('1_CNT1.png' if folder == 'cno' else '1-L1.png'), rect(0, 0, 2, 2))
+    assert list_dl1_electrodes(root, 'M') == ['A', 'B'] and list_dl1_electrodes(root, 'missing') == []
+
+
+def test_window_checks_run_before_any_output_is_started(world, tmp_path, monkeypatch, capsys):
+    def boom():
+        raise AssertionError('output tracking started before the argument checks')
+    monkeypatch.setattr(candidates, 'output_tracker', boom)
+    for window in (PITCH/2, 100.0):          # smaller than a pixel / larger than the 40 x 42 um frame
+        out = tmp_path/f'out_{window}'
+        capsys.readouterr()
+        assert run_change(world, out, window=window) == 2
+        assert 'invalid_candidates_change_argument' in capsys.readouterr().err and not out.exists()
 
 
 # --- the single-file runner: same bytes on the ETX interpreter (Python 3.9) --------------------------------------------
@@ -537,7 +665,9 @@ def test_runner_output_on_python39_equals_the_current_interpreter(world, tmp_pat
         text = (tmp_path/label/'job.log').read_text(encoding='utf-8')
         assert 'candidates-change exit 3' in text, (done.stderr, text[-2000:])
         outputs[label] = digests(out)
-    assert outputs['current'] == outputs['etx39'] and len(outputs['current']) == 9
+    assert outputs['current'] == outputs['etx39'] and len(outputs['current']) == 11
+    for name in ('direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json'):    # same bytes on 3.9 and 3.11
+        assert outputs['current'][name] == outputs['etx39'][name]
     assert not ENVIRONMENT_FIELDS
     in_tree = tmp_path/'in_tree'
     assert run_change(world, in_tree) == 3
@@ -546,4 +676,5 @@ def test_runner_output_on_python39_equals_the_current_interpreter(world, tmp_pat
                        'reference_index_export/review_rois.json', 'target_index_export/review_rois.json',
                        'reference_export/review_rois.csv', 'target_export/review_rois.csv',
                        'reference_index_export/review_rois.csv', 'target_index_export/review_rois.csv',
+                       'direct/roi_correspondence.json',
                        'candidate_queries_v1.json', 'execution.json'}     # only the exporter's producer_commit differs
