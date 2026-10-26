@@ -2,6 +2,17 @@
 
 영역 계산·export는 기존 코드(compute_electrode_maps, export_review_rois)를 그대로 쓴다.
 CA·delta·점수·상호(mutual/one_way) 표시는 하지 않는다(T3 이후). 확정되지 않은 후보는 수치에 들어가지 않는다.
+
+공용 함수(다른 단계가 재사용한다):
+- merge_regions(regions, window_um, overlap, rank_key=None): 창 겹침 병합, rank_key 로 대표 순위 지정.
+- RegionInfo.score: 점수 기반 후보가 순위 값을 싣는 선택 필드.
+- prepare_side(cfg, name, diameter_um, reserved_bytes=0): electrode map 없이 side 준비.
+- export_manual_rows(cfg, side, requests, folder, diameter_um, track, memo, reserved_bytes, min_count=None): manual ROI export + role gate.
+- export_index(cfg, side, folder, diameter_um, track, memo, reserved_bytes, min_count=None): index export.
+- index_coverage(side): index export 의 전극 coverage 표.
+- build_funnel(direction, n_regions, n_merged, n_cut, queries, max_candidates): 깔때기 한 방향.
+- output_tracker(): (track, cleanup) 이 실행이 만든 파일·폴더만 기록·정리.
+- write_text(path, text, track), write_funnel_csv(path, funnels, coverage, track): 출력 쓰기.
 """
 from __future__ import annotations
 
@@ -33,6 +44,7 @@ class RegionInfo:
     area_um2: float
     layer: str
     frame_bbox_um: tuple
+    score: object = None  # 선택: 점수 기반 후보의 순위 값. 기본 순위(_rank_key)는 읽지 않는다.
 
 
 def window_bounds(center, window_um):
@@ -57,11 +69,13 @@ def _rank_key(info):
     return -info.max_count, -info.area_um2, info.region_id
 
 
-def merge_regions(regions, window_um, overlap):
-    """R3: region_id 순서의 union-find(전이적). 대표 = max_count↑, area↑, region_id↑ 순으로 첫 번째.
+def merge_regions(regions, window_um, overlap, rank_key=None):
+    """R3: region_id 순서의 union-find(전이적). 대표 = rank_key 가 가장 작은 영역(기본 max_count↑, area↑, region_id↑).
 
-    반환: [{'representative': RegionInfo, 'members': [RegionInfo...(region_id 순)]}], 대표 순위(max_count↓...) 정렬.
+    반환: [{'representative': RegionInfo, 'members': [RegionInfo...(region_id 순)]}], 대표 순위 정렬.
     """
+    if rank_key is None:
+        rank_key = _rank_key
     ordered = sorted(regions, key=lambda r: r.region_id)
     parent = list(range(len(ordered)))
 
@@ -89,8 +103,8 @@ def merge_regions(regions, window_um, overlap):
     components = {}
     for index, info in enumerate(ordered):
         components.setdefault(find(index), []).append(info)
-    merged = [{'representative': min(members, key=_rank_key), 'members': members} for members in components.values()]
-    return sorted(merged, key=lambda m: _rank_key(m['representative']))
+    merged = [{'representative': min(members, key=rank_key), 'members': members} for members in components.values()]
+    return sorted(merged, key=lambda m: rank_key(m['representative']))
 
 
 def _sha256_file(path):
@@ -168,9 +182,11 @@ def _slim_rows(rows):
     return slim
 
 
-def _prepare(cfg, name, min_count, diameter_um, reserved_bytes=0):
+def prepare_side(cfg, name, diameter_um, reserved_bytes=0):
+    """electrode map 없이 한 제품의 side(데이터셋·frame·입력 기록·product_ids·role gate 입력)를 만든다.
+
+    diameter_um·reserved_bytes 는 map 계산에만 쓰이므로 여기서는 받기만 한다(호출 형태를 _prepare 와 맞춘다)."""
     from simcompare import pipeline
-    from simcompare.electrode_map import compute_electrode_maps
     from simcompare.numeric_images import resolve_path
     from simcompare.numeric_schema import NumericContractError
     side = _Side(name)
@@ -200,6 +216,13 @@ def _prepare(cfg, name, min_count, diameter_um, reserved_bytes=0):
                              manifest_sha256=_sha256_file(resolve_path(Path(side.root), manifest_path)),
                              dataset_input_hash=side.dataset.provenance.get('input_hash'),
                              source_kind='real_hotspot_v1' if real is not None else 'numeric_v2')
+    side.product_ids = sorted({c.identity.product_id for c in side.dataset.cases})
+    return side
+
+
+def _prepare(cfg, name, min_count, diameter_um, reserved_bytes=0):
+    from simcompare.electrode_map import compute_electrode_maps
+    side = prepare_side(cfg, name, diameter_um, reserved_bytes)
     if side.status == 'available':
         side.maps = compute_electrode_maps(side.dataset, diameter_um=diameter_um, min_count=min_count,
                                            reserved_bytes=reserved_bytes)
@@ -240,8 +263,10 @@ def _do_export(cfg, side, selections, folder, min_count, diameter_um, track, mem
             track(folder, is_dir=True)
             for name in ('review_rois.json', 'review_rois.csv'):
                 track(folder/name)
-            derived = {**cfg, 'map': {'input': side.section, 'diameter_um': diameter_um, 'min_count': min_count},
-                       'review_rois': selections}
+            spec = {'input': side.section, 'diameter_um': diameter_um}
+            if min_count is not None:
+                spec['min_count'] = min_count
+            derived = {**cfg, 'map': spec, 'review_rois': selections}
             result = pipeline._real_roi_export(derived, folder, side.real, derived['map'],
                                                prepared=(side.root, side.dataset, side.maps))
         else:
@@ -257,6 +282,11 @@ def _do_export(cfg, side, selections, folder, min_count, diameter_um, track, mem
         payload = {'status': result['status'], 'reasons': list(result.get('reasons', [])), 'rois': [],
                    'excluded_records': [], 'producer_commit': None}
     return result, path, payload, blocked[0]
+
+
+def export_manual_rows(cfg, side, requests, folder, diameter_um, track, memo, reserved_bytes, min_count=None):
+    """manual ROI 요청을 기존 export 경로로 내보내고 role gate를 적용한다. 반환은 _do_export 와 같다(rows = payload['rois'])."""
+    return _do_export(cfg, side, {'manual': requests}, folder, min_count, diameter_um, track, memo, reserved_bytes)
 
 
 def _export_side(cfg, side, selected_ids, folder, min_count, diameter_um, track, memo, reserved_bytes):
@@ -291,6 +321,10 @@ def _index_point(frame):
 
 
 def _export_index(cfg, side, folder, min_count, diameter_um, track, memo, reserved_bytes):
+    export_index(cfg, side, folder, diameter_um, track, memo, reserved_bytes, min_count=min_count)
+
+
+def export_index(cfg, side, folder, diameter_um, track, memo, reserved_bytes, min_count=None):
     """데이터셋 case마다 명시 manual ROI 하나를 내보내 role/layer union이 제품 전체 전극을 덮게 한다(index 전용)."""
     requests, own_blocked = [], {}
     for case in sorted(side.dataset.cases, key=lambda c: tuple(str(v) for v in asdict(c.identity).values())):
@@ -308,7 +342,7 @@ def _export_index(cfg, side, folder, min_count, diameter_um, track, memo, reserv
         state['status'] = 'blocked'
         state['reasons'] = ['index_no_exportable_case']
         return
-    done = _do_export(cfg, side, {'manual': requests}, folder, min_count, diameter_um, track, memo, reserved_bytes)
+    done = export_manual_rows(cfg, side, requests, folder, diameter_um, track, memo, reserved_bytes, min_count)
     if done is None:
         state['status'] = 'blocked'
         state['reasons'] = list(SHORT_CIRCUIT_REASONS)
@@ -321,7 +355,7 @@ def _export_index(cfg, side, folder, min_count, diameter_um, track, memo, reserv
         state['reasons'] = list(payload.get('reasons', []))
 
 
-def _index_coverage(side):
+def index_coverage(side):
     """index export가 데이터셋 전극 전체를 (role, layer)별로 덮는지 센다."""
     state = side.index
     universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases for e in case.endpoints}
@@ -380,7 +414,7 @@ def _query_id(direction, region_id):
     return 'cand_'+hashlib.sha256(f'{direction}|{region_id}'.encode()).hexdigest()[:16]
 
 
-def _funnel(direction, n_regions, n_merged, n_cut, queries, max_candidates):
+def build_funnel(direction, n_regions, n_merged, n_cut, queries, max_candidates):
     kept = len(queries)
     ready = sum(q['status'] == 'ready' for q in queries)
     blocked_reasons = {}
@@ -434,16 +468,24 @@ def run_candidates(cfg, out, *, min_count, window_um, merge_overlap, max_candida
     kinds = [pipeline._real_source(cfg, cfg[name]) is not None for name in ('reference', 'target')]
     if any(kinds) and not all(kinds):
         raise NumericContractError('mixed_real_and_numeric_source_formats')
-    created_files, created_dirs = [], []
-
-    def track(path, is_dir=False):
-        (created_dirs if is_dir else created_files).append(Path(path))
-
+    track, cleanup = output_tracker()
     out.mkdir()
     track(out, is_dir=True)
     try:
         return _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, diameter_um)
     except BaseException:
+        cleanup()
+        raise
+
+
+def output_tracker():
+    """(track, cleanup): track(path, is_dir=False)로 이 실행이 만든 경로를 기록하고, cleanup()은 그것만 지운다(접두 패턴·재귀 삭제 없음)."""
+    created_files, created_dirs = [], []
+
+    def track(path, is_dir=False):
+        (created_dirs if is_dir else created_files).append(Path(path))
+
+    def cleanup():
         for path in created_files:
             try:
                 path.unlink()
@@ -454,13 +496,29 @@ def run_candidates(cfg, out, *, min_count, window_um, merge_overlap, max_candida
                 path.rmdir()
             except OSError:
                 pass
-        raise
+    return track, cleanup
 
 
-def _write_text(path, text, track):
+def write_text(path, text, track):
+    """텍스트 파일을 LF·UTF-8 로 쓰고 track 에 기록한다."""
     track(path)
     with open(path, 'w', encoding='utf-8', newline='\n') as handle:  # Path.write_text(newline=) is 3.10+
         handle.write(text)
+
+
+def write_funnel_csv(path, funnels, coverage, track):
+    """funnel.csv(utf-8-sig): 방향별 단계 행 뒤에 제품별 index_coverage 행."""
+    track(path)
+    with Path(path).open('w', encoding='utf-8-sig', newline='') as handle:
+        writer = csv.writer(handle, lineterminator='\n')
+        writer.writerow(['direction', 'stage', 'count', 'dropped', 'reasons'])
+        for f in funnels:
+            for s in f['stages']:
+                writer.writerow([f['direction'], s['stage'], s['count'], s['dropped'],
+                                 ';'.join(f'{k}:{v}' for k, v in s['reasons'].items())])
+        for name, item in coverage.items():
+            writer.writerow([f'index_{name}', 'index_coverage', item['index_rois_ready'], item['index_rois_blocked'],
+                             ';'.join(f'{k}:{v}' for k, v in item['blocked_reasons'].items())])
 
 
 def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, diameter_um):
@@ -526,7 +584,7 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
                 'area_um2': rep.area_um2, 'layers': sorted({m.layer for m in members}), 'flags': flags,
                 'status': 'ready' if ready else 'blocked', 'reasons': sorted(reasons),
                 'roi_ids': sorted(r['roi_id'] for r in rows), 'n_rois': len(rows), 'n_rois_ready': len(ready)})
-        funnels.append(_funnel(direction, plan['n_regions'], plan['n_merged'], len(plan['cut']), queries, max_candidates))
+        funnels.append(build_funnel(direction, plan['n_regions'], plan['n_merged'], len(plan['cut']), queries, max_candidates))
         directions.append({'direction': direction, 'query_product': query_name, 'index_product': index_name,
                            'query_export': f'{query_name}_export/review_rois.json' if sides[query_name].export_path else None,
                            'index_export': (f'{index_name}_index_export/review_rois.json'
@@ -549,7 +607,7 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
     for name, side in sides.items():
         if side.index is None:
             continue
-        coverage[name] = _index_coverage(side)
+        coverage[name] = index_coverage(side)
         if not coverage[name]['complete']:
             warnings.append({'code': 'index_coverage_incomplete', 'product': name,
                              'electrodes_covered': coverage[name]['electrodes_covered'],
@@ -601,23 +659,12 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
     outputs = []
 
     def emit(name, text):
-        _write_text(out/name, text, track)
+        write_text(out/name, text, track)
         outputs.append(name)
 
     emit('candidate_queries_v1.json', json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)+'\n')
     emit('funnel.json', json.dumps(funnel_doc, ensure_ascii=False, indent=2, allow_nan=False)+'\n')
-    csv_path = out/'funnel.csv'
-    track(csv_path)
-    with csv_path.open('w', encoding='utf-8-sig', newline='') as handle:
-        writer = csv.writer(handle, lineterminator='\n')
-        writer.writerow(['direction', 'stage', 'count', 'dropped', 'reasons'])
-        for f in funnels:
-            for s in f['stages']:
-                writer.writerow([f['direction'], s['stage'], s['count'], s['dropped'],
-                                 ';'.join(f'{k}:{v}' for k, v in s['reasons'].items())])
-        for name, item in coverage.items():
-            writer.writerow([f'index_{name}', 'index_coverage', item['index_rois_ready'], item['index_rois_blocked'],
-                             ';'.join(f'{k}:{v}' for k, v in item['blocked_reasons'].items())])
+    write_funnel_csv(out/'funnel.csv', funnels, coverage, track)
     outputs.append('funnel.csv')
     for name, side in sides.items():
         if side.export_path is not None:
@@ -635,6 +682,6 @@ def _run(cfg, out, track, min_count, window_um, merge_overlap, max_candidates, d
                                  for n, c in coverage.items()},
               'match_inputs': match_inputs, 'match_files': payload['match_files'], 'dl2_model_roles': dl2_model_roles}
     execution = {'command': 'candidates', **result}
-    _write_text(out/'execution.json', json.dumps(execution, ensure_ascii=False, indent=2)+'\n', track)
+    write_text(out/'execution.json', json.dumps(execution, ensure_ascii=False, indent=2)+'\n', track)
     result['outputs'] = sorted(result['outputs']+['execution.json'])
     return result
