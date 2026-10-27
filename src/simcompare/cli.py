@@ -108,6 +108,14 @@ def _parser() -> argparse.ArgumentParser:
     dvt.add_argument("--timings", required=True, type=int, help="구동 타이밍 수 N (1–20, 기본값 없음)")
     dvt.add_argument("--impedance-db", help="전극별 임피던스 DB CSV (electrode_id, impedance=low|high|빈칸; 다른 열은 무시)")
     dvt.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
+    dvg = _korean_help(sub.add_parser(
+        "dv-grade", add_help=False,
+        help="채운 전압 시트와 case 폴더 이름으로 short 쌍별 ΔV·최대 타이밍·등급(None/Low/High)을 계산(PNG·CSV 내용은 열지 않음, 경계 기본값 없음)"))
+    dvg.add_argument("--sheet", required=True, help="사용자가 채운 dv_sheet.csv (UTF-8)")
+    dvg.add_argument("--root", required=True, help="제품 hotspot 또는 template case root")
+    dvg.add_argument("--product-id", required=True, help="제품 식별자(기본값 없음, 빈 문자열 금지). manifest 에 기록")
+    dvg.add_argument("--low-low-threshold-v", help="low–low 쌍의 High 경계 V (0 보다 큰 일반 소수). 없으면 ΔV>0 인 모든 쌍이 High")
+    dvg.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     confirm = _korean_help(sub.add_parser(
         "confirm-pairs", add_help=False,
         help="사용자가 decisions.csv 로 accept 한 NCC/DL2 후보만 roi_correspondence_v1 로 변환(점수는 사이드카에만)"))
@@ -255,6 +263,12 @@ def main(argv: list[str] | None = None) -> int:
             result = dv_template.run_dv_template(args.root, Path(args.out), args.timings, args.impedance_db)
             print("\n".join(dv_template.summary_lines(result)))
             return 0
+        if args.command == "dv-grade":
+            # dv-template 과 같다: staging 후 rename 하므로 실패 시 출력이 남지 않는다(공용 오류 핸들러 제외).
+            from simcompare import dv_grade
+            result = dv_grade.run_dv_grade(args.sheet, args.root, Path(args.out), args.product_id, args.low_low_threshold_v)
+            print("\n".join(dv_grade.summary_lines(result)))
+            return 0
         if args.command == "confirm-pairs":
             # 출력 폴더는 새 것이어야 하며 run_confirm_pairs 가 이 실행이 만든 파일만 정리한다(공용 오류 핸들러 제외).
             from simcompare import confirm_pairs, pipeline
@@ -310,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
-        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "confirm-pairs", "dv-template"):
+        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "confirm-pairs", "dv-template", "dv-grade"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2

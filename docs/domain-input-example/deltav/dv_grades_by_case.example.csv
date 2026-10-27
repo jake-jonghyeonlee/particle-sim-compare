@@ -1,0 +1,4 @@
+case_name,defect,electrode_a,layer_a,electrode_b,layer_b,pair_key,dv_v,dv_timing,grade
+lateral_short-EX_DATA-M1-EX_SCAN-M1,lateral_short,EX_DATA,M1,EX_SCAN,M1,EX_DATA-EX_SCAN,11.0,T1,High
+lateral_short-EX_SCAN-M1-EX_VDD-M1,lateral_short,EX_SCAN,M1,EX_VDD,M1,EX_SCAN-EX_VDD,10.5,T1,Low
+vertical_short-EX_VDD-M2-EX_DATA-M1,vertical_short,EX_VDD,M2,EX_DATA,M1,EX_DATA-EX_VDD,4.5,T1,High

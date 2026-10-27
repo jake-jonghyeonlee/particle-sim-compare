@@ -12,6 +12,7 @@
 | 회차 | 명령 | 입력 | 출력 | 다음 회차 전 수작업 |
 |---|---|---|---|---|
 | 0 (선택) | `dv-template` | 제품 case 폴더 이름, 임피던스 DB(선택) | `dv_sheet.csv`, `new_electrodes.csv` | 전압 칸과 새 전극 임피던스를 사용자가 채움. 1~6회차와 독립. [상세](dv_template.md) |
+| 0 (선택) | `dv-grade` | 채운 `dv_sheet.csv`, 제품 case 폴더 이름, `--product-id` | `dv_grades.csv`, `dv_grades_by_case.csv`, `dv_grade_manifest.json` | short 쌍별 ΔV·최대 타이밍·등급(None/Low/High) 계산. 1~6회차와 독립. [상세](dv_grade.md) |
 | 1 | `import-hotspots` | hotspot 폴더(모델별) | `data/imported/reference`, `target` | `pairs.csv`를 두 출력 폴더 안에 복사 |
 | 2 | `validate-data`, `compare` | `real.yaml` | `comparison.json`, `comparison.csv`, `comparison_masks.zip` | 3회차용 `assignment_<side>.json` 준비 |
 | 3 | `import-electrode-assets` | 전극 PNG, assignment JSON | `data/assets/reference`, `target` | 출력을 각 `data_dir`로 복사하고 `real.yaml`에 경로·sha256 기입 |

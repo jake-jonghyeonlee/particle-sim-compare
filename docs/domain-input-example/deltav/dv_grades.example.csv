@@ -1,0 +1,4 @@
+pair_key,electrode_a,electrode_b,impedance_a,impedance_b,impedance_class,dv_v,dv_timing,dv_timings_tied,dv_timing_tie_count,grade,threshold_v,case_count,cases,defects,layer_pairs
+EX_DATA-EX_SCAN,EX_DATA,EX_SCAN,high,low,high_any,11.0,T1,T1,1,High,12,1,lateral_short-EX_DATA-M1-EX_SCAN-M1,lateral_short,M1:M1
+EX_DATA-EX_VDD,EX_DATA,EX_VDD,high,low,high_any,4.5,T1,T1,1,High,12,1,vertical_short-EX_VDD-M2-EX_DATA-M1,vertical_short,M1:M2
+EX_SCAN-EX_VDD,EX_SCAN,EX_VDD,low,low,low_low,10.5,T1,T1;T2,2,Low,12,1,lateral_short-EX_SCAN-M1-EX_VDD-M1,lateral_short,M1:M1

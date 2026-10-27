@@ -12,7 +12,7 @@ from simcompare.cli import _parser, main
 ROOT = Path(__file__).resolve().parents[1]
 RETIRED = {'model','train','losses','dataset','retrieval','baseline','split','variants',
            'cards','plots','caa','analysis','neighborhood','pair_geometry','checks','config'}
-APPROVED = {'demo-data','validate-data','compare','electrode-map','export-review-rois','merge-exports','import-hotspots','import-electrode-assets','compare-windows','report','candidates','candidates-change','confirm-pairs','export-template-rois','dv-template'}
+APPROVED = {'demo-data','validate-data','compare','electrode-map','export-review-rois','merge-exports','import-hotspots','import-electrode-assets','compare-windows','report','candidates','candidates-change','confirm-pairs','export-template-rois','dv-template','dv-grade'}
 
 
 def test_help_lists_exactly_approved_commands():
