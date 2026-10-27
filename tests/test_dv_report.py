@@ -33,7 +33,8 @@ def test_report_files_self_contained_and_footnote(report):
     html = (report / 'report.html').read_text(encoding='utf-8')
     assert not re.search(r'https?://|<script|<link |@import', html)
     assert '병합 전 등급 영역(선정 성분) 기준 CA' in html and 'ROI 내 CA µm² *' in html
-    assert 'color-mix' not in html and 'prefers-color-scheme: dark' in html
+    assert 'prefers-color-scheme: dark' in html
+    assert '(보고서 exit 0)' in html
     assert json.loads((report / 'execution.json').read_text())['command'] == 'vulnerability-report'
 
 
@@ -68,6 +69,14 @@ def test_layout_layer_colors_in_legend_and_map(report):
     html = (report / 'report.html').read_text(encoding='utf-8')
     assert 'class="lf l1"' in html and '<i class="lf l1"' in html and 'L1</span>' in html
     assert '<title>P1 (L1)</title>' in html or '<title>N1 (L1)</title>' in html
+    # 견본·막대에 실제 색을 주는 CSS 선언이 있어야 한다(클래스 이름만으로는 색이 나오지 않는다)
+    style = html.split('<style>')[1].split('</style>')[0]
+    for slot in (1, 2, 3, 4):
+        assert re.search(r'\.legend i\.l%d\{background:color-mix\(in srgb,var\(--l-%d\) \d+%%,transparent\);border-color:var\(--l-%d\)\}' % (slot, slot, slot), style)
+        assert f'--l-{slot}:#' in style and re.search(r'\.l%d\{fill:var\(--l-%d\);stroke:var\(--l-%d\)\}' % (slot, slot, slot), style)
+    for grade in ('High', 'Low', 'None'):
+        assert f'rect.g-{grade}{{fill:var(--g-{grade.lower()})}}' in style and f'.g-{grade}{{background:var(--g-{grade.lower()})}}' in style
+    assert 'style="border:1px solid"' not in html and '<rect x=' in html and 'class="bt"' in html and 'fill="var(' not in html
     assert 'class="gc gc3"' in html and 'class="win"' in html and 'class="sel"' in html
 
 
@@ -113,3 +122,28 @@ def test_top_n_limits_and_same_input_same_bytes(world, basic, report):
     assert payload['top_n'] == 1 and len(payload['products']['reference']['dropped_rows']) == 1
     assert payload['products']['reference']['n_dropped'] == 2
     assert main(['vulnerability-report', '--candidates-dv-dir', str(basic), '--out', str(world.base / 'n0'), '--top-n', '0']) == 2
+
+
+def test_malformed_json_shape_exit_2_without_output(world, basic):
+    copy = world.base / 'basic_bad'
+    shutil.copytree(basic, copy)
+    path = copy / 'vulnerability_v1.json'
+    payload = load(path)
+    payload['products']['reference']['pairs'] = [None]            # TypeError 가 될 모양
+    payload['products']['target']['regions'] = [[]]               # AttributeError/TypeError 가 될 모양
+    path.write_text(json.dumps(payload))
+    out = world.base / 'report_bad'
+    assert main(['vulnerability-report', '--candidates-dv-dir', str(copy), '--out', str(out)]) == 2
+    assert not out.exists()
+
+
+def test_status_row_shows_final_exit_code_on_layout_warning(world, basic):
+    copy = world.base / 'basic_status'
+    shutil.copytree(basic, copy)
+    path = copy / 'candidate_queries_v1.json'
+    payload = load(path)
+    payload['inputs']['target']['asset_manifest']['sha256'] = '1' * 64
+    path.write_text(json.dumps(payload))
+    out = world.base / 'report_status'
+    assert main(['vulnerability-report', '--candidates-dv-dir', str(copy), '--out', str(out)]) == 3
+    assert '(보고서 exit 3)' in (out / 'report.html').read_text(encoding='utf-8')

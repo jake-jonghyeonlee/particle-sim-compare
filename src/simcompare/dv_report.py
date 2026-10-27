@@ -64,6 +64,12 @@ th{color:var(--text-secondary);font-weight:600;font-size:12px}th.l,td.l{text-ali
 .badge{display:inline-flex;align-items:center;gap:4px;border-radius:10px;padding:0 8px;font-size:12px;font-weight:600;border:1px solid var(--line)}
 .badge i,.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
 .g-High{background:var(--g-high)}.g-Low{background:var(--g-low)}.g-None{background:var(--g-none)}.g-ungraded{background:var(--g-uncovered)}
+rect.g-High{fill:var(--g-high)}rect.g-Low{fill:var(--g-low)}rect.g-None{fill:var(--g-none)}.bt{fill:var(--text-secondary);font-size:11px}
+.legend i.lf{border:1px solid var(--text-muted)}
+.legend i.l1{background:color-mix(in srgb,var(--l-1) 30%,transparent);border-color:var(--l-1)}
+.legend i.l2{background:color-mix(in srgb,var(--l-2) 30%,transparent);border-color:var(--l-2)}
+.legend i.l3{background:color-mix(in srgb,var(--l-3) 30%,transparent);border-color:var(--l-3)}
+.legend i.l4{background:color-mix(in srgb,var(--l-4) 30%,transparent);border-color:var(--l-4)}
 .up{color:var(--text-primary)}.muted{color:var(--text-muted)}
 .flag{font-size:11px;border:1px dashed var(--text-muted);border-radius:4px;padding:0 5px;color:var(--text-secondary);margin-left:3px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary);margin:6px 0}.legend span{display:inline-flex;align-items:center;gap:4px}
@@ -499,7 +505,7 @@ def _roi_figures(root, product, region, query, layouts, args, warn, side, case_i
             f *= 2
         bytes_used += len(svg)
         used = sorted({l for _, l in group}) if group else []
-        legend = ''.join(f'<span><i class="lf l{group_slots[l]}" style="border:1px solid"></i>{escape(l)}</span>' for l in used if group_slots.get(l))
+        legend = ''.join(f'<span><i class="lf l{group_slots[l]}"></i>{escape(l)}</span>' for l in used if group_slots.get(l))
         title = (f'{escape(layer)} 전극' if split else '전극 layout(layer 별 색)')
         figures.append(f'<figure>{svg}<figcaption>{title} · 최고 등급 · 질의 창 · 선정 셀'
                        f'{"<div class=legend>" + legend + "</div>" if legend else ""}'
@@ -577,7 +583,7 @@ def _layer_maps(root, product, queries_of, args, warn, side):
 
 # ---- 구성 --------------------------------------------------------------------------------------------------------
 
-def _settings(queries, vulnerability):
+def _settings(queries, vulnerability, exit_code):
     args = queries['args']
     provenance = [vulnerability['products'][s]['dv_provenance'] for s in SIDES]
     thresholds = {p.get('threshold_v') for p in provenance}
@@ -595,7 +601,7 @@ def _settings(queries, vulnerability):
               ('병합 R', escape(str(args['merge_overlap']))))
         + row(('low–low 경계', escape(threshold)), ('등급 규칙', f'<code>{escape(", ".join(grade_rules))}</code>'),
               ('순위 규칙', f'<code>{escape(str(vulnerability.get("score_rule_version")))}</code>'),
-              ('상태', escape(f'{status} (exit {0 if status == "available" else 3})')))
+              ('상태', escape(f'{status} (보고서 exit {exit_code})')))
         + row(('max-candidates', escape(str(args.get('max_candidates')) if args.get('max_candidates') is not None else '없음'),),
               ('대표 지름', f'{escape(str(args.get("representative_diameter_um")))} µm'))
         + '</table></div>')
@@ -609,7 +615,7 @@ def _kpis(product):
     for grade in ('High', 'Low', 'None'):
         width = counts[grade] / total * 296
         bars += (f'<rect x="{x:.1f}" y="4" width="{max(width - 2, 1):.1f}" height="14" rx="3" class="g-{grade}"><title>{grade}: {counts[grade]} 쌍</title></rect>'
-                 f'<text x="{x + 2:.1f}" y="31" font-size="11" fill="var(--text-secondary)">{grade} {counts[grade]}</text>')
+                 f'<text x="{x + 2:.1f}" y="31" class="bt">{grade} {counts[grade]}</text>')
         x += width
     ungraded = len(product['ungraded_cases'])
     reps = sum(1 for r in product['regions'] if r.get('is_representative'))
@@ -779,7 +785,7 @@ def build_report(candidates_dv_dir, top_n=10):
         f'<title>{escape(title)}</title><style>{CSS}</style></head><body><main>'
         f'<h1>{escape(title)}</h1><p class="sub">{products_text} · 대표 지름 {escape(str(args.get("representative_diameter_um")))} µm · '
         f'생성 <code>vulnerability-report</code> (입력: <code>candidates-dv</code> 출력 폴더)</p>'
-        f'{_cell(_settings(queries, vulnerability))}'
+        f'{_cell(_settings(queries, vulnerability, 0 if queries.get("status") == "available" and not warnings else 3))}'
         '<input class="tabr" type="radio" name="side" id="tab-reference" checked><input class="tabr" type="radio" name="side" id="tab-target">'
         '<div class="tabs" role="group" aria-label="제품 선택">'
         + ''.join(f'<label for="tab-{s}">{s} {escape(vulnerability["products"][s]["product_id"])}</label>' for s in SIDES) + '</div>'
@@ -811,7 +817,12 @@ def run_vulnerability_report(candidates_dv_dir, out, top_n=10):
     resolved_in, resolved_out = folder.resolve(), out.resolve()
     if resolved_out == resolved_in or resolved_in in resolved_out.parents:
         raise _bad('output_is_input', '--out 은 candidates-dv 출력 폴더 밖의 새 폴더여야 합니다')
-    html, report, warnings, status = build_report(folder, top_n)
+    try:
+        html, report, warnings, status = build_report(folder, top_n)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, NumericContractError):
+            raise
+        raise _bad('vulnerability_input_malformed', f'입력 JSON 의 모양이 예상과 다릅니다: {type(exc).__name__}: {exc}') from exc
     partial = status != 'available' or bool(warnings)
     reasons = sorted({c for c, _, _ in warnings} | ({'input_status_partial'} if status != 'available' else set()))
     out.parent.mkdir(parents=True, exist_ok=True)
