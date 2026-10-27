@@ -422,6 +422,22 @@ def test_side_without_cases_still_checks_the_dv_grade_product_against_the_config
     assert 'PX' in err
 
 
+def test_side_without_cases_reads_the_product_from_condition_assignment(world, monkeypatch, capsys):
+    # configs/real.example.yaml 모양: 최상위 product_id 없이 condition_assignment.product_id 만 있다 → 여전히 경고 + 3
+    from dataclasses import replace
+
+    def no_cases(name, side):
+        if name == 'reference':
+            side.dataset = replace(side.dataset, cases=[])
+            side.status, side.reasons, side.product_ids = 'unavailable', ['same_name_endpoints_unresolved'], []
+            assert side.section['condition_assignment']['product_id']
+            side.section = {k: v for k, v in side.section.items() if k != 'product_id'}
+    _patched_prepare(monkeypatch, no_cases)
+    capsys.readouterr()
+    assert world.run('nocases_assignment_only') == 3
+    assert 'dv_grade_product_mismatch' not in capsys.readouterr().err
+
+
 def test_duplicate_case_id_in_one_dataset_exits_2_before_writing(world, monkeypatch, capsys):
     from dataclasses import replace
 

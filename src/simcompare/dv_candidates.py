@@ -85,7 +85,9 @@ def _link_side(name, side, dv):
             raise _bad('dv_candidates_duplicate_case_id', f'{name}: 데이터셋에 case_id {case.identity.case_id!r} 가 두 번 있습니다')
         cases[case.identity.case_id] = case
     if not cases:   # candidates 의 side_unavailable 과 같다: 오류가 아니라 경고 + 종료 코드 3 (경고는 _run 이 붙인다)
-        configured = (side.section or {}).get('product_id')   # case 가 없으면 제품은 config 로만 알 수 있다
+        # case 가 없으면 제품은 config 로만 알 수 있다. case 가 있을 때처럼 condition_assignment.product_id(필수 키)를 쓴다.
+        section = side.section or {}
+        configured = (section.get('condition_assignment') or {}).get('product_id', section.get('product_id'))
         if configured != manifest['product_id']:
             raise _bad('dv_grade_product_mismatch',
                        f'{name}: config 제품 {configured!r} 인데 dv-grade manifest 의 product_id 는 {manifest["product_id"]!r} 입니다')
