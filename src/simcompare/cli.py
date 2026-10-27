@@ -101,6 +101,19 @@ def _parser() -> argparse.ArgumentParser:
     change.add_argument("--mask-derivation-rule", required=True,
                         help="DL2 mask_derivation 규칙: between_stack_order_v1 만 허용(기본값 없음). 질의·index export 폴더마다 mask_derivation.json 을 쓴다")
     change.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
+    cdv = _korean_help(sub.add_parser(
+        "candidates-dv", add_help=False,
+        help="두 제품(real_hotspot_v1)의 ΔV 등급(dv-grade 출력)으로 가중한 취약점 영역 → 질의 ROI와 DL2 export, 비가중 순위와의 비교(모든 인수 필수, 기본값 없음)"))
+    cdv.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference·target 각각 real_hotspot_v1 단일 제품)")
+    cdv.add_argument("--dv-grades-reference", required=True, help="reference 제품의 dv-grade 출력 폴더 (manifest product_id 가 reference 제품과 같아야 함)")
+    cdv.add_argument("--dv-grades-target", required=True, help="target 제품의 dv-grade 출력 폴더 (reference 와 다른 폴더)")
+    cdv.add_argument("--min-count", required=True, type=int, help="영역 최소 전극 수 K (선정 지도 기준, 기본값 없음)")
+    cdv.add_argument("--roi-grade", required=True, choices=("high", "low_or_high"),
+                     help="영역 선정 등급: high 는 High 쌍만, low_or_high 는 Low·High 쌍으로 센 전극 수 (기본값 없음)")
+    cdv.add_argument("--window-um", required=True, type=float, help="질의 창 한 변(µm). 병합 판정과 창 포함 비율에 쓰임 (기본값 없음)")
+    cdv.add_argument("--merge-overlap", required=True, type=float, help="두 창의 intersection/min(area) 병합 기준 (0,1] (기본값 없음)")
+    cdv.add_argument("--max-candidates", type=int, help="방향(제품)별 질의 수 상한. 명시할 때만 적용하며 잘린 수를 funnel에 기록")
+    cdv.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있으면 거부)")
     dvt = _korean_help(sub.add_parser(
         "dv-template", add_help=False,
         help="제품 case 폴더 이름에서 전극×타이밍 전압 시트의 빈 양식을 만듦(PNG·CSV 내용은 열지 않음, 전압·임피던스 기본값 없음)"))
@@ -257,6 +270,16 @@ def main(argv: list[str] | None = None) -> int:
                 merge_overlap=args.merge_overlap, top_k=args.top_k, mask_derivation_rule=args.mask_derivation_rule)
             _print(result)
             return result["exit_code"]
+        if args.command == "candidates-dv":
+            # candidates 와 같다: 출력 폴더는 새 것이어야 하고 run_candidates_dv 가 이 실행이 만든 파일만 정리한다.
+            from simcompare import dv_candidates, pipeline
+            cfg = pipeline.load_numeric_config(args.config)
+            result = dv_candidates.run_candidates_dv(
+                cfg, Path(args.out), dv_grades_reference=args.dv_grades_reference, dv_grades_target=args.dv_grades_target,
+                min_count=args.min_count, roi_grade=args.roi_grade, window_um=args.window_um, merge_overlap=args.merge_overlap,
+                max_candidates=args.max_candidates)
+            _print(result)
+            return result["exit_code"]
         if args.command == "dv-template":
             # 출력 폴더는 새 것이어야 하고 staging 후 rename 하므로 실패 시 출력이 남지 않는다(공용 오류 핸들러 제외).
             from simcompare import dv_template
@@ -324,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
-        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "confirm-pairs", "dv-template", "dv-grade"):
+        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "candidates-dv", "confirm-pairs", "dv-template", "dv-grade"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2

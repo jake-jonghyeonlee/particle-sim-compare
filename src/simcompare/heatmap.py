@@ -22,14 +22,19 @@ def count_color(count):
     return tuple(255 - (span * int(count)) // (int(count) + 8) for span in (240, 200, 120))
 
 
-def write_heatmap(out, name, counts, frame, *, status, reasons=(), provenance=None):
+def write_heatmap(out, name, counts, frame, *, status, reasons=(), provenance=None,
+                  palette=None, unit='distinct_electrodes', title='Distinct electrodes', labels=None):
     """원본 grid를 PNG 좌상단에 정수 셀 확대(nearest)로 그림; 오른쪽은 count legend.
 
     invalid/미관측은 회색이며 0(흰색)과 다르다. frame 없는 summary는 sidecar만 쓴다.
     physical extent는 원본 domain의 half-open (x0,y0,x1,y1), 단위 um다.
+    palette(value) -> (r,g,b), unit(sidecar), title(legend 제목), labels(value) -> 범례 글자는 등급 지도용 선택 인자이며,
+    기본값이면 출력 바이트가 이 인자들이 생기기 전과 같다.
     """
+    color_of = count_color if palette is None else palette
+    label_of = str if labels is None else labels
     out = Path(out);out.mkdir(parents=True, exist_ok=True)
-    metadata = {'status':status,'reasons':list(reasons),'unit':'distinct_electrodes',
+    metadata = {'status':status,'reasons':list(reasons),'unit':unit,
                 'physical_unit':'um','extent_um':None if frame is None else list(frame.bbox_um),
                 'frame':None if frame is None else {
                     'frame_id':frame.frame_id,'origin_xy_um':list(frame.origin_xy_um),
@@ -49,23 +54,26 @@ def write_heatmap(out, name, counts, frame, *, status, reasons=(), provenance=No
         display_width,display_height=width*scale,height*scale
         metadata['rendering'].update(scale=scale,cell_pixels=scale)
         values = [] if counts is None else sorted(map(int,np.unique(counts[frame.valid])))
-        metadata['legend'] = [{'count':n,'color':list(count_color(n))} for n in values]
+        metadata['legend'] = [{'count':n,'color':list(color_of(n))} for n in values]
+        if labels is not None:
+            for entry in metadata['legend']:
+                entry['label'] = label_of(entry['count'])
         metadata['rendering']['grid_bbox_px'] = [0,0,display_width,display_height]
         image = Image.new('RGB',(display_width+240,max(display_height,45+18*(len(values)+1))),UNAVAILABLE_COLOR)
         if counts is not None:
             rgb = np.empty((height,width,3),dtype=np.uint8)
             rgb[:] = UNAVAILABLE_COLOR
             for n in values:
-                rgb[(counts == n) & frame.valid] = count_color(n)
+                rgb[(counts == n) & frame.valid] = color_of(n)
             grid = Image.fromarray(rgb)
             image.paste(grid.resize((display_width,display_height),Image.Resampling.NEAREST),(0,0))
         draw = ImageDraw.Draw(image)
         draw.rectangle((display_width,0,image.width,image.height),fill='white')
-        draw.text((display_width+10,5),'Distinct electrodes: '+status,fill='black')
+        draw.text((display_width+10,5),title+': '+status,fill='black')
         for index,n in enumerate(values):
             y=25+18*index
-            draw.rectangle((display_width+10,y,display_width+23,y+12),fill=count_color(n))
-            draw.text((display_width+30,y),str(n),fill='black')
+            draw.rectangle((display_width+10,y,display_width+23,y+12),fill=color_of(n))
+            draw.text((display_width+30,y),label_of(n),fill='black')
         y=25+18*len(values)
         draw.rectangle((display_width+10,y,display_width+23,y+12),fill=UNAVAILABLE_COLOR)
         draw.text((display_width+30,y),'unavailable / outside valid',fill='black')

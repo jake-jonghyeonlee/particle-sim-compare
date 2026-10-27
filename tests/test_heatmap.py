@@ -79,3 +79,24 @@ def test_r2_sequential_palette_above_six_hand_checked():
     assert count_color(8)==(135,155,195)
     assert count_color(16)==(95,122,175)
     assert all(all(b<=a for a,b in zip(count_color(n),count_color(n+1))) for n in range(199))
+
+
+def test_grade_options_change_palette_unit_title_and_labels_only(tmp_path):
+    frame=Frame('FRAME',.5,(100,200),(1,3),[[1,1,1]])
+    colors={0:(255,255,255),1:(255,236,160),2:(255,152,0),3:(198,40,40)}
+    result=write_heatmap(tmp_path,'grade',np.array([[0,1,3]],dtype=np.uint8),frame,status='available',
+                         palette=lambda value:colors[int(value)],unit='grade_max',title='Max grade',labels=lambda value:f'g{value}')
+    sidecar=json.loads((tmp_path/result['sidecar']).read_text())
+    assert sidecar['unit']=='grade_max' and sidecar['legend']==[{'count':0,'color':[255,255,255],'label':'g0'},
+        {'count':1,'color':[255,236,160],'label':'g1'},{'count':3,'color':[198,40,40],'label':'g3'}]
+    with Image.open(tmp_path/result['png']) as image:
+        assert image.getpixel((0,0))==(255,255,255) and image.getpixel((134,0))==(255,236,160) and image.getpixel((268,0))==(198,40,40)
+    plain=write_heatmap(tmp_path,'plain',np.array([[0,1,3]],dtype=np.uint8),frame,status='available')
+    default=json.loads((tmp_path/plain['sidecar']).read_text())
+    assert default['unit']=='distinct_electrodes' and all('label' not in entry for entry in default['legend'])
+
+
+def test_unsigned_integer_count_maps_are_accepted(tmp_path):
+    frame=Frame('FRAME',.5,(0,0),(1,2),[[1,1]])
+    for dtype in (np.uint8,np.uint16):
+        assert write_heatmap(tmp_path,'u'+np.dtype(dtype).name,np.array([[1,2]],dtype=dtype),frame,status='available')['png']

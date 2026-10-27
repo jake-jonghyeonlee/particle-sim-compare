@@ -436,6 +436,45 @@ def _region_windows(inside, frame):
     return windows
 
 
+def stable_region_id(key, diameter, threshold, frame, inside, selection=None):
+    """영역 id: 지도 키·지름·임계값·frame·영역 셀의 해시. selection 은 등급 지도의 선정 지도 이름이며 None 이면 기존 id 와 같다."""
+    payload = [asdict(key), diameter, threshold, frame.frame_id, frame.pixel_pitch_um,
+               frame.origin_xy_um, frame.shape_yx, frame.valid_hash, np.argwhere(inside).tolist()]
+    if selection is not None:
+        payload.append(selection)
+    return 'region_' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+ROI_GRADES = ('high', 'low_or_high')
+GRADE_VALUES = ('High', 'Low', 'None')
+
+
+@dataclass(frozen=True, eq=False)
+class GradedLayer:
+    """한 지도 키(layer)의 등급 지도. ElectrodeMaps.layers 와 같은 순서·같은 key. 지도가 unavailable 이면 배열은 None.
+
+    count_high / count_visible: 등급 High / (Low 또는 High) 인 case 만으로 센 서로 다른 전극 수(uint16).
+    grade_max: 셀을 덮는 case 등급의 최댓값 — 0 덮임 없음(등급 없는 case 만 덮어도 0), 1 None, 2 Low, 3 High(uint8)."""
+    key: MapKey
+    frame: Frame
+    count_high: np.ndarray | None
+    count_visible: np.ndarray | None
+    grade_max: np.ndarray | None
+
+
+@dataclass(frozen=True, eq=False)
+class GradedMaps:
+    layers: tuple[GradedLayer, ...]
+    roi_grade: str
+    min_count: int
+
+
+def graded_extra_bytes(cells, layers):
+    """등급 지도가 더 쓰는 바이트: layer 마다 count_high·count_visible(uint16)·grade_max(uint8) 5 B/cell 을 끝까지 들고,
+    계산 중 전극 하나의 bool 마스크 둘·None 덮임·한 case 의 active 한 장이 더 필요하다(4 B/cell)."""
+    return int(cells) * (5 * int(layers) + 4) if cells else 0
+
+
 def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                            diameter_um=DEFAULT_DIAMETER_UM, min_count=None, reserved_bytes=0) -> ElectrodeMaps:
     """T2 원본 binary/valid에서 계산. pair 표·density·unit divisor를 사용하지 않는다.
@@ -444,8 +483,35 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
     source/process/exposure별 layer 지도를 보존하며 product/design/unit 요약은 최대값이다.
     reserved_bytes: 호출자가 이 지도 밖에 이미 들고 있는 바이트(candidates의 다른 제품 행·영역). real dataset의 admission 추정에만 더한다.
     """
+    return _compute(inputs, diameter_um=diameter_um, min_count=min_count, reserved_bytes=reserved_bytes)[0]
+
+
+def compute_graded_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], grade_of_case, *,
+                                  diameter_um=DEFAULT_DIAMETER_UM, min_count, roi_grade, reserved_bytes=0):
+    """compute_electrode_maps 와 같은 한 번의 패스에 등급 지도를 더한다. (ElectrodeMaps, GradedMaps) 를 돌려준다.
+
+    grade_of_case(case) -> 'High' | 'Low' | 'None' | None(등급 없음). layer.counts 는 기존 count_all 이고,
+    영역(layer.regions)은 roi_grade 가 'high' 면 count_high, 'low_or_high' 면 count_visible 이 min_count 이상인 4-neighbour
+    연결 성분이다(기존 count_all 영역이 아니다). 영역 id 는 선정 지도 이름을 포함해 같은 셀의 count_all 영역 id 와 다르다.
+    추가로 쓰는 메모리(graded_extra_bytes)는 할당 전에 reserved 에 더해 admission·count·region·link 한도에 반영한다."""
+    threshold = _threshold(min_count)
+    if roi_grade not in ROI_GRADES:
+        raise NumericContractError('invalid_roi_grade', f'{roi_grade!r}: {" | ".join(ROI_GRADES)}')
+    dataset = inputs if isinstance(inputs, NumericDataset) else None
+    extra = 0
+    if dataset is not None and dataset.frames:
+        cases = dataset.cases
+        extra = graded_extra_bytes(next(iter(dataset.frames.values())).valid.size, len({_key(case) for case in cases}))
+    maps, layers = _compute(inputs, diameter_um=diameter_um, min_count=threshold, reserved_bytes=reserved_bytes + extra,
+                            grade_of_case=grade_of_case, select=roi_grade)
+    return maps, GradedMaps(layers, roi_grade, threshold)
+
+
+def _compute(inputs, *, diameter_um, min_count, reserved_bytes, grade_of_case=None, select=None):
+    """compute_electrode_maps 의 본체. grade_of_case 가 있으면 (ElectrodeMaps, GradedLayer 튜플), 없으면 (ElectrodeMaps, None)."""
     diameter = float(diameter_key(diameter_um))
     threshold = None if min_count is None else _threshold(min_count)
+    selection = None if grade_of_case is None else select
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     cases = list(dataset.cases if dataset else inputs)
     if dataset is not None:
@@ -460,6 +526,10 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                   'selection_policy_version': 'electrode_count_region_v1' if threshold is not None else None,
                   'source_manifest_hash': dataset.provenance.get('input_hash') if dataset else None,
                   'real_coverage_status': 'pending', 'real_coverage_reason': 'unit_area_basis_unconfirmed'}
+    if grade_of_case is not None:
+        if threshold is None:
+            raise NumericContractError('invalid_count_threshold')
+        provenance.update(selection_policy_version='electrode_count_region_graded_v1', roi_grade=selection)
     grouped, seen, excluded = {}, set(), []
     for case in cases:
         _validate_case(case)
@@ -481,7 +551,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
             if identity not in actual:
                 missing_manifest.append(identity)
     provenance['missing_manifest_cases'] = missing_manifest
-    layers = []
+    layers, graded_layers = [], []
     region_total = link_total = 0
     priced = dataset is not None and isinstance(dataset.provenance.get('resource_estimate'), dict)
     if priced:
@@ -556,19 +626,57 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
         # distinct electrodes per cell: OR the actives of each electrode's cases (a shared or repeated endpoint counts once),
         # then add the electrodes up. One electrode's bool mask is alive at a time.
         counts = np.zeros(frame.shape_yx, np.int64)
-        for indexes in by_electrode.values():
-            touched = np.zeros(frame.shape_yx, bool)
-            for index in indexes:
-                touched |= observed[index].active(frame.valid)
-            counts += touched
-        touched = None
+        if grade_of_case is None:
+            for indexes in by_electrode.values():
+                touched = np.zeros(frame.shape_yx, bool)
+                for index in indexes:
+                    touched |= observed[index].active(frame.valid)
+                counts += touched
+            touched = None
+            grades = count_high = count_visible = grade_max = None
+        else:
+            # the same pass, plus: per electrode the OR of its High cases / Low-or-High cases (one case's active is unpacked once per endpoint)
+            grades = [grade_of_case(item.case) for item in observed]
+            for grade in grades:
+                if grade is not None and grade not in GRADE_VALUES:
+                    raise NumericContractError('invalid_grade', repr(grade))
+            count_high = np.zeros(frame.shape_yx, np.uint16)
+            count_visible = np.zeros(frame.shape_yx, np.uint16)
+            cover_none = np.zeros(frame.shape_yx, bool)
+            for indexes in by_electrode.values():
+                touched = np.zeros(frame.shape_yx, bool)
+                touched_high = np.zeros(frame.shape_yx, bool)
+                touched_visible = np.zeros(frame.shape_yx, bool)
+                for index in indexes:
+                    mask = observed[index].active(frame.valid)
+                    touched |= mask
+                    grade = grades[index]
+                    if grade == 'High':
+                        touched_high |= mask
+                        touched_visible |= mask
+                    elif grade == 'Low':
+                        touched_visible |= mask
+                    elif grade == 'None':
+                        cover_none |= mask
+                counts += touched
+                count_high += touched_high
+                count_visible += touched_visible
+            touched = touched_high = touched_visible = mask = None
+            grade_max = np.zeros(frame.shape_yx, np.uint8)
+            grade_max[cover_none] = 1
+            grade_max[count_visible > 0] = 2
+            grade_max[count_high > 0] = 3
+            cover_none = grades = None
+            for array in (count_high, count_visible, grade_max):
+                array.setflags(write=False)
         counts.setflags(write=False)
         regions = []
         shared_coverage = None   # one frozen copy of this layer's coverage for all its regions (_frozen_coverage)
         labelled = None
         layer_runs = 0
         if threshold is not None:
-            active = (counts >= threshold) & frame.valid
+            selected_map = counts if grade_of_case is None else (count_high if selection == 'high' else count_visible)
+            active = (selected_map >= threshold) & frame.valid
             run_counts = _run_counts(active)
             if priced:
                 # real datasets: price the count prepass, then the region construction, before allocating either
@@ -616,9 +724,7 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
             links = tuple(links)
             link_total += len(links)
             windows = region_cache = None  # one region's windows at a time: the guard prices the region with the most runs
-            payload = [asdict(key), diameter, threshold, frame.frame_id, frame.pixel_pitch_um,
-                       frame.origin_xy_um, frame.shape_yx, frame.valid_hash, np.argwhere(inside).tolist()]
-            stable_id = 'region_' + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            stable_id = stable_region_id(key, diameter, threshold, frame, inside, selection=selection)
             inside.setflags(write=False)
             if shared_coverage is None:
                 shared_coverage = _frozen_coverage(coverage)
@@ -636,6 +742,11 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
         regions.sort(key=lambda r: (-r.max_count, -r.area_um2, r.region_id))
         status = coverage['source_coverage_status'] if has_observed or coverage['not_applicable'] else 'unavailable'
         layers.append(LayerMap(key, frame, counts if status!='unavailable' else None, status, tuple(sorted(reasons)), coverage, tuple(regions)))
+        if grade_of_case is not None:
+            usable = status != 'unavailable'
+            graded_layers.append(GradedLayer(key, frame, count_high if usable else None, count_visible if usable else None,
+                                             grade_max if usable else None))
+        count_high = count_visible = grade_max = None
     summaries = []
     summary_groups = {}
     for layer in layers:
@@ -663,4 +774,5 @@ def compute_electrode_maps(inputs: NumericDataset | Iterable[NumericCase], *,
                                     ('unavailable' if counts is None else
                                      'available' if all(m.status == 'available' for m in maps) else 'partial'),
                                     tuple(sorted(reasons)), coverage, summary_provenance))
-    return ElectrodeMaps(tuple(layers), tuple(summaries), diameter, provenance)
+    return (ElectrodeMaps(tuple(layers), tuple(summaries), diameter, provenance),
+            None if grade_of_case is None else tuple(graded_layers))
