@@ -56,7 +56,7 @@ def _line(code, description, row=None, electrode=None, column=None, value=None):
     parts = [code]
     for key, item in (('row', row), ('electrode', electrode), ('column', column), ('value', value)):
         if item is not None:
-            parts.append(f'{key}={item}')
+            parts.append(f'{key}={item!r}' if key == 'value' else f'{key}={item}')
     return ' '.join(parts) + f' : {description}'
 
 
@@ -67,6 +67,8 @@ def _number(text):
 
 
 def _text(value):
+    if value.is_zero() and value.is_signed():   # '-0' 표기를 만들지 않는다
+        value = abs(value)
     return format(value, 'f')
 
 
@@ -368,6 +370,9 @@ def load_dv_grades(out_dir):
         raise DvGradeLoadError('dv_grade_schema_unsupported', repr(manifest.get('schema_version')))
     if manifest.get('grade_rule_version') != GRADE_RULE_VERSION:
         raise DvGradeLoadError('dv_grade_rule_unsupported', repr(manifest.get('grade_rule_version')))
+    product_id = manifest.get('product_id')
+    if not isinstance(product_id, str) or not product_id.strip():
+        raise DvGradeLoadError('dv_grade_manifest_invalid', 'product_id 가 없거나 비어 있습니다')
     outputs = manifest.get('outputs')
     if not isinstance(outputs, dict) or set(outputs) != set(OUTPUT_FILES):
         raise DvGradeLoadError('dv_grade_manifest_invalid', 'outputs 가 예상 파일 목록과 다릅니다')

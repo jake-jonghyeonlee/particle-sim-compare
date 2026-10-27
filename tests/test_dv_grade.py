@@ -331,16 +331,32 @@ def test_voltage_rejects_non_plain_numbers(tmp_path, capsys, value):
     assert '지수 표기 없이' in err
 
 
-@pytest.mark.parametrize('value', ['1e-3', '.5', '1234567', 'abc', '0', '-1', '0.0', ''])
+@pytest.mark.parametrize('value', ['1e-3', '.5', '1234567', 'abc', '0', '-1', '0.0', '', '-0', '+0.0'])
 def test_threshold_must_be_positive_plain_decimal(tmp_path, capsys, value):
     err = _fails(tmp_path, capsys, threshold=value)
     assert 'dv_threshold_invalid' in err
 
 
-@pytest.mark.parametrize('value', ['+1.5', '-12.25', '123456.123456', '0.5', ' 2 '])
+@pytest.mark.parametrize('value', ['+1.5', '-12.25', '123456.123456', '0.5', ' 2 ', '-0', '+0.0', '000001.5', '0.000000'])
 def test_plain_numbers_are_accepted(tmp_path, value):
     rows = [_row('A', 'low', (value, '999999'), ('0', '0')), _row('B', 'low', ('0', '0'), ('0', '0')), _row('C', 'low', ('0', '0'), ('0', '0'))]
     assert _grade(tmp_path, sheet=_write_sheet(tmp_path / 's.csv', rows)) == 0
+
+
+def test_negative_zero_is_written_as_zero(tmp_path):
+    rows = [_row('A', 'low', ('-0', '-0'), ('0', '0')), _row('B', 'low', ('0', '0'), ('0', '0')), _row('C', 'low', ('-0', '-0'), ('0', '0'))]
+    assert _grade(tmp_path, sheet=_write_sheet(tmp_path / 's.csv', rows)) == 0
+    text = (tmp_path / 'out' / 'dv_pair_timings.csv').read_text(encoding='utf-8-sig')
+    assert '-0' not in text
+    assert _dicts(tmp_path / 'out' / 'dv_pair_timings.csv')[0]['dv_ab'] == '0'
+    assert '-0' not in (tmp_path / 'out' / 'dv_grades.csv').read_text(encoding='utf-8-sig')
+
+
+def test_error_value_is_repr_so_newline_stays_on_one_line(tmp_path, capsys):
+    rows = [_row('A', 'low', ('1\n2', '1'), ('0', '0')), _row('B', 'low', ('0', '0'), ('0', '0')), _row('C', 'low', ('0', '0'), ('0', '0'))]
+    err = _fails(tmp_path, capsys, sheet=_write_sheet(tmp_path / 's.csv', rows))
+    line = [item for item in err.splitlines() if 'dv_voltage_invalid' in item][0]
+    assert "value='1\\n2'" in line and 'column=T1_min' in line
 
 
 def test_all_errors_are_collected_with_row_numbers(tmp_path, capsys):
@@ -358,8 +374,8 @@ def test_all_errors_are_collected_with_row_numbers(tmp_path, capsys):
         writer.writerow(_row('Z', 'high', ('5', '4'), ('0', '0')))                 # row 9 비필수인데 min>max
         writer.writerow(_row('Y', 'bad', ('', ''), ('', '')))                      # row 10 비필수인데 채운 임피던스 오류
     err = _fails(tmp_path, capsys, sheet=path)
-    for fragment in ('dv_sheet_duplicate_electrode row=3 electrode=A', 'dv_impedance_invalid row=4 electrode=B column=impedance value=mid',
-                     'dv_voltage_invalid row=4 electrode=B column=T1_min value=x', 'dv_voltage_range_inverted row=4 electrode=B',
+    for fragment in ('dv_sheet_duplicate_electrode row=3 electrode=A', 'dv_impedance_invalid row=4 electrode=B column=impedance value=\'mid\'',
+                     'dv_voltage_invalid row=4 electrode=B column=T1_min value=\'x\'', 'dv_voltage_range_inverted row=4 electrode=B',
                      'dv_sheet_row_width_invalid row=5', 'dv_sheet_row_width_invalid row=6', 'dv_sheet_electrode_id_empty row=7',
                      'dv_voltage_range_inverted row=9 electrode=Z', 'dv_impedance_invalid row=10 electrode=Y',
                      'dv_sheet_electrode_missing electrode=C'):
@@ -519,6 +535,18 @@ def test_load_accepts_case_with_reversed_endpoints(tmp_path):
     loaded = dv_grade.load_dv_grades(out)
     rev = [row for row in loaded['by_case'] if row['case_name'] == 'vertical_short-B-M2-A-M1'][0]
     assert (rev['electrode_a'], rev['electrode_b']) == ('B', 'A')
+
+
+@pytest.mark.parametrize('mutate', ['delete', 'empty', 'blank', 'number'])
+def test_load_rejects_missing_or_empty_product_id(tmp_path, mutate):
+    out = _make(tmp_path)
+    manifest = _manifest(out)
+    if mutate == 'delete':
+        del manifest['product_id']
+    else:
+        manifest['product_id'] = {'empty': '', 'blank': '  ', 'number': 5}[mutate]
+    _write_manifest(out, manifest)
+    assert _load_code(out) == 'dv_grade_manifest_invalid'
 
 
 def test_load_missing_manifest(tmp_path):
