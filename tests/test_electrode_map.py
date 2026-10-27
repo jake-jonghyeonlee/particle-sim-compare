@@ -609,12 +609,24 @@ BASELINE_SHAS = {
 }
 
 
-def _snapshot(folder, tmp_path):
+TEXT_SUFFIXES = ('.json', '.csv', '.html')
+
+
+def _snapshot(folder, tmp_path, text_only=False):
+    """text_only: JSON·CSV·HTML 만, 64자리 hex(PNG 자산 sha256)와 data URI(PNG 바이트)를 지운 해시. PIL·numpy 버전과 무관하다."""
     shas = {}
     for path in sorted(Path(folder).rglob('*')):
         if not path.is_file():
             continue
         relative = path.relative_to(folder).as_posix()
+        if text_only:
+            if path.suffix in TEXT_SUFFIXES:
+                data = path.read_bytes().replace(str(tmp_path).encode(), b'<TMP>')
+                data = _re.sub(rb'"producer_commit": "[0-9a-f]{40}"', b'"producer_commit": "<COMMIT>"', data)
+                data = _re.sub(rb'data:[a-z/+-]+;base64,[A-Za-z0-9+/=]+', b'<DATA-URI>', data)
+                data = _re.sub(rb'[0-9a-f]{64}', b'<HEX64>', data)
+                shas[relative] = _hashlib.sha256(data).hexdigest()
+            continue
         if path.suffix == '.npz':
             with np.load(path) as archive:
                 digest = _hashlib.sha256()
@@ -638,35 +650,86 @@ def _byte_identity_runs(tmp_path):
     assert main(['demo-data', '--out', str(demo)]) == 0
     runs = {}
     assert main(['electrode-map', '--config', str(demo / 'config.yaml'), '--min-count', '4', '--out', str(tmp_path / 'em')]) == 0
-    runs['electrode_map_demo'] = _snapshot(tmp_path / 'em', tmp_path)
+    runs['electrode_map_demo'] = tmp_path / 'em'
     assert main(['candidates', '--config', str(demo / 'config.yaml'), '--min-count', '4', '--window-um', '4',
                  '--merge-overlap', '0.5', '--out', str(tmp_path / 'cand')]) == 0
-    runs['candidates_demo'] = _snapshot(tmp_path / 'cand', tmp_path)
+    runs['candidates_demo'] = tmp_path / 'cand'
     from test_candidates import real_config
     (tmp_path / 'realdir').mkdir()
     config = real_config(tmp_path / 'realdir')
     code = main(['candidates', '--config', str(config), '--min-count', '1', '--window-um', '10', '--merge-overlap', '0.5',
                  '--out', str(tmp_path / 'cand_real')])
     assert code == 0
-    runs['candidates_real'] = _snapshot(tmp_path / 'cand_real', tmp_path)
+    runs['candidates_real'] = tmp_path / 'cand_real'
     from simcompare.heatmap import write_heatmap
     from simcompare.numeric_schema import Frame
     frame = Frame('FRAME', .5, (100, 200), (2, 3), [[1, 1, 1], [1, 0, 1]])
     write_heatmap(tmp_path / 'heat', 'counts', np.array([[0, 2, 3], [1, 7, 4]]), frame, status='partial', reasons=['valid_coverage_partial'])
-    runs['heatmap_default'] = _snapshot(tmp_path / 'heat', tmp_path)
-    return runs
+    runs['heatmap_default'] = tmp_path / 'heat'
+    return runs   # 이름 → 출력 폴더
 
 
 BASELINE_ENV = {'python': '3.11', 'PIL': '12.3.0', 'numpy': '2.4.6'}   # 해시를 고정한 환경: PNG·npz 바이트는 PIL·numpy 버전에 따라 다르다
 
 
-def test_baseline_outputs_are_byte_identical(tmp_path):
+# 정규화한 텍스트 해시: 기준 환경(BASELINE_ENV)에서 전체 해시(BASELINE_SHAS)가 통과하는 상태에서 PRINT_BASELINE=1 로 뽑았다.
+TEXT_ONLY_SHAS = {
+    'candidates_demo': {
+        'candidate_queries_v1.json': '46ecbecab5b7c7caffc8ec5dbefba3dd1c146b5c720f106c2f90d016036917f0',
+        'execution.json': '4e0bb545459934db1e9371c287177337b248939b68ff051ad61165a23986e482',
+        'funnel.csv': '7838acbd417162e5176ba9c73dbb5e63219c20721357cebebdc5cebd61573ba1',
+        'funnel.json': 'a22a13ae0fa68e80b290cd59abeffdb558feb28c980f8e9415c3b1140bf45324',
+        'reference_export/review_rois.json': 'da9fa3e0ba2f130adbbd2184b0b486b11e17ce63f7ca3059e581cb48369bea79',
+        'reference_index_export/review_rois.json': 'dd0f351ac64b89aa458d54c66cf9a36b62cea452afa30facdde3a622d72750e5',
+        'target_export/review_rois.json': 'ba906e72d7f627e598c67a06340adf0caa8725d9f890bc0b04d3528ac8179ca5',
+        'target_index_export/review_rois.json': '058d51c6539d13a7eb03ad5be403212b45f2e9289e7aa38e5d01ad8ab8882189'},
+    'candidates_real': {
+        'candidate_queries_v1.json': '7c47d2c5d59ac12143da9533ea66e3f4866902859d3e47b9f03d8ae847a45c2b',
+        'execution.json': '71052d384dde5fe5017c55c4d15bfd341490603f31de1b9a3e28621c0bf3da62',
+        'funnel.csv': '176a98c405f36d86b6ae4d7d9db01e52dd97622448683f4280ecb948d2f26528',
+        'funnel.json': '69e4706b8f16d229f19817d807f550e28fd7bf994203ebf3e46caf136d1a4c78',
+        'reference_export/review_rois.json': 'a469567dcd0ddff116a2447cd6a5de0965f2c3c59786ea6fbe2981477fee2492',
+        'reference_index_export/review_rois.json': '73f2bd37e8f5c0ce0851746f9780a5fef4c027ee6cb96dd8a6be43580915747c',
+        'target_export/review_rois.json': '3bb490e4ed7c5e42a8400a58811cec217750fd1864ed972a6ce398f567a326c3',
+        'target_index_export/review_rois.json': 'ae996c10280312cac59f09fb9eed51c5fa00d52144c1e4de52cad66eaca161b4'},
+    'electrode_map_demo': {
+        'electrode_map.html': '54b383ea5ebba502f4b7a017914b9dff25ba3c399d3f8dd33467f28b202d1342',
+        'electrode_map.json': '4a254f2b00edae62146df2aae72057062e9887d028f8f469708e191ffce20b46',
+        'electrode_map_layer_dad86b4780ba65ff2f07.json': '08b039c2e55e0cfe7b72024b77581d344f9806520c841c3a3ab151475ffa0a67',
+        'electrode_map_summary_16134bada04ff34214c3.json': '5d7822d09f11f85b1a145ef5c6095d7f09cabe4ebdac85609f2c8c705cd6bd2f',
+        'execution.json': 'cc81e9aadeef10867ded97f800a8413cfb1a305d07f28c6fe7d31951500180ec'},
+    'heatmap_default': {
+        'counts.json': '1980d267692766ebdc1d5ee4f9cea3e3140a0870d53e7423d44c71f6b3c92150'},
+}
+
+
+def _environment():
     import sys
     import PIL
-    here = {'python': '%d.%d' % sys.version_info[:2], 'PIL': PIL.__version__, 'numpy': np.__version__}
+    return {'python': '%d.%d' % sys.version_info[:2], 'PIL': PIL.__version__, 'numpy': np.__version__}
+
+
+@pytest.fixture(scope='module')
+def baseline_folders(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp('baseline')
+    return tmp_path, _byte_identity_runs(tmp_path)
+
+
+def test_baseline_text_outputs_are_byte_identical_in_every_environment(baseline_folders):
+    """JSON·CSV·HTML 은 PNG 자산 sha256·data URI 를 지우고 해시하므로 PIL·numpy 버전과 무관하다. 환경 조건 skip 이 없다."""
+    tmp_path, folders = baseline_folders
+    runs = {run: _snapshot(folder, tmp_path, text_only=True) for run, folder in folders.items()}
+    if os.environ.get('PRINT_BASELINE'):
+        print('TEXT_ONLY', json.dumps(runs, indent=1, sort_keys=True))
+    assert runs == TEXT_ONLY_SHAS
+
+
+def test_baseline_png_and_npz_outputs_are_byte_identical(baseline_folders):
+    here = _environment()
     if here != BASELINE_ENV:
-        pytest.skip(f'baseline sha256 values were recorded with {BASELINE_ENV}, this environment is {here}')
-    runs = _byte_identity_runs(tmp_path)
+        pytest.skip(f'baseline PNG/npz/raw sha256 values were recorded with {BASELINE_ENV}, this environment is {here}')
+    tmp_path, folders = baseline_folders
+    runs = {run: _snapshot(folder, tmp_path) for run, folder in folders.items()}
     if os.environ.get('PRINT_BASELINE'):
         print('BASELINE', json.dumps(runs, indent=1, sort_keys=True))
-    assert runs == BASELINE_SHAS
+    assert runs == BASELINE_SHAS   # 정규화하지 않은 전체 해시(텍스트 포함): 기준 환경에서만 검사한다

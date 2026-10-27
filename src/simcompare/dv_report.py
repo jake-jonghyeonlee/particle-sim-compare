@@ -33,6 +33,7 @@ QUERIES_NAME, VULNERABILITY_NAME = 'candidate_queries_v1.json', 'vulnerability_v
 SIDES = ('reference', 'target')
 GRADE_ORDER = {'High': 0, 'Low': 1, 'None': 2}
 GRADE_CODE_NAME = {0: 'ungraded', 1: 'None', 2: 'Low', 3: 'High'}
+# LAYER_SLOTS 와 CSS 의 --l-1 … --l-N 변수(라이트·다크 두 곳)·.l1…lN 규칙은 함께 고쳐야 한다. 한쪽만 바꾸면 슬롯과 색이 어긋난다.
 LAYER_SLOTS = 4           # CSS --l-1 … --l-4. 이보다 layer 가 많으면 layer 별 작은 지도로 나눈다(색을 만들지 않는다)
 MAP_SIZE_PX = 310         # ROI 상세 지도 한 변(화면 px)
 MAP_MAX_CELLS = 220       # 지도 한 변 최대 셀 수(넘으면 정수 배로 묶는다)
@@ -67,7 +68,7 @@ th{color:var(--text-secondary);font-weight:600;font-size:12px}th.l,td.l{text-ali
 .g-High{background:var(--g-high)}.g-Low{background:var(--g-low)}.g-None{background:var(--g-none)}.g-ungraded{background:var(--g-uncovered)}
 rect.g-High{fill:var(--g-high)}rect.g-Low{fill:var(--g-low)}rect.g-None{fill:var(--g-none)}.bt{fill:var(--text-secondary);font-size:11px}
 .legend i.lf{border:1px solid var(--text-muted)}
-.ln{fill:var(--text-muted);stroke:var(--text-muted)}.ls.ln{fill:none}.legend i.ln{background:transparent;border:1px dashed var(--text-muted)}
+.ln{fill:var(--text-muted);stroke:var(--text-muted)}.ls.ln{fill:none;stroke-dasharray:4 3}.legend i.ln{background:transparent;border:1px dashed var(--text-muted)}
 .legend i.l1{background:color-mix(in srgb,var(--l-1) 30%,transparent);border-color:var(--l-1)}
 .legend i.l2{background:color-mix(in srgb,var(--l-2) 30%,transparent);border-color:var(--l-2)}
 .legend i.l3{background:color-mix(in srgb,var(--l-3) 30%,transparent);border-color:var(--l-3)}

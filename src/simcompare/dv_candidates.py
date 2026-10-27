@@ -79,8 +79,14 @@ def _load_grades(path, label):
 def _link_side(name, side, dv):
     """dv-grade 출력 ↔ 이 제품의 데이터셋. 쓰기 전에 모두 검사한다. (case_id -> grade, 등급 없는 case_id 목록)."""
     manifest = dv['manifest']
-    cases = {case.identity.case_id: case for case in side.dataset.cases}
-    if cases and side.product_ids != [manifest['product_id']]:
+    cases = {}
+    for case in side.dataset.cases:
+        if case.identity.case_id in cases:
+            raise _bad('dv_candidates_duplicate_case_id', f'{name}: 데이터셋에 case_id {case.identity.case_id!r} 가 두 번 있습니다')
+        cases[case.identity.case_id] = case
+    if not cases:   # candidates 의 side_unavailable 과 같다: 오류가 아니라 경고 + 종료 코드 3 (경고는 _run 이 붙인다)
+        return {}, []
+    if side.product_ids != [manifest['product_id']]:
         raise _bad('dv_grade_product_mismatch',
                    f'{name}: 제품 {side.product_ids} 인데 dv-grade manifest 의 product_id 는 {manifest["product_id"]!r} 입니다')
     grade_of = {}
@@ -477,6 +483,9 @@ def _run(cfg, out, track, sides, dv, links, notes, args, diameter_um):
                              'query_rows_blocked': side.role_blocked, 'index_rows_blocked': side.role_blocked_index})
         if side.status in ('blocked', 'unavailable'):
             warnings.append({'code': 'side_' + side.status, 'product': name, 'reasons': side.reasons})
+        if not side.dataset.cases:
+            warnings.append({'code': 'dv_candidates_side_has_no_cases', 'product': name,
+                             'detail': '이 제품의 데이터셋에 case 가 없어 dv-grade 와 연결하지 않았습니다(side_unavailable 과 같은 처리).'})
         ungraded = links[name][1]
         if ungraded:
             warnings.append({'code': 'dv_ungraded_cases', 'product': name, 'count': len(ungraded), 'cases': ungraded[:UNGRADED_SAMPLE],
@@ -601,12 +610,13 @@ def _vulnerability(sides, plans, dv, links, args, notes):
             rank[rep] = (merge['rank_graded'], plan['rank_unweighted'][rep], merge['kept'])
         exported = {merge['representative'].region_id for merge in plan['kept']}
         regions = []
+        by_pair = {item['pair_key']: item for item in dv[name]['pairs']}
         for row in plan['graded_rows']:
             region = row['region']
             rep = merged_into.get(region.region_id, region.region_id)
             pairs = plan['pairs_by_region'][region.region_id]
-            grade_count = {'None': 0, 'Low': 0, 'High': 0, 'ungraded': len(pairs['ungraded_cases'])}
-            by_pair = {item['pair_key']: item for item in dv[name]['pairs']}
+            # None·Low·High 는 쌍(pair_key) 수, ungraded_cases 는 등급 없는 case 수(단위가 다르다)
+            grade_count = {'None': 0, 'Low': 0, 'High': 0, 'ungraded_cases': len(pairs['ungraded_cases'])}
             for pair in pairs['pairs']:
                 grade_count[by_pair[pair['pair_key']]['grade']] += 1
             regions.append({
@@ -638,7 +648,7 @@ def _vulnerability(sides, plans, dv, links, args, notes):
             'product_id': dv[name]['manifest']['product_id'], 'dv_provenance': _dv_record(dv[name]),
             'regions': regions, 'unweighted_regions': unweighted, 'grade_maps': plan['grade_maps'],
             'pairs': [dict(row) for row in dv[name]['pairs']],
-            'cases': [{**dict(row), 'in_dataset': True} for row in dv[name]['by_case']],
+            'cases': [{**dict(row), 'in_dataset': bool(side.dataset.cases)} for row in dv[name]['by_case']],
             'ungraded_cases': ungraded, 'n_dataset_cases': len(side.dataset.cases),
             'n_graded_cases': len(grade_of), 'case_count_by_grade': {g: sum(1 for r in by_case.values() if r['grade'] == g) for g in GRADE_CODE}}
     return {'schema_version': VULNERABILITY_SCHEMA, 'score_rule_version': SCORE_RULE_VERSION, 'args': args, 'products': products,

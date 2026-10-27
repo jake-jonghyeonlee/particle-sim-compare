@@ -193,3 +193,9 @@ def test_layer_slots_natural_order_and_overflow_has_no_new_colour():
                              {('E%d' % i, l): mask for i, l in enumerate(layers)}, slots, (0, 0, 0.2, 0.2), layers)
     classes = set(re.findall(r'class="(?:lf|ls) (l\d|ln)"', svg))
     assert classes == {'l1', 'l2', 'l3', 'l4', 'ln'} and '<title>E5 (L6)</title>' in svg
+
+
+def test_outline_of_layer_outside_slots_is_dashed_like_the_legend(report):
+    style = (report / 'report.html').read_text(encoding='utf-8').split('<style>')[1].split('</style>')[0]
+    assert re.search(r'\.ls\.ln\{[^}]*stroke-dasharray:[^}]+\}', style)
+    assert re.search(r'\.legend i\.ln\{[^}]*dashed', style)

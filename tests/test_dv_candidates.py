@@ -337,6 +337,88 @@ def test_ungraded_case_is_partial_exit_3_and_not_in_the_grade_map(world, capsys)
     assert sorted(r['max_count'] for r in unweighted.values()) == [4, 4, 4, 5]   # count_all 은 등급 없는 case 도 센다
 
 
+def _patched_prepare(monkeypatch, edit):
+    """candidates.prepare_side 가 만든 side 를 edit(name, side) 로 바꾼 뒤 돌려준다(테스트 전용 입력 변형)."""
+    from simcompare import candidates
+    original = candidates.prepare_side
+
+    def prepare(cfg, name, *args, **kwargs):
+        side = original(cfg, name, *args, **kwargs)
+        edit(name, side)
+        return side
+    monkeypatch.setattr(candidates, 'prepare_side', prepare)
+
+
+def test_representative_centre_on_an_invalid_cell_keeps_exporter_reason_and_flags_the_query(tmp_path, monkeypatch):
+    """고리 모양 섬(3×5 에서 가운데 셀만 비움): 영역 bbox 중심이 비어 있는 셀 위다. 그 셀만 invalid 로 만든다.
+    real_hotspot 의 frame 은 전부 valid 라 구멍은 테스트가 넣고, valid 해시·자산 일치 검사는 원래 값으로 맞춘다."""
+    from simcompare import roi_export
+    from simcompare.numeric_schema import Frame
+    ring = [(r, c) for r in range(3) for c in range(10, 15) if (r, c) != (1, 12)]
+
+    def name(a, b):
+        return f'lateral_short-{a}-L1-{b}-L1'
+    cases = [(name('P1', 'N1'), ring), (name('P2', 'N2'), ring)]
+    ring_world = World(tmp_path, cases, cases)
+    assert ring_world.run('plain', k=4) == 0
+    [plain] = queries(load(tmp_path / 'plain' / 'candidate_queries_v1.json'))
+    centre = plain['center_xy_um']
+    assert 'query_centre_invalid' not in plain['flags'] and plain['status'] == 'ready'
+
+    original_hash = Frame.valid_hash
+    original_asset = roi_export._asset
+
+    def punch_hole(side_name, side):
+        for frame in {id(f): f for f in side.dataset.frames.values()}.values():
+            col = int((centre[0] - frame.origin_xy_um[0]) / frame.pixel_pitch_um)
+            row = int((centre[1] - frame.origin_xy_um[1]) / frame.pixel_pitch_um)
+            valid = frame.valid.copy()
+            valid[row, col] = False
+            hashes[id(frame)] = original_hash.fget(frame)
+            object.__setattr__(frame, 'valid', valid)
+    hashes = {}
+    _patched_prepare(monkeypatch, punch_hole)
+    monkeypatch.setattr(Frame, 'valid_hash', property(lambda self: hashes.get(id(self)) or original_hash.fget(self)))
+    monkeypatch.setattr(roi_export, '_asset', lambda root, ref, frame, *, valid=False, memo=None:
+                        original_asset(root, ref, frame, valid=False, memo=memo))
+    assert ring_world.run('hole', k=4) == 3
+    payload = load(tmp_path / 'hole' / 'candidate_queries_v1.json')
+    [hole] = queries(payload)
+    assert hole['center_xy_um'] == centre
+    assert 'query_centre_invalid' in hole['flags'] and 'position_outside_valid_domain' in hole['reasons']   # 질의 플래그와 exporter 사유 둘 다
+    assert hole['status'] == 'blocked'
+
+
+def test_side_without_cases_is_a_warning_with_exit_3_not_a_product_mismatch(world, monkeypatch, capsys):
+    from dataclasses import replace
+
+    def no_cases(name, side):
+        if name == 'reference':
+            side.dataset = replace(side.dataset, cases=[])
+            side.status, side.reasons, side.product_ids = 'unavailable', ['same_name_endpoints_unresolved'], []
+    _patched_prepare(monkeypatch, no_cases)
+    capsys.readouterr()
+    assert world.run('nocases') == 3
+    assert 'dv_grade_product_mismatch' not in capsys.readouterr().err
+    out = world.base / 'nocases'
+    payload = load(out / 'candidate_queries_v1.json')
+    codes = {(w['code'], w['product']) for w in payload['warnings']}
+    assert ('dv_candidates_side_has_no_cases', 'reference') in codes and ('side_unavailable', 'reference') in codes
+    assert payload['status'] == 'partial' and queries(payload) == []
+    product = load(out / 'vulnerability_v1.json')['products']['reference']
+    assert product['regions'] == [] and product['n_dataset_cases'] == 0 and not any(c['in_dataset'] for c in product['cases'])
+
+
+def test_duplicate_case_id_in_one_dataset_exits_2_before_writing(world, monkeypatch, capsys):
+    from dataclasses import replace
+
+    def duplicate(name, side):
+        if name == 'target':
+            side.dataset = replace(side.dataset, cases=list(side.dataset.cases) + [side.dataset.cases[0]])
+    _patched_prepare(monkeypatch, duplicate)
+    _exit2(world, capsys, 'dv_candidates_duplicate_case_id', name='dup')
+
+
 def _exit2(world, capsys, code, *, dv=None, extra=(), name='bad', **kwargs):
     capsys.readouterr()
     assert world.run(name, dv=dv, extra=extra, **kwargs) == 2
@@ -566,7 +648,7 @@ def test_rank_counterexample_none_heavy_region_loses_to_high_region(multi):
     best = min(regions.values(), key=lambda r: r['rank_graded'] or 99)
     assert best['sel_max_count'] == 8 and best['max_count'] == 8
     assert heavy['sel_max_count'] == 4 and heavy['rank_graded'] == 3 and heavy['rank_unweighted'] == 1
-    assert heavy['n_pairs_by_grade'] == {'None': 3, 'Low': 0, 'High': 2, 'ungraded': 0}
+    assert heavy['n_pairs_by_grade'] == {'None': 3, 'Low': 0, 'High': 2, 'ungraded_cases': 0}
 
 
 def test_identical_dv_outputs_are_a_note_not_an_error(tmp_path):
