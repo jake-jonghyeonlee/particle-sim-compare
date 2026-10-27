@@ -1,5 +1,7 @@
 # deltav 예시 파일
 
+**흐름.** `dv-template` 이 빈 시트를 만들고, 사용자가 전압·임피던스를 채우고, `dv-grade` 가 제품마다 쌍별 등급을 계산한다. 그 출력 폴더 둘을 `candidates-dv`(`docs/dv_candidates.md`)에 주면 등급으로 가중한 취약점 ROI 가 나오고, `vulnerability-report` 가 수치 근거 HTML 을 만든다. ETX 에서는 0 → 0b → (1~3회차) → 4b → 4c 순서다.
+
 `dv-template`(`docs/dv_template.md`)이 읽고 쓰는 파일 형식의 예시다.
 
 **이 폴더의 숫자와 전극 이름은 모두 가짜다.** 실제 임피던스나 전압이 아니다.

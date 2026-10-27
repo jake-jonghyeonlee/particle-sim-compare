@@ -164,7 +164,7 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 
 ## ROI 선정
 
-ROI 선정 방식은 둘이다. **변경점 ROI(`candidates-change`)가 현행이다.** 취약점 ROI(`candidates`, `max_count` 기준)는 코드와 문서를 남겨 두되 **보류**한다(ΔV 가중 설계가 끝날 때까지 쓰지 않는다). ETX 4회차 실행기(`simcompare_job_4_candidates.py`)는 `candidates-change`를 돈다.
+ROI 선정 방식은 셋이다. **변경점 ROI(`candidates-change`)와 ΔV 취약점 ROI(`candidates-dv`)가 현행이다.** 비가중 취약점 ROI(`candidates`, `max_count` 기준)는 참고용으로 코드와 문서를 남겨 둔다. ETX 4회차 실행기(`simcompare_job_4_candidates.py`)는 `candidates-change`를, 4b·4c 실행기는 `candidates-dv`·`vulnerability-report`를 돈다.
 
 ### 변경점 ROI (candidates-change) — 현행
 
@@ -266,9 +266,34 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 - 층 사이 합집합을 만들지 않는다. 층이 바뀐 조합은 위처럼 한쪽 조합 둘이다.
 - 실데이터 규모, 메모리·시간, ETX Linux 실행은 아직 검증하지 않았다(`docs/plan/change_roi/README.md`).
 
-### 취약점 ROI (candidates) — 보류
+### 취약점 ROI (candidates-dv) — 현행
 
-아래는 `max_count` 기준 취약점 ROI의 설명이다. ΔV 가중 설계가 끝날 때까지 **보류**한다. 변경점 ROI와 같은 출력 스키마(`candidate_queries_v1`)를 쓰지만 점수·순위가 다르다.
+두 제품의 `dv-grade` 출력(전극쌍 ΔV 등급)으로 가중한 취약점 영역을 뽑는다. real_hotspot_v1 전용이다. 변경점 ROI(`candidates-change`)와 독립이고 출력 폴더도 따로 쓴다. 상세는 [dv_candidates.md](dv_candidates.md)에 있다.
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare candidates-dv --config real.yaml --dv-grades-reference dv_grade_ref --dv-grades-target dv_grade_tgt --min-count 4 --roi-grade high --window-um 20 --merge-overlap 0.5 --out changes_dv
+```
+
+- 모든 인수(`--config`, `--dv-grades-reference`, `--dv-grades-target`, `--min-count`, `--roi-grade`, `--window-um`, `--merge-overlap`, `--out`)는 **필수이며 기본값이 없다**. `--max-candidates N`은 선택이다. 위 값은 예시다.
+- `--roi-grade high`는 High 쌍으로 센 전극 수(`count_high`), `low_or_high`는 Low·High 쌍으로 센 전극 수(`count_visible`)로 영역을 고른다. 비가중 `count_all`은 비교용으로만 계산한다.
+- 출력: `candidate_queries_v1.json`(`roi_source: candidates_dv_v1`), `vulnerability_v1.json`, `grade_maps/`, `funnel.json`/`funnel.csv`, `*_export/`, `*_index_export/`, `execution.json`.
+- 종료 코드: 0 = 완전, 3 = 부분 결과(등급 없는 case, case 없는 제품, 지도·index coverage 불완전 등), 2 = 입력·설정 오류(dv-grade 제품·case 불일치, 같은 dv-grade 폴더, 중복 case_id 등). 입력 오류는 아무것도 쓰기 전에 멈춘다.
+- 한계: 질의 중심은 영역 bbox 중심이라 U 자·고리 영역에서는 영역 밖일 수 있다(`query_centre_invalid`, `selected_cells_outside_window`). 쌍 표의 ROI 내 CA는 병합 전 등급 영역 기준이다. 실규모 실측은 아직 없다.
+
+#### 수치 근거 보고서 (vulnerability-report)
+
+```bat
+.venv-cmd\Scripts\python.exe -m simcompare vulnerability-report --candidates-dv-dir changes_dv --out vulnerability_report
+```
+
+- `candidates-dv` 출력 폴더(`--candidates-dv-dir`)만 읽고 수치를 다시 계산하지 않는다. `--out`은 입력 폴더 밖의 새 폴더이며 필수다. `--top-n`(표시할 상위 ROI 수, 기본 10)은 선택이다.
+- 출력: `report.html`(외부 CDN 없음), `report.json`, `execution.json`. 등급 순위와 비가중 순위 비교, ROI 별 쌍 표, layer 별 색 전극 layout 지도를 보인다. layer 색은 layer 이름의 자연 정렬 순서(슬롯 4개, 초과는 색 없이 점선)다.
+- 입력 기록의 `data_dir`(절대 경로)로 전극 layout 자산을 다시 읽으므로 `candidates-dv`와 같은 서버에서 이어서 실행한다. 자산이 없거나 해시가 다르면 layout 없이 그리고 종료 코드 3이다.
+- 종료 코드: 0 = 완전, 3 = 입력이 partial이거나 경고가 있다, 2 = 입력 없음·모양 오류·`--out` 오류.
+
+### 취약점 ROI (candidates) — 비가중(참고)
+
+아래는 `max_count` 기준 비가중 취약점 ROI(`candidates`)의 설명이다. ΔV 등급을 쓰지 않는 참고용이며 현행 취약점 ROI는 위 `candidates-dv`다. 변경점 ROI와 같은 출력 스키마(`candidate_queries_v1`)를 쓰지만 점수·순위가 다르다.
 
 두 제품(`config.reference`, `config.target`)의 electrode-map 영역을 **양방향**으로 뽑아 질의 ROI로 정리하고, 바로 매칭에 쓸 export와 깔때기 표를 만든다. 점수·CA·Δ·확정·`mutual/one_way`는 다루지 않는다(후속 Task).
 
@@ -436,7 +461,7 @@ JOBS = [("candidates-change", ["--config", "real.yaml", "--cnt-from-dl1-root", "
                                "--top-k", "20", "--out", "data/changes"])]
 ```
 
-모든 인수는 필수이며 값은 예시다(제품에 맞게 바꾼다; 의미는 위 "ROI 선정" 절). `--cnt-from-dl1-root`는 3회차와 같은 DL1 root다. 결과: `data/changes/alignment.html`(정렬·변경 지도), `direct/roi_correspondence.json`(6회차 기본 입력), `*_export/review_rois.json`, `*_index_export/review_rois.json`(DL2 입력). `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 role 목록이다. 실행기는 종료 코드 3을 '계속'으로 처리하므로 로그의 `candidates-change exit N` 줄과 `reasons`를 직접 확인한다. 취약점 ROI(`candidates`)는 보류이며 이 회차에서 쓰지 않는다.
+모든 인수는 필수이며 값은 예시다(제품에 맞게 바꾼다; 의미는 위 "ROI 선정" 절). `--cnt-from-dl1-root`는 3회차와 같은 DL1 root다. 결과: `data/changes/alignment.html`(정렬·변경 지도), `direct/roi_correspondence.json`(6회차 기본 입력), `*_export/review_rois.json`, `*_index_export/review_rois.json`(DL2 입력). `candidate_queries_v1.json`·`execution.json`의 `dl2_model_roles`가 DL2 설정 `model.roles`에 넣을 role 목록이다. 실행기는 종료 코드 3을 '계속'으로 처리하므로 로그의 `candidates-change exit N` 줄과 `reasons`를 직접 확인한다. ΔV 취약점 ROI는 4b·4c회차(`candidates-dv`, `vulnerability-report`)에서 따로 돈다. 비가중 `candidates`는 참고용이며 이 회차에서 쓰지 않는다.
 
 DL2 — 위치 매칭(**DL2 경로 전용**: 직접 대응을 쓰면 DL2와 5회차를 건너뛰고 6회차로 간다. 다른 제품 탐색이 필요할 때만 쓴다. DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job_baseline_ncc.py`, 같은 `BASE_DIR`에서 실행): 4회차 결과로 두 방향 `baseline_ncc --all-ready`를 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 검토 시트 `data/dl2/*_sheet/sheet.html`을 만든다. torch는 필요 없다. ETX 실행기로 만든 export에는 `producer_commit`이 없으므로(git checkout이 아님, 사유는 export에 기록) DL2 실행기는 `--allow-unversioned-producer`를 쓴다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`=`accept`|`reject`)를 쓴다. `candidate_id` 목록은 5회차 첫 작업(`confirm-pairs --list`)이 로그에 찍는다.
 
