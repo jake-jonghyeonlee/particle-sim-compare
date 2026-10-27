@@ -16,6 +16,7 @@ import io
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -66,6 +67,7 @@ th{color:var(--text-secondary);font-weight:600;font-size:12px}th.l,td.l{text-ali
 .g-High{background:var(--g-high)}.g-Low{background:var(--g-low)}.g-None{background:var(--g-none)}.g-ungraded{background:var(--g-uncovered)}
 rect.g-High{fill:var(--g-high)}rect.g-Low{fill:var(--g-low)}rect.g-None{fill:var(--g-none)}.bt{fill:var(--text-secondary);font-size:11px}
 .legend i.lf{border:1px solid var(--text-muted)}
+.ln{fill:var(--text-muted);stroke:var(--text-muted)}.ls.ln{fill:none}.legend i.ln{background:transparent;border:1px dashed var(--text-muted)}
 .legend i.l1{background:color-mix(in srgb,var(--l-1) 30%,transparent);border-color:var(--l-1)}
 .legend i.l2{background:color-mix(in srgb,var(--l-2) 30%,transparent);border-color:var(--l-2)}
 .legend i.l3{background:color-mix(in srgb,var(--l-3) 30%,transparent);border-color:var(--l-3)}
@@ -322,8 +324,33 @@ class _Grid:
         return out
 
 
+def _natural_key(text):
+    return [(0, int(part), '') if part.isdigit() else (1, 0, part) for part in re.split(r'(\d+)', str(text)) if part != '']
+
+
+ORDER_SOURCE = ('layer 이름 자연 정렬(L2 < L10). candidates-dv 입력 기록에 stack_order 가 없어 이 순서를 씁니다')
+
+
 def _layer_slots(layers):
-    return {layer: (index + 1 if index < LAYER_SLOTS else None) for index, layer in enumerate(sorted(layers))}
+    """보고서 전체에서 한 번만 만든다. layer → 슬롯 번호(1..LAYER_SLOTS), 슬롯 밖은 None(무색)."""
+    return {layer: (index + 1 if index < LAYER_SLOTS else None) for index, layer in enumerate(sorted(set(layers), key=_natural_key))}
+
+
+def _slot_class(slots, layer):
+    slot = slots.get(layer)
+    return f'l{slot}' if slot else 'ln'
+
+
+def _all_layers(vulnerability):
+    layers = set()
+    for side in SIDES:
+        product = vulnerability['products'][side]
+        layers.update(entry['key']['layer'] for entry in product['grade_maps'])
+        layers.update(region['map_key']['layer'] for region in product['regions'])
+        layers.update(region['map_key']['layer'] for region in product['unweighted_regions'])
+        for case in product['cases']:
+            layers.update(case[k] for k in ('layer_a', 'layer_b') if case.get(k))
+    return layers
 
 
 # ---- 전극 layout -------------------------------------------------------------------------------------------------
@@ -442,14 +469,12 @@ def _map_svg(factor, grid, box, codes, selected, shapes, slots, window, caption_
     parts = [f'<svg class="map" viewBox="0 0 {W} {H}" width="{MAP_SIZE_PX}" height="{max(1, round(MAP_SIZE_PX * H / W))}" role="img" '
              f'aria-label="전극 layout, 최고 등급, 질의 창, 선정 셀" shape-rendering="crispEdges">']
     for (electrode, layer), mask in sorted(shapes.items(), key=lambda item: (item[0][1], item[0][0])):
-        slot = slots.get(layer)
-        if slot is None:
-            continue
+        cls = _slot_class(slots, layer)
         pooled = _pool(mask, factor, False)
         if not pooled.any():
             continue
-        parts.append(f'<path class="lf l{slot}" d="{_rect_path(pooled)}"><title>{escape(electrode)} ({escape(layer)})</title></path>'
-                     f'<path class="ls l{slot}" d="{_edge_path(pooled)}"/>')
+        parts.append(f'<path class="lf {cls}" d="{_rect_path(pooled)}"><title>{escape(electrode)} ({escape(layer)})</title></path>'
+                     f'<path class="ls {cls}" d="{_edge_path(pooled)}"/>')
     for code in (1, 2, 3):
         mask = codes == code
         if mask.any():
@@ -464,7 +489,7 @@ def _map_svg(factor, grid, box, codes, selected, shapes, slots, window, caption_
     return ''.join(parts) + '</svg>'
 
 
-def _roi_figures(root, product, region, query, layouts, args, warn, side, case_ids, layout_summary):
+def _roi_figures(root, product, region, query, layouts, args, warn, side, case_ids, layout_summary, slots):
     """ROI 상세 지도 HTML 과 메모 dict. 지도를 그릴 수 없으면 사유를 담은 문구를 돌려준다."""
     entry = next((e for e in product['grade_maps'] if all(e['key'].get(k) == region['map_key'].get(k)
                                                           for k in ('source_id', 'process_step_id', 'exposure_id', 'layer', 'unit_id'))), None)
@@ -488,24 +513,22 @@ def _roi_figures(root, product, region, query, layouts, args, warn, side, case_i
         return '<p class="note muted">등급 지도를 읽지 못해 위치 지도를 그리지 못했습니다(경고 참고).</p>', {}
     selected = counts >= args['min_count']
     shapes = _paste_layouts(layouts, case_ids, grid=grade, box=box, warn=warn, side=side) if layouts.index is not None else {}
-    layer_names = sorted({layer for _, layer in shapes})
-    slots = _layer_slots(layer_names)
+    layer_names = sorted({layer for _, layer in shapes}, key=_natural_key)
     split = len(layer_names) > LAYER_SLOTS
     height, width = codes.shape
     factor = max(1, math.ceil(max(height, width) / MAP_MAX_CELLS))
     groups = [(None, shapes)] if not split else [(layer, {k: v for k, v in shapes.items() if k[1] == layer}) for layer in layer_names]
     figures, bytes_used = [], 0
     for layer, group in groups:
-        group_slots = slots if not split else {layer: 1}
         f = factor
         while True:
-            svg = _map_svg(f, grade, box, codes, selected, group, group_slots, window, layer_names)
+            svg = _map_svg(f, grade, box, codes, selected, group, slots, window, layer_names)
             if len(svg) <= MAP_MAX_BYTES or f >= 16:
                 break
             f *= 2
         bytes_used += len(svg)
-        used = sorted({l for _, l in group}) if group else []
-        legend = ''.join(f'<span><i class="lf l{group_slots[l]}"></i>{escape(l)}</span>' for l in used if group_slots.get(l))
+        used = sorted({l for _, l in group}, key=_natural_key) if group else []
+        legend = ''.join(f'<span><i class="lf {_slot_class(slots, l)}"></i>{escape(l)}{"" if slots.get(l) else " (색 없음)"}</span>' for l in used)
         title = (f'{escape(layer)} 전극' if split else '전극 layout(layer 별 색)')
         figures.append(f'<figure>{svg}<figcaption>{title} · 최고 등급 · 질의 창 · 선정 셀'
                        f'{"<div class=legend>" + legend + "</div>" if legend else ""}'
@@ -726,6 +749,10 @@ def build_report(candidates_dv_dir, top_n=10):
             warnings.append(item)
 
     by_query = _queries_by_region(queries)
+    slots = _layer_slots(_all_layers(vulnerability))
+    slot_legend = ''.join(f'<span><i class="lf {_slot_class(slots, layer)}"></i>{escape(layer)}{"" if slots[layer] else " (색 없음)"}</span>'
+                          for layer in sorted(slots, key=_natural_key))
+    slot_legend += f'<span class="muted">— 색 순서: {escape(ORDER_SOURCE)}</span>'
     sections, report_products = {}, {}
     for side in SIDES:
         product = vulnerability['products'][side]
@@ -740,7 +767,7 @@ def build_report(candidates_dv_dir, top_n=10):
             if query is None:
                 continue          # export 하지 않은 질의(max-candidates 로 잘림)는 상세를 그리지 않는다
             pair_rows, members = _pairs_for_roi(product, region)
-            figure, extra = _roi_figures(folder, product, region, query, layouts, args, warn, side, [r['case_name'] for r in pair_rows], layout_summary)
+            figure, extra = _roi_figures(folder, product, region, query, layouts, args, warn, side, [r['case_name'] for r in pair_rows], layout_summary, slots)
             ungraded = _ungraded_in(product, region)
             merged = [m for m in members if m != region['region_id']]
             info = _table(['항목', '값'], [
@@ -770,7 +797,7 @@ def build_report(candidates_dv_dir, top_n=10):
             f'<h3>1-1. 전극은 많지만 등급 때문에 빠진 영역 (비가중 영역, export 안 함)</h3>'
             f'<p class="note">전체 {n_dropped}개 중 전체 전극 수 순 상위 {len(dropped)}개.</p><div class="card" style="overflow-x:auto">{_cell(_dropped_table(dropped))}</div>'
             f'<h2>2. ROI 별 상세 (등급 순위 상위 {len(roi_report)})</h2>'
-            f'<div class="legend"><span>전극 layout: layer 마다 다른 색(지도 아래 범례)</span><span style="margin-left:8px">등급:</span>'
+            f'<div class="legend"><span>전극 layout: layer 마다 다른 색(고정 슬롯)</span>{slot_legend}<span style="margin-left:8px">등급:</span>'
             f'<span><i class="g-None"></i>None (ΔV 0)</span><span><i class="g-Low"></i>Low</span><span><i class="g-High"></i>High</span>'
             f'<span><i style="background:transparent;border:2px solid var(--win)"></i>질의 창 (W)</span>'
             f'<span><i style="background:transparent;border:2px dashed var(--sel)"></i>선정 셀 (선정 전극 수 ≥ K)</span></div>{rois or "<p class=note>상세를 그릴 ROI 가 없습니다.</p>"}'
@@ -797,6 +824,7 @@ def build_report(candidates_dv_dir, top_n=10):
         '</main></body></html>')
     report = {'schema_version': REPORT_SCHEMA, 'top_n': top_n, 'input_status': queries.get('status'),
               'inputs': {'candidates_dv_dir': str(folder.resolve()), 'sha256': hashes}, 'args': args, 'products': report_products,
+              'layer_slots': {'order': ORDER_SOURCE, 'slots': {layer: slots[layer] for layer in sorted(slots, key=_natural_key)}},
               'warnings': [{'code': c, 'product': p, 'detail': d} for c, p, d in extra_warnings]}
     return html, report, extra_warnings, queries.get('status')
 

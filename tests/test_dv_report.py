@@ -147,3 +147,49 @@ def test_status_row_shows_final_exit_code_on_layout_warning(world, basic):
     out = world.base / 'report_status'
     assert main(['vulnerability-report', '--candidates-dv-dir', str(copy), '--out', str(out)]) == 3
     assert '(보고서 exit 3)' in (out / 'report.html').read_text(encoding='utf-8')
+
+
+# ---- layer 색 슬롯: 보고서 전체에서 고정 ---------------------------------------------------------------------------
+def _two_layer_cases():
+    layer2 = [(re.sub(r'-([A-Z]\d+)-L2', r'-\1b-L2', name), cells) for name, cells in standard_cases('L2')]
+    return standard_cases('L1') + layer2
+
+
+def test_layer_slots_fixed_across_rois(tmp_path):
+    world = World(tmp_path, _two_layer_cases(), _two_layer_cases(), tgt_types=TWIST)
+    assert world.run('cdv') == 0
+    out = tmp_path / 'rep'
+    assert main(['vulnerability-report', '--candidates-dv-dir', str(tmp_path / 'cdv'), '--out', str(out)]) == 0
+    html = (out / 'report.html').read_text(encoding='utf-8')
+    side = html.split('id="side-reference"')[1].split('id="side-target"')[0]
+    maps = side.split('<svg class="map"')[1:]
+    assert len(maps) >= 2
+    seen = {}
+    per_map = []
+    for svg in maps:
+        svg = svg.split('</svg>')[0]
+        found = set(re.findall(r'class="lf (l\d|ln)" d="[^"]*"><title>[^<(]*\((L\d+)\)</title>', svg))
+        per_map.append({layer for _, layer in found})
+        for cls, layer in found:
+            seen.setdefault(layer, set()).add(cls)
+    assert seen == {'L1': {'l1'}, 'L2': {'l2'}}             # 같은 layer 는 ROI 가 달라도 같은 슬롯
+    assert {'L1'} in per_map and {'L2'} in per_map           # layer 가 서로 다른 ROI 에 따로 나온다
+    payload = json.loads((out / 'report.json').read_text(encoding='utf-8'))
+    assert payload['layer_slots']['slots'] == {'L1': 1, 'L2': 2} and '자연 정렬' in payload['layer_slots']['order']
+    assert '자연 정렬' in html and '<i class="lf l1"></i>L1' in html and '<i class="lf l2"></i>L2' in html
+
+
+def test_layer_slots_natural_order_and_overflow_has_no_new_colour():
+    import numpy as np
+    from types import SimpleNamespace
+    from simcompare import dv_report
+    assert dv_report._layer_slots(['L10', 'L2', 'L1']) == {'L1': 1, 'L2': 2, 'L10': 3}
+    layers = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']
+    slots = dv_report._layer_slots(layers)
+    assert [slots[l] for l in layers] == [1, 2, 3, 4, None, None]
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[1:3, 1:3] = True
+    svg = dv_report._map_svg(1, SimpleNamespace(pitch=0.1, origin=(0.0, 0.0)), (0, 0, 4, 4), np.zeros((4, 4), dtype=int), np.zeros((4, 4), dtype=bool),
+                             {('E%d' % i, l): mask for i, l in enumerate(layers)}, slots, (0, 0, 0.2, 0.2), layers)
+    classes = set(re.findall(r'class="(?:lf|ls) (l\d|ln)"', svg))
+    assert classes == {'l1', 'l2', 'l3', 'l4', 'ln'} and '<title>E5 (L6)</title>' in svg
