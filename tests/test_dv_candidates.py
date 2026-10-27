@@ -409,6 +409,19 @@ def test_side_without_cases_is_a_warning_with_exit_3_not_a_product_mismatch(worl
     assert product['regions'] == [] and product['n_dataset_cases'] == 0 and not any(c['in_dataset'] for c in product['cases'])
 
 
+def test_side_without_cases_still_checks_the_dv_grade_product_against_the_config(world, monkeypatch, capsys):
+    from dataclasses import replace
+
+    def no_cases(name, side):
+        if name == 'reference':
+            side.dataset = replace(side.dataset, cases=[])
+            side.status, side.reasons, side.product_ids = 'unavailable', ['same_name_endpoints_unresolved'], []
+    _patched_prepare(monkeypatch, no_cases)
+    other = make_dv(world.base, 'otherprod', 'PX', [c for c, _ in world.cases['reference']], root_name='src_reference')
+    err = _exit2(world, capsys, 'dv_grade_product_mismatch', dv={'reference': other, 'target': world.dv['target']}, name='nocases_other')
+    assert 'PX' in err
+
+
 def test_duplicate_case_id_in_one_dataset_exits_2_before_writing(world, monkeypatch, capsys):
     from dataclasses import replace
 

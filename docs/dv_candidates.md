@@ -55,7 +55,7 @@ python -m simcompare candidates-dv --config <real.yaml> --dv-grades-reference <�
 | 파일 | 내용 |
 |---|---|
 | `candidate_queries_v1.json` | 방향별 질의, 인수, 입력 해시, 경고, `match_inputs`, `match_files`. `roi_source` 는 `candidates_dv_v1` |
-| `vulnerability_v1.json` | 제품별 등급 영역, 비가중 영역, 쌍 표, case 표, 등급 없는 case |
+| `vulnerability_v1.json` | 제품별 등급 영역, 비가중 영역, 쌍 표, case 표, 등급 없는 case. 영역의 `n_pairs_by_grade` 에서 None·Low·High 는 쌍 수이고 `ungraded_cases` 는 case 수다(단위가 다르다) |
 | `grade_maps/` | layer 마다 `count_high`, `count_visible`, `grade_max` PNG + sidecar |
 | `funnel.json`, `funnel.csv` | 단계별 개수. `unweighted_regions` → `graded_regions` → `merged_queries` → … |
 | `reference_export/`, `target_export/` | 질의 export(`review_rois.json`) |
@@ -85,7 +85,11 @@ python -m simcompare candidates-dv --config <real.yaml> --dv-grades-reference <�
   - `dv_grade_case_endpoint_mismatch`: case 의 전극·layer·불량 종류가 다르다.
   - `dv_grades_dir_shared`: 두 제품이 같은 dv-grade 폴더를 가리킨다.
   - `dv_candidates_duplicate_case_id`: 한 제품 데이터셋에 같은 case_id 가 두 번 있다.
-  - `invalid_candidates_dv_argument`, `output_dir_exists`.
+  - `dv_grade_invalid_value`: dv-grade 쌍 표의 grade 값이 None·Low·High 가 아니다.
+  - `dv_candidates_requires_real_hotspot`, `numeric_input_required`: config 의 두 제품이 real_hotspot_v1 이 아니거나 없다.
+  - `invalid_candidates_dv_argument`, `invalid_candidate_argument`, `invalid_count_threshold`, `output_dir_exists`: 인수 오류, `--out` 이 이미 있음.
+  - dv-grade 출력을 읽는 오류(`dv_grade_manifest_missing`, `dv_grade_hash_mismatch` 등 `dv_grade_*`): 코드는 `docs/dv_grade.md` 와 같다.
+  - 제품 대조는 case 가 없는 제품에도 적용한다: config `product_id` 가 dv-grade manifest 의 `product_id` 와 다르면 `dv_grade_product_mismatch`(종료 코드 2)다. 같으면 `dv_candidates_side_has_no_cases`(종료 코드 3)다.
 - 참고(`notes`): `dv_grade_root_name_differs`(dv-grade 때 쓴 root 이름이 import 원본과 다르다), `dv_grades_identical_outputs`(두 제품의 dv-grade 출력 해시가 같다). 오류가 아니다.
 
 실패하면 이 실행이 만든 파일과 폴더만 지운다.
@@ -110,4 +114,6 @@ python -m simcompare vulnerability-report --candidates-dv-dir <candidates-dv 출
 - `--top-n` 은 표시할 상위 ROI 수다(표시용, 기본 10).
 - 출력: `report.html`(외부 CDN 없음, `file://` 로 열린다), `report.json`, `execution.json`.
 - 내용: 등급 순위와 비가중 순위 비교, ROI 별 쌍 표(쌍·case·원본 CA·ROI 내 CA), layer 별 색 전극 layout 지도, 등급 분포.
-- 종료 코드: 0 = 입력이 available 이고 경고가 없다. 3 = 입력이 partial 이거나 경고가 있다(layout 자산 해시 불일치 등). 2 = 입력 JSON 이 없거나 모양이 다르다.
+- 종료 코드: 0 = 입력이 available 이고 경고가 없다. 3 = 입력이 partial 이거나 경고가 있다(layout 자산 해시 불일치 등). 2 = 입력 오류. 아무것도 쓰지 않는다.
+  - 입력 JSON 이 없거나 모양이 다르다: `candidates_dv_dir_missing`, `not_candidates_dv_output`, `missing_input_file`, `unreadable_input_file`, `unexpected_schema_version`, `vulnerability_products_invalid`, `queries_args_invalid`, `vulnerability_input_malformed`.
+  - `--out` 과 인수: `output_dir_exists`(`--out` 이 이미 있다), `output_is_input`(`--out` 이 입력 폴더 안이다), `invalid_vulnerability_report_argument`(`--top-n` 이 1 이상의 정수가 아니다).

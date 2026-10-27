@@ -40,7 +40,10 @@ STAGES = {
          "--out은 아직 없는 새 경로여야 한다. 상세는 docs/dv_template.md."],
         [("dv-template", ["--root", f"{DATA}/input/hotspot/QA4_R00", "--timings", "4",
                           "--impedance-db", f"{DATA}/electrode_impedance.csv", "--out", f"{DATA}/dv_template/QA4_R00"],
-          "예시 — 제품에 맞게 바꾼다: 타이밍 4개. electrode_impedance.csv가 아직 없으면 --impedance-db 줄을 지운다")]),
+          "reference (QA4_R00). 제품마다 한 번 실행한다. 예시 — 제품에 맞게 바꾼다: 타이밍 4개. electrode_impedance.csv가 아직 없으면 --impedance-db 줄을 지운다"),
+         ("dv-template", ["--root", f"{DATA}/input/hotspot/QA4_T00", "--timings", "4",
+                          "--impedance-db", f"{DATA}/electrode_impedance.csv", "--out", f"{DATA}/dv_template/QA4_T00"],
+          "target (QA4_T00). 제품마다 한 번 실행한다. 앞 제품에서 채운 dv_sheet.csv를 electrode_impedance.csv로 두면 겹치는 전극의 임피던스가 채워진다")]),
     "0b_dv_grade": (
         ["0b회차(선택, 0회차 뒤): 전압·임피던스를 채운 dv_sheet.csv로 전극쌍별 ΔV, 최대 타이밍, 등급(None/Low/High)을 계산한다.",
          "PNG·CSV 내용은 열지 않고 case 폴더 이름에서 short 쌍을 모은다(open과 같은 이름 쌍은 빼고 manifest에 기록).",
@@ -49,7 +52,10 @@ STAGES = {
          "--out은 아직 없는 새 경로여야 한다. 상세는 docs/dv_grade.md."],
         [("dv-grade", ["--sheet", f"{DATA}/dv_template/QA4_R00/dv_sheet.csv", "--root", f"{DATA}/input/hotspot/QA4_R00",
                        "--product-id", "QA4_R00", "--low-low-threshold-v", "3", "--out", f"{DATA}/dv_grade/QA4_R00"],
-          "예시 — 제품에 맞게 바꾼다: 경계 3 V는 예시값. 경계를 쓰지 않으면 --low-low-threshold-v 와 값을 지운다")]),
+          "reference (QA4_R00). 제품마다 한 번 실행한다. 예시 — 제품에 맞게 바꾼다: 경계 3 V는 예시값. 경계를 쓰지 않으면 --low-low-threshold-v 와 값을 지운다"),
+         ("dv-grade", ["--sheet", f"{DATA}/dv_template/QA4_T00/dv_sheet.csv", "--root", f"{DATA}/input/hotspot/QA4_T00",
+                       "--product-id", "QA4_T00", "--low-low-threshold-v", "3", "--out", f"{DATA}/dv_grade/QA4_T00"],
+          "target (QA4_T00). 제품마다 한 번 실행한다(4b회차는 두 제품의 dv-grade 출력 폴더를 모두 읽는다)")]),
     "1_import_hotspots": (
         ["1회차: hotspot import. 끝나면 pairs.csv를 data/imported/reference/와 data/imported/target/ 안에 복사한다.",
          "각 import는 --expected-cases-from-roots로 다른 모델의 root를 함께 주어, 기대 case 목록을 두 모델에서 발견된 case 이름의 합집합으로 만든다",
