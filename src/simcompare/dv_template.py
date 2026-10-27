@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -32,7 +33,8 @@ def _read_impedance_db(path):
         text = data.decode('utf-8-sig')
     except UnicodeDecodeError as exc:
         raise NumericContractError('impedance_db_invalid', f'{path}: UTF-8 이 아닙니다') from exc
-    reader = csv.DictReader(text.splitlines())
+    # splitlines() 는 \x0b·\x85·  등에서도 행을 나누므로 쓰지 않는다. csv 모듈이 따옴표 안 줄바꿈까지 처리한다.
+    reader = csv.DictReader(io.StringIO(text, newline=''))
     names = [(name or '').strip() for name in reader.fieldnames or ()]
     if 'electrode_id' not in names or 'impedance' not in names:
         raise NumericContractError('impedance_db_invalid', f'{path}: electrode_id, impedance 열이 필요합니다')
@@ -86,6 +88,8 @@ def run_dv_template(root, out, timings, impedance_db=None):
             layers.setdefault(electrode, set()).add(layer)
             counts[electrode] = counts.get(electrode, 0) + 1
     electrodes = sorted(layers)
+    if not electrodes:
+        raise NumericContractError('dv_template_no_electrodes', '같은 이름 전극 case 를 뺀 뒤 전극이 없습니다')
     joined = {electrode: ';'.join(sorted(layers[electrode])) for electrode in electrodes}
     header = ['electrode_id', 'impedance', 'layers']
     for index in range(1, timings + 1):
@@ -104,6 +108,10 @@ def run_dv_template(root, out, timings, impedance_db=None):
         _write_csv(stage / NEW_NAME, [['electrode_id', 'layers', 'case_count']] + [[e, joined[e], counts[e]] for e in new])
         with open(stage / MANIFEST_NAME, 'w', encoding='utf-8', newline='\n') as handle:
             handle.write(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+        # mkdtemp 는 0700 으로 만든다. 다른 출력 폴더처럼 umask 기준 권한으로 맞춘 뒤 옮긴다.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(str(stage), 0o777 & ~umask)
         os.rename(str(stage), str(out))
     except BaseException:
         shutil.rmtree(str(stage), ignore_errors=True)

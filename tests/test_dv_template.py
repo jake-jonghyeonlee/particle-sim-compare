@@ -1,5 +1,7 @@
 import csv
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -129,6 +131,37 @@ def test_images_layout_is_recognized(tmp_path):
     out = tmp_path / 'out'
     assert _run('--root', root, '--timings', 1, '--out', out) == 0
     assert [row[0] for row in _rows(out / 'dv_sheet.csv')[1:]] == ['A', 'B']
+
+
+def test_only_same_name_cases_exits_2_without_output(tmp_path, capsys):
+    root = tmp_path / 'product'
+    _case(root, 'lateral_short-C-M1-C-M2')
+    out = tmp_path / 'out'
+    assert _run('--root', root, '--timings', 1, '--out', out) == 2
+    assert 'dv_template_no_electrodes' in capsys.readouterr().err
+    assert not out.exists() and not list(tmp_path.glob('.out.staging-*'))
+
+
+def test_db_rows_are_not_split_on_unicode_line_breaks(tmp_path):
+    # \x0b, \x85,   은 str.splitlines() 가 행으로 나누지만 CSV 행 경계가 아니다.
+    db = _db(tmp_path, 'electrode_id,impedance\nDATA,high\nVDD X,low\nA\x0bB,low\nC\x85D,high\nSCAN,low\n')
+    out = tmp_path / 'out'
+    assert _run('--root', _tree(tmp_path), '--timings', 1, '--impedance-db', db, '--out', out) == 0
+    sheet = {row[0]: row[1] for row in _rows(out / 'dv_sheet.csv')[1:]}
+    assert sheet == {'DATA': 'high', 'SCAN': 'low', 'VDD': ''}
+    manifest = json.loads((out / 'dv_template_manifest.json').read_text(encoding='utf-8'))
+    # 한 행이 둘로 나뉘었다면 'VDD' 같은 조각이 DB 항목이 되거나 오류(값 없는 행)가 났을 것이다.
+    assert manifest['db_only_electrodes'] == ['A\x0bB', 'C\x85D', 'VDD X']
+
+
+def test_output_folder_follows_umask(tmp_path):
+    out = tmp_path / 'out'
+    old = os.umask(0o022)
+    try:
+        assert _run('--root', _tree(tmp_path), '--timings', 1, '--out', out) == 0
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o755
 
 
 def test_no_cases_exits_2(tmp_path):

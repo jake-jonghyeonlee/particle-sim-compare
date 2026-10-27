@@ -21,6 +21,8 @@ python -m simcompare dv-template --root <제품 hotspot 또는 template case roo
 - case 폴더 **이름**만 읽는다(`<불량>-<전극A>-<layerA>-<전극B>-<layerB>`). PNG·CSV 내용은 열지 않는다.
 - 두 전극 이름의 합집합이 시트 행이 된다. 전극 이름은 unit pixel 기준이고, 같은 역할 전극은 제품이 달라도 이름이 같다.
 - 두 전극 이름이 같은 case(`ea == eb`)는 무시한다. 이름은 manifest 의 `ignored_same_name_cases` 에 남는다.
+- manifest 의 `case_count` 는 무시한 case 를 포함한 전체 case 수다.
+- 같은 이름 case 를 빼고 전극이 0개면 `dv_template_no_electrodes`, 종료 코드 2, 출력 없음.
 
 ## 임피던스 DB
 
