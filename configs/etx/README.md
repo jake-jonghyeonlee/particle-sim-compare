@@ -4,6 +4,7 @@
 
 | 회차 | 실행 파일 (`bundles/etx/`) | 필요한 설정 파일 | 회차 뒤 할 일 |
 |---|---|---|---|
+| 0 (선택) | `simcompare_job_0_dv_template.py` (`dv-template`) | 임피던스 DB CSV(선택) | `--timings`·`--root`를 제품에 맞게 고친다. `data/dv_template/<제품>/dv_sheet.csv`의 전압 칸과 `new_electrodes.csv`의 임피던스를 채운다. 1~6회차와 독립 |
 | 1 | `simcompare_job_1_import_hotspots.py` | 없음 | `pairs.csv`를 `data/imported/reference/`, `data/imported/target/`에 복사 |
 | 2 | `simcompare_job_2_validate_compare.py` | `real.stage2.example.yaml` → `real.yaml` | 기본 한도로 충분한 것이 정상. `oversized_real_operation`이 나오면 추정치로 `max_operation_bytes` 결정 |
 | 3 | `simcompare_job_3_import_electrode_assets.py` | `assignment_reference.example.json`, `assignment_target.example.json` → `assignment_<side>.json` | 출력 파일을 각 `data_dir`로 복사, sha256 기록 |

@@ -1,0 +1,4 @@
+electrode_id,impedance,layers,T1_min,T1_max,T2_min,T2_max
+EX_DATA,high,M1;M2,0.0,5.0,1.0,4.0
+EX_SCAN,low,M1,-6.0,8.0,-6.0,8.0
+EX_VDD,low,M1;M2,4.5,4.5,4.5,4.5

@@ -32,6 +32,15 @@ def _electrode(side, model):
 
 
 STAGES = {
+    "0_dv_template": (
+        ["0회차(선택, 1~6회차와 독립): 제품 case 폴더 이름에서 전극×타이밍 전압 시트의 빈 양식(dv_sheet.csv)을 만든다.",
+         "PNG·CSV 내용은 열지 않는다. 전압은 항상 빈칸이고, 임피던스(low/high)는 --impedance-db CSV에 있는 전극만 채워진다.",
+         "--timings(구동 타이밍 수 1~20)는 필수이며 기본값이 없다. 아래 값은 예시다. --impedance-db는 처음 제품이면 지운다",
+         "(DB가 없으면 모든 전극이 new_electrodes.csv에 나온다). 채운 dv_sheet.csv를 다음 제품의 --impedance-db로 그대로 줄 수 있다.",
+         "--out은 아직 없는 새 경로여야 한다. 상세는 docs/dv_template.md."],
+        [("dv-template", ["--root", f"{DATA}/input/hotspot/QA4_R00", "--timings", "4",
+                          "--impedance-db", f"{DATA}/electrode_impedance.csv", "--out", f"{DATA}/dv_template/QA4_R00"],
+          "예시 — 제품에 맞게 바꾼다: 타이밍 4개. electrode_impedance.csv가 아직 없으면 --impedance-db 줄을 지운다")]),
     "1_import_hotspots": (
         ["1회차: hotspot import. 끝나면 pairs.csv를 data/imported/reference/와 data/imported/target/ 안에 복사한다.",
          "각 import는 --expected-cases-from-roots로 다른 모델의 root를 함께 주어, 기대 case 목록을 두 모델에서 발견된 case 이름의 합집합으로 만든다",
