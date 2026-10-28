@@ -7,8 +7,6 @@
 """
 import hashlib
 import json
-import shutil
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,10 +17,11 @@ from test_change_candidates import (build_product, load, run_change, write_confi
 
 PINNED_COMMIT = '0' * 40
 
-# data_dir·config_sha256·export_sha256 에 입력 폴더의 절대 경로가 들어간다(sidecar·candidate_queries). 원본 바이트를 그대로 비교하려고
-# world 를 고정 폴더에 만들고, 그 폴더의 resolve() 경로가 기록한 값과 다르면(다른 호스트·OS) 해시 단정만 건너뛴다.
-WORLD_NAME = 'simcompare_change_roi_v2_baseline'
-EXPECTED_WORLD_ROOT = '/private/tmp/' + WORLD_NAME      # macOS: /tmp -> /private/tmp
+# 입력 폴더의 절대 경로가 여러 산출물에 들어간다. 해시 전에 world 루트 경로(와 resolve() 한 /private 형)를 <WORLD> 로 바꾼다.
+# 경로가 든 파일의 해시를 값으로 가진 키는 경로가 바뀌면 달라지므로 비교에서 뺀다(그 파일들은 치환 뒤 직접 해시한다):
+#   config_sha256 (config yaml 해시), export_sha256, index_export_sha256 (review_rois.json 해시) — sidecar 와 candidate_queries 의 어느 깊이든.
+DROP_KEYS = ('config_sha256', 'export_sha256', 'index_export_sha256')
+PLACEHOLDER = '<WORLD>'
 
 # 뒤 Task 가 정규화 키를 늘릴 수 있게 한 곳에 둔다(T4b: contributing_cases·sidecar pairs 의 area 키 제외 예정).
 CANDIDATE_DROP_KEYS = ('alignment_report',)
@@ -34,16 +33,16 @@ EXPECTED = {   # recorded at 0717947
     'funnel.json': '457ca1d93d71e51adca415ee7441ae37794e73078d61986fea78412abf466dec',
     'funnel.csv': 'dc760c1db9ac06d9bb4e0426771fbe0b4f231250c129d37f37ae5f435154dd3c',
     'direct/roi_correspondence.json': '3ff874f13acae437d1221bd23561bf81fb27235c045faf4d589fca026600d107',
-    'direct/direct_pairs_sidecar.json': 'd36b2be014adce6f92ae5232a17f8551274913435e3e499ac6a937e95e703922',
-    'reference_export/review_rois.json': 'e8792f0f9c8a101859d5b9c3df273853099bc9731d4d881d670447dbd1c11ed2',
-    'reference_index_export/review_rois.json': '8d0696f3d994e7bc424ac4d9c8ee55fa767df4872deb66124618f1bc0998ebe0',
-    'target_export/review_rois.json': 'dd917e808d6b0d14db18dfef48f917913c5c46e1106da0165bd0b40c6b33e241',
-    'target_index_export/review_rois.json': 'fc3f93efa5995c6fc5c2f3d61c07f37daaf145ae1cd5ddc96ee356cfd5906b5c',
+    'direct/direct_pairs_sidecar.json': '2ac712f758f81d8a6d0cd1665cc576331bf5c31b9788b38f4e01eaa26fb13488',
+    'reference_export/review_rois.json': 'b4e0ba95b258f884f4134a9980c8df64df881aac35c909a0b0daf5ca112ce2a7',
+    'reference_index_export/review_rois.json': '69badb1aec4b2868099c4b7fbcd809722f835e9e24313ee331a6d5d3e9cd6c20',
+    'target_export/review_rois.json': '7040ffdd2931962409b20e4ef9c1ec9d18e25e24d59f227540f2e8e427f5c94b',
+    'target_index_export/review_rois.json': 'c28212cc8948d06ee078635cf30dfa20b284bfd48572ec0d97cc4a8895bc631c',
     'reference_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'reference_index_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'target_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'target_index_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
-    'candidate_queries_v1.json(normalised)': 'f09cd7c35ed3c0887818257f1a797a863cf395d8761f7c4f7ce2f3786fb17f56',
+    'candidate_queries_v1.json(normalised)': '365b57882e655980f1aa890073f1e4261a305ebd114eb9a0f2f751359b74c373',
 }
 
 
@@ -51,31 +50,44 @@ def _sha_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def normalised_candidates_text(path):
-    payload = json.loads(Path(path).read_text(encoding='utf-8'))
-    for key in CANDIDATE_DROP_KEYS:
-        payload.pop(key, None)
-    return json.dumps(payload, indent=2, ensure_ascii=False)
+def _drop(value):
+    if isinstance(value, dict):
+        return {k: _drop(v) for k, v in value.items() if k not in DROP_KEYS}
+    if isinstance(value, list):
+        return [_drop(v) for v in value]
+    return value
 
 
-def baseline_hashes(out):
+def _text(path, roots, *, drop_keys, drop_top=()):
+    """파일 텍스트에서 world 루트 경로를 <WORLD> 로 바꾼다. drop_keys 이면 JSON 으로 읽어 DROP_KEYS(와 drop_top)를 빼고 다시 쓴다."""
+    text = Path(path).read_text(encoding='utf-8')
+    for root in sorted(set(roots), key=len, reverse=True):
+        text = text.replace(root, PLACEHOLDER)
+    if drop_keys:
+        payload = json.loads(text)
+        for key in drop_top:
+            payload.pop(key, None)
+        text = json.dumps(_drop(payload), indent=2, ensure_ascii=False)
+    return text
+
+
+def baseline_hashes(out, roots):
     out = Path(out)
     files = [out/name for name in RAW_FILES]
     for pattern in RAW_GLOBS:
         files.extend(sorted(out.glob(pattern)))
-    hashes = {p.relative_to(out).as_posix(): _sha_bytes(p.read_bytes()) for p in files}
+    hashes = {}
+    for p in files:
+        name = p.relative_to(out).as_posix()
+        hashes[name] = _sha_bytes(_text(p, roots, drop_keys=name == 'direct/direct_pairs_sidecar.json').encode('utf-8'))
     hashes['candidate_queries_v1.json(normalised)'] = _sha_bytes(
-        normalised_candidates_text(out/'candidate_queries_v1.json').encode('utf-8'))
+        _text(out/'candidate_queries_v1.json', roots, drop_keys=True, drop_top=CANDIDATE_DROP_KEYS).encode('utf-8'))
     return hashes
 
 
 @pytest.fixture(scope='module')
 def pinned_run(tmp_path_factory):
-    base = (Path('/tmp') if Path('/tmp').is_dir() else Path(tempfile.gettempdir()))/WORLD_NAME
-    if base.exists():
-        shutil.rmtree(base)
-    base.mkdir(parents=True)
-    base = base.resolve()
+    base = tmp_path_factory.mktemp('baseline_world')
     datas, assignments = {}, {}
     for side in ('reference', 'target'):
         datas[side], assignments[side] = build_product(base, side)
@@ -94,7 +106,7 @@ def pinned_run(tmp_path_factory):
         code = run_change(world, out)
     finally:
         mp.undo()
-    return SimpleNamespace(out=out, code=code, payload=load(out), root=str(base))
+    return SimpleNamespace(out=out, code=code, payload=load(out), roots=[str(base), str(base.resolve())])
 
 
 def test_exit_code_and_status_match_the_baseline(pinned_run):
@@ -110,9 +122,7 @@ def test_fixture_has_no_images_skipped_warning(pinned_run):
 
 
 def test_default_run_hashes_are_pinned(pinned_run):
-    if pinned_run.root != EXPECTED_WORLD_ROOT:
-        pytest.skip('hashes were recorded with the world at %s' % EXPECTED_WORLD_ROOT)
-    assert baseline_hashes(pinned_run.out) == EXPECTED
+    assert baseline_hashes(pinned_run.out, pinned_run.roots) == EXPECTED
 
 
 # --- T1: frame 크기 차이와 비교 영역 기록 ------------------------------------------------------------------------------
