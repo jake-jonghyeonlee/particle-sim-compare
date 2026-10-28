@@ -1,7 +1,7 @@
 """실제 전극 PNG → review_assets_v1 어댑터 (PLAN_v4 §6 T1a).
 
 출처 종류 두 가지를 읽는다: DL1 PNG 폴더(<root>/<model>/<electrode>/<n>-<layer>.png,
-<root>/<model>/cno/<n>_<layer>.png)와 hotspot case의 전극 영상(<case>/1.png, 2.png).
+<root>/<model>/cno/<n>-<layer>.png — cno 는 예전 <n>_<layer>.png 도 받는다)와 hotspot case의 전극 영상(<case>/1.png, 2.png).
 case 문맥(identity/endpoint/failure_type/frame/valid/input_hash)은 numeric dataset에서만 가져오고,
 이 어댑터는 endpoint를 정확히 일치하는 PNG에 묶어 asset으로 내보낼 뿐이다.
 hotspot/CA/density 값은 읽지도 내보내지도 않는다. 극성은 출처별 계약 표(SOURCE_KIND_CONTRACT)로만 정한다.

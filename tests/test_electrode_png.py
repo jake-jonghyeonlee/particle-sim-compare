@@ -365,6 +365,21 @@ def test_cno_name_accepts_hyphen_like_electrodes_and_still_accepts_underscore(tm
     assert electrode_png.list_dl1_electrodes(root, 'PRODUCT') == ['A', 'B', 'C']
 
 
+def test_cno_hyphen_and_underscore_names_of_one_layer_are_unioned_with_a_warning_not_an_error(tmp_path):
+    # 실자료가 두 구분자를 섞어 쓰면(1-CNT.png 와 7_CNT.png) 같은 층 CNT 두 파일이다: 오류가 아니라 합집합 + duplicate_cnt_layer_name 경고.
+    from types import SimpleNamespace
+    root = dl1_tree(tmp_path)                                   # cno/7_CNT.png = pattern(4)
+    save(root / 'PRODUCT' / 'cno' / '1-CNT.png', pattern(1))
+    frame = SimpleNamespace(pixel_pitch_um=0.1, origin_xy_um=(50.0, 50.0), shape_yx=(H, W), frame_id='F')
+    result = electrode_png.load_cnt_layers(root, 'PRODUCT', frame)
+    crop = (slice(500, 500 + H), slice(500, 500 + W))
+    assert list(result['layers']) == ['CNT']
+    assert np.array_equal(result['layers']['CNT'], pattern(1)[crop] | pattern(4)[crop])
+    duplicate = [w for w in result['warnings'] if w['status'] == 'duplicate_cnt_layer_name']
+    assert duplicate == [{'status': 'duplicate_cnt_layer_name', 'model': 'PRODUCT', 'layer': 'CNT',
+                          'files': ['PRODUCT/cno/1-CNT.png', 'PRODUCT/cno/7_CNT.png']}]
+
+
 def test_cno_name_without_number_separator_is_still_an_error(tmp_path):
     root = dl1_tree(tmp_path)
     save(root / 'PRODUCT' / 'cno' / 'PXL.png', pattern(5))
