@@ -335,17 +335,30 @@ class _Linker:
             self._target_rows = _export_rows(self._dir, self._payload, 'target_to_reference', self._files)
         return self._reference_rows, self._target_rows
 
-    def link(self, direction, query_roi_id):
-        """(target roi_id or None, reason when None)."""
-        if direction == 'target_to_reference':
-            return (query_roi_id, None) if query_roi_id in self.roi_ids else (None, 'query_roi_not_in_decisions')
+    def link(self, direction, candidates):
+        """(target roi_id or None, reason when None). Order: a `target_to_reference` candidate of the pair (mutual merge or
+        plain), then the candidates payload (reference query -> region_id -> target query), then export `source_region_id`."""
+        for item in candidates:
+            if item.get('direction') == 'target_to_reference':
+                roi = item.get('query_roi_id')
+                return (roi, None) if roi in self.roi_ids else (None, 'query_roi_not_in_decisions')
+        query_roi_id = (candidates or [{}])[0].get('query_roi_id')
         reference_rows, target_rows = self._rows()
         row = reference_rows.get(query_roi_id)
-        if row is None or not row.get('source_region_id'):
+        if row is None:
             return None, 'reference_query_roi_without_region'
-        found = [roi for roi, other in target_rows.items()
-                 if other.get('source_region_id') == row['source_region_id'] and _endpoint_key(other) == _endpoint_key(row)
-                 and roi in self.roi_ids]
+        region = next((q.get('region_id') for q in _direction(self._payload, 'reference_to_target').get('queries', [])
+                       if query_roi_id in (q.get('roi_ids') or [])), None)
+        pool = set()
+        if region is not None:
+            pool = {roi for q in _direction(self._payload, 'target_to_reference').get('queries', [])
+                    if q.get('region_id') == region for roi in q.get('roi_ids') or []}
+        if not pool and row.get('source_region_id'):
+            pool = {roi for roi, other in target_rows.items() if other.get('source_region_id') == row['source_region_id']}
+        if region is None and not pool:
+            return None, 'reference_query_roi_without_region'
+        found = sorted(roi for roi in pool if roi in self.roi_ids and roi in target_rows
+                       and _endpoint_key(target_rows[roi]) == _endpoint_key(row))
         if len(found) != 1:
             return None, 'no_target_roi_for_region' if not found else 'several_target_rois_for_region'
         return found[0], None
@@ -376,6 +389,8 @@ def _pair_view(key, product, windows, pair, record, window_row):
     candidate = (record.get('candidates') or [{}])[0]
     values = {name: _row_text(window_row, name) if window_row else '' for name in ('a_value_um2', 'b_value_um2', 'delta_um2',
                                                                                    'delta_status', 'delta_reasons')}
+    if window_row is None and pair.get('status') == 'ready':
+        values['delta_reasons'] = '["delta_row_missing"]'   # a ready pair without its union window row: say so, never a blank
     reference = product['role'] == 'reference'
     values['delta_orientation'] = 'target_minus_reference' if reference else 'model_minus_target'
     values['delta_model_minus_target_um2'] = negate_text(values['delta_um2']) if reference else values['delta_um2']
@@ -414,7 +429,7 @@ def _build(decisions, reference, products, windows_by_key, candidates_dir, paylo
             record = product['sidecar']['pairs'][pair['pair_id']]
             candidate = (record.get('candidates') or [{}])[0]
             view = _pair_view(key, product, windows, pair, record, windows['rows'].get(pair['pair_id']) if windows else None)
-            roi, reason = linker.link(record.get('direction'), candidate.get('query_roi_id'))
+            roi, reason = linker.link(record.get('direction'), record.get('candidates') or [])
             view['target_center_xy_um'] = list(pair['b']['center_xy_um']) if product['role'] == 'reference' else list(pair['a']['center_xy_um'])
             query_center = (roi_rows.get(roi) or {}).get('center_xy_um') if roi else None
             view['center_differs_from_query'] = (None if query_center is None or product['role'] != 'reference' else
@@ -423,14 +438,8 @@ def _build(decisions, reference, products, windows_by_key, candidates_dir, paylo
                 unlinked.append((key, view, reason))
             else:
                 by_cell.setdefault((roi, key), []).append(view)
-    rows, seen = [], set()
-
-    def add(row):
-        identity = (row['roi_id'], row['model'], row['pair_id'])
-        if identity in seen:
-            raise _bad('model_report_duplicate_key', f'ROI·모델·pair_id 가 겹칩니다: {identity}')
-        seen.add(identity)
-        rows.append(row)
+    rows = []
+    add = rows.append
 
     def base(roi, key, cell, status, linked, reason):
         export = roi_rows.get(roi) or {}
@@ -459,7 +468,18 @@ def _build(decisions, reference, products, windows_by_key, candidates_dir, paylo
                 add({**base(roi, key, cell, status, True, None), **view})
     for key, view, reason in sorted(unlinked, key=lambda item: (item[0], item[1]['pair_id'])):
         add({**base(None, key, {}, view['pair_status'], False, reason), **view})
+    check_unique(rows)
     return rows, order
+
+
+def check_unique(rows):
+    """(ROI, model, pair_id) must not repeat."""
+    seen = set()
+    for row in rows:
+        identity = (row['roi_id'], row['model'], row['pair_id'])
+        if identity in seen:
+            raise _bad('model_report_duplicate_key', f'ROI·모델·pair_id 가 겹칩니다: {identity}')
+        seen.add(identity)
 
 
 # ---- writers -----------------------------------------------------------------------------------------------------------------
@@ -515,6 +535,13 @@ def _e(value):
     return html.escape('' if value is None else str(value))
 
 
+def _unavailable_note(row):
+    reasons = row['unavailable_reasons'] or {}
+    if not reasons:
+        return ''
+    return f' · 쓸 수 없음 {sum(reasons.values())}({", ".join(f"{k} {v}" for k, v in sorted(reasons.items()))})'
+
+
 def _cell_html(cell_rows):
     first = cell_rows[0]
     parts = [f'<span class="st {_e(first["cell_status"])}">{_e(first["cell_status"])}</span>']
@@ -522,7 +549,7 @@ def _cell_html(cell_rows):
         parts.append(f' <span class="st">자산 {_e(first["asset_status"])}</span>')
     if first['n_candidates'] is not None and not first['pair_id']:
         parts.append(f'<div class="note">후보 {_e(first["n_candidates"])} · accept {_e(first["n_accepted"])} · reject {_e(first["n_rejected"])}'
-                     f' · 미결정 {_e(first["n_undecided"])}</div>')
+                     f' · 미결정 {_e(first["n_undecided"])}{_unavailable_note(first)}</div>')
     for row in cell_rows:
         if not row['pair_id']:
             continue
@@ -536,7 +563,7 @@ def _cell_html(cell_rows):
             '<span class="note">{change}{names}{center}</span></div>'.format(
                 pid=_e(row['pair_id']), state=_e(row['pair_status']), rank=_e(row['rank']), scope=_e(row['search_scope']),
                 unified=_e(row['delta_model_minus_target_um2']), raw=_e(row['delta_um2']), orient=_e(row['delta_orientation']),
-                dstatus=_e(row['delta_status']), a=_e(row['a_value_um2']), b=_e(row['b_value_um2']), change=change,
+                dstatus=_e(row['delta_status'] or ('delta_row_missing' if 'delta_row_missing' in row['delta_reasons'] else '')), a=_e(row['a_value_um2']), b=_e(row['b_value_um2']), change=change,
                 names=f'<br>{_e(names)}' if names else '',
                 center=' · target 중심이 질의 중심과 다름' if row['center_differs_from_query'] else ''))
     return ''.join(parts)
