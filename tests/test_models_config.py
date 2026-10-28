@@ -193,3 +193,11 @@ def test_model_pair_id_depends_on_product_and_inputs_only():
               model_pair_id('target_to_reference', 'roi2', 1, 'C', (1.0, 2.0)),
               model_pair_id('target_to_reference', 'roi1', 1, 'C', (1.0, 2.5))}
     assert base not in others and len(others) == 4
+
+
+def test_example_models_yaml_parses_and_keys_pass_the_rule():
+    root = Path(__file__).resolve().parents[1]
+    data = yaml.safe_load((root/'configs/etx/models.example.yaml').read_text(encoding='utf-8'))
+    assert data['schema_version'] == 'compare_models_v1' and data['target_product_id'] == 'QA4_T00'
+    check_product_keys(list(data['models']))
+    assert all(section['data_dir'] == f'data/models/{key}' for key, section in data['models'].items())

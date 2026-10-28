@@ -1,0 +1,62 @@
+# confirm-pairs --models 용 예시(compare_models_v1). real.yaml 과 같은 폴더에 models.yaml 로 둔다.
+# 모델 절의 키와 규칙은 real.yaml 의 reference/target 절과 같다. 상대 경로는 이 파일(= real.yaml) 위치 기준이다.
+# 모델 키 = product_id = DL2 봉투 candidates[].product_id. 영문·숫자·. _ - 만, 64자 이내, 대소문자만 다른 중복 불가.
+# target_product_id 는 real.yaml 의 target.product_id 와 같아야 한다. reference/target 제품은 models 에 넣지 않는다.
+# 모델 폴더 data/models/<product_id>/ 는 reference 와 같은 1·3회차 산출물이다:
+#   import-hotspots --root <모델 hotspot> --expected-cases-from-roots <target hotspot> --out data/models/<product_id> (+ pairs.csv 복사)
+# manifest.json 이 아직 없으면 그 모델은 assets_pending 이다(후보는 보이고, accept 하면 deferred.json 에 남고 종료 3).
+schema_version: compare_models_v1
+target_product_id: QA4_T00
+models:
+  QA4_C00:
+    product_id: QA4_C00
+    data_dir: data/models/QA4_C00
+    # 3회차 출력을 data_dir 로 복사한 뒤 sha256 을 적는다. 없으면 생략한다.
+    asset_manifest: {path: review_assets.json, sha256: <SHA256_OF_REVIEW_ASSETS_JSON>}
+    electrode_import_record: {path: electrode_asset_import_record.json, sha256: <SHA256_OF_IMPORT_RECORD_JSON>}
+    condition_assignment:
+      product_id: QA4_C00
+      design_version: UNSPECIFIED
+      source_id: QA4_C00_hotspot
+      process_step_id: UNSPECIFIED
+      exposure_id: UNSPECIFIED
+      unit_id: UNSPECIFIED
+      layer_stack:
+        - {actual_layer: BML,  stack_order: 1,  density_process_layer: BML}
+        - {actual_layer: ACT,  stack_order: 2,  density_process_layer: ACT}
+        - {actual_layer: GAT1, stack_order: 3,  density_process_layer: GAT1}
+        - {actual_layer: GATC, stack_order: 4,  density_process_layer: GATC}
+        - {actual_layer: GAT2, stack_order: 5,  density_process_layer: GAT2}
+        - {actual_layer: OACT, stack_order: 6,  density_process_layer: OACT}
+        - {actual_layer: GAT3, stack_order: 7,  density_process_layer: GAT3}
+        - {actual_layer: SD1,  stack_order: 8,  density_process_layer: SD1}
+        - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
+        - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
+        - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
+      pair_table_path: pairs.csv
+      electrode_role_policy: electrode_id
+  QA4_D00:
+    # 폴더가 아직 없거나 manifest.json 이 없으면 assets_pending.
+    product_id: QA4_D00
+    data_dir: data/models/QA4_D00
+    condition_assignment:
+      product_id: QA4_D00
+      design_version: UNSPECIFIED
+      source_id: QA4_D00_hotspot
+      process_step_id: UNSPECIFIED
+      exposure_id: UNSPECIFIED
+      unit_id: UNSPECIFIED
+      layer_stack:
+        - {actual_layer: BML,  stack_order: 1,  density_process_layer: BML}
+        - {actual_layer: ACT,  stack_order: 2,  density_process_layer: ACT}
+        - {actual_layer: GAT1, stack_order: 3,  density_process_layer: GAT1}
+        - {actual_layer: GATC, stack_order: 4,  density_process_layer: GATC}
+        - {actual_layer: GAT2, stack_order: 5,  density_process_layer: GAT2}
+        - {actual_layer: OACT, stack_order: 6,  density_process_layer: OACT}
+        - {actual_layer: GAT3, stack_order: 7,  density_process_layer: GAT3}
+        - {actual_layer: SD1,  stack_order: 8,  density_process_layer: SD1}
+        - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
+        - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
+        - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
+      pair_table_path: pairs.csv
+      electrode_role_policy: electrode_id

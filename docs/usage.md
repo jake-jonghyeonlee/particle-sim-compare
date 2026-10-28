@@ -27,6 +27,22 @@
 
 수치를 새로 만드는 것은 2회차(면적)와 6회차(창별 ΔCA)이고 나머지는 입력을 준비하고 짝을 고르는 단계다. 6회차 `compare-windows`는 reference가 a, target이 b이며 방향은 b − a다.
 
+### 모델이 여럿일 때 (`confirm-pairs --models`, 선택)
+
+reference·target 외에 비교할 모델(제품)이 더 있으면 `models.yaml`(`compare_models_v1`)에 적고 5회차에 `--models`를 더한다. `--models`가 없으면 5회차의 코드 경로와 출력은 그대로다. 예시 파일은 `configs/etx/models.example.yaml`이다.
+
+- `models.yaml`은 `real.yaml`과 **같은 폴더**에 둔다(다르면 `models_config_dir_mismatch`, 종료 2). 모델 절의 상대 경로는 `real.yaml`의 reference/target 절과 같은 기준으로 읽는다. 모델 폴더는 reference와 같은 1·3회차 산출물(`manifest.json`, `pairs.csv`, 3회차 뒤 `review_assets.json` 등)이며 `data/models/<product_id>/`에 둔다.
+- `data_dir/manifest.json`이 아직 없는 모델은 `assets_pending`이다. 후보는 `--list`에 `model_status`로 보이고, accept 하면 쌍 없이 `models/<product_id>/deferred.json`에 남고 종료 코드는 3이다. 자산이 오면 새 `--out`으로 다시 돌린다.
+- 모델 후보는 target 질의(`target_to_reference`) ROI에서 나온 것만 쓴다. reference 질의의 모델 후보는 `candidate_model_query_not_target`이며 accept 하면 종료 2이다.
+- 모델 쌍은 a = target 질의, b = 모델이다. 그래서 이 쌍으로 계산한 Δ는 모델 − target이다(reference 쌍은 target − reference).
+
+```text
+python -m simcompare confirm-pairs --list --config real.yaml --models models.yaml --candidates data/changes --match target_to_reference=data/dl2/search_batch.json
+python -m simcompare confirm-pairs --config real.yaml --models models.yaml --candidates data/changes --match reference_to_target=data/dl2/search_batch.json --match target_to_reference=data/dl2/search_batch.json --decisions decisions.csv --labelled-by jdoe --mutual-tolerance-um 5 --out data/confirmed_models
+```
+
+출력은 기존 파일(reference↔target 쌍만) 외에 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(pending 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`이다. 스키마는 [데이터 계약](data_contract.md)의 확정 쌍 절에 있다. 같은 봉투 파일을 두 `--match`에 줘도 모델 후보는 한 번만 센다.
+
 ## ETX (Linux 서버)
 
 **준비물**: Python 3.8 이상, numpy, Pillow(DL1 환경에 이미 있음). 패키지 설치는 필요 없다. hotspot 입력 폴더(모델 폴더 `QA4_R00`, `QA4_T00` 아래 `<case>/images/...`, `<case>/result/<불량명>.csv`)와 DL1 PNG 폴더를 서버에 둔다.
