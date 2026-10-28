@@ -151,6 +151,7 @@ def _parser() -> argparse.ArgumentParser:
     confirm.add_argument("--decisions", help="decisions.csv (candidate_id,decision,note; decision=accept|reject, UTF-8, 헤더 필수)")
     confirm.add_argument("--labelled-by", help="확정한 사용자 ID (기본값 없음)")
     confirm.add_argument("--mutual-tolerance-um", type=float, help="mutual/one_way 판정 중심 허용 거리 µm (기본값 없음)")
+    confirm.add_argument("--models", help="compare_models_v1 models.yaml(--config 와 같은 폴더). 있으면 모델 후보를 models/<product_id>/ 아래 별도 대응 파일로 낸다")
     confirm.add_argument("--out", help="새 출력 디렉터리(이미 있으면 거부)")
     windows = _korean_help(sub.add_parser("compare-windows", add_help=False,
                                           help="대응 위치의 같은 물리 창 안 ΔCA(b−a). 창 크기는 기본값 없음"))
@@ -323,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
                 matches[name] = path
             cfg = pipeline.load_numeric_config(args.config)
             if args.list:
-                _print(confirm_pairs.list_candidates(cfg, args.candidates, matches))
+                _print(confirm_pairs.list_candidates(cfg, args.candidates, matches, models_path=args.models))
                 return 0
             for flag, value in (("--decisions", args.decisions), ("--labelled-by", args.labelled_by),
                                 ("--mutual-tolerance-um", args.mutual_tolerance_um), ("--out", args.out)):
@@ -331,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise NumericContractError("confirm_pairs_argument_required", flag + " 가 필요합니다(기본값 없음)")
             result = confirm_pairs.run_confirm_pairs(cfg, Path(args.out), candidates_dir=args.candidates, matches=matches,
                                                      decisions_path=args.decisions, labelled_by=args.labelled_by,
-                                                     mutual_tolerance_um=args.mutual_tolerance_um)
+                                                     mutual_tolerance_um=args.mutual_tolerance_um, models_path=args.models)
             _print(result)
             return result["exit_code"]
         if args.command == "report":

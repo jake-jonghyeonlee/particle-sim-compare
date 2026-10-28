@@ -190,7 +190,7 @@ def _rows_by_id(export, problems, label):
     return rows
 
 
-def _load_match(direction, path, cands, datasets, problems):
+def _load_match(direction, path, cands, datasets, problems, models=None):
     """한 방향의 DL2 결과를 검사하고 후보 표를 만든다. 반환: dict 또는 None."""
     query_name, index_name = next((q, i) for d, q, i in DIRECTIONS if d == direction)
     result, sha = _read_json_bytes(path, problems, f'match_{direction}')
@@ -198,7 +198,7 @@ def _load_match(direction, path, cands, datasets, problems):
         return None
     label = f'{direction}({path})'
     if isinstance(result, dict) and result.get('schema_version') == BATCH_SCHEMA:
-        return _load_batch_match(direction, path, result, sha, cands, datasets, problems)
+        return _load_batch_match(direction, path, result, sha, cands, datasets, problems, models)
     if not isinstance(result, dict) or result.get('schema_version') != NCC_SCHEMA:
         problems.add('match_schema_version_unsupported', f'{label}: {result.get("schema_version") if isinstance(result, dict) else None!r}')
         return None
@@ -311,13 +311,19 @@ def _index_grade(parsed, product, index_sha):
     return ('candidates_index_export' if same else 'product_ids_only'), used
 
 
-def _batch_candidate_problem(entry, direction_products, grade):
-    """후보 하나가 쓸 수 없는 사유 코드(쓸 수 있으면 None)."""
+def _batch_candidate_problem(entry, direction_products, grade, model=None):
+    """후보 하나가 쓸 수 없는 사유 코드(쓸 수 있으면 None).
+
+    model: models.yaml 에 있는 후보 제품이면 {'direction', 'grade'}. 모델 후보는 target 질의(target_to_reference)에서만 쓴다."""
     query_product, index_product = direction_products
     if entry['search_scope'] not in SEARCH_SCOPES:
         return 'unsupported_search_scope'
     if entry['product_id'] == query_product:
         return 'candidate_same_product'
+    if model is not None:
+        if model['direction'] != 'target_to_reference':
+            return 'candidate_model_query_not_target'
+        return 'candidate_product_unverifiable' if model['grade'] is None else None
     if entry['product_id'] != index_product:
         return 'candidate_product_not_configured'
     if grade is None:
@@ -325,8 +331,11 @@ def _batch_candidate_problem(entry, direction_products, grade):
     return None
 
 
-def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
-    """psdl2_search_batch_v1 한 방향. 반환 형태는 NCC 경로(_load_match)와 같고 unusable_candidates 가 더해진다."""
+def _load_batch_match(direction, path, result, sha, cands, datasets, problems, models=None):
+    """psdl2_search_batch_v1 한 방향. 반환 형태는 NCC 경로(_load_match)와 같고 unusable_candidates 가 더해진다.
+
+    models(load_models 결과)가 있으면 모델 제품 후보는 table/unusable_candidates 가 아니라 model_table/model_unusable 에 담는다
+    (reference↔target 의 깔때기·목록 항목이 모델 후보로 달라지지 않게 한다)."""
     query_name, index_name = next((q, i) for d, q, i in DIRECTIONS if d == direction)
     label = f'{direction}({path})'
     if not isinstance(result.get('rankings'), list):
@@ -343,6 +352,8 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
     query_rows = (side['query'] or {}).get('rows', {})
     index_rows = (side['index'] or {}).get('rows', {})
     table, unusable, unusable_candidates, seen_queries = {}, {}, {}, set()
+    model_table, model_unusable, model_grades = {}, {}, {}
+    model_entries = models['models'] if models else {}
     skipped_other_direction = 0
     for position, ranking in enumerate(result['rankings']):
         where = f'{label} rankings[{position}]'
@@ -385,16 +396,23 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
                 problems.add('match_candidate_malformed', f'{where}: rank={rank!r}')
                 continue
             cid = candidate_id(direction, roi_id, rank)
-            if cid in table or cid in unusable_candidates:
+            if cid in table or cid in unusable_candidates or cid in model_table or cid in model_unusable:
                 problems.add('match_duplicate_candidate_id', cid)
                 continue
-            reason = _batch_candidate_problem(entry, products, grade)
+            model_entry = model_entries.get(entry['product_id'])
+            model_check = None
+            if model_entry is not None:
+                if entry['product_id'] not in model_grades:
+                    model_grades[entry['product_id']] = _index_grade(parsed_sources, entry['product_id'], None)[0]
+                model_check = {'direction': direction, 'grade': model_grades[entry['product_id']]}
+            reason = _batch_candidate_problem(entry, products, grade, model_check)
             if reason is not None:
-                unusable_candidates[cid] = {'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
-                                            'candidate_product_id': entry['product_id'], 'search_scope': entry['search_scope'],
-                                            'reason': reason}
+                (model_unusable if model_entry is not None else unusable_candidates)[cid] = {
+                    'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
+                    'candidate_product_id': entry['product_id'], 'search_scope': entry['search_scope'], 'reason': reason}
                 continue
-            table[cid] = {'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
+            target_table = table if model_entry is None else model_table
+            target_table[cid] = {'candidate_id': cid, 'direction': direction, 'query_roi_id': roi_id, 'rank': rank,
                           'score': None, 'center_xy_um': cand_centre, 'frame_id': entry['frame_id'],
                           'product_id': entry['product_id'], 'query_center_xy_um': centre,
                           'query_frame_id': qrow.get('frame_id'),
@@ -402,6 +420,9 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
                           'score_gap': None, 'shared_with': [], 'template_sha256': None, 'reasons': [], 'query_row': qrow,
                           'match_schema': BATCH_SCHEMA, 'search_scope': entry['search_scope'], 'candidate_roi_id': entry['roi_id'],
                           'index_export_verification': grade}
+            if model_entry is not None:
+                target_table[cid].update(index_export_verification=model_grades[entry['product_id']], is_model=True,
+                                         model_status=model_entry['status'])
     arguments = result.get('arguments') if isinstance(result.get('arguments'), dict) else {}
     warnings = [] if seen_queries else ['no_rankings_for_direction']
     extra = {'match_schema': BATCH_SCHEMA, 'checkpoint_fingerprint': result.get('checkpoint_fingerprint'),
@@ -414,7 +435,7 @@ def _load_batch_match(direction, path, result, sha, cands, datasets, problems):
             'unusable_candidates': unusable_candidates, 'n_queries': len(seen_queries), 'index_rows': index_rows,
             'implementation_revision': None, 'window_um': None, 'topk': arguments.get('topk'), 'self_check': None,
             'inputs': {'query_export_sha256': query_sha, 'index_export_sha256': index_sha}, 'match_schema': BATCH_SCHEMA,
-            'sidecar_extra': extra}
+            'sidecar_extra': extra, 'model_table': model_table, 'model_unusable': model_unusable}
 
 
 def _read_decisions(path, problems):
@@ -462,9 +483,11 @@ def _classify_decisions(decisions, matches, problems):
             problems.add('candidate_match_file_not_given', f'{where}: {cid} ({direction})')
             continue
         match = matches[direction]
-        if cid not in match['table']:
+        if cid not in match['table'] and cid not in match.get('model_table', {}):
             if cid in match.get('unusable_candidates', {}):
                 problems.add('candidate_match_unavailable', f'{where}: {cid} ({match["unusable_candidates"][cid]["reason"]})')
+            elif cid in match.get('model_unusable', {}):
+                problems.add('candidate_match_unavailable', f'{where}: {cid} ({match["model_unusable"][cid]["reason"]})')
             elif roi_id in match['unusable']:
                 problems.add('candidate_match_unavailable', f'{where}: {cid} ({", ".join(match["unusable"][roi_id])})')
             else:
@@ -526,6 +549,51 @@ def _build_pairs(accepted, matches, datasets, labelled_by, labelled_at, problems
         pair['status'] = 'blocked' if reasons else 'ready'
         pairs.append((item, pair))
     return pairs
+
+
+def _candidate_item(match, cid):
+    item = match['table'].get(cid)
+    return item if item is not None else match['model_table'][cid]
+
+
+def _build_model_pairs(accepted, models, datasets, labelled_by, labelled_at, problems):
+    """모델 후보 accept → {모델 key: [(item, pair)]}. a = target 질의 행, b = 모델 후보, 결속은 (target, X) 데이터셋.
+
+    assets_pending 모델의 accept 는 쌍이 되지 않고 'deferred' 항목([item])으로만 돌려준다(키 'deferred')."""
+    from .correspondence import bind_pairs
+    from .models import CONFIGURED, model_pair_id
+    target = datasets['target']['dataset']
+    built = {key: {'pairs': [], 'deferred': []} for key in models['models']}
+    for item in accepted:
+        key = item['product_id']
+        entry = models['models'][key]
+        if entry['status'] != CONFIGURED:
+            built[key]['deferred'].append(item)
+            continue
+        model_dataset = entry['dataset']
+        designs = sorted({case.identity.design_version for case in model_dataset.cases})
+        if len(designs) != 1:
+            problems.add('candidate_design_version_unresolved',
+                         f'{item["candidate_id"]}: model {key!r} dataset has design versions {designs}')
+            continue
+        query_side = _side_from_row(item['query_row'])
+        cand_side = _candidate_side(item, designs[0], query_side['analysis_layer'])
+        pair = {'pair_id': model_pair_id(item['direction'], item['query_roi_id'], item['rank'], key, item['center_xy_um']),
+                'a': query_side, 'b': cand_side, 'repeats_per_frame': None,
+                'source': {'kind': 'manual', 'labelled_by': labelled_by, 'labelled_at': labelled_at},
+                'status': 'ready', 'reasons': []}
+        try:
+            bound = bind_pairs(_wrap([pair]), target, model_dataset)[0]
+        except NumericContractError as exc:
+            problems.add(exc.code, f'{item["candidate_id"]}: {exc}')
+            continue
+        reasons = set(bound.reasons)
+        if target.frames[query_side['frame_id']].pixel_pitch_um != model_dataset.frames[cand_side['frame_id']].pixel_pitch_um:
+            reasons.add('pixel_pitch_mismatch')
+        pair['reasons'] = sorted(reasons)
+        pair['status'] = 'blocked' if reasons else 'ready'
+        built[key]['pairs'].append((item, pair))
+    return built
 
 
 def _wrap(pairs):
@@ -638,7 +706,7 @@ def _load_datasets(cfg):
         else:
             root, dataset = pipeline._numeric_input(cfg, section)
         datasets[name] = {'dataset': dataset, 'product': _dataset_product(dataset, name), 'root': root,
-                          'manifest_path': section.get('manifest_path', 'manifest.json')}
+                          'manifest_path': section.get('manifest_path', 'manifest.json'), 'real': real_source is not None}
     return datasets
 
 
@@ -685,30 +753,37 @@ def _check_args(labelled_by, tolerance):
         raise NumericContractError('invalid_mutual_tolerance', '--mutual-tolerance-um 은 0 이상의 유한한 수여야 합니다')
 
 
-def _prepare(cfg, candidates_dir, matches, problems):
+def _prepare(cfg, candidates_dir, matches, problems, models_path=None):
+    """반환: (datasets, cands, loaded, models). models 는 --models 가 없으면 None."""
     if not matches:
         raise NumericContractError('match_file_required', '--match 를 하나 이상 지정해야 합니다')
     for direction in matches:
         if direction not in DIRECTION_NAMES:
             raise NumericContractError('unknown_match_direction', direction)
     datasets = _load_datasets(cfg)
-    cands = _load_candidates(candidates_dir, cfg, problems, datasets, matches)
+    models, guarded = None, datasets
+    if models_path is not None:
+        from .models import CONFIGURED, load_models
+        models = load_models(models_path, cfg, config_real=all(item['real'] for item in datasets.values()))
+        guarded = {**datasets, **{'model:' + key: {'dataset': entry['dataset']}
+                                  for key, entry in models['models'].items() if entry['status'] == CONFIGURED}}
+    cands = _load_candidates(candidates_dir, cfg, problems, guarded, matches)
     loaded = {}
     if cands is not None:
         _check_chain(cands, datasets, problems)
         for direction, path in matches.items():
             if (cands['directions'][direction]['query'] is None or cands['directions'][direction]['index'] is None):
                 continue
-            match = _load_match(direction, path, cands, datasets, problems)
+            match = _load_match(direction, path, cands, datasets, problems, models)
             if match is not None:
                 loaded[direction] = match
-    return datasets, cands, loaded
+    return datasets, cands, loaded, models
 
 
-def list_candidates(cfg, candidates_dir, matches):
+def list_candidates(cfg, candidates_dir, matches, models_path=None):
     """DL2 검토 시트에 보이는 (질의 roi_id, 순위)에 해당하는 candidate_id 목록. 점수는 싣지 않는다."""
     problems = _Problems()
-    _, _, loaded = _prepare(cfg, candidates_dir, matches, problems)
+    _, _, loaded, models = _prepare(cfg, candidates_dir, matches, problems, models_path)
     problems.raise_if_any()
     listing = {'candidate_id_format': '<direction>:<query_roi_id>:r<rank>', 'candidates': [], 'unavailable_queries': []}
     unavailable_candidates = []
@@ -716,8 +791,9 @@ def list_candidates(cfg, candidates_dir, matches):
         match = loaded.get(direction)
         if match is None:
             continue
-        for cid in sorted(match['table']):
-            item = match['table'][cid]
+        usable = {**match['table'], **match.get('model_table', {})}
+        for cid in sorted(usable):
+            item = usable[cid]
             entry = {'candidate_id': cid, 'direction': direction, 'query_roi_id': item['query_roi_id'],
                      'rank': item['rank'], 'candidate_product_id': item['product_id'],
                      'candidate_frame_id': item['frame_id'], 'candidate_center_xy_um': item['center_xy_um'],
@@ -725,10 +801,12 @@ def list_candidates(cfg, candidates_dir, matches):
             if item.get('match_schema'):
                 entry['search_scope'] = item['search_scope']
                 entry['index_export_verification'] = item['index_export_verification']
+            if item.get('is_model'):
+                entry['model_status'] = item['model_status']
             listing['candidates'].append(entry)
         for roi_id, reasons in sorted(match['unusable'].items()):
             listing['unavailable_queries'].append({'direction': direction, 'query_roi_id': roi_id, 'reasons': reasons})
-        for cid, item in sorted(match.get('unusable_candidates', {}).items()):
+        for cid, item in sorted({**match.get('unusable_candidates', {}), **match.get('model_unusable', {})}.items()):
             unavailable_candidates.append(item)
     if any(m.get('match_schema') for m in loaded.values()):
         listing['unavailable_candidates'] = unavailable_candidates
@@ -740,11 +818,13 @@ def list_candidates(cfg, candidates_dir, matches):
     return listing
 
 
-def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labelled_by, mutual_tolerance_um, now=None):
+def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labelled_by, mutual_tolerance_um, now=None,
+                      models_path=None):
     """새 출력 폴더에 roi_correspondence.json, confirmed_pairs_sidecar.json, confirm_funnel.json/.csv, execution.json 을 쓴다.
 
     입력·정합성 문제는 출력 폴더를 만들기 전에 모두 모아 NumericContractError(종료 코드 2)로 알린다.
     쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다(접두 패턴·재귀 삭제 없음).
+    models_path(--models)가 있으면 models/ 아래에 모델별 쌍 파일·유예·결정 현황·색인을 더 쓴다(기존 파일은 reference↔target 그대로).
     """
     from .correspondence import load_correspondence, validate_correspondence, write_correspondence
     _check_args(labelled_by, mutual_tolerance_um)
@@ -752,15 +832,19 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
     if out.exists() or out.is_symlink():
         raise NumericContractError('output_dir_exists', str(out))
     problems = _Problems()
-    datasets, cands, matches_loaded = _prepare(cfg, candidates_dir, matches, problems)
+    datasets, cands, matches_loaded, models = _prepare(cfg, candidates_dir, matches, problems, models_path)
     decisions = _read_decisions(decisions_path, problems)
     chosen = _classify_decisions(decisions, matches_loaded, problems) if decisions is not None else {}
     problems.raise_if_any()
     labelled_at = (now or utc_now_iso)()
     labelled_by = labelled_by.strip()
-    accepted = sorted((matches_loaded[m.group(1)]['table'][cid] for cid in chosen if chosen[cid]['decision'] == 'accept'
-                       for m in [ID_PATTERN.match(cid)]), key=lambda item: item['candidate_id'])
+    accepted_all = sorted((_candidate_item(matches_loaded[m.group(1)], cid) for cid in chosen
+                           if chosen[cid]['decision'] == 'accept' for m in [ID_PATTERN.match(cid)]),
+                          key=lambda item: item['candidate_id'])
+    accepted = [item for item in accepted_all if not item.get('is_model')]
+    model_accepted = [item for item in accepted_all if item.get('is_model')]
     entries = _build_pairs(accepted, matches_loaded, datasets, labelled_by, labelled_at, problems)
+    model_entries = _build_model_pairs(model_accepted, models, datasets, labelled_by, labelled_at, problems) if models else {}
     problems.raise_if_any()
     near, merged, differs = _mutual(entries, mutual_tolerance_um)
     kept = [(item, pair) for item, pair in entries if pair['pair_id'] not in merged]
@@ -803,19 +887,24 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
     funnel = _funnel(matches_loaded, chosen, entries, kept, merged)
     ready_count = sum(pair['status'] == 'ready' for _, pair in kept)
     blocked_count = len(kept)-ready_count
-    complete = ready_count > 0 and blocked_count == 0
+    model_ready = sum(pair['status'] == 'ready' for built in model_entries.values() for _, pair in built['pairs'])
+    model_blocked = sum(len(built['pairs']) for built in model_entries.values())-model_ready
+    model_deferred = sum(len(built['deferred']) for built in model_entries.values())
+    complete = ready_count+model_ready > 0 and blocked_count+model_blocked == 0 and model_deferred == 0
     exit_code = 0 if complete else 3
+    policy = {'scores': 'display_and_provenance_only_never_used_for_selection_ordering_or_merging',
+              'mutual_one_way': 'marking_only_merge_keeps_lower_pair_id_only_for_same_analysis_layer_and_failure_type_otherwise_both_kept_with_mutual_context_differs',
+              'undecided_and_rejected': 'never_in_correspondence'}
+    inputs_record = {'config_sha256': cfg.get('_config_sha256'),
+                     'candidates_payload_sha256': cands['payload_sha256'], 'decisions_sha256': decisions['sha256'],
+                     'matches': {name: {**{k: m[k] for k in ('path', 'sha256', 'implementation_revision', 'window_um', 'topk',
+                                                              'self_check', 'inputs')}, **m.get('sidecar_extra', {})}
+                                 for name, m in sorted(matches_loaded.items())}}
     sidecar = {'schema_version': SIDECAR_SCHEMA, 'labelled_by': labelled_by, 'labelled_at': labelled_at,
-               'mutual_tolerance_um': float(mutual_tolerance_um),
-               'policy': {'scores': 'display_and_provenance_only_never_used_for_selection_ordering_or_merging',
-                          'mutual_one_way': 'marking_only_merge_keeps_lower_pair_id_only_for_same_analysis_layer_and_failure_type_otherwise_both_kept_with_mutual_context_differs',
-                          'undecided_and_rejected': 'never_in_correspondence'},
-               'inputs': {'config_sha256': cfg.get('_config_sha256'),
-                          'candidates_payload_sha256': cands['payload_sha256'], 'decisions_sha256': decisions['sha256'],
-                          'matches': {name: {**{k: m[k] for k in ('path', 'sha256', 'implementation_revision', 'window_um', 'topk',
-                                                                   'self_check', 'inputs')}, **m.get('sidecar_extra', {})}
-                                      for name, m in sorted(matches_loaded.items())}},
+               'mutual_tolerance_um': float(mutual_tolerance_um), 'policy': policy, 'inputs': inputs_record,
                'pairs': pair_records, 'merged_away': merged_away, 'warnings': normalised['warnings']}
+    if models:
+        funnel['models'] = _models_funnel(models, matches_loaded, chosen, model_entries)
     created_files, created_dirs = [], []
 
     def track(path, is_dir=False):
@@ -844,15 +933,26 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
                 writer.writerow(['total', stage['stage'], stage['count'],
                                  ';'.join(f'{k}:{v}' for k, v in stage['reasons'].items())])
         outputs = ['confirm_funnel.csv', 'confirm_funnel.json', 'confirmed_pairs_sidecar.json', 'roi_correspondence.json']
+        model_summary = None
+        if models:
+            written_models, model_summary = _write_models(
+                out, models, model_entries, matches_loaded, chosen, datasets, cands, cfg, payload['producer'],
+                {'labelled_by': labelled_by, 'labelled_at': labelled_at, 'tolerance': float(mutual_tolerance_um),
+                 'policy': policy, 'inputs': inputs_record}, track)
+            outputs += written_models
         reasons = []
-        if ready_count == 0:
+        if ready_count+model_ready == 0:
             reasons.append('no_emitted_ready_pairs')
-        if blocked_count:
+        if blocked_count+model_blocked:
             reasons.append('blocked_pairs_present')
+        if model_deferred:
+            reasons.append('model_assets_pending')
         result = {'status': 'available' if complete else 'partial', 'reasons': reasons, 'outputs': sorted(outputs+['execution.json']),
                   'exit_code': exit_code, 'labelled_by': labelled_by, 'labelled_at': labelled_at,
                   'n_accepted': len(accepted), 'n_emitted_ready': ready_count, 'n_emitted_blocked': blocked_count,
                   'n_merged_away': len(merged), 'funnel': funnel['totals']['counts']}
+        if model_summary is not None:
+            result['models'] = model_summary
         _write_text(out/'execution.json', _json_text({'command': 'confirm-pairs', **result}), track)
         return result
     except BaseException:
@@ -867,6 +967,167 @@ def run_confirm_pairs(cfg, out, *, candidates_dir, matches, decisions_path, labe
             except OSError:
                 pass
         raise
+
+
+MODEL_DECISIONS_SCHEMA = 'confirm_model_decisions_v1'
+MODELS_INDEX_SCHEMA = 'confirm_models_index_v1'
+MODEL_DEFERRED_SCHEMA = 'confirm_model_deferred_v1'
+
+
+def _model_items(matches, product):
+    """(usable model candidates, unusable model candidates) of one model product over all given match files."""
+    usable, unusable = {}, {}
+    for match in matches.values():
+        usable.update({cid: item for cid, item in match.get('model_table', {}).items() if item['product_id'] == product})
+        unusable.update({cid: item for cid, item in match.get('model_unusable', {}).items()
+                         if item['candidate_product_id'] == product})
+    return usable, unusable
+
+
+def _models_funnel(models, matches, chosen, built):
+    """funnel['models']: 모델별 깔때기. 기존 directions/totals 는 reference↔target 만 센다."""
+    result = {}
+    for key in sorted(models['models']):
+        usable, unusable = _model_items(matches, key)
+        decision = {cid: chosen.get(cid, {}).get('decision') for cid in usable}
+        accept = sum(1 for value in decision.values() if value == 'accept')
+        reject = sum(1 for value in decision.values() if value == 'reject')
+        pairs = [pair for _, pair in built[key]['pairs']]
+        blocked = [pair for pair in pairs if pair['status'] == 'blocked']
+        reasons = {}
+        for pair in blocked:
+            for code in pair['reasons']:
+                reasons[code] = reasons.get(code, 0)+1
+        unusable_reasons = {}
+        for item in unusable.values():
+            unusable_reasons[item['reason']] = unusable_reasons.get(item['reason'], 0)+1
+        result[key] = {'asset_status': models['models'][key]['status'], 'stages': [
+            {'stage': 'candidates_in_match_file', 'count': len(usable), 'reasons': dict(sorted(unusable_reasons.items()))},
+            {'stage': 'decided_accept', 'count': accept, 'reasons': {}},
+            {'stage': 'decided_reject', 'count': reject, 'reasons': {}},
+            {'stage': 'undecided', 'count': len(usable)-accept-reject, 'reasons': {}},
+            {'stage': 'deferred_assets_pending', 'count': len(built[key]['deferred']), 'reasons': {}},
+            {'stage': 'blocked', 'count': len(blocked), 'reasons': dict(sorted(reasons.items()))},
+            {'stage': 'emitted_ready_pairs', 'count': len(pairs)-len(blocked), 'reasons': {}}]}
+    return result
+
+
+def _model_decisions(models, matches, chosen, cands, datasets):
+    """models/decisions.json: target 질의 ROI × 제품(reference 포함)마다 후보·결정·사유별 사용 불가·유예 수.
+
+    결정(accepted/rejected/undecided)과 자산 상태(asset_status)는 따로 적는다. 후보 없음(candidates=0)과 모두 reject
+    (candidates>0, rejected=candidates)가 구별된다."""
+    reference_product = datasets['reference']['product']
+    status = {reference_product: 'config_side'}
+    status.update({key: models['models'][key]['status'] for key in models['models']})
+    products = [reference_product]+sorted(models['models'])
+    match = matches.get('target_to_reference')
+    rows = ((cands['directions'].get('target_to_reference') or {}).get('query') or {}).get('rows', {})
+    roi_ids = sorted(roi for roi, row in rows.items() if row.get('status') == 'ready')
+    cells = {(roi, product): {'candidates': 0, 'accepted': 0, 'rejected': 0, 'undecided': 0, 'unavailable': {}, 'deferred': 0,
+                              'asset_status': status[product]} for roi in roi_ids for product in products}
+    ranked = set()
+    if match is not None:
+        ranked.update(match['unusable'])
+        usable = list(match['table'].values())+list(match.get('model_table', {}).values())
+        for item in usable:
+            ranked.add(item['query_roi_id'])
+            cell = cells.get((item['query_roi_id'], item['product_id']))
+            if cell is None:
+                continue
+            cell['candidates'] += 1
+            decision = chosen.get(item['candidate_id'], {}).get('decision')
+            if decision == 'accept':
+                cell['accepted'] += 1
+                if item.get('is_model') and item['model_status'] != 'configured':
+                    cell['deferred'] += 1
+            elif decision == 'reject':
+                cell['rejected'] += 1
+            else:
+                cell['undecided'] += 1
+        for item in list(match.get('unusable_candidates', {}).values())+list(match.get('model_unusable', {}).values()):
+            ranked.add(item['query_roi_id'])
+            cell = cells.get((item['query_roi_id'], item['candidate_product_id']))
+            if cell is None:
+                continue
+            cell['candidates'] += 1
+            cell['unavailable'][item['reason']] = cell['unavailable'].get(item['reason'], 0)+1
+    for cell in cells.values():
+        cell['unavailable'] = dict(sorted(cell['unavailable'].items()))
+    other = matches.get('reference_to_target')
+    return {'schema_version': MODEL_DECISIONS_SCHEMA, 'target_product_id': models['target_product_id'],
+            'reference_product_id': reference_product, 'target_to_reference_match_given': match is not None,
+            'asset_status': dict(sorted(status.items())),
+            'reference_to_target_model_candidates_unusable': len(other.get('model_unusable', {})) if other else 0,
+            'rois': [{'query_roi_id': roi, 'ranked': roi in ranked,
+                      'query_unavailable_reasons': list(match['unusable'].get(roi, [])) if match is not None else [],
+                      'products': {product: cells[(roi, product)] for product in products}} for roi in roi_ids]}
+
+
+def _ensure_dir(path, track):
+    if not path.is_dir():
+        path.mkdir()
+        track(path, is_dir=True)
+
+
+def _write_models(out, models, built, matches, chosen, datasets, cands, cfg, producer, common, track):
+    """models/ 아래 파일을 쓴다. 반환: (out 기준 상대 경로 목록, 실행 요약)."""
+    from .correspondence import load_correspondence, validate_correspondence, write_correspondence
+    from .models import CONFIGURED
+    root = out/'models'
+    _ensure_dir(root, track)
+    written, index, summary = [], {}, {}
+    for key in sorted(models['models']):
+        entry, data = models['models'][key], built[key]
+        folder = root/key
+        pairs = sorted(data['pairs'], key=lambda pair_entry: pair_entry[1]['pair_id'])
+        n_ready = sum(pair['status'] == 'ready' for _, pair in pairs)
+        info = {'product_id': key, 'status': entry['status'], 'n_ready': n_ready, 'n_blocked': len(pairs)-n_ready,
+                'n_deferred': len(data['deferred']), 'folder': f'models/{key}', 'correspondence': None}
+        if entry['status'] == CONFIGURED:
+            _ensure_dir(folder, track)
+            payload = {'schema_version': 'roi_correspondence_v1', 'producer': dict(producer),
+                       'pairs': [pair for _, pair in pairs], 'notes': f'a=target(query), b={key}. {NOTE}'}
+            normalised = validate_correspondence(payload)
+            track(folder/'roi_correspondence.json')
+            path = write_correspondence(folder/'roi_correspondence.json', payload)
+            if load_correspondence(path) != normalised:
+                raise NumericContractError('correspondence_round_trip_mismatch', path)
+            records = {}
+            for item, pair in pairs:
+                record = {'pair_id': pair['pair_id'], 'status': pair['status'], 'reasons': pair['reasons'],
+                          'direction': item['direction'], 'candidates': [_provenance(item, chosen[item['candidate_id']], matches)],
+                          'merged_with': []}
+                if pair['status'] == 'ready':
+                    record.update(mutual_status='one_way', mutual_with=[], mutual_context_differs=False,
+                                  opposite_match_given=False, opposite_candidates_within_tolerance=[])
+                else:
+                    record['mutual_status'] = None
+                records[pair['pair_id']] = record
+            sidecar = {'schema_version': SIDECAR_SCHEMA, 'labelled_by': common['labelled_by'], 'labelled_at': common['labelled_at'],
+                       'mutual_tolerance_um': common['tolerance'], 'policy': dict(common['policy']), 'inputs': common['inputs'],
+                       'pairs': records, 'merged_away': {}, 'warnings': normalised['warnings'],
+                       'model': {'product_id': key, 'status': entry['status'], 'models_sha256': models['sha256'],
+                                 'data_dir': entry['data_dir'], 'manifest_sha256': entry['manifest_sha256'],
+                                 'asset_manifest_sha256': entry['asset_manifest_sha256'],
+                                 'electrode_import_record_sha256': entry['electrode_import_record_sha256']}}
+            _write_text(folder/'confirmed_pairs_sidecar.json', _json_text(sidecar), track)
+            info['correspondence'] = f'models/{key}/roi_correspondence.json'
+            written += [f'models/{key}/roi_correspondence.json', f'models/{key}/confirmed_pairs_sidecar.json']
+        if data['deferred']:
+            _ensure_dir(folder, track)
+            deferred = {'schema_version': MODEL_DEFERRED_SCHEMA, 'product_id': key, 'reason': 'model_assets_pending',
+                        'models_sha256': models['sha256'],
+                        'candidate_ids': sorted(item['candidate_id'] for item in data['deferred'])}
+            _write_text(folder/'deferred.json', _json_text(deferred), track)
+            written.append(f'models/{key}/deferred.json')
+        index[key] = info
+        summary[key] = {'status': entry['status'], 'n_ready': info['n_ready'], 'n_blocked': info['n_blocked'],
+                        'n_deferred': info['n_deferred']}
+    _write_text(root/'decisions.json', _json_text(_model_decisions(models, matches, chosen, cands, datasets)), track)
+    _write_text(root/'index.json', _json_text({'schema_version': MODELS_INDEX_SCHEMA, 'target_product_id': models['target_product_id'],
+                                                'models': index}), track)
+    return written+['models/decisions.json', 'models/index.json'], summary
 
 
 def _funnel(matches, chosen, entries, kept, merged):
