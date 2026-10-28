@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from simcompare import roi_export
@@ -126,8 +127,6 @@ def test_default_run_hashes_are_pinned(pinned_run):
 
 
 # --- T1: frame 크기 차이와 비교 영역 기록 ------------------------------------------------------------------------------
-import numpy as np
-
 import test_change_candidates as tcc
 from simcompare import change_map
 
@@ -196,7 +195,7 @@ def test_unequal_frames_are_recorded_and_noted_without_changing_the_exit_code(tm
     execution = json.loads((out/'execution.json').read_text(encoding='utf-8'))
     assert [n for n in execution['notes'] if n.get('code') == 'frame_shape_differs'] == note
     assert not any(w.get('code') == 'frame_shape_differs' for w in load(out)['warnings'])
-    assert code in (0, 3)
+    assert code == (3 if load(out)['warnings'] else 0)
     html = (out/'alignment.html').read_text(encoding='utf-8')
     assert 'resize 하지 않습니다' in html
 
@@ -240,3 +239,25 @@ def test_empty_domain_has_no_bbox():
     result = _maps(ref, tgt)
     assert result['domain_bbox_px'] is None
     assert result['stats']['domain_pixels_before_erosion'] == 0 and result['stats']['domain_pixels'] == 0
+
+
+def test_bbox_starts_after_an_invalid_margin():
+    ref = np.ones((30, 40), bool)
+    ref[:5, :] = False                                 # top strip
+    ref[:, :7] = False                                 # left strip
+    result = _maps(ref, np.ones((30, 40), bool))
+    assert result['domain_bbox_px'] == [5, 30, 7, 40]
+
+
+def test_bbox_shrinks_by_a_nonzero_offset():
+    full = np.ones((30, 40), bool)
+    y0, y1, x0, x1 = _maps(full, full, offset=(3, 0))['domain_bbox_px']
+    assert (y0, y1) == (0, 30) and (x0, x1) in ((3, 40), (0, 37))
+
+
+def test_alignment_record_writes_a_null_bbox_for_an_empty_domain():
+    from simcompare import change_candidates
+    stats = {'domain_pixels_before_erosion': 0, 'domain_pixels': 0}
+    record = change_candidates._frame_record((20, 20), (25, 15), stats, None)
+    assert record['comparison_domain']['bbox_px'] is None
+    assert json.loads(json.dumps(record))['comparison_domain']['bbox_px'] is None
