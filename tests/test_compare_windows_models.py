@@ -96,10 +96,11 @@ def test_model_run_binds_target_as_a_and_the_model_as_b(env):
         'product_id': 'C', 'models_sha256': sha(models), 'manifest_sha256': sha(demo/'models'/'C'/'manifest.json'),
         'asset_manifest_sha256': sha(demo/'models'/'C'/'review_assets.json'), 'electrode_import_record_sha256': None}
     # C is a copy of target: the window areas are equal, so every delta b - a is exactly 0 (sign convention b - a is tested below)
-    ready = [row for row in result['rows'] if row.get('status') == 'ready'] if 'rows' in result else []
-    for row in ready:
-        for value in row.get('delta_um2', {}).values() if isinstance(row.get('delta_um2'), dict) else []:
-            assert value in (0, 0.0, None)
+    complete = [row for row in result['rows'] if row['window']['delta']['union']['status'] == 'available']
+    assert complete, 'the delta check below must run on at least one row'
+    for row in complete:
+        assert all(row['window']['delta'][metric]['value'] in (0, 0.0, None) for metric in row['window']['delta'])
+        assert row['window']['delta']['union']['value'] == 0
 
 
 def test_delta_sign_is_model_minus_target(env, monkeypatch):
@@ -168,10 +169,12 @@ ERROR_CASES = [
 def test_argument_errors_exit_2_and_write_nothing(env, capsys, name, extra, out):
     models, conf = confirmed(env, accept=(1, 2))
     reference_run(env, conf)
+    assert windows(env, models, conf, out='win_other') in (0, 3)      # an unrelated earlier generation that must stay as it is
     demo = demo_dir(env)
     before = tree_hashes(demo)
-    other = tree_hashes(env['tmp']/'win_other') if (env['tmp']/'win_other').exists() else None
-    args = ['compare-windows', '--config', str(env['config']), '--correspondence', str(conf/'models'/'C'/'roi_correspondence.json'),
+    other = tree_hashes(env['tmp']/'win_other')
+    assert other and 'local_delta.json' in other
+    args =['compare-windows', '--config', str(env['config']), '--correspondence', str(conf/'models'/'C'/'roi_correspondence.json'),
             '--window-sizes', *SIZES, *extra(env, models, conf)]
     if out:
         args += ['--out', str(env['tmp']/out)]
@@ -180,7 +183,7 @@ def test_argument_errors_exit_2_and_write_nothing(env, capsys, name, extra, out)
     assert capsys.readouterr().err.startswith('오류:')
     assert not (env['tmp']/'win_x').exists()
     assert tree_hashes(demo) == before
-    assert (tree_hashes(env['tmp']/'win_other') if (env['tmp']/'win_other').exists() else None) == other
+    assert tree_hashes(env['tmp']/'win_other') == other
 
 
 def test_out_equal_to_the_default_output_folder_is_refused(env, capsys):
@@ -261,3 +264,45 @@ def test_guard_receives_the_swapped_datasets(env, monkeypatch):
     monkeypatch.setattr(real_hotspot, 'guard_stage_compare_windows', spy)
     assert windows(env, models, conf) in (0, 3)
     assert calls and {call[1:] for call in calls} == {(frozenset({'target'}), frozenset({'C'}), False)}   # every stage (windows, report)
+
+
+def test_real_config_with_a_numeric_model_is_refused_before_any_write(env, monkeypatch):
+    """T2 adv:1: prepare_model_run passes config_real, so a real config does not accept a numeric model."""
+    import simcompare.pipeline as pipeline
+    from simcompare.models import prepare_model_run
+    from simcompare.numeric_schema import NumericContractError
+    models, conf = confirmed(env)
+    cfg = pipeline.load_numeric_config(env['config'])
+    original = pipeline._real_source
+    monkeypatch.setattr(pipeline, '_real_source', lambda config, section: {'real': True} if section is config.get('target') else original(config, section))
+    demo = demo_dir(env)
+    before = tree_hashes(demo)
+    with pytest.raises(NumericContractError) as caught:
+        prepare_model_run(cfg, models, 'C', str(env['tmp']/'win_x'))
+    assert caught.value.code == 'mixed_real_and_numeric_source_formats'
+    assert not (env['tmp']/'win_x').exists() and tree_hashes(demo) == before
+
+
+def test_out_naming_the_default_folder_through_another_path_is_refused(env, monkeypatch):
+    """T2 adv:3: two paths that are the same file-system object count as the same folder."""
+    import simcompare.pipeline as pipeline
+    from simcompare.models import prepare_model_run
+    from simcompare.numeric_schema import NumericContractError
+    models, conf = confirmed(env)
+    cfg = pipeline.load_numeric_config(env['config'])
+    other = env['tmp']/'win_alias'
+    other.mkdir()
+    prepare_model_run(cfg, models, 'C', str(other))        # an ordinary other folder is accepted
+    monkeypatch.setattr(os.path, 'samefile', lambda first, second: True)
+    with pytest.raises(NumericContractError) as caught:
+        prepare_model_run(cfg, models, 'C', str(other))
+    assert caught.value.code == 'model_out_conflict'
+
+
+def test_unsafe_product_id_message_shows_the_anchored_pattern():
+    """T2 adv:5."""
+    from simcompare.models import check_product_keys
+    from simcompare.numeric_schema import NumericContractError
+    with pytest.raises(NumericContractError) as caught:
+        check_product_keys(['bad key'])
+    assert caught.value.code == 'models_product_id_unsafe' and '^[A-Za-z0-9]' in str(caught.value) and str(caught.value).endswith('$')

@@ -39,7 +39,7 @@ def check_product_keys(keys):
     seen = {}
     for key in keys:
         if not isinstance(key, str) or KEY_PATTERN.fullmatch(key) is None or key in ('.', '..'):
-            raise NumericContractError('models_product_id_unsafe', f'{key!r}: {KEY_PATTERN.pattern}')
+            raise NumericContractError('models_product_id_unsafe', f'{key!r}: must match ^{KEY_PATTERN.pattern}$')
         folded = key.lower()
         if folded in seen:
             raise NumericContractError('models_product_id_unsafe', f'{seen[folded]!r} and {key!r} differ only by case')
@@ -181,6 +181,17 @@ def _existing_products(path):
         return None
 
 
+def _same_folder(first, second):
+    """Same resolved path, or (both exist) the same file-system object (hard link, case-insensitive volume)."""
+    import os
+    if first == second:
+        return True
+    try:
+        return os.path.samefile(str(first), str(second))
+    except OSError:
+        return False
+
+
 def prepare_model_run(cfg, models_path, key, out):
     """Everything compare-windows --model checks before it may write anything. Returns (derived cfg, provenance.model).
 
@@ -189,11 +200,12 @@ def prepare_model_run(cfg, models_path, key, out):
     from . import pipeline
     if out is None:
         raise NumericContractError('model_out_required', '--model 은 --out 이 필요합니다(기본 출력 폴더는 reference 용)')
-    loaded = load_models(models_path, cfg)
+    config_real = pipeline._real_source(cfg, cfg.get('target')) is not None   # a real config refuses a numeric model (and the reverse)
+    loaded = load_models(models_path, cfg, config_real=config_real)
     derived = derive_config(cfg, loaded, key)
     target_product = section_product(cfg.get('target'))
     out_path = Path(out).resolve()
-    if cfg.get('output_dir') is not None and out_path == Path(pipeline._numeric_path(cfg, cfg['output_dir'])).resolve():
+    if cfg.get('output_dir') is not None and _same_folder(out_path, Path(pipeline._numeric_path(cfg, cfg['output_dir'])).resolve()):
         raise NumericContractError('model_out_conflict', f'--out {out} 은 config 기본 compare-windows 출력 폴더입니다')
     existing = out_path/'local_delta.json'
     if existing.exists() and _existing_products(existing) != (target_product, key):
