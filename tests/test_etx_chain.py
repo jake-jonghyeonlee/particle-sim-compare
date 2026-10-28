@@ -89,7 +89,7 @@ def _write_hotspot_tree(root, side):
             writer.writerow(['5', f'{int(mask.sum()) * PITCH * PITCH:.2f}'])
 
 
-def _write_dl1(dl1, side):
+def _write_dl1(dl1, side, product=None):
     dx, dy = OFFSET
     for number, (name, seed) in enumerate((('CNT1', 21), ('CNT2', 22), ('CNT3', 23)), start=1):
         world = cnt_world(seed)
@@ -97,11 +97,66 @@ def _write_dl1(dl1, side):
             world = shifted(world, dx, dy)
             if name == 'CNT1':
                 world[500 + 305 + dy:500 + 315 + dy, 500 + 305 + dx:500 + 315 + dx] = True
-        save_black(dl1 / PRODUCTS[side] / 'cno' / f'{number}_{name}.png', world)
+        save_black(dl1 / (product or PRODUCTS[side]) / 'cno' / f'{number}_{name}.png', world)
 
 
-def _assignment(side):
-    return {'product_id': PRODUCTS[side], 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
+MODEL_FOLDER = MODEL_PRODUCT = 'QA4_C00'     # the runners use the model key as folder name and as --model; models.yaml key = product id
+
+
+def _write_model_tree(root):
+    """The model hotspot tree: the target's, with the case-AB hotspot moved 1.5 um (so its hotspot differs from the target's)."""
+    _write_hotspot_tree(root, 'target')
+    mask = np.roll(hotspot_masks('target')[CASE_AB], 15, axis=1)
+    folder = root / 'images' / CASE_AB
+    Image.fromarray(mask.astype(np.uint8) * 255).save(folder / 'hotspot_lateral_short05.png')
+    with (folder / 'result/lateral_short.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(['defect_size(um)', 'Area(um2)'])
+        writer.writerow(['5', f'{int(mask.sum()) * PITCH * PITCH:.2f}'])
+
+
+def _write_models_yaml(base, with_assets):
+    section = {'product_id': MODEL_PRODUCT, 'data_dir': f'data/models/{MODEL_FOLDER}',
+               'condition_assignment': _assignment('target', MODEL_PRODUCT)}
+    if with_assets:
+        data = base / 'data/models' / MODEL_FOLDER
+        section['asset_manifest'] = {'path': 'review_assets.json', 'sha256': sha(data / 'review_assets.json')}
+        section['electrode_import_record'] = {'path': 'electrode_asset_import_record.json',
+                                              'sha256': sha(data / 'electrode_asset_import_record.json')}
+    (base / 'models.yaml').write_text(yaml.safe_dump({'schema_version': 'compare_models_v1', 'target_product_id': PRODUCTS['target'],
+                                                      'models': {MODEL_PRODUCT: section}}), encoding='utf-8')
+
+
+def _write_search_batch(base):
+    """psdl2_search_batch_v1 by hand (DL2 is not run): every target ROI gets rank 1 = the reference ROI place, rank 2 = the model."""
+    cand = base / 'data/changes'
+    ref_frame = json.loads((cand / 'reference_index_export/review_rois.json').read_text(encoding='utf-8'))['rois'][0]['frame_id']
+    tgt_frame = json.loads((cand / 'target_index_export/review_rois.json').read_text(encoding='utf-8'))['rois'][0]['frame_id']
+    export = json.loads((cand / 'target_export/review_rois.json').read_text(encoding='utf-8'))
+    dx, dy = OFFSET
+    rankings, candidate_ids = [], []
+    for row in sorted((r for r in export['rois'] if r['status'] == 'ready'), key=lambda r: r['roi_id']):
+        x, y = row['center_xy_um']
+        rankings.append({'query_roi_id': row['roi_id'], 'query_product_id': PRODUCTS['target'], 'query_export_sha256': sha(cand / 'target_export/review_rois.json'),
+                         'candidates': [{'rank': 1, 'roi_id': 'idx_1', 'product_id': PRODUCTS['reference'], 'frame_id': ref_frame,
+                                         'center_xy_um': [x - dx * PITCH, y - dy * PITCH], 'search_scope': 'primary'},
+                                        {'rank': 2, 'roi_id': 'idx_2', 'product_id': MODEL_PRODUCT, 'frame_id': tgt_frame,
+                                         'center_xy_um': [x, y], 'search_scope': 'primary'}]})
+        candidate_ids += [f'target_to_reference:{row["roi_id"]}:r1', f'target_to_reference:{row["roi_id"]}:r2']
+    payload = {'schema_version': 'psdl2_search_batch_v1', 'checkpoint_fingerprint': 'c' * 64, 'view_fingerprint': 'd' * 64,
+               'index_sources': [{'export_sha256': 'e' * 64, 'patch_set_sha256s': [],
+                                  'product_ids': [PRODUCTS['reference'], PRODUCTS['target'], MODEL_PRODUCT]}],
+               'inputs': {'query_export_sha256': None, 'query_dataset_sha256': None, 'index_sha256': 'f' * 64},
+               'arguments': {'topk': 2}, 'results': [], 'rankings': rankings}
+    (base / 'data/dl2/search_batch.json').write_text(json.dumps(payload, indent=2), encoding='utf-8')
+    with (base / 'data/dl2/decisions.csv').open('w', newline='', encoding='utf-8') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(['candidate_id', 'decision', 'note'])
+        writer.writerows([[cid, 'accept', ''] for cid in candidate_ids])
+
+
+def _assignment(side, product=None):
+    return {'product_id': product or PRODUCTS[side], 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
             'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'pairs.csv', 'electrode_roles': dict(ROLES),
             'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
 
@@ -133,7 +188,7 @@ def _exit_codes(text):
     return re.findall(r'^\[simcompare_job\] \S+ \S+ (\S+) exit (\d+) in \d+s$', text, re.M)
 
 
-def _build_chain(python, tmp):
+def _build_chain(python, tmp, with_models=False):
     started = time.time()
     base = tmp / 'work'
     logs, results = {}, {}
@@ -141,11 +196,20 @@ def _build_chain(python, tmp):
         _write_hotspot_tree(base / 'data/input/hotspot' / model, side)
         _write_dl1(base / 'data/input/dl1', side)
         (base / f'assignment_{side}.json').write_text(json.dumps(_assignment(side)), encoding='utf-8')
+    if with_models:
+        _write_model_tree(base / 'data/input/hotspot' / MODEL_FOLDER)
+        _write_dl1(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
+        (base / f'assignment_{MODEL_FOLDER}.json').write_text(json.dumps(_assignment('target', MODEL_PRODUCT)), encoding='utf-8')
 
     def stage(name, jobs, label=None):
         logs[label or name], results[label or name] = _run_stage(python, base, tmp, name, jobs, label)
 
     stage('1_import_hotspots', _jobs('1_import_hotspots'))
+    if with_models:
+        stage('1m_import_models', _jobs('1m_import_models'))
+        (base / f'data/models/{MODEL_FOLDER}/pairs.csv').write_text(
+            'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
+            encoding='utf-8')
     for side in MODELS:                                      # manual step: pairs.csv next to each import
         (base / f'data/imported/{side}/pairs.csv').write_text(
             'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
@@ -162,6 +226,17 @@ def _build_chain(python, tmp):
             shutil.copyfile(path, data / 'assets' / path.name)
         for electrode in ROLES:                              # DL1 electrode folders: only the names matter to stage 4
             save_black(base / 'data/input/dl1' / PRODUCTS[side] / electrode / '1-L1.png', rect(0, 0, 4, 4))
+    if with_models:
+        stage('3m_import_model_assets', _jobs('3m_import_model_assets'))
+        out, data = base / f'data/assets/models/{MODEL_FOLDER}', base / f'data/models/{MODEL_FOLDER}'
+        for name in ('review_assets.json', 'electrode_asset_import_record.json'):
+            shutil.copyfile(out / name, data / name)
+        (data / 'assets').mkdir(exist_ok=True)
+        for path in (out / 'assets').iterdir():
+            shutil.copyfile(path, data / 'assets' / path.name)
+        for electrode in ROLES:
+            save_black(base / 'data/input/dl1' / MODEL_PRODUCT / electrode / '1-L1.png', rect(0, 0, 4, 4))
+        _write_models_yaml(base, with_assets=True)
     _config(base, with_assets=True)
     stage('4_candidates', _jobs('4_candidates', STAGE_ARGS))
     # the DL2 path: a synthetic NCC JSON, then confirm-pairs --list only (decisions need the human)
@@ -173,6 +248,14 @@ def _build_chain(python, tmp):
         shutil.move(str(matches['target_to_reference']), base / 'data/dl2/ncc_t2r.json')
         stage('5_confirm_pairs', _jobs('5_confirm_pairs', only=1))
     stage('6_compare_windows', _jobs('6_compare_windows'))
+    if with_models:     # the multi-product flow: 5m instead of 5, 6 again on the DL2 correspondence (reference pairs), 6m, 7
+        _write_search_batch(base)
+        stage('5m_confirm_pairs_models', _jobs('5m_confirm_pairs_models'))
+        stage('6_compare_windows', _jobs('6_compare_windows', {'--correspondence': 'data/confirmed/roi_correspondence.json'}),
+              label='6_compare_windows_dl2')
+        stage('6m_compare_windows_models', _jobs('6m_compare_windows_models'))
+        seven = [(name, [arg.replace('QA4_R00=', f'{PRODUCTS["reference"]}=') for arg in args]) for name, args in _jobs('7_model_report')]
+        stage('7_model_report', seven)      # the synthetic world names its reference PROD_R, the runner example QA4_R00
     # a wrong DL1 root: the stage-4 log alone must say which argument and which path is wrong
     wrong = _jobs('4_candidates', {**STAGE_ARGS, '--cnt-from-dl1-root': 'data/input/dl1_TYPO', '--out': 'data/changes_typo'})
     # a later stage's job is appended to show that the runner stops at exit 2 and never starts it
@@ -185,6 +268,14 @@ def chain(request, tmp_path_factory):
     if request.param is None:
         pytest.fail('SIMCOMPARE_REQUIRE_ETX_PY=1 but SIMCOMPARE_ETX_PY is not set')
     return _build_chain(request.param, tmp_path_factory.mktemp('etx_chain'))
+
+
+@pytest.fixture(scope='module', params=_python_params())
+def model_chain(request, tmp_path_factory):
+    """The same world plus the multi-product stages 1m, 3m, 5m, 6 (DL2 correspondence), 6m and 7."""
+    if request.param is None:
+        pytest.fail('SIMCOMPARE_REQUIRE_ETX_PY=1 but SIMCOMPARE_ETX_PY is not set')
+    return _build_chain(request.param, tmp_path_factory.mktemp('etx_chain_models'), with_models=True)
 
 
 # ---- the checks -------------------------------------------------------------------------------------------------------
@@ -266,6 +357,45 @@ def test_wrong_dl1_root_is_visible_in_the_stage_four_log_alone(chain):
     assert 'candidates-change exit 2' in text and chain.results[label].returncode == 2
     assert 'compare-windows' not in ''.join(line for line in text.splitlines() if ' exit ' in line or ' start ' in line)
     assert not (chain.base / 'data/changes_typo').exists()
+
+
+MODEL_COMMANDS = {
+    '1m_import_models': ['import-hotspots'],
+    '3m_import_model_assets': ['import-electrode-assets'],
+    '5m_confirm_pairs_models': ['confirm-pairs', 'confirm-pairs'],
+    '6_compare_windows_dl2': ['compare-windows'],
+    '6m_compare_windows_models': ['compare-windows'],
+    '7_model_report': ['model-report']}
+
+
+def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_pairs(model_chain):
+    """1m, 3m, 5m, 6 (DL2 correspondence), 6m and 7 as runners: the model report puts the reference pair and the model pair of one
+    target ROI in one row group, from the runner files alone."""
+    chain = model_chain
+    for stage, commands in MODEL_COMMANDS.items():
+        text = chain.logs[stage]
+        assert re.search(r'payload_sha256=[0-9a-f]{64}', text), stage
+        codes = _exit_codes(text)
+        assert [name for name, _ in codes] == commands, (stage, codes, text[-1500:])
+        assert all(int(code) in (0, 3) for _, code in codes), (stage, codes, text[-1500:])
+    base = chain.base
+    assert (base / f'data/models/{MODEL_FOLDER}/manifest.json').is_file() and (base / f'data/assets/models/{MODEL_FOLDER}/review_assets.json').is_file()
+    assert (base / f'data/confirmed/models/{MODEL_PRODUCT}/roi_correspondence.json').is_file()
+    model_local = base / f'data/local/models/{MODEL_FOLDER}'
+    assert (model_local / 'window_cases.json').is_file() and (model_local / 'local_delta.json').is_file()
+    assert (base / 'data/local/local_delta.json').is_file()       # the stage-6 generation did not remove the model folder
+    report = base / 'data/model_report'
+    assert sorted(p.name for p in report.iterdir()) == ['execution.json', 'model_report.csv', 'model_report.html', 'model_report.json']
+    with (report / 'model_report.csv').open(encoding='utf-8-sig', newline='') as handle:
+        rows = list(csv.DictReader(handle))
+    by_roi = {}
+    for row in rows:
+        if row['pair_id'] and row['roi_linked'] == 'True':
+            by_roi.setdefault(row['roi_id'], set()).add(row['model'])
+    assert any({PRODUCTS['reference'], MODEL_PRODUCT} <= models for models in by_roi.values()), by_roi
+    print(f'\netx-chain-models[{Path(chain.python).name}] elapsed {chain.seconds:.1f}s')
+    for stage in MODEL_COMMANDS:
+        print('  ', stage, [(n, c, s) for n, c, s in re.findall(r'^\[simcompare_job\] \S+ \S+ (\S+) exit (\d+) in (\d+)s$', chain.logs[stage], re.M)])
 
 
 def test_chain_elapsed_time_is_reported(chain):
