@@ -47,6 +47,12 @@ python -m simcompare confirm-pairs --config real.yaml --models models.yaml --can
 python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed_models/models/QA4_C00/roi_correspondence.json --window-sizes 20 --out data/local/models/QA4_C00
 ```
 
+모델 쌍의 "창 안 관측 case 구성 차이"(둘 다 / target 에만 / 모델에만, 개수와 이름)는 같은 명령에 `--case-window-um`과 `--case-diameter-um`을 함께 주면 `window_cases.json`·`window_cases.csv`로 나온다. 창은 `--window-sizes` 안의 값이어야 하고 지름은 두 데이터셋에 있어야 하며 기본값은 없다. 목록·개수일 뿐 인과를 뜻하지 않는다([데이터 계약](data_contract.md)의 `window_cases_v1`).
+
+```text
+python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed_models/models/QA4_C00/roi_correspondence.json --window-sizes 20 --case-window-um 20 --case-diameter-um 5 --out data/local/models/QA4_C00
+```
+
 `confirm-pairs --models`의 출력은 기존 파일(reference↔target 쌍만) 외에 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(pending 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`이다. 스키마는 [데이터 계약](data_contract.md)의 확정 쌍 절에 있다. 같은 봉투 파일을 두 `--match`에 줘도 모델 후보는 한 번만 센다.
 
 ## ETX (Linux 서버)
