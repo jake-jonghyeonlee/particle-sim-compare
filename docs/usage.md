@@ -53,6 +53,12 @@ python -m simcompare compare-windows --config real.yaml --models models.yaml --m
 python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed_models/models/QA4_C00/roi_correspondence.json --window-sizes 20 --case-window-um 20 --case-diameter-um 5 --out data/local/models/QA4_C00
 ```
 
+모델별 한 장 표(행 = target 질의 ROI, 열 = 모델, 셀 = 쌍 목록과 불량 변화 Δ)는 `model-report`가 만든다. 모든 인수가 필수이고 수치는 기존 출력에서 복사하며, 입력 폴더의 세대가 어긋나면(대응 파일 sha256, 제품 방향, target 입력, 미완료 폴더 등) 아무것도 쓰지 않고 종료 2이다. `--windows`는 reference 쌍 폴더(키 = reference product_id)와 모델 폴더(키 = 모델 product_id)를 제품마다 하나씩 준다. 부호는 모델 − target으로 통일한 열이 따로 있고 원값(b − a)도 함께 나온다. case 구성 차이는 인과를 뜻하지 않는다. 필드와 검증 목록은 [데이터 계약](data_contract.md)의 `model_report_v1` 절에 있다.
+
+```text
+python -m simcompare model-report --candidates data/changes --confirm data/confirmed_models --windows QA4_R00=data/local --windows QA4_C00=data/local/models/QA4_C00 --diameter-um 5 --window-um 20 --out data/model_report
+```
+
 `confirm-pairs --models`의 출력은 기존 파일(reference↔target 쌍만) 외에 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(pending 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`이다. 스키마는 [데이터 계약](data_contract.md)의 확정 쌍 절에 있다. 같은 봉투 파일을 두 `--match`에 줘도 모델 후보는 한 번만 센다.
 
 ## ETX (Linux 서버)

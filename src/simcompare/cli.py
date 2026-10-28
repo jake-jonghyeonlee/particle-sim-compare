@@ -188,6 +188,16 @@ def _parser() -> argparse.ArgumentParser:
     report.add_argument("--rank-window-um", type=float, default=20.0,
                         help="악화/개선 순위 기준 창 µm (기본 20, 임시 기준값. local_delta.json의 창 크기 중 하나여야 함)")
     report.add_argument("--top-n", type=int, default=10, help="악화/개선 각각 표시할 쌍 수 (기본 10)")
+    mreport = _korean_help(sub.add_parser(
+        "model-report", add_help=False,
+        help="target 질의 ROI × 모델(reference 포함) 표 한 장: 변경사항(case 구성 차이)과 불량 변화 Δ를 기존 출력에서 복사(모든 인수 필수, 기본값 없음)"))
+    mreport.add_argument("--candidates", required=True, help="candidates-change 출력 폴더")
+    mreport.add_argument("--confirm", required=True, help="confirm-pairs --models 출력 폴더")
+    mreport.add_argument("--windows", action="append", default=[], metavar="PRODUCT_ID=DIR",
+                         help="compare-windows 출력 폴더, 제품마다 반복(reference 쌍 폴더는 reference product_id 키, 모델은 모델 키)")
+    mreport.add_argument("--diameter-um", required=True, type=float, help="표시 지름 µm (기본값 없음)")
+    mreport.add_argument("--window-um", required=True, type=float, help="표시 창 한 변 µm (local_delta.json 의 window_sizes_um 안, 기본값 없음)")
+    mreport.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있거나 입력 폴더 안이면 거부)")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -341,6 +351,13 @@ def main(argv: list[str] | None = None) -> int:
                                                      mutual_tolerance_um=args.mutual_tolerance_um, models_path=args.models)
             _print(result)
             return result["exit_code"]
+        if args.command == "model-report":
+            # 출력 폴더는 새 것이어야 하고 staging 후 rename 하므로 실패 시 출력이 남지 않는다(공용 오류 핸들러 제외).
+            from simcompare import model_report
+            result = model_report.run_model_report(args.candidates, args.confirm, model_report.parse_windows(args.windows),
+                                                   diameter_um=args.diameter_um, window_um=args.window_um, out=args.out)
+            _print(result)
+            return result["exit_code"]
         if args.command == "report":
             from simcompare import final_report
             result = final_report.run_report(args.compare_dir, args.out, map_dir=args.map_dir, windows_dir=args.windows_dir,
@@ -408,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
             # 쓰기 전에 거부한 인수 오류(case 지름 등): 출력 폴더·error.json 을 만들지 않는다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2
-        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "candidates-dv", "vulnerability-report", "confirm-pairs", "dv-template", "dv-grade"):
+        if args.command in ("import-electrode-assets", "candidates", "candidates-change", "candidates-dv", "vulnerability-report", "confirm-pairs", "model-report", "dv-template", "dv-grade"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
             return 2
