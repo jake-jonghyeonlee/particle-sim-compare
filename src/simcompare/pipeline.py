@@ -1088,17 +1088,19 @@ def _load_stage6_artefact(output, reference, target):
 
 
 def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter_um=None, sort_diameter_um=None,
-                            compact_json=False, config_path=None, model=None):
+                            compact_json=False, config_path=None, model=None, case_window_um=None, case_diameter_um=None):
     """compare-windows: same physical window around corresponding positions, b − a.
 
     model (compare-multiproduct T2): provenance.model of a --model run (cfg is then the derived cfg: reference = the
     target, target = the model). It adds that one provenance key and keeps the reference's stage-2 masks out of the
-    model run; nothing else changes."""
+    model run; nothing else changes.
+    case_window_um / case_diameter_um (T2b, --model runs only): also publish window_cases.json/csv (window_cases.py) in the
+    same generation, plus provenance.window_cases; without them nothing is added."""
     from simcompare.correspondence import bind_pairs, load_correspondence
     from simcompare.local_delta import compute_local_delta, correspondence_hash, write_local_delta
     from simcompare.local_delta_report import write_local_delta_html
     from simcompare.numeric_schema import NumericContractError, finite
-    from simcompare.publication import SetPublication
+    from simcompare.publication import LOCAL_DELTA_FILES, SetPublication
     real = [_real_source(cfg, cfg.get(name)) is not None for name in ('reference', 'target')]
     if any(real) and not all(real):
         raise NumericContractError('mixed_real_and_numeric_source_formats')
@@ -1106,6 +1108,13 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
     target = _dataset_for(cfg, cfg.get('target'), 'target')
     from simcompare.adapters.real_hotspot import guard_stage_compare_windows
     from simcompare.local_delta import _validate_sizes
+    case_args = case_window_um is not None or case_diameter_um is not None
+    if case_args:
+        from simcompare import window_cases
+        if model is None or case_window_um is None or case_diameter_um is None:
+            raise window_cases.writes_nothing(NumericContractError('case_args_incomplete'))
+        case_window_um = window_cases.check_window(case_window_um, window_sizes_um)
+        case_diameter_um = window_cases.resolve_diameter(reference, target, case_diameter_um)   # before anything is written
     payload = load_correspondence(correspondence)
     pairs = bind_pairs(payload, reference, target)
     sizes = _validate_sizes(window_sizes_um)
@@ -1128,7 +1137,7 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
     # failure anywhere before its commit leaves the previous generation exactly as it was. begin() runs before the
     # compute so that an unreadable earlier publication is reported before the expensive work.
     output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
-    publication = SetPublication(output)
+    publication = SetPublication(output, re.compile(LOCAL_DELTA_FILES.pattern + r'|window_cases\.json|window_cases\.csv'))
     try:
         staging = publication.begin()
         result = compute_local_delta(pairs, reference, target, window_sizes_um=window_sizes_um, jitter_um=jitter_um,
@@ -1139,9 +1148,15 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
                                                  'correspondence_warnings': payload['warnings'],
                                                  'config_path': str(cfg.get('_config_path', config_path or '')) or None,
                                                  'config_sha256': cfg.get('_config_sha256'),
-                                                 **({'model': model} if model is not None else {})})
+                                                 **({'model': model} if model is not None else {}),
+                                                 **({'window_cases': {'window_um': case_window_um, 'diameter_um': float(case_diameter_um),
+                                                                      'file': window_cases.JSON_NAME}} if case_args else {})})
         paths = write_local_delta(staging, result, compact=compact_json)
         paths += write_local_delta_html(staging, result, cfg=cfg, reference=reference, target=target)
+        if case_args:
+            paths += window_cases.write_window_cases(staging, window_cases.build_window_cases(
+                pairs, reference, target, window_um=case_window_um, diameter_um=case_diameter_um,
+                correspondence_sha256=result.provenance['correspondence_sha256']))
         publication.commit()
     except Exception as exc:
         # from here on the previous generation is intact or being recovered (publication.py): tell cli.py's failure

@@ -165,6 +165,10 @@ def _parser() -> argparse.ArgumentParser:
                          help="JSON에서 행별 세부 지표를 빼고 CSV에만 남김(수십 쌍 × 여러 창일 때 용량 절약)")
     windows.add_argument("--models", help="compare_models_v1 models.yaml(--config 와 같은 폴더). --model 과 함께 쓴다")
     windows.add_argument("--model", help="models.yaml 의 모델 키. a = config target, b = 이 모델로 비교한다(--out 필수)")
+    windows.add_argument("--case-window-um", type=float, metavar="UM",
+                         help="--model 과 함께: 이 창(--window-sizes 안의 값)에서 모델 쌍의 관측 hotspot case 구성 차이를 window_cases.json/csv 로 낸다(--case-diameter-um 과 함께, 기본값 없음)")
+    windows.add_argument("--case-diameter-um", type=float, metavar="UM",
+                         help="window_cases 를 낼 지름 µm(두 데이터셋에 있는 값, --case-window-um 과 함께)")
     windows.add_argument("--out", help="출력 디렉터리")
     merge = _korean_help(sub.add_parser(
         "merge-exports", add_help=False,
@@ -351,6 +355,20 @@ def main(argv: list[str] | None = None) -> int:
         from simcompare import pipeline
         model_run = args.command == "compare-windows" and (args.models is not None or args.model is not None)
         derived, model_provenance = None, None
+        case_run = args.command == "compare-windows" and (args.case_window_um is not None or args.case_diameter_um is not None)
+        if case_run:
+            # case 인수 검사도 어떤 파일도 쓰기 전에 끝난다(오류 stderr + 종료 2).
+            from simcompare import window_cases
+            from simcompare.numeric_schema import NumericContractError
+            try:
+                if args.model is None:
+                    raise NumericContractError("case_args_require_model", "--case-window-um/--case-diameter-um 은 --model 과 함께만 쓸 수 있습니다")
+                if args.case_window_um is None or args.case_diameter_um is None:
+                    raise NumericContractError("case_args_incomplete", "--case-window-um 과 --case-diameter-um 은 함께 지정해야 합니다")
+                window_cases.check_window(args.case_window_um, args.window_sizes)
+            except NumericContractError as exc:
+                print(f"오류: {exc}", file=sys.stderr)
+                return 2
         if model_run:
             # --model 실행의 인수·models·충돌 검사는 어떤 파일도 쓰기 전에 끝난다: 실패하면 stderr 오류와 종료 2 뿐이다(공용 오류 처리기 제외).
             from simcompare import models as models_module
@@ -374,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
                                                       window_sizes_um=args.window_sizes, jitter_um=args.jitter_um,
                                                       sort_diameter_um=args.sort_diameter_um,
                                                       compact_json=args.compact_json, config_path=args.config,
-                                                      **({"model": model_provenance} if model_run else {}))
+                                                      **({"model": model_provenance} if model_run else {}),
+                                                      **({"case_window_um": args.case_window_um, "case_diameter_um": args.case_diameter_um} if case_run else {}))
         else:
             runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
                        "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}
@@ -385,6 +404,10 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return result["exit_code"]
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
+        if getattr(exc, "writes_nothing", False):
+            # 쓰기 전에 거부한 인수 오류(case 지름 등): 출력 폴더·error.json 을 만들지 않는다.
+            print(f"오류: {exc}", file=sys.stderr)
+            return 2
         if args.command in ("import-electrode-assets", "candidates", "candidates-change", "candidates-dv", "vulnerability-report", "confirm-pairs", "dv-template", "dv-grade"):
             # 출력 디렉터리는 새 것이어야 하므로 실패 marker나 정리 없이 오류만 알린다.
             print(f"오류: {exc}", file=sys.stderr)
