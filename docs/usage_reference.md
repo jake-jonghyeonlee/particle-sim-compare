@@ -210,7 +210,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | `--merge-overlap` | 두 창의 `intersection/min(area)`가 이 값 이상이면 병합한다(기본은 층 안에서). `(0, 1]`. 0.5이면 두 창이 50 % 이상 겹칠 때 병합하고 50 % 미만으로 겹치는 창은 따로 남는다. 창 격자 간격은 W/4이다 | 0.5 |
 | `--merge-scope` | 선택(생략 시 `layer`, 이전 동작). `all`이면 층을 넘어 병합한다. 대표 창과 같은 위치의 구성원 층 case를 모두 다시 세어 기여 case에 `layer`를 붙인다. `score_um2`·`score_layer`·`sum_residual_um2`·`union_*`는 대표 층 창의 값이고, `changed_case_count`·`contributing_cases`·`one_sided_cases`는 `layers`의 모든 층 case를 센다. 한계: 연쇄 병합에서 대표 창과 먼 구성 창에서만 일어난 변경은 다시 세지 않는다 | 생략 |
 | `--suppress-overlap` | 선택(생략 시 억제 없음). `(0, 1]`. 병합·정렬 뒤 `top-k` 전에, 순위가 앞선 대표 창과 겹침 비율(`ox*oy/W²`)이 이 값 이상인 대표 창을 층 구분 없이 버린다. funnel에 `suppressed` 단계가 생긴다 | 생략 |
-| `--electrode-png-root` | 선택(생략 시 `--cnt-from-dl1-root`, 이전 동작). `alignment.html` 5절 층 묶음의 전극 형상 바탕에만 쓰는 PNG root다. 폴더 구조는 DL1과 같다: `<root>/<product_id>/<전극>/<층>.png`. 전극 목록 비교(`electrode_set_differs`, 조합 짝짓기)에는 쓰지 않고 항상 `--cnt-from-dl1-root`를 쓴다. 폴더가 아니면 쓰기 전에 종료 코드 2(`electrode_png_root_missing`). 지정하면 `change_args`·`execution.json`의 `args`에 `electrode_png_root` 키가 생긴다. 그 층 PNG가 없거나 읽을 수 없으면 바탕 없이 그리고 "전극 형상 없음"으로 적는다. 메모리 추정이 한도를 넘으면 바탕만 빼고 경고 `alignment_report_layer_base_skipped`(종료 코드 3) | 생략 |
+| `--electrode-png-root` | 선택(생략 시 `--cnt-from-dl1-root`, 이전 동작). `alignment.html` 5절 층 묶음의 전극 형상 바탕에만 쓰는 PNG root다. 폴더 구조는 DL1과 같다: `<root>/<product_id>/<전극>/<층>.png`. 전극 목록 비교(`electrode_set_differs`, 조합 짝짓기)에는 쓰지 않고 항상 `--cnt-from-dl1-root`를 쓴다. 폴더가 아니면 쓰기 전에 종료 코드 2(`electrode_png_root_missing`). 지정하면 `change_args`·`execution.json`의 `args`에 `electrode_png_root` 키가 생긴다. 그 층 PNG가 없거나 읽을 수 없으면 바탕 없이 그리고 "전극 형상 없음"으로 적는다. 메모리 추정이 한도를 넘으면 바탕만 빼고 경고 `alignment_report_layer_base_skipped`(종료 코드 3). 빈 문자열(`''`)은 폴더로 보지 않고 같은 종료 코드 2다. 바탕이 없는 그림의 캡션은 사유를 적는다: "전극 형상 없음 (파일 없음)", "(제품 폴더 없음)", "(읽기 실패: <코드>)", "(읽기 생략: 메모리 한도)" | 생략 |
 | `--top-k` | 방향(`reference_to_target`, `target_to_reference`)별 질의 수 | 20. 설계자가 보는 ROI 수에 맞춘다 |
 | `--mask-derivation-rule` | DL2 `mask_derivation` 규칙. `between_stack_order_v1`만 허용한다(없거나 다른 값이면 종료 코드 2: `mask_derivation_rule_required`·`mask_derivation_rule_unknown`) | `between_stack_order_v1` |
 | `--out` | 새 출력 폴더. 이미 있으면 아무것도 건드리지 않고 종료 코드 2 | `data/changes` |
@@ -229,7 +229,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 |---|---|
 | `candidate_queries_v1.json` | 기존 스키마에 키를 더한 것(`roi_source=cnt_change`, `alignment`, `diameter_um`, `change_args`, `change_map`, `union_basis`, `alignment_report`, `direct`, 질의별 점수·속성; 아래 `docs/data_contract.md`) |
 | `alignment.json` | 정렬 결과(`cnt_alignment_v1`): offset, Dice, peak 비율, 대안 offset, 층별·4분면 offset |
-| `alignment.html` | 정렬 요약, 층별 겹침(정렬 전·후), 변경 지도 열지도, top-k ROI crop. 외부 참조 없이 `file://`로 열린다 |
+| `alignment.html` | 정렬 요약·층별 겹침·변경 강조 지도·ROI 목록·ROI 상세(층 묶음)·열지도·각주. 구성은 아래 "alignment.html 구성". 외부 참조 없이 `file://`로 열린다 |
 | `direct/roi_correspondence.json` | 6회차 `compare-windows`가 그대로 읽는 `roi_correspondence_v1`(DL2 건너뛰기) |
 | `direct/direct_pairs_sidecar.json` | `direct_pairs_sidecar_v1`: 쌍별 정렬 상태·점수·속성·불확실성 |
 | `reference_export/`, `target_export/` | 질의 `review_rois.json`(DL2 입력, manual 행)과 `mask_derivation.json` |
@@ -237,7 +237,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | `funnel.json`, `funnel.csv` | 방향별 깔때기(`change_candidates` → `merged` → `top_k` → `exported_ready`)와 직접 쌍 수 |
 | `execution.json` | 실행 요약 |
 
-**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전 등. 2 = 입력·인수 오류(필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류, 없는 `--cnt-from-dl1-root`, `--mask-derivation-rule` 누락·오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않거나 폴더가 아닌 `--cnt-from-dl1-root`는 **쓰기 전에** 종료 코드 2다: `오류: cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: <입력> (resolved: <절대 경로>)`. `--out`은 만들어지지 않고 ETX 실행기는 멈춘다(종료 2는 '계속'이 아니다). root는 있는데 모델 폴더나 `cno/`가 없으면 지금처럼 정렬 실패(종료 코드 3: `alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked)다.
+**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전, `alignment_report_images_skipped`(그림 생성 메모리 추정이 한도 초과: 표만 쓴다), `alignment_report_layer_base_skipped`(전극 형상 바탕 읽기 메모리 추정이 한도 초과: 바탕만 뺀다) 등. 2 = 입력·인수 오류(필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류, 없는 `--cnt-from-dl1-root`, `--mask-derivation-rule` 누락·오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않거나 폴더가 아닌 `--cnt-from-dl1-root`는 **쓰기 전에** 종료 코드 2다: `오류: cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: <입력> (resolved: <절대 경로>)`. `--out`은 만들어지지 않고 ETX 실행기는 멈춘다(종료 2는 '계속'이 아니다). root는 있는데 모델 폴더나 `cno/`가 없으면 지금처럼 정렬 실패(종료 코드 3: `alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked)다.
 
 **`mask_derivation.json`(R1).** DL2는 `1.png`/`2.png`를 case 처리 마스크로 보고, 두 제품의 마스크가 같은 방식으로 만들어졌을 때만 비교한다. 그 사실을 질의 export 2개와 index export 2개 폴더마다 `mask_derivation.json`(`psdl2_mask_derivation_v1`)으로 동봉한다. 형식·규칙은 `export-template-rois`와 같은 writer를 쓴다: 규칙 `between_stack_order_v1`, vertical 은 위 전극 마스크에서 두 끝 층 사이 층(제품의 `condition_assignment.layer_stack` 기준)을 제거, lateral 은 제거 없음(`processed_endpoint: null`), CNT 는 DL1 `cno` 합집합, VIA 미사용. 항목은 그 폴더 `review_rois.json`의 **ready 행** case(failure_type + 정렬한 endpoints)마다 하나다. blocked 행과 한쪽 조합(반대 모델에 case가 없어 행이 없음)은 항목이 없다(DL2 `mask_derivation_case_missing`은 ready 행에만 적용된다). 경로는 `candidate_queries_v1.json`의 `mask_derivation_files`(방향별 `query`/`index`)와 `execution.json`의 `outputs`에 있다. DL2 `psdl2_dataset_v1` 매니페스트의 `mask_derivation` 값으로 출력 폴더 기준 상대 경로를 그대로 쓴다. DL2 문서 흐름의 DB·후보는 제품별 `export-template-rois` 출력(template export)이고, 이 `*_index_export` 흐름도 같이 지원한다. 아래는 `*_index_export` 를 DB source 로 쓰는 예시다:
 
@@ -268,6 +268,10 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 - 중간에 하드 실패하면 `alignment.html`은 없다. 정렬이 실패·불확실한 경우에는 항상 쓴다.
 - 층 사이 합집합을 만들지 않는다. 층이 바뀐 조합은 위처럼 한쪽 조합 둘이다.
 - 실데이터 규모, 메모리·시간, ETX Linux 실행은 아직 검증하지 않았다(`docs/plan/change_roi/README.md`).
+- frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. 왼쪽 위 인덱스를 맞추고 offset 만 더하며 resize 하지 않는다. unit 별 offset(2단계)은 보류다.
+- 면적 지표(`area_reference_um2`, `area_target_um2`, `union_area_*`)는 창 안·비교 영역 안의 값이라, 두 frame 크기가 다르면 두 모델 면적의 분모(관측 영역)가 다를 수 있다.
+
+**alignment.html 구성(v3 순서).** 1 요약(정렬 상태·offset·frame 크기·합집합 조합 수), 2 CNT 정렬과 정렬 진단(층별 겹침 정렬 전·후, 대안 offset), 3 변경 강조 지도(변경 위치를 빨강으로), 4 ROI 목록(순위 표, 각 ROI 로 이동), 5 ROI 상세(위치 그림, 기여 조합 표, 그 ROI 에 불량 조합이 있는 층마다 층 묶음 = 비교·reference·target 그림에 전극 형상 바탕. 층이 4개를 넘으면 창 안 변경 면적 합이 큰 4개만, 기여 조합이 없는 ROI 는 묶음 없이 한 줄), 6 변경 지도 열지도(참고, 접어 둠), 7 각주. 파일 크기가 상한을 넘으면 순위가 낮은 ROI 의 crop 부터 줄이거나 뺀다.
 
 ### 취약점 ROI (candidates-dv) — 현행
 

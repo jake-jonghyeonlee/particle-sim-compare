@@ -98,3 +98,33 @@ DL2를 실제로 연결할 때 하나씩 확인한다. 1~10은 계획 초안(PLA
 - `alignment.html`의 PNG 압축 바이트는 zlib 구현에 따라 환경마다 달라 sha256이 다를 수 있다. 다른 출력 파일은 3.9와 3.11에서 바이트가 같다(테스트).
 - 중간에 하드 실패하면 `alignment.html`은 없다.
 - Windows zip·wheel은 이번 기능을 포함하지 않는다.
+
+## change-roi-v2 (2026-10-28)
+
+Run `20261028-change-roi-v2`(기준 `feat/template-export` @ `0717947`). 계획 v1.3, 기록은 `~/git/paseo-ops/migration/runs/20261028-change-roi-v2/`(`CHECKPOINT.md`, `PLAN_v1.1.md`, 계약 `T*_CONTRACT.md`). 모든 Task는 독립 리뷰 PASS 뒤 이 브랜치 사슬(t1 → t2 → t4b → t3a → t3b → t6)에 쌓였다.
+
+**문제(Task 기준 요약).**
+1. 두 모델의 frame 크기가 다를 때 `alignment.json`에 크기·비교 영역 기록이 없었다.
+2. 병합이 층 안에서만 일어나 같은 위치의 다른 층 변경이 별개 ROI로 남았다.
+3. 서로 크게 겹치는 ROI가 top-k를 차지했다.
+4. 기여 조합 표에 case별 면적·창 안 변경 종류가 없고 한글 표현이 어색했다.
+5. `alignment.html`에서 정렬 결과와 ROI 안 불량 조합이 있는 층의 reference/target 모양을 한눈에 볼 수 없었다.
+
+**사용자 결정(2026-10-28, "추천대로").**
+- D0: 새 선택 인수의 기본값은 이전 동작이다. D1: `frame_shape_differs`는 정보(note)이며 경고·정렬 불확실 사유가 아니다. D3: 4회차 예시 인수는 `--merge-scope all --suppress-overlap 0.3`이다. D2·D4–D6, Q4와 번호별 원문은 Run 폴더의 `CHECKPOINT.md`와 `PLAN_v1.1.md`에 있다.
+- V1: CNT 정렬·진단을 앞쪽 절로. V2: ROI 상세에서 전층 합친 CNT crop을 뺀다. V3: ROI 안에 불량 조합이 있는 층마다 비교·reference·target 한 묶음(최대 4층)이며 바탕은 전극 형상이다(`--electrode-png-root`, 생략 시 `--cnt-from-dl1-root`).
+
+**Task와 후보 commit.**
+
+| Task | 내용 | 후보 commit |
+|---|---|---|
+| T1 | 기준선 해시 테스트, frame 크기·비교 영역 기록 | `faffe9ea7d2698e3a753f78276f82b1651aae14e` |
+| T2 | `--merge-scope`, `--suppress-overlap` | `aecfcfcbc77f934222183ffff1e21e226f2ad0d3` |
+| T4b | case 면적 키, 계약 문서 | `64ae3c03a67c01055c9d148fe8962762d87dd4c8` |
+| T3a | `alignment.html` 재구성·그림·한글 표 | `646f447847bb361a590f6171633c3eb8b33ed782` |
+| T3b | `--electrode-png-root`, ROI 층 묶음 | `4a59ff8e15539a53f0ba3394f194e1d92e1f7abc` |
+| T6 | T3b 리뷰 권고(admission 추정·빈 인수 거부·캡션 사유), 문서, ETX 예시, bundles | 이 브랜치 head(`change-roi-v2/t6`) |
+
+**보류.** 2단계(E): unit 별·4분면 offset 보정과 T5 설계 메모는 사용자의 실자료 `alignment.json` 진단을 받은 뒤 착수 여부를 정한다. 지금은 frame 크기가 다르면 공통 영역만 비교한다(resize 없음).
+
+**남은 비차단 권고.** T2 adv:4: `--merge-scope all`의 층을 넘는 병합은 후보 수 N에 대해 O(N²)이다. 실자료 후보 수가 크면 다시 확인한다.
