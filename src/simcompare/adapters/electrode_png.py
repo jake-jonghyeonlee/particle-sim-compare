@@ -202,6 +202,41 @@ def list_dl1_electrodes(root, model):
     return sorted(_scan_dl1_model(root, model)['electrodes'])
 
 
+def scan_electrode_layers(root, model):
+    """change-roi-v2/T3b: ``{layer: [fs_rel, ...]}`` — 모델 폴더의 전극 PNG 를 층별로 모은다(이름만, 읽지 않는다).
+
+    모델 폴더가 없으면 빈 dict 다. 이름 규칙 위반·중복은 ``_scan_dl1_model`` 과 같은 오류다."""
+    root = Path(root)
+    if not (root / model).is_dir():
+        return {}
+    layers = {}
+    scan = _scan_dl1_model(root, model)
+    for name in sorted(scan['electrodes']):
+        for layer, record in sorted(scan['electrodes'][name].items()):
+            layers.setdefault(layer, []).append(record['fs_rel'])
+    return layers
+
+
+def load_electrode_layer(root, model, frame, fs_rels):
+    """change-roi-v2/T3b: 한 층의 전극 PNG 여러 장을 frame 크기 bool(검정 = 형상)로 합집합해 돌려준다. 읽지 못한 파일은 건너뛴다.
+
+    ``fs_rels`` 는 ``scan_electrode_layers`` 의 값. 디코드·frame 크기 오류(``NumericContractError``)와 파일 읽기 오류(``OSError``)는
+    이 함수 안에서 그 파일만 건너뛰며(보고서 그림 전용이라 실행을 멈추지 않는다), 읽은 파일이 하나도 없으면 ``None`` 이다.
+    sha256·경고를 기록하지 않는다: 이 값은 alignment.html 그림에만 쓰이고 계산·JSON 에 들어가지 않는다."""
+    root = Path(root)
+    _check_frame(frame)
+    union = None
+    for fs_rel in fs_rels:
+        try:
+            marked, _ = _decode(resolve_path(root, fs_rel).read_bytes(), fs_rel)
+            cropped = _crop(marked, frame.shape_yx, fs_rel)
+        except (NumericContractError, OSError):
+            continue
+        union = cropped.copy() if union is None else (union | cropped)
+        del marked, cropped
+    return union
+
+
 def _check_stack_order(model, scan, stack_order):
     """With an order file every present name must match (casefold); collisions reject. Without one they warn."""
     names = sorted({r['layer'] for slot in scan['electrodes'].values() for r in slot.values()} |
