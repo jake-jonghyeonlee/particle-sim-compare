@@ -284,6 +284,45 @@ def test_failed_status_and_empty_side_hide_the_counts(env):
     assert by_pair[second]['window_cases_status'] == 'no_candidates_a' and by_pair[second]['window_cases_unknown'] == ''
 
 
+def test_ready_pair_without_its_union_window_row_says_delta_row_missing(env):
+    """review adv:3: a ready pair whose union window row is gone shows delta_row_missing, not a blank; other pairs are untouched."""
+    ctx = build(env, accept=[tid(env, 2), tid(env, 3)])
+    path = ctx['C']/'local_delta_rows.csv'
+    with path.open(encoding='utf-8', newline='') as handle:
+        reader = csv.DictReader(handle)
+        names, rows = reader.fieldnames, list(reader)
+    gone = sorted(delta_rows(ctx['C']))[0]
+    kept = [r for r in rows if not (r['pair_id'] == gone and r['kind'] == 'window' and r['metric'] == 'union'
+                                    and float(r['side_um']) == WINDOW and float(r['diameter_um']) == DIAMETER)]
+    assert len(kept) == len(rows)-1
+    with path.open('w', encoding='utf-8', newline='') as handle:
+        writer = csv.DictWriter(handle, names, lineterminator='\n')
+        writer.writeheader()
+        writer.writerows(kept)
+    assert report(env, ctx) == 0
+    by_pair = {r['pair_id']: r for r in rows_of(env) if r['model'] == 'C' and r['pair_id']}
+    assert by_pair[gone]['delta_reasons'] == '["delta_row_missing"]' and by_pair[gone]['delta_um2'] == '' and by_pair[gone]['delta_status'] == ''
+    others = [r for p, r in by_pair.items() if p != gone]
+    assert others and all('delta_row_missing' not in r['delta_reasons'] and r['delta_um2'] != '' for r in others)
+    document = (env['tmp']/'rep'/'model_report.html').read_text(encoding='utf-8')
+    assert 'delta_row_missing' in document
+
+
+def test_cell_without_pairs_lists_the_unavailable_candidates_in_the_html(env):
+    """review adv:3: the '쓸 수 없음' memo of a cell without a pair, in the written HTML."""
+    ctx = build(env, accept=[tid(env, 2)])
+    second = query_rows(env, 'target_to_reference')[1]['roi_id']
+
+    def inject(payload):
+        cell = next(roi for roi in payload['rois'] if roi['query_roi_id'] == second)['products']['D']
+        cell['unavailable'] = {'candidate_x': 1, '<i>y': 2}
+        cell['candidates'] = 3
+    edit(ctx['conf']/'models'/'decisions.json', inject)
+    assert report(env, ctx) == 0
+    document = (env['tmp']/'rep'/'model_report.html').read_text(encoding='utf-8')
+    assert ' · 쓸 수 없음 3(&lt;i&gt;y 2, candidate_x 1)' in document and '<i>y' not in document
+
+
 def test_window_cases_window_must_match_the_report_window(env, monkeypatch, capsys):
     monkeypatch.setattr(tw, 'SIZES', ['2', '4'])
     ctx = build(env, accept=[tid(env, 2)])

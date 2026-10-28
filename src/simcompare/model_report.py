@@ -37,7 +37,7 @@ NUMERIC_FIELDS = ('a_value_um2', 'b_value_um2', 'delta_um2', 'delta_model_minus_
 CSV_COLUMNS = [
     'roi_id', 'roi_linked', 'unlinked_reason', 'model', 'model_role', 'cell_status', 'asset_status', 'n_candidates', 'n_accepted',
     'n_rejected', 'n_undecided', 'n_deferred', 'unavailable_reasons', 'pair_id', 'pair_status', 'pair_reasons', 'direction',
-    'rank', 'search_scope', 'center_differs_from_query', 'target_center_xy_um', 'roi_center_xy_um', 'roi_analysis_layer',
+    'link_source', 'link_flags', 'rank', 'search_scope', 'center_differs_from_query', 'target_center_xy_um', 'roi_center_xy_um', 'roi_analysis_layer',
     'a_value_um2', 'b_value_um2', 'delta_um2', 'delta_status', 'delta_reasons', 'delta_orientation',
     'delta_model_minus_target_um2', 'window_cases_status', 'window_cases_both', 'window_cases_target_only',
     'window_cases_model_only', 'window_cases_unknown', 'window_cases_top',
@@ -336,32 +336,50 @@ class _Linker:
         return self._reference_rows, self._target_rows
 
     def link(self, direction, candidates):
-        """(target roi_id or None, reason when None). Order: a `target_to_reference` candidate of the pair (mutual merge or
-        plain), then the candidates payload (reference query -> region_id -> target query), then export `source_region_id`."""
+        """(target roi_id or None, reason when None, source, flags). Order: a `target_to_reference` candidate of the pair
+        (mutual merge or plain), then the candidates payload (reference query -> region_id -> target query), then export
+        `source_region_id`. When path 1 links and a `reference_to_target` candidate also links by region to another ROI, the row
+        keeps the path 1 ROI and gets the `link_mismatch` flag."""
         for item in candidates:
             if item.get('direction') == 'target_to_reference':
                 roi = item.get('query_roi_id')
-                return (roi, None) if roi in self.roi_ids else (None, 'query_roi_not_in_decisions')
-        query_roi_id = (candidates or [{}])[0].get('query_roi_id')
+                if roi not in self.roi_ids:
+                    return None, 'query_roi_not_in_decisions', None, []
+                flags = []
+                other = next((c.get('query_roi_id') for c in candidates if c.get('direction') == 'reference_to_target'), None)
+                if other is not None:
+                    try:
+                        by_region, _, _ = self._by_region(other)
+                    except NumericContractError:
+                        by_region = None
+                    if by_region is not None and by_region != roi:
+                        flags.append('link_mismatch')
+                return roi, None, 'sidecar_t2r', flags
+        found, reason, source = self._by_region((candidates or [{}])[0].get('query_roi_id'))
+        return found, reason, source, []
+
+    def _by_region(self, query_roi_id):
+        """(target roi_id or None, reason when None, link source). Paths 2 and 3."""
         reference_rows, target_rows = self._rows()
         row = reference_rows.get(query_roi_id)
         if row is None:
-            return None, 'reference_query_roi_without_region'
+            return None, 'reference_query_roi_without_region', None
         region = next((q.get('region_id') for q in _direction(self._payload, 'reference_to_target').get('queries', [])
                        if query_roi_id in (q.get('roi_ids') or [])), None)
-        pool = set()
+        pool, source = set(), 'candidates_region_id'
         if region is not None:
             pool = {roi for q in _direction(self._payload, 'target_to_reference').get('queries', [])
                     if q.get('region_id') == region for roi in q.get('roi_ids') or []}
         if not pool and row.get('source_region_id'):
             pool = {roi for roi, other in target_rows.items() if other.get('source_region_id') == row['source_region_id']}
+            source = 'source_region_id'
         if region is None and not pool:
-            return None, 'reference_query_roi_without_region'
+            return None, 'reference_query_roi_without_region', None
         found = sorted(roi for roi in pool if roi in self.roi_ids and roi in target_rows
                        and _endpoint_key(target_rows[roi]) == _endpoint_key(row))
         if len(found) != 1:
-            return None, 'no_target_roi_for_region' if not found else 'several_target_rois_for_region'
-        return found[0], None
+            return None, 'no_target_roi_for_region' if not found else 'several_target_rois_for_region', None
+        return found[0], None, source
 
 
 # ---- rows --------------------------------------------------------------------------------------------------------------------
@@ -429,7 +447,7 @@ def _build(decisions, reference, products, windows_by_key, candidates_dir, paylo
             record = product['sidecar']['pairs'][pair['pair_id']]
             candidate = (record.get('candidates') or [{}])[0]
             view = _pair_view(key, product, windows, pair, record, windows['rows'].get(pair['pair_id']) if windows else None)
-            roi, reason = linker.link(record.get('direction'), record.get('candidates') or [])
+            roi, reason, view['link_source'], view['link_flags'] = linker.link(record.get('direction'), record.get('candidates') or [])
             view['target_center_xy_um'] = list(pair['b']['center_xy_um']) if product['role'] == 'reference' else list(pair['a']['center_xy_um'])
             query_center = (roi_rows.get(roi) or {}).get('center_xy_um') if roi else None
             view['center_differs_from_query'] = (None if query_center is None or product['role'] != 'reference' else
@@ -453,6 +471,7 @@ def _build(decisions, reference, products, windows_by_key, candidates_dir, paylo
                 'changed_case_count': attr.get('changed_case_count'), 'union_delta_um2': attr.get('union_delta_um2'),
                 'change_kind_counts': attr.get('change_kind_counts'), 'cnt_change_um2_by_layer': attr.get('cnt_change_um2_by_layer')}
     empty_pair = {'pair_id': '', 'pair_status': None, 'pair_reasons': [], 'direction': None, 'rank': None, 'search_scope': None,
+                  'link_source': None, 'link_flags': [],
                   'center_differs_from_query': None, 'target_center_xy_um': None, 'a_value_um2': '', 'b_value_um2': '', 'delta_um2': '',
                   'delta_status': '', 'delta_reasons': '', 'delta_orientation': None, 'delta_model_minus_target_um2': '',
                   'window_cases_status': None, 'window_cases_counts': {name: None for name in CLASS_NAMES}, 'window_cases_top': {}}
@@ -539,7 +558,7 @@ def _unavailable_note(row):
     reasons = row['unavailable_reasons'] or {}
     if not reasons:
         return ''
-    return f' · 쓸 수 없음 {sum(reasons.values())}({", ".join(f"{k} {v}" for k, v in sorted(reasons.items()))})'
+    return f' · 쓸 수 없음 {sum(reasons.values())}({", ".join(f"{_e(k)} {_e(v)}" for k, v in sorted(reasons.items()))})'
 
 
 def _cell_html(cell_rows):
@@ -560,7 +579,9 @@ def _cell_html(cell_rows):
         parts.append(
             '<div class="pair"><span class="mono">{pid}</span> {state} r{rank} {scope}<br>'
             'Δ(모델−target) <b>{unified}</b> <span class="note">(원값 {raw} = {orient}, {dstatus}; a {a} / b {b} µm²)</span><br>'
-            '<span class="note">{change}{names}{center}</span></div>'.format(
+            '<span class="note">{change}{names}{center}{mismatch}</span></div>'.format(
+                mismatch=(' · <b class="st blocked">link_mismatch</b> (사이드카 연결과 region 연결이 다른 ROI를 가리킴)'
+                          if 'link_mismatch' in row['link_flags'] else ''),
                 pid=_e(row['pair_id']), state=_e(row['pair_status']), rank=_e(row['rank']), scope=_e(row['search_scope']),
                 unified=_e(row['delta_model_minus_target_um2']), raw=_e(row['delta_um2']), orient=_e(row['delta_orientation']),
                 dstatus=_e(row['delta_status'] or ('delta_row_missing' if 'delta_row_missing' in row['delta_reasons'] else '')), a=_e(row['a_value_um2']), b=_e(row['b_value_um2']), change=change,

@@ -160,10 +160,78 @@ def test_two_candidate_target_rois_make_an_unlinked_row(monkeypatch):
                               {'direction': 'target_to_reference', 'queries': [{'region_id': 'g', 'roi_ids': ['t1', 't2']}]}]}
     monkeypatch.setattr(model_report, '_export_rows', lambda d, p, direction, f: reference if direction == 'reference_to_target' else {'t1': twin, 't2': twin})
     linker = model_report._Linker('x', payload, ['t1', 't2'], None)
-    assert linker.link('reference_to_target', [{'direction': 'reference_to_target', 'query_roi_id': 'r1'}]) == (None, 'several_target_rois_for_region')
+    assert linker.link('reference_to_target', [{'direction': 'reference_to_target', 'query_roi_id': 'r1'}]) == (
+        None, 'several_target_rois_for_region', None, [])
     single = model_report._Linker('x', payload, ['t1'], None)
-    assert single.link('reference_to_target', [{'direction': 'reference_to_target', 'query_roi_id': 'r1'}]) == ('t1', None)
+    assert single.link('reference_to_target', [{'direction': 'reference_to_target', 'query_roi_id': 'r1'}]) == (
+        't1', None, 'candidates_region_id', [])
     assert key  # silence
+
+
+def _row(layer, *electrodes, failure='lateral_short'):
+    return {'failure_type': failure, 'analysis_layer': layer, 'endpoints': [{'electrode_id': e} for e in electrodes]}
+
+
+def _linker(monkeypatch, reference, target, roi_ids):
+    payload = {'directions': [{'direction': 'reference_to_target', 'queries': [{'region_id': 'g', 'roi_ids': ['r1']}]},
+                              {'direction': 'target_to_reference', 'queries': [{'region_id': 'g', 'roi_ids': sorted(target)}]}]}
+    monkeypatch.setattr(model_report, '_export_rows', lambda d, p, direction, f: reference if direction == 'reference_to_target' else target)
+    return model_report._Linker('x', payload, roi_ids, None)
+
+
+R2T = {'direction': 'reference_to_target', 'query_roi_id': 'r1'}
+
+
+def test_region_link_refuses_a_target_roi_of_another_layer_or_other_endpoints(monkeypatch):
+    """review adv:5: path 2 needs the same failure type, layer and endpoint set; otherwise no_target_roi_for_region."""
+    reference = {'r1': _row('L1', 'A', 'B')}
+    for other in (_row('L2', 'A', 'B'), _row('L1', 'A', 'C'), _row('L1', 'A', 'B', 'C'), _row('L1', 'A', 'B', failure='vertical_short')):
+        linker = _linker(monkeypatch, reference, {'t1': other}, ['t1'])
+        assert linker.link('reference_to_target', [R2T]) == (None, 'no_target_roi_for_region', None, [])
+    assert _linker(monkeypatch, reference, {'t1': _row('L1', 'B', 'A')}, ['t1']).link('reference_to_target', [R2T])[:2] == ('t1', None)
+
+
+def test_region_link_falls_back_to_source_region_id_only_without_a_region_pool(monkeypatch):
+    reference = {'r1': {**_row('L1', 'A', 'B'), 'source_region_id': 's'}}
+    target = {'t1': {**_row('L1', 'A', 'B'), 'source_region_id': 's'}}
+    payload = {'directions': [{'direction': 'reference_to_target', 'queries': [{'region_id': None, 'roi_ids': ['r1']}]},
+                              {'direction': 'target_to_reference', 'queries': [{'region_id': 'other', 'roi_ids': ['t1']}]}]}
+    monkeypatch.setattr(model_report, '_export_rows', lambda d, p, direction, f: reference if direction == 'reference_to_target' else target)
+    assert model_report._Linker('x', payload, ['t1'], None).link('reference_to_target', [R2T]) == ('t1', None, 'source_region_id', [])
+
+
+def test_sidecar_link_wins_and_a_different_region_link_flags_link_mismatch(monkeypatch):
+    """review adv:1: both paths give a ROI and differ -> the sidecar ROI stays, the row gets link_mismatch."""
+    reference = {'r1': _row('L1', 'A', 'B')}
+    target = {'t1': _row('L1', 'A', 'B'), 't2': _row('L1', 'C', 'D')}
+    linker = _linker(monkeypatch, reference, {'t1': target['t1']}, ['t1', 't2'])
+    t2r = {'direction': 'target_to_reference', 'query_roi_id': 't2'}
+    assert linker.link('reference_to_target', [t2r, R2T]) == ('t2', None, 'sidecar_t2r', ['link_mismatch'])
+    same = {'direction': 'target_to_reference', 'query_roi_id': 't1'}
+    assert linker.link('reference_to_target', [same, R2T]) == ('t1', None, 'sidecar_t2r', [])
+    assert linker.link('target_to_reference', [t2r]) == ('t2', None, 'sidecar_t2r', [])
+    assert linker.link('target_to_reference', [{**t2r, 'query_roi_id': 'zz'}]) == (None, 'query_roi_not_in_decisions', None, [])
+
+
+def test_link_mismatch_reaches_html_csv_and_json_columns():
+    row = {'cell_status': 'ready', 'asset_status': None, 'n_candidates': None, 'pair_id': 'P1', 'pair_status': 'ready', 'rank': 1,
+           'search_scope': 'primary', 'delta_model_minus_target_um2': '1', 'delta_um2': '1', 'delta_orientation': 'x', 'delta_status': 'available',
+           'delta_reasons': '', 'a_value_um2': '1', 'b_value_um2': '2', 'link_flags': ['link_mismatch'], 'link_source': 'sidecar_t2r',
+           'window_cases_counts': {n: None for n in model_report.CLASS_NAMES}, 'window_cases_status': 'not_applicable',
+           'window_cases_top': {}, 'center_differs_from_query': None, 'unavailable_reasons': {}}
+    assert 'link_mismatch' in model_report._cell_html([row])
+    assert 'link_source' in model_report.CSV_COLUMNS and 'link_flags' in model_report.CSV_COLUMNS
+    flat = model_report._csv_row({**row, 'model': 'm'})
+    assert flat['link_flags'] == '["link_mismatch"]' and flat['link_source'] == 'sidecar_t2r'
+    assert model_report._json_row({**row, 'model': 'm'})['link_flags'] == ['link_mismatch']
+
+
+def test_unavailable_note_lists_counts_and_escapes_reason_keys():
+    """review adv:3/adv:4: the '쓸 수 없음' memo sums the counts and escapes the reason keys."""
+    assert model_report._unavailable_note({'unavailable_reasons': {}}) == ''
+    note = model_report._unavailable_note({'unavailable_reasons': {'b_reason': 1, '<script>x': 2}})
+    assert note == ' · 쓸 수 없음 3(&lt;script&gt;x 2, b_reason 1)'
+    assert '<script>' not in note
 
 
 def test_duplicate_key_is_refused():
