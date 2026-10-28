@@ -41,7 +41,13 @@ python -m simcompare confirm-pairs --list --config real.yaml --models models.yam
 python -m simcompare confirm-pairs --config real.yaml --models models.yaml --candidates data/changes --match reference_to_target=data/dl2/search_batch.json --match target_to_reference=data/dl2/search_batch.json --decisions decisions.csv --labelled-by jdoe --mutual-tolerance-um 5 --out data/confirmed_models
 ```
 
-출력은 기존 파일(reference↔target 쌍만) 외에 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(pending 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`이다. 스키마는 [데이터 계약](data_contract.md)의 확정 쌍 절에 있다. 같은 봉투 파일을 두 `--match`에 줘도 모델 후보는 한 번만 센다.
+모델 한 개의 창 비교는 `compare-windows`에 `--models`와 `--model`을 같이 준다. 두 인수와 `--out`이 모두 필요하고, a = config target, b = 모델이며 Δ = 모델 − target이다. `--out`은 reference 용 `data/local`과 다른 폴더(예 `data/local/models/<key>`)여야 하며, 인수 오류는 파일을 하나도 쓰지 않고 종료 2이다.
+
+```text
+python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed_models/models/QA4_C00/roi_correspondence.json --window-sizes 20 --out data/local/models/QA4_C00
+```
+
+`confirm-pairs --models`의 출력은 기존 파일(reference↔target 쌍만) 외에 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(pending 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`이다. 스키마는 [데이터 계약](data_contract.md)의 확정 쌍 절에 있다. 같은 봉투 파일을 두 `--match`에 줘도 모델 후보는 한 번만 센다.
 
 ## ETX (Linux 서버)
 
