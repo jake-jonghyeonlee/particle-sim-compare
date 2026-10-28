@@ -10,7 +10,9 @@ change-roi-v2/T3a: 절 순서는 제목 줄 / 1 요약 / 2 CNT 정렬과 정렬 
   정렬 전은 reference 파랑 계열 / target 주황 계열(겹치면 미리 섞은 색), 정렬 후는 같은 픽셀 = 회색~검정, 한쪽만 = 파랑·주황, 비교 영역 밖 = 회색.
 - 2b 층별 CNT 겹침: CNT 층마다 정렬 전·후 두 장(접어 둠).
 - 3 변경 강조 지도: 층별 hotspot 합집합 변화의 층 OR 을 빨강, 변경 없는 패턴 연회색, 비교 영역 밖 진회색, 선정 ROI 초록 사각형·순위.
-- 5 ROI 상세: frame 전체에 이 ROI 만 굵은 빨강 사각형인 위치 그림(한 변 <= POSITION_MAX_PX)과 대표 층 hotspot 합집합 crop(한 변 <= CROP_MAX_PX).
+- 5 ROI 상세: frame 전체에 이 ROI 만 굵은 빨강 사각형인 위치 그림(한 변 <= POSITION_MAX_PX)과, 이 ROI 에 불량 조합이 있는 층마다 한 묶음
+  (change-roi-v2/T3b): [비교, reference, target] 세 그림(한 변 <= CROP_MAX_PX). 바탕 DDDDDD = 그 모델의 그 층 전극 PNG 합집합(target 은 offset 으로
+  reference 좌표에 옮김), 색 = 그 층 hotspot 합집합. 층이 MAX_BUNDLES 를 넘으면 창 안 변경 면적 합이 큰 층부터 MAX_BUNDLES 개. 전극 PNG 가 없으면 바탕 없이 그린다.
 - 6 열지도: hotspot 층마다 합집합 변화(RU)와 조합별 잔차 합(count_map)(접어 둠).
 모든 PNG 는 고정 색표와 미리 섞은 색만 쓴다(반투명 없음).
 
@@ -35,6 +37,8 @@ CROP_MAX_PX = 400
 CROP_HALF_PX = 200
 POSITION_MAX_PX = 250
 SHADE_LEVELS = 6
+MAX_BUNDLES = 4                                 # ROI 하나에 그리는 층 묶음 수 상한
+HEAT_LAYERS_ASSUMED = 8                         # 메모리 추정에서 hotspot 층 수를 모를 때 쓰는 보수적 상수
 SCHEMA = 'alignment_report_v1'
 
 # 2a 고정 색표(밝음 → 어두움). 층 순서(이름 자연 정렬)대로 SHADE_LEVELS 단계, 넘으면 처음부터 반복한다.
@@ -55,6 +59,7 @@ TGT_COLOUR = (235, 140, 20)
 BOTH_COLOUR = (30, 30, 30)
 GRAY = (205, 205, 205)
 WHITE = (255, 255, 255)
+BASE_COLOUR = (221, 221, 221)                   # 층 묶음의 전극 형상 바탕(DDDDDD)
 RECT_COLOUR = (0, 150, 70)
 LABEL_COLOUR = (0, 0, 0)
 
@@ -126,9 +131,12 @@ def _step_for(shape, limit):
     return max(1, int(math.ceil(max(shape) / float(limit))))
 
 
-def _overlay(ref, tgt, gray):
+def _overlay(ref, tgt, gray, base=None):
+    """base: 전극 형상(None 이면 바탕 없음). 그리는 순서: 흰색, 전극 형상, 비교 영역 밖 회색, hotspot 색."""
     rgb = np.empty(ref.shape + (3,), dtype=np.uint8)
     rgb[:] = WHITE
+    if base is not None:
+        rgb[base] = BASE_COLOUR
     rgb[gray] = GRAY
     rgb[ref & ~tgt] = REF_COLOUR
     rgb[tgt & ~ref] = TGT_COLOUR
@@ -196,25 +204,46 @@ def _heat(values, observed):
 
 # --------------------------------------------------------------------------- 메모리 추정·자료 수집
 
-def estimate_report_bytes(ref_shape, tgt_shape, n_rois=0):
-    """그림 생성 중 동시에 보유하는 배열(바이트 수). 층 하나씩 처리하므로 층 수와 무관하다.
+def estimate_report_bytes(ref_shape, tgt_shape, n_rois=0, n_layers=HEAT_LAYERS_ASSUMED, window_px=0):
+    """그림 생성 중 동시에 보유하는 배열(바이트 수). 2a 는 층 하나씩 처리하므로 그 부분은 층 수와 무관하다.
 
     hr = H_ref*W_ref, ht = H_tgt*W_tgt, nb = 블록 축소한 그림의 칸 수(ceil(H/step)*ceil(W/step), step = _step_for(ref, OVERVIEW_MAX_PX)).
     - 2a 정렬 후 한 층: ref&비교 영역, 이동한 target, 이동한 target valid, 비교 영역, 같은 칸, reference 만, target 만 = 7*hr,
       블록 축소 중간 배열 2*hr 이하(reduceat 는 한 축만 줄인 (ny, W) 배열) → 9*hr, 정렬 전 target 한 장분 ht.
     - 2a 두 장의 층 인덱스·rgb 와 3절·6절 블록 지도(블록 단위 uint8/bool/uint32/rgb 합쳐 칸당 24 바이트 이하) → 24*nb.
-    - ROI 위치 그림은 한 변 POSITION_MAX_PX 이하 rgb 와 블록 배열: ROI 마다 4*POSITION_MAX_PX**2 → n_rois * 4*POSITION_MAX_PX**2.
-    식: 9*hr + ht + 24*nb + n_rois * 4*POSITION_MAX_PX**2.
+    - ImageSource.heat 는 hotspot 층마다 합집합 변화(uint32)와 조합별 잔차 합(최대 uint32) 블록 지도를 놓는다 → n_layers * 8*nb.
+      hotspot 층 수는 이 시점에 모르므로 기본값은 보수적 상수 HEAT_LAYERS_ASSUMED 다.
+    - ROI 위치 그림은 ROI 마다 따로 만들어 바이트로 바꾼 뒤 놓는다: 바탕 rgb 와 그림 하나, 블록 배열 → n_rois > 0 이면 4*POSITION_MAX_PX**2 (ROI 수와 무관).
+    - ROI crop(window_px > 0 일 때): 상자 한 변 <= 2*window_px 로 ROI 마다 비교 영역 bool 1개 + hotspot 층마다 reference·target bool 2개 +
+      층 묶음 바탕 최대 MAX_BUNDLES 층 x 2개 = (2*n_layers + 1 + 2*MAX_BUNDLES) 개를 잡는다.
+    식: 9*hr + ht + 24*nb + n_layers*8*nb + (4*POSITION_MAX_PX**2 if n_rois) + n_rois * min(hr, (2*window_px)**2) * (2*n_layers + 1 + 2*MAX_BUNDLES).
     열지도 수집 중 uint32 지도의 reduceat 중간 배열은 4*hr 이하라 더 작다."""
     hr = int(ref_shape[0]) * int(ref_shape[1])
     ht = int(tgt_shape[0]) * int(tgt_shape[1])
     step = _step_for(ref_shape, OVERVIEW_MAX_PX)
     nb = int(math.ceil(ref_shape[0] / float(step))) * int(math.ceil(ref_shape[1] / float(step)))
-    return 9 * hr + ht + 24 * nb + int(n_rois) * 4 * POSITION_MAX_PX ** 2
+    total = 9 * hr + ht + 24 * nb + int(n_layers) * 8 * nb
+    if n_rois:
+        total += 4 * POSITION_MAX_PX ** 2
+        if window_px:
+            total += int(n_rois) * min(hr, (2 * int(window_px)) ** 2) * (2 * int(n_layers) + 1 + 2 * MAX_BUNDLES)
+    return total
 
 
-def fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes, n_rois=0):
-    return estimate_report_bytes(ref_shape, tgt_shape, n_rois) <= max_operation_bytes - reserved_bytes
+def fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes, n_rois=0, n_layers=HEAT_LAYERS_ASSUMED, window_px=0):
+    return estimate_report_bytes(ref_shape, tgt_shape, n_rois, n_layers, window_px) <= max_operation_bytes - reserved_bytes
+
+
+def electrode_read_bytes(ref_shape, tgt_shape):
+    """층 묶음 바탕을 읽을 때 동시에 보유하는 최대 바이트(한 번에 (모델, 층) 하나씩 읽는다).
+
+    DL1 전극 PNG 는 frame 보다 사방 500 px 큰 이미지다(fw = (H + 1000)*(W + 1000)). 디코드 중 RGBA 4 바이트 + 검정 판정·marked 각 1 바이트,
+    PNG 원본 바이트·중간 사본 여유까지 8*fw, frame 크기 bool 합집합 하나와 crop 사본 둘(2*H*W)을 잡는다. 두 모델 중 큰 쪽."""
+    return max(8 * (int(s[0]) + 1000) * (int(s[1]) + 1000) + 2 * int(s[0]) * int(s[1]) for s in (ref_shape, tgt_shape))
+
+
+def electrode_fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes):
+    return electrode_read_bytes(ref_shape, tgt_shape) <= max_operation_bytes - reserved_bytes
 
 
 class ImageSource:
@@ -228,7 +257,8 @@ class ImageSource:
         self.heat = {}
         self.observed = None
         self.hot_any = None       # 모든 hotspot 층의 reference ∪ target 합집합 블록(3절·위치 그림의 연회색 패턴)
-        self.hot = []
+        self.hot = []             # ROI 순서: {'box', 'obs', 'layers': {층: {'ref', 'tgt'}}}
+        self.base = {}            # (ROI 번호, 층, 'ref' | 'tgt') → 상자 크기 전극 형상 bool 또는 None (collect_bases)
 
     def collect(self, maps, windows):
         """``change_maps`` 결과(maps)에서 열지도용 블록 값과 선정 창의 hotspot 합집합 crop 을 뽑는다. 호출 뒤 maps 를 놓아도 된다."""
@@ -246,11 +276,40 @@ class ImageSource:
             y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
             box = _crop_box(y, x, w, height, width)
             y0, y1, x0, x1 = box
-            layer = window['layer']
-            self.hot.append({'box': box,
-                             'ref': np.array(maps['union_ref'][layer][y0:y1, x0:x1], dtype=bool),
-                             'tgt': np.array(maps['union_tgt'][layer][y0:y1, x0:x1], dtype=bool),
-                             'obs': np.array(maps['D'][y0:y1, x0:x1], dtype=bool)})
+            # 층 묶음에 쓸 층은 기여 계산 뒤에 정해지므로, 상자 안에 hotspot 이 있는 모든 층의 crop 을 모은다(상자 크기라 작다).
+            layers = {}
+            for layer in sorted(maps['union_ref']):
+                if layer not in maps['union_tgt']:
+                    continue
+                ref = np.array(maps['union_ref'][layer][y0:y1, x0:x1], dtype=bool)
+                tgt = np.array(maps['union_tgt'][layer][y0:y1, x0:x1], dtype=bool)
+                if ref.any() or tgt.any() or layer == window['layer']:
+                    layers[layer] = {'ref': ref, 'tgt': tgt}
+            self.hot.append({'box': box, 'layers': layers, 'obs': np.array(maps['D'][y0:y1, x0:x1], dtype=bool)})
+
+    def collect_bases(self, wanted, load_reference, load_target):
+        """층 묶음 바탕(전극 형상) crop. wanted: ``{층: [ROI 번호(0 부터)]}``, load_*(층) → frame 크기 bool 또는 None(전극 PNG 없음).
+
+        (모델, 층) 하나씩 frame bool 을 읽어 필요한 모든 ROI 상자를 잘라 두고 바로 놓는다. target 은 hotspot 과 같은
+        ``change_map._shift_crop`` 으로 reference 좌표에 옮긴다. 결과는 ``self.base[(ROI, 층, 'ref'|'tgt')]`` (없으면 None)."""
+        dx, dy = self.offset_px
+        for layer in sorted(wanted):
+            for side, load in (('ref', load_reference), ('tgt', load_target)):
+                frame = load(layer)
+                for i in wanted[layer]:
+                    y0, y1, x0, x1 = self.hot[i]['box']
+                    if frame is None:
+                        crop = None
+                    elif side == 'ref':
+                        crop = np.array(frame[y0:y1, x0:x1], dtype=bool)
+                        if crop.shape != (y1 - y0, x1 - x0):          # frame 이 reference valid 보다 작으면 모자란 쪽은 형상 없음
+                            full = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+                            full[:crop.shape[0], :crop.shape[1]] = crop
+                            crop = full
+                    else:
+                        crop = change_map._shift_crop(frame, dy, dx, y0, y1, x0, x1)
+                    self.base[(i, layer, side)] = crop
+                del frame
 
 
 def _crop_box(y, x, w, height, width):
@@ -291,7 +350,8 @@ def natural_key(name):
 
 
 def _shade(ref_idx, tgt_idx, same_idx, gray):
-    """층 인덱스 배열(없음 = -1) → rgb. 같은 칸은 SAME_SHADES, 한쪽만은 REF/TGT_SHADES, 한 칸에 둘 다 있으면 미리 섞은 평균색."""
+    """층 인덱스 배열(없음 = -1) → rgb. 같은 칸은 SAME_SHADES, 한쪽만은 REF/TGT_SHADES.
+    한 칸에 reference 만·target 만이 같이 있으면 정렬 전(same_idx 없음)은 미리 섞은 평균색, 정렬 후는 순수 target 색이다."""
     rgb = np.empty(ref_idx.shape + (3,), dtype=np.uint8)
     rgb[:] = WHITE
     rgb[gray] = OUTSIDE_GRAY
@@ -304,7 +364,10 @@ def _shade(ref_idx, tgt_idx, same_idx, gray):
     rgb[t & ~r] = tgt_t[tgt_idx[t & ~r]]
     both = r & t
     if both.any():
-        rgb[both] = ((ref_t[ref_idx[both]].astype(np.uint16) + tgt_t[tgt_idx[both]]) // 2).astype(np.uint8)
+        if same_idx is not None:        # 정렬 후: reference 만·target 만 픽셀이 한 칸에 같이 있으면 평균 색(같음처럼 보임) 대신 순수 target 주황
+            rgb[both] = tgt_t[tgt_idx[both]]
+        else:                           # 정렬 전: 겹치면 미리 섞은 색
+            rgb[both] = ((ref_t[ref_idx[both]].astype(np.uint16) + tgt_t[tgt_idx[both]]) // 2).astype(np.uint8)
     return rgb
 
 
@@ -426,31 +489,74 @@ def _heat_images(source, windows):
     return out
 
 
-def _fit(rgb_inputs, limit):
-    """crop 한 장을 한 변 <= limit 로 만든다. 크면 블록 any, 작으면 정수 배 확대. (ref, tgt, gray, rect) → (rgb, scale 정보)"""
+def _fit(rgb_inputs, limit, base=None):
+    """crop 한 장을 한 변 <= limit 로 만든다. 크면 블록 any, 작으면 정수 배 확대. (ref, tgt, gray, rect) → rgb. base: 전극 형상 bool 또는 None."""
     ref, tgt, gray, rect = rgb_inputs
     size = max(ref.shape)
     y0, x0, y1, x1 = rect
     if size > limit:
         step = int(math.ceil(size / float(limit)))
         ref, tgt, gray = _block(ref, step, 'any'), _block(tgt, step, 'any'), _block(gray, step, 'any')
+        base = _block(base, step, 'any') if base is not None else None
         rect = (y0 // step, x0 // step, y1 // step, x1 // step)
     else:
         scale = max(1, limit // size)
         if scale > 1:
             ref, tgt, gray = (np.repeat(np.repeat(a, scale, axis=0), scale, axis=1) for a in (ref, tgt, gray))
+            base = np.repeat(np.repeat(base, scale, axis=0), scale, axis=1) if base is not None else None
             rect = (y0 * scale, x0 * scale, (y1 + 1) * scale - 1, (x1 + 1) * scale - 1)
-    rgb = _overlay(ref, tgt, gray)
+    rgb = _overlay(ref, tgt, gray, base)
     _rect(rgb, *rect, RECT_COLOUR)
     return rgb
 
 
-def _crop_images(source, window, hot, limit):
-    """ROI 하나의 [(제목, rgb)]: 대표 층 hotspot 합집합 reference/target 겹침 한 장(CNT 정렬 crop 은 2절로 옮겼다)."""
+def layer_bundles(query, window):
+    """ROI 의 층 묶음 계획: ``(보일 묶음 목록, 생략한 층 이름 목록)``.
+
+    묶음 = ``{'layer', 'area', 'n', 'counts': (형상 변화, 새로 생김, 사라짐)}``. 층은 기여 case 의 ``layer``(merge_scope=all)이고
+    없으면 대표 층 하나다. 순서는 창 안 변경 면적(``residual_um2``) 합이 큰 순(같으면 이름 자연 정렬), MAX_BUNDLES 개까지 보이고 나머지는 생략한다."""
+    stats = {}
+    for case in query['contributing_cases']:
+        item = stats.setdefault(case.get('layer', window['layer']), {'area': 0.0, 'n': 0, 'counts': [0, 0, 0]})
+        item['area'] += float(case['residual_um2'])
+        item['n'] += 1
+        kind = case['change_kind']
+        item['counts'][1 if kind == 'appeared' else 2 if kind == 'disappeared' else 0] += 1
+    if not stats:
+        stats[window['layer']] = {'area': 0.0, 'n': 0, 'counts': [0, 0, 0]}
+    ordered = sorted(stats, key=lambda layer: (-stats[layer]['area'], natural_key(layer)))
+    bundles = [{'layer': layer, 'area': stats[layer]['area'], 'n': stats[layer]['n'], 'counts': tuple(stats[layer]['counts'])}
+               for layer in ordered]
+    return bundles[:MAX_BUNDLES], sorted((b['layer'] for b in bundles[MAX_BUNDLES:]), key=natural_key)
+
+
+def bundle_title(bundle):
+    parts = [name + ' ' + str(count) for name, count in zip(('형상 변화', CHANGE_KIND_TEXT['appeared'], CHANGE_KIND_TEXT['disappeared']),
+                                                          bundle['counts']) if count]
+    return '층 %s — 불량 조합 %d개%s' % (bundle['layer'], bundle['n'], ' (' + ' · '.join(parts) + ')' if parts else '')
+
+
+def _bundle_images(source, i, window, layer, limit):
+    """ROI i 의 한 층 묶음 [(캡션, rgb)] = 비교 · reference · target. 바탕이 없는 쪽은 캡션에 '전극 형상 없음'을 적는다."""
+    hot = source.hot[i]
     y0, y1, x0, x1 = hot['box']
     y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
     rect = (y - y0, x - x0, y + w - 1 - y0, x + w - 1 - x0)
-    return [('hotspot 합집합 (대표 층 ' + window['layer'] + ')', _fit((hot['ref'], hot['tgt'], ~hot['obs'], rect), limit))]
+    crops = hot['layers'].get(layer)
+    empty = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+    ref, tgt = (crops['ref'], crops['tgt']) if crops is not None else (empty, empty)
+    gray = ~hot['obs']
+    base_ref, base_tgt = source.base.get((i, layer, 'ref')), source.base.get((i, layer, 'tgt'))
+    both = base_ref if base_tgt is None else base_tgt if base_ref is None else (base_ref | base_tgt)
+    missing = [name for name, base in (('reference', base_ref), ('target', base_tgt)) if base is None]
+    compare_note = '' if not missing else ' · 전극 형상 없음' if len(missing) == 2 else ' · 전극 형상 없음 (' + missing[0] + ')'
+    return [
+        ('ROI 층 ' + layer + ' · 비교: 파랑 = reference 만 · 주황 = target 만 · 검정 = 둘 다' + compare_note,
+         _fit((ref, tgt, gray, rect), limit, both)),
+        ('ROI 층 ' + layer + ' · reference: 전극 형상 + hotspot' + ('' if base_ref is not None else ' · 전극 형상 없음'),
+         _fit((ref, empty, gray, rect), limit, base_ref)),
+        ('ROI 층 ' + layer + ' · target: 전극 형상 + hotspot' + ('' if base_tgt is not None else ' · 전극 형상 없음'),
+         _fit((empty, tgt, gray, rect), limit, base_tgt))]
 
 
 # --------------------------------------------------------------------------- HTML
@@ -461,6 +567,7 @@ STYLE = (
     'th{background:#f3f3f3}.warn{border:2px solid #c00;background:#fff0f0;padding:.6rem 1rem;font-weight:bold}'
     '.note{color:#555;font-size:13px}.figs{display:flex;flex-wrap:wrap;gap:12px}figure{margin:0}'
     'figure img{max-width:100%;border:1px solid #999;image-rendering:pixelated}figcaption{font-size:12px;color:#555}'
+    '.bundle{border-left:3px solid #ddd;padding-left:8px;margin:.5rem 0}.bundle h4{margin:.2rem 0}'
     '.roi{border-top:2px solid #888;margin-top:1.2rem;padding-top:.4rem}.missing{border:1px dashed #999;color:#777;padding:.4rem;font-size:12px}'
     '.sw{display:inline-block;width:.9em;height:.9em;vertical-align:middle;border:1px solid #666;margin-right:2px}'
     '.badge{display:inline-block;padding:3px 12px;border-radius:12px;font-weight:bold;color:#fff;font-size:14px}'
@@ -472,7 +579,7 @@ STYLE = (
 
 BADGE = {'aligned': ('ok', '정렬됨'), 'aligned_uncertain': ('uncertain', '불확실'),
          'alignment_failed_identity_used': ('failed', '실패')}
-CHANGE_KIND_TEXT = {'appeared': '새로 생김', 'disappeared': '사라짐', 'shifted': '형상 변화', 'reshaped': '형상 변화',
+CHANGE_KIND_TEXT = {'appeared': '창 안 새로 생김', 'disappeared': '창 안 사라짐', 'shifted': '형상 변화', 'reshaped': '형상 변화',
                     'mixed_undetermined': '형상 변화'}
 PRESENT_TEXT = {'both': '둘 다', 'reference': 'reference 만', 'target': 'target 만'}
 ELECTRODE_FLAG_TEXT = {'new_electrode': '새 전극', 'removed_electrode': '없어진 전극'}
@@ -708,10 +815,10 @@ def _case_row(case):
     kind_cell = escape(kind_text) + ('' if kind == 'appeared' or kind == 'disappeared' else ' <code>' + escape(kind) + '</code>')
     flags = [f for f in case.get('flags', ()) if f in CASE_FLAGS]
     flag_cell = ', '.join(escape(ELECTRODE_FLAG_TEXT[f]) + ' <code>' + escape(f) + '</code>' for f in flags) or '—'
-    first = (escape(failure) if failure is not None else escape(case['case_key'])) + \
-        ' <br><span class="key">' + escape(case['case_key']) + '</span>'
     if failure is None:
         first = '<span class="key">' + escape(case['case_key']) + '</span>'
+    else:
+        first = escape(failure) + ' <br><span class="key">' + escape(case['case_key']) + '</span>'
     cells = [first, escape(pair) if pair is not None else '—', escape(str(layer)) if layer is not None else '—', kind_cell,
              _fmt2(case['residual_um2']), _fmt2(case.get('area_reference_um2')),
              _fmt2(case.get('area_target_um2')), escape(PRESENT_TEXT.get(case.get('present_in', 'both'), str(case.get('present_in')))),
@@ -738,7 +845,8 @@ def _contribution_table(cases):
 
 def _roi_list(queries, windows, shape):
     """4절 ROI 목록 표. 순위 칸은 5절 상세(``roi<순위>``)로 가는 링크."""
-    header = ('순위', '대표 층', '불량 조합이 있는 층', '중심 (µm)', 'frame 안 위치', '점수 µm²', '새로 생김', '사라짐', '형상 변화', '상태')
+    header = ('순위', '대표 층', '불량 조합이 있는 층', '중심 (µm)', 'frame 안 위치', '점수 µm²', CHANGE_KIND_TEXT['appeared'],
+              CHANGE_KIND_TEXT['disappeared'], '형상 변화', '상태')
     out = ['<h2 id="list">4. ROI 목록</h2>']
     if not queries:
         out.append('<p class="note">선정된 ROI 가 없습니다.</p>')
@@ -797,6 +905,10 @@ def _footnotes():
             '<li>열지도는 블록 축소한 값이다: 합집합 변화는 블록 안 변화 칸 수, 조합별 잔차 합은 블록 안 최댓값(겹친 조합 수).</li>'
             '<li>창 안 변경 면적(<code>residual_um2</code>)은 한 조합의 reference 와 target hotspot 을 정렬 offset 으로 맞춘 뒤 '
             '변경 허용 오차를 넘어 창 안에 남는 칸의 면적이다. 조합마다 따로 구하며 합집합 변화(<code>score_um2</code>)와 같은 값이 아니다.</li>'
+            '<li>변경 종류는 창 단위다: 그 창 안에서 한 모델의 hotspot 이 없으면 새로 생김/사라짐이다. case 자체는 두 모델에 다 있을 수 있다(있는 모델 열).</li>'
+            '<li>층 묶음(5절)은 그 ROI 에 불량 조합이 있는 층만 보인다. 바탕 회색은 그 모델의 그 층 전극 PNG 를 ROI 주변만 잘라 합친 형상이고, '
+            'target 은 정렬 offset 으로 reference 좌표에 옮겼다. 층이 ' + str(MAX_BUNDLES) + '개를 넘으면 창 안 변경 면적 합이 큰 층부터 ' +
+            str(MAX_BUNDLES) + '개만 그린다. 전극 PNG 가 없거나 읽을 수 없으면 바탕 없이 그리고 "전극 형상 없음"이라고 적는다.</li>'
             '<li>reference 면적 / target 면적은 창 안·비교 영역 안 그 조합의 hotspot 면적이다. 한쪽에만 있는 조합은 없는 쪽이 0 이다. '
             '두 frame 크기가 달라 두 면적의 분모(관측 영역)가 다를 수 있다.</li>'
             '<li>frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. resize 하지 않으며 비교 영역 밖은 회색이다.</li>'
@@ -890,10 +1002,17 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
             if position_base is not None:
                 rgb = _position_image(position_base[0], position_base[1], windows[i])
                 items.append(_figure(_uri(_png(rgb)), '위치: frame 전체에서 이 ROI 만 굵은 빨강 사각형'))
+            figs = '<div class="figs">' + ''.join(items) + '</div>'
             if level < 2 and i < len(source.hot):
                 side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
-                items.extend(_figure(_uri(_png(rgb)), caption) for caption, rgb in _crop_images(source, windows[i], source.hot[i], side))
-            figs = '<div class="figs">' + ''.join(items) + '</div>'
+                shown, omitted_layers = layer_bundles(queries[i], windows[i])
+                figs += '<p class="note">이 ROI 에 불량 조합이 있는 층마다 한 묶음: 비교 · reference · target. 바탕 회색 = 그 층 전극 형상, 색 = 그 층 hotspot 합집합, 초록 = ROI 창.</p>'
+                for bundle in shown:
+                    pictures = _bundle_images(source, i, windows[i], bundle['layer'], side)
+                    figs += ('<div class="bundle"><h4>' + escape(bundle_title(bundle)) + '</h4><div class="figs">' +
+                             ''.join(_figure(_uri(_png(rgb)), caption) for caption, rgb in pictures) + '</div></div>')
+                if omitted_layers:
+                    figs += '<p class="note">생략 %d개 층 (창 안 변경 면적 합이 작은 층): %s</p>' % (len(omitted_layers), escape(', '.join(omitted_layers)))
             if level == 2:
                 figs += '<p class="missing">그림 생략: 파일 크기 상한(%d MiB) 때문에 이 ROI 의 crop 그림을 뺐습니다.</p>' % (limit // (1024 * 1024))
         sections[(i, level)] = encode('<div class="roi" id="roi%d">' % (i + 1) + title + figs + text + '</div>')
@@ -918,16 +1037,17 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
         body = [section(i, level) for i in range(keep)] + [section(i, 2) for i in range(keep, count)]
         omitted = list(range(keep + 1, count + 1))
         has_position = 1 if position_base is not None else 0
-        n_images += sum(section_images(source, i) + has_position for i in range(keep)) + has_position * (count - keep)
+        n_images += (sum(section_images(source, i, queries[i], windows[i]) + has_position for i in range(keep)) +
+                     has_position * (count - keep))
     prefix_bytes = encode(head + ''.join(prefix))
     data = prefix_bytes + b''.join(body) + encode(suffix + tail)
     return data, {'path': 'alignment.html', 'bytes': len(data), 'downscaled': bool(downscaled),
                   'crops_omitted': omitted, 'n_images': n_images}
 
 
-def section_images(source, i):
-    """ROI i 의 crop 그림 장수 = 대표 층 hotspot 합집합 1 (위치 그림은 따로 센다)."""
-    return 1 if i < len(source.hot) else 0
+def section_images(source, i, query, window):
+    """ROI i 의 crop 그림 장수 = 층 묶음 수 x 3 (위치 그림은 따로 센다)."""
+    return 3 * len(layer_bundles(query, window)[0]) if i < len(source.hot) else 0
 
 
 def _heat_count(source):

@@ -91,6 +91,7 @@ def _parser() -> argparse.ArgumentParser:
         help="두 제품(real_hotspot_v1)의 CNT 정렬 + 5 µm hotspot 변경 지도 → 변경 위치 질의 ROI와 DL2 export(모든 인수 필수, 기본값 없음)"))
     change.add_argument("--config", required=True, help="numeric_config_v1 YAML (reference·target 각각 real_hotspot_v1 단일 제품·단일 frame)")
     change.add_argument("--cnt-from-dl1-root", required=True, help="두 제품의 cno/ CNT 층 PNG가 있는 DL1 PNG root (제품 폴더 = product_id)")
+    change.add_argument("--electrode-png-root", help="선택. alignment.html 층 묶음의 전극 형상 바탕을 읽을 PNG root (<root>/<product_id>/<전극>/<층>.png, DL1 과 같은 구조). 생략하면 --cnt-from-dl1-root. 전극 목록 비교에는 쓰지 않는다")
     change.add_argument("--align-search-um", required=True, type=float, help="CNT 정렬 탐색 반경 µm. 최소값은 pixel pitch의 2배 이상(코드 검사). 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값(예시 30 µm). 주기가 탐색 반경 안에 있으면 peak_ambiguous 와 대안 offset 으로 표시된다")
     change.add_argument("--align-min-dice", required=True, type=float, help="정렬 최소 Dice [0, 1]. 미만이면 aligned_uncertain")
     change.add_argument("--align-layer-tolerance-um", required=True, type=float, help="층별·4분면 offset 이 전역 offset 과 달라도 되는 거리 µm")
@@ -278,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
                 align_min_dice=args.align_min_dice, align_layer_tolerance_um=args.align_layer_tolerance_um,
                 change_tolerance_um=args.change_tolerance_um, window_um=args.window_um,
                 merge_overlap=args.merge_overlap, top_k=args.top_k, mask_derivation_rule=args.mask_derivation_rule,
-                merge_scope=args.merge_scope, suppress_overlap=args.suppress_overlap)
+                merge_scope=args.merge_scope, suppress_overlap=args.suppress_overlap,
+                electrode_png_root=args.electrode_png_root)
             _print(result)
             return result["exit_code"]
         if args.command == "candidates-dv":

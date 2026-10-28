@@ -58,12 +58,15 @@ ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_ch
 
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
-                   mask_derivation_rule, merge_scope=None, suppress_overlap=None):
+                   mask_derivation_rule, merge_scope=None, suppress_overlap=None, electrode_png_root=None):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
     if not Path(cnt_root).is_dir():
         raise _bad('cnt_dl1_root_missing',
                    f'--cnt-from-dl1-root 경로가 없습니다: {cnt_root} (resolved: {Path(cnt_root).resolve()})')
+    if electrode_png_root is not None and (not isinstance(electrode_png_root, (str, Path)) or not Path(electrode_png_root).is_dir()):
+        raise _bad('electrode_png_root_missing',
+                   f'--electrode-png-root 경로가 폴더가 아닙니다: {electrode_png_root} (resolved: {Path(str(electrode_png_root)).resolve()})')
     if mask_derivation_rule is None:
         raise _bad('mask_derivation_rule_required', f'--mask-derivation-rule: {template_export.RULE_VERSION}만 허용되며 기본값이 없습니다')
     if mask_derivation_rule != template_export.RULE_VERSION:
@@ -430,12 +433,15 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None
 
 def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um,
                           change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule,
-                          merge_scope=None, suppress_overlap=None):
+                          merge_scope=None, suppress_overlap=None, electrode_png_root=None):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
     reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
     direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
 
-    폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값(없는 DL1 root, 규칙 값 포함),
+    ``electrode_png_root`` (선택): alignment.html 층 묶음의 전극 형상 바탕을 읽는 PNG root. 생략하면 ``cnt_from_dl1_root`` 다.
+    전극 목록 비교(``electrode_set_differs``, 조합 짝짓기)는 이 값과 무관하게 ``cnt_from_dl1_root`` 를 쓴다.
+
+    폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값(없는 DL1 root, 폴더가 아닌 전극 PNG root, 규칙 값 포함),
     이미 있는 출력 경로, config 종류·지름,
     side 준비 결과, 제품·frame 개수, pitch 불일치, 정렬 탐색 반경(>= 2 x pitch), 창 크기(>= pitch, frame 보다 크지 않음).
     CNT 읽기·정렬·메모리 한도(admission) 오류는 폴더를 만든 뒤에 나므로, 쓰는 도중 실패한 경우와 같이 이 실행이 만든
@@ -443,7 +449,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     """
     from . import pipeline
     _validate_args(cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um, change_tolerance_um,
-                   window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap)
+                   window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap, electrode_png_root)
     out = Path(out)
     if out.exists() or out.is_symlink():
         raise _bad('output_dir_exists', str(out))
@@ -485,6 +491,8 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         args['merge_scope'] = merge_scope
     if suppress_overlap is not None:
         args['suppress_overlap'] = suppress_overlap
+    if electrode_png_root is not None:
+        args['electrode_png_root'] = str(electrode_png_root)
     track, cleanup = candidates.output_tracker()
     out.mkdir()
     track(out, is_dir=True)
@@ -493,6 +501,38 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     except BaseException:
         cleanup()
         raise
+
+
+def _collect_layer_bases(source, queries, windows, root, files, products, limit, reserved, warnings):
+    """alignment.html 5절 층 묶음의 전극 형상 바탕(DDDDDD)을 읽어 ROI 상자 crop 으로 남긴다.
+
+    그리는 층(``alignment_report.layer_bundles``)만, (모델, 층) 하나씩 frame bool 로 읽고 바로 놓는다. 메모리 추정(``electrode_fits``)이
+    한도를 넘으면 바탕만 빼고 경고 ``alignment_report_layer_base_skipped`` 를 남긴다(계산·JSON 은 그대로, 종료 코드 3).
+    읽은 파일의 sha256 은 기록하지 않는다: 이 PNG 는 보고서 그림에만 쓰이고 계산·export·JSON 에 들어가지 않으므로 입력 지문이 아니다."""
+    from .adapters.electrode_png import load_electrode_layer
+    wanted = {}
+    for i, (query, window) in enumerate(zip(queries, windows)):
+        if i >= len(source.hot):
+            break
+        for bundle in alignment_report.layer_bundles(query, window)[0]:
+            wanted.setdefault(bundle['layer'], []).append(i)
+    if not wanted:
+        return
+    ref_shape, tgt_shape = products['reference'].frame.valid.shape, products['target'].frame.valid.shape
+    if not alignment_report.electrode_fits(ref_shape, tgt_shape, limit, reserved):
+        warnings.append({'code': 'alignment_report_layer_base_skipped',
+                         'estimated_bytes': alignment_report.electrode_read_bytes(ref_shape, tgt_shape),
+                         'reserved_bytes': reserved, 'max_operation_bytes': limit})
+        return
+
+    def loader(name):
+        item = products[name]
+
+        def load(layer):
+            names = files[name].get(layer)
+            return load_electrode_layer(root, item.product_id, item.frame, names) if names else None
+        return load
+    source.collect_bases(wanted, loader('reference'), loader('target'))
 
 
 def _frame_record(ref_shape, tgt_shape, stats, bbox):
@@ -510,7 +550,7 @@ def _frame_record(ref_shape, tgt_shape, stats, bbox):
 
 
 def _run(cfg, out, track, sides, products, pitch, limit, args):
-    from .adapters.electrode_png import list_dl1_electrodes, load_cnt_layers
+    from .adapters.electrode_png import list_dl1_electrodes, load_cnt_layers, scan_electrode_layers
     from .adapters.real_hotspot import MAP_SLIM_ROW_BYTES, dataset_held_bytes
     from .roi_export import AssetMemo
     from . import cnt_align
@@ -548,9 +588,15 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     outputs.append('alignment.json')      # 파일은 변경 지도 뒤에 쓴다(비교 영역 픽셀 수를 그 계산에서 재사용)
     offset_px = (int(alignment['offset_xy_px'][0]), int(alignment['offset_xy_px'][1]))
     # alignment.html 의 그림: 만들기 전에 메모리 추정으로 허용 여부를 정한다(넘으면 표만 쓰고 경고, 계산은 그대로).
-    images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k)
+    window_px = change_map._round_px(window_um, pitch)
+    images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k,
+                                      alignment_report.HEAT_LAYERS_ASSUMED, window_px)
     report_source = (alignment_report.ImageSource(cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
                                                   tgt.frame.valid, offset_px) if images_ok else None)
+    electrode_root = args.get('electrode_png_root', args['cnt_from_dl1_root'])
+    # 층 묶음 바탕용 전극 PNG 이름 목록(읽지 않는다). 이름 규칙 위반은 기존 loader 와 같은 오류다.
+    electrode_files = ({name: scan_electrode_layers(electrode_root, products[name].product_id) for name in products}
+                       if report_source is not None else {})
     if alignment['status'] != 'aligned':
         warnings.append({'code': 'alignment_' + ('failed' if alignment['status'] == 'alignment_failed_identity_used'
                                                  else 'uncertain'),
@@ -831,8 +877,12 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
 
     # --- alignment.html: 정렬이 실패·불확실해도 항상 쓴다. 그림 생성을 허용하지 않았으면 표만 쓰고 경고(exit 3)
     skipped = None
+    if report_source is not None:
+        _collect_layer_bases(report_source, directions[0]['queries'], windows, electrode_root, electrode_files, products,
+                             limit, reserved, warnings)
     if report_source is None:
-        need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k)
+        need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k,
+                                                      alignment_report.HEAT_LAYERS_ASSUMED, window_px)
         skipped = f'estimated {need} bytes + {reserved} reserved > operation limit {limit}'
         warnings.append({'code': 'alignment_report_images_skipped', 'estimated_bytes': need, 'reserved_bytes': reserved,
                          'max_operation_bytes': limit})
@@ -890,7 +940,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     alignment_summary = {k: alignment[k] for k in ('status', 'reasons', 'offset_xy_um', 'dice_best', 'peak_ratio')}
     change_args = {k: args[k] for k in ('align_search_um', 'align_min_dice', 'align_layer_tolerance_um',
                                         'change_tolerance_um', 'window_um', 'merge_overlap', 'top_k')}
-    change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap') if k in args})
+    change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap', 'electrode_png_root') if k in args})
     payload = {'schema_version': candidates.SCHEMA_VERSION, 'roi_source': ROI_SOURCE, 'producer_commit': commit,
                'args': {'min_count': None, 'window_um': window_um, 'merge_overlap': args['merge_overlap'],
                         'max_candidates': top_k, 'representative_diameter_um': DIAMETER_UM},
