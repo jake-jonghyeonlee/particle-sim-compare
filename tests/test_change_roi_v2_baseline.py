@@ -21,7 +21,8 @@ PINNED_COMMIT = '0' * 40
 # 입력 폴더의 절대 경로가 여러 산출물에 들어간다. 해시 전에 world 루트 경로(와 resolve() 한 /private 형)를 <WORLD> 로 바꾼다.
 # 경로가 든 파일의 해시를 값으로 가진 키는 경로가 바뀌면 달라지므로 비교에서 뺀다(그 파일들은 치환 뒤 직접 해시한다):
 #   config_sha256 (config yaml 해시), export_sha256, index_export_sha256 (review_rois.json 해시) — sidecar 와 candidate_queries 의 어느 깊이든.
-DROP_KEYS = ('config_sha256', 'export_sha256', 'index_export_sha256')
+DROP_KEYS = ('config_sha256', 'export_sha256', 'index_export_sha256',
+             'area_reference_um2', 'area_target_um2')   # T4b: contributing_cases[*]·sidecar pairs[*] 의 case 면적 키(새 값)
 PLACEHOLDER = '<WORLD>'
 
 # 뒤 Task 가 정규화 키를 늘릴 수 있게 한 곳에 둔다(T4b: contributing_cases·sidecar pairs 의 area 키 제외 예정).

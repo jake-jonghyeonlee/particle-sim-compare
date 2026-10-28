@@ -54,6 +54,7 @@ MERGE_SCOPES = ('layer', 'all')
 MERGE_POLICY = {'layer': 'per_layer_window_overlap_intersection_over_min_area_union_find_region_id_order',
                 'all': 'all_layers_window_overlap_intersection_over_min_area_union_find_region_id_order'}
 SUPPRESS_POLICY = 'greedy_score_order_window_overlap_ge_x_all_layers'
+ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
 
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
@@ -312,7 +313,10 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
                                   'present_in': present_in, 'one_sided_case': present_in != 'both',
                                   'layer_changed': pair.layer_changed,
                                   'change_kind': contribution['classification'],
-                                  'residual_um2': contribution['residual_um2'], 'iou_global': contribution['iou_global'],
+                                  'residual_um2': contribution['residual_um2'],
+                                  'area_reference_um2': contribution['area_reference_um2'],
+                                  'area_target_um2': contribution['area_target_um2'],
+                                  'iou_global': contribution['iou_global'],
                                   'iou_local': contribution['iou_local'],
                                   'local_shift_um': contribution['local_shift_um'], **_layer_key(contribution)}
     for record in found.values():
@@ -350,6 +354,7 @@ def _direct_documents(records, alignment, commit, inputs):
             **{k: r[k] for k in ATTRIBUTE_KEYS},
             'region_id': r['region_id'], 'one_sided_case': r['one_sided_case'], 'present_in': r['present_in'],
             'layer_changed': r['layer_changed'], 'change_kind': r['change_kind'], 'residual_um2': r['residual_um2'],
+            'area_reference_um2': r['area_reference_um2'], 'area_target_um2': r['area_target_um2'],
             'iou_global': r['iou_global'], 'iou_local': r['iou_local'], 'local_shift_um': r['local_shift_um'],
             'observed_fraction': r['observed_fraction'], 'flags': r['flags'], 'directions': sorted(r['directions']),
             **_layer_key(r)}
@@ -764,6 +769,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 'observed_fraction': window['observed_fraction'],
                 'contributing_cases': [
                     {'case_key': c['case_key'], 'residual_um2': c['residual_um2'], 'change_kind': c['classification'],
+                     'area_reference_um2': c['area_reference_um2'], 'area_target_um2': c['area_target_um2'],
                      'iou_global': c['iou_global'], 'iou_local': c['iou_local'],
                      'local_shift_um': c['local_shift_um'], 'flags': c['flags'],
                      'present_in': pair_by_key[c['case_key']].present_in,
@@ -912,6 +918,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                           'index_export': 'one_manual_roi_per_dataset_case_index_only_not_queries_no_region_provenance'}}
     if suppress is not None:
         payload['policy']['suppress'] = SUPPRESS_POLICY
+    if merge_all:
+        payload['policy']['attributes'] = ATTRIBUTES_POLICY_ALL
     emit('candidate_queries_v1.json', json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     emit('funnel.json', json.dumps(funnel_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     candidates.write_funnel_csv(out / 'funnel.csv', funnels, coverage, track)

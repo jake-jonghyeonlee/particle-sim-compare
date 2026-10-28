@@ -775,7 +775,11 @@ def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, 
             if not count:
                 continue
             entry = {'case_key': pair.case_key, 'residual_um2': count * pitch_um * pitch_um}
-            entry.update(_classify(a_c[inner] & d_c[inner], b_c[inner] & d_c[inner], w, pitch_um))
+            a_in, b_in = a_c[inner] & d_c[inner], b_c[inner] & d_c[inner]
+            # 표시용 면적: 창 안·비교 영역 안 hotspot 픽셀 수 × pitch². 한쪽 조합의 없는 쪽은 0.
+            entry['area_reference_um2'] = int(np.count_nonzero(a_in)) * pitch_um * pitch_um
+            entry['area_target_um2'] = int(np.count_nonzero(b_in)) * pitch_um * pitch_um
+            entry.update(_classify(a_in, b_in, w, pitch_um))
             entry['flags'] = list(getattr(pair, 'flags', ()))
             found[index].append(entry)
         a = b = a_c = b_c = None   # 다음 쌍을 읽기 전에 이전 쌍 배열(과 그 view)을 놓는다
