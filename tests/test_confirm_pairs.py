@@ -694,3 +694,47 @@ def test_missing_match_files_field_stays_accepted(env):
     del payload['match_files']
     cand.write_text(json.dumps(payload, indent=2), encoding='utf-8')
     assert run(env, {'reference_to_target': matches}, path) == 0
+
+
+# compare-multiproduct/T1: byte-identity golden of the output without --models (digests taken from the 1f48e0d code) ----
+
+GOLDEN_BASELINE = {
+    'confirm_funnel.csv': '1842855e37fe79c898760a9520fae2b76c35f2d7ce2ede34c9fcb2866128ae4e',
+    'confirm_funnel.json': '0c0e8c8a76326407f89b1ea33d240911df4fba5b588b13ffef075893fbb2d58d',
+    'confirmed_pairs_sidecar.json': '1d005b104d5a9918000aa11c1450e3c43e78fe920b92fad09e5be5182bd03672',
+    'execution.json': '3de1dd7de82bf8bb93177bc7462b18b9f4c5eb846793adaf65ee03fa19385b9d',
+    'roi_correspondence.json': 'b0707b3f5b4a4845e0b10b6450406233bd934a6ae48948fa437bcafce844ed83',
+}
+
+
+def _normalised_output_digests(env, out):
+    """sha256 per output file with the variable fields (labelled_at, producer commit, the temp path) removed."""
+    import re
+
+    def clean(value):
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items() if k not in ('labelled_at', 'commit')}
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        return value
+    digests = {}
+    for path in sorted(Path(out).iterdir()):
+        text = path.read_bytes().decode('utf-8')
+        text = text.replace(str(env['tmp']), '<TMP>')
+        if path.name == 'confirmed_pairs_sidecar.json':   # input hashes cover exports that embed the temp path
+            text = re.sub(r'[0-9a-f]{64}', 'H', text)
+        if path.suffix == '.json':
+            text = json.dumps(clean(json.loads(text)), sort_keys=True, ensure_ascii=False)
+        else:
+            text = re.sub(r'\r\n', '\n', text)
+        digests[path.name] = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return digests
+
+
+def test_without_models_outputs_are_byte_identical_to_the_baseline(env):
+    matches, path = mutual_env(env, 0.3)
+    assert run(env, matches, path, tolerance=0.5) == 0
+    digests = _normalised_output_digests(env, env['tmp']/'out')
+    assert not (env['tmp']/'out'/'models').exists()
+    assert 'models' not in load(env['tmp']/'out'/'confirm_funnel.json')
+    assert digests == GOLDEN_BASELINE, json.dumps(digests, indent=1)
