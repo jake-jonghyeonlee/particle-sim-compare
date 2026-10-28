@@ -3,13 +3,19 @@
 한 파일, PNG 는 base64 data URI, ``<script>`` 와 외부 URL 이 없어 ``file://`` 로 열린다. 보고서만 만든다: 계산·순위·export 는 바꾸지 않는다.
 numpy·표준 라이브러리만 쓴다(PNG 는 zlib 으로 직접 쓰고, 글자는 3x5 점 글꼴이라 Pillow·글꼴 버전에 따라 바이트가 달라지지 않는다).
 
-그림 (모두 층별이며 층 사이 합집합은 만들지 않는다)
-- 층별 전체 겹침: CNT 층마다 정렬 전(offset 0)·정렬 후 두 장. reference 만 / target 만 / 둘 다 3색. 긴 변 <= OVERVIEW_MAX_PX 로 블록 any 축소.
-- 변경 지도 열지도: hotspot 층마다 합집합 변화(RU, 블록당 변화 칸 수)와 조합별 잔차 합(count_map, 블록 최대)에 선정 ROI 창을 사각형·순위로 표시.
-- ROI 상세: 창 + 50% 여백 crop(한 변 <= CROP_MAX_PX)의 CNT 층별 겹침과 hotspot 합집합 reference/target 겹침.
+change-roi-v2/T3a: 절 순서는 제목 줄 / 1 요약 / 2 CNT 정렬과 정렬 진단 / 3 변경 강조 지도 / 4 ROI 목록 / 5 ROI 상세 / 6 열지도 / 7 각주.
+
+그림 (층 사이 hotspot 합집합은 만들지 않는다)
+- 2a 전체 CNT 층 겹침(정렬 전 / 정렬 후): 모든 CNT 층을 한 장에. 층마다 고정 색표의 명도(최대 SHADE_LEVELS 단계, 넘으면 반복).
+  정렬 전은 reference 파랑 계열 / target 주황 계열(겹치면 미리 섞은 색), 정렬 후는 같은 픽셀 = 회색~검정, 한쪽만 = 파랑·주황, 비교 영역 밖 = 회색.
+- 2b 층별 CNT 겹침: CNT 층마다 정렬 전·후 두 장(접어 둠).
+- 3 변경 강조 지도: 층별 hotspot 합집합 변화의 층 OR 을 빨강, 변경 없는 패턴 연회색, 비교 영역 밖 진회색, 선정 ROI 초록 사각형·순위.
+- 5 ROI 상세: frame 전체에 이 ROI 만 굵은 빨강 사각형인 위치 그림(한 변 <= POSITION_MAX_PX)과 대표 층 hotspot 합집합 crop(한 변 <= CROP_MAX_PX).
+- 6 열지도: hotspot 층마다 합집합 변화(RU)와 조합별 잔차 합(count_map)(접어 둠).
+모든 PNG 는 고정 색표와 미리 섞은 색만 쓴다(반투명 없음).
 
 크기: 직렬화한 실제 바이트가 ``MAX_HTML_BYTES`` 를 넘으면 ROI crop 을 반 해상도로, 그래도 넘으면 순위 낮은 ROI 의 crop 부터 뺀다
-(요약 표·전체 겹침·열지도는 빼지 않는다). 같은 입력은 같은 바이트다(시각·절대 경로 없음).
+(요약 표·전체 겹침·위치 그림·열지도는 빼지 않는다). 같은 입력은 같은 바이트다(시각·절대 경로 없음).
 """
 from __future__ import annotations
 
@@ -27,7 +33,22 @@ MAX_HTML_BYTES = 30 * 1024 * 1024
 OVERVIEW_MAX_PX = 1000
 CROP_MAX_PX = 400
 CROP_HALF_PX = 200
+POSITION_MAX_PX = 250
+SHADE_LEVELS = 6
 SCHEMA = 'alignment_report_v1'
+
+# 2a 고정 색표(밝음 → 어두움). 층 순서(이름 자연 정렬)대로 SHADE_LEVELS 단계, 넘으면 처음부터 반복한다.
+REF_SHADES = ((190, 208, 246), (137, 168, 236), (80, 122, 220), (40, 90, 200), (24, 62, 150), (14, 38, 100))
+TGT_SHADES = ((250, 214, 170), (245, 184, 108), (235, 150, 50), (205, 115, 15), (150, 80, 8), (100, 52, 4))
+SAME_SHADES = ((150, 150, 150), (120, 120, 120), (90, 90, 90), (62, 62, 62), (36, 36, 36), (10, 10, 10))
+OUTSIDE_GRAY = (200, 200, 200)                  # 비교 영역 밖(C8C8C8)
+MAP_BG = (240, 240, 240)                        # 3절 바탕
+MAP_PATTERN = (208, 208, 208)                   # 변경 없는 패턴
+MAP_OUTSIDE = (160, 160, 160)                   # 비교 영역 밖
+MAP_CHANGED = (224, 32, 32)                     # 변경(빨강)
+POS_BG = (244, 244, 244)
+POS_PATTERN = (190, 190, 190)
+POS_RECT = (224, 32, 32)
 
 REF_COLOUR = (40, 90, 220)
 TGT_COLOUR = (235, 140, 20)
@@ -175,19 +196,25 @@ def _heat(values, observed):
 
 # --------------------------------------------------------------------------- 메모리 추정·자료 수집
 
-def estimate_report_bytes(ref_shape, tgt_shape):
-    """그림 생성 중 동시에 보유하는 bool 배열(바이트 수). 층 하나씩 처리하므로 층 수와 무관하다.
+def estimate_report_bytes(ref_shape, tgt_shape, n_rois=0):
+    """그림 생성 중 동시에 보유하는 배열(바이트 수). 층 하나씩 처리하므로 층 수와 무관하다.
 
-    hr = H_ref*W_ref, ht = H_tgt*W_tgt: 겹침 그림 한 장 = ref&valid, 이동한 target, 이동한 target valid, 비교 영역, 정렬 전 target
-    = 4*hr + ht, 블록 축소 중간 배열 2*hr 이하(reduceat 는 한 축만 줄인 (ny, W) 배열) → 6*hr + ht.
+    hr = H_ref*W_ref, ht = H_tgt*W_tgt, nb = 블록 축소한 그림의 칸 수(ceil(H/step)*ceil(W/step), step = _step_for(ref, OVERVIEW_MAX_PX)).
+    - 2a 정렬 후 한 층: ref&비교 영역, 이동한 target, 이동한 target valid, 비교 영역, 같은 칸, reference 만, target 만 = 7*hr,
+      블록 축소 중간 배열 2*hr 이하(reduceat 는 한 축만 줄인 (ny, W) 배열) → 9*hr, 정렬 전 target 한 장분 ht.
+    - 2a 두 장의 층 인덱스·rgb 와 3절·6절 블록 지도(블록 단위 uint8/bool/uint32/rgb 합쳐 칸당 24 바이트 이하) → 24*nb.
+    - ROI 위치 그림은 한 변 POSITION_MAX_PX 이하 rgb 와 블록 배열: ROI 마다 4*POSITION_MAX_PX**2 → n_rois * 4*POSITION_MAX_PX**2.
+    식: 9*hr + ht + 24*nb + n_rois * 4*POSITION_MAX_PX**2.
     열지도 수집 중 uint32 지도의 reduceat 중간 배열은 4*hr 이하라 더 작다."""
     hr = int(ref_shape[0]) * int(ref_shape[1])
     ht = int(tgt_shape[0]) * int(tgt_shape[1])
-    return 6 * hr + ht
+    step = _step_for(ref_shape, OVERVIEW_MAX_PX)
+    nb = int(math.ceil(ref_shape[0] / float(step))) * int(math.ceil(ref_shape[1] / float(step)))
+    return 9 * hr + ht + 24 * nb + int(n_rois) * 4 * POSITION_MAX_PX ** 2
 
 
-def fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes):
-    return estimate_report_bytes(ref_shape, tgt_shape) <= max_operation_bytes - reserved_bytes
+def fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes, n_rois=0):
+    return estimate_report_bytes(ref_shape, tgt_shape, n_rois) <= max_operation_bytes - reserved_bytes
 
 
 class ImageSource:
@@ -200,6 +227,7 @@ class ImageSource:
         self.step = _step_for(ref_valid.shape, OVERVIEW_MAX_PX)
         self.heat = {}
         self.observed = None
+        self.hot_any = None       # 모든 hotspot 층의 reference ∪ target 합집합 블록(3절·위치 그림의 연회색 패턴)
         self.hot = []
 
     def collect(self, maps, windows):
@@ -209,6 +237,10 @@ class ImageSource:
         for layer in sorted(maps['maps']):
             self.heat[layer] = {'union': _block(np.asarray(maps['union_change'][layer], dtype=bool), step, 'sum'),
                                 'count': _block(maps['maps'][layer], step, 'max')}
+            if layer in maps['union_ref'] and layer in maps['union_tgt']:
+                any_layer = _block(np.asarray(maps['union_ref'][layer], dtype=bool) |
+                                   np.asarray(maps['union_tgt'][layer], dtype=bool), step, 'any')
+                self.hot_any = any_layer if self.hot_any is None else (self.hot_any | any_layer)
         height, width = self.ref_valid.shape
         for window in windows:
             y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
@@ -250,6 +282,120 @@ def _overview_pair(source, name):
         out.append(_overlay(ref_b, _block(layer_t, step, 'any'), gray))
         del valid_t, layer_t
     return out
+
+
+def natural_key(name):
+    """층 이름 자연 정렬 키: CNT2 < CNT10."""
+    import re
+    return [int(part) if part.isdigit() else part for part in re.split(r'(\d+)', str(name))]
+
+
+def _shade(ref_idx, tgt_idx, same_idx, gray):
+    """층 인덱스 배열(없음 = -1) → rgb. 같은 칸은 SAME_SHADES, 한쪽만은 REF/TGT_SHADES, 한 칸에 둘 다 있으면 미리 섞은 평균색."""
+    rgb = np.empty(ref_idx.shape + (3,), dtype=np.uint8)
+    rgb[:] = WHITE
+    rgb[gray] = OUTSIDE_GRAY
+    ref_t, tgt_t, same_t = (np.array(t, dtype=np.uint8) for t in (REF_SHADES, TGT_SHADES, SAME_SHADES))
+    if same_idx is not None:
+        m = same_idx >= 0
+        rgb[m] = same_t[same_idx[m]]
+    r, t = ref_idx >= 0, tgt_idx >= 0
+    rgb[r & ~t] = ref_t[ref_idx[r & ~t]]
+    rgb[t & ~r] = tgt_t[tgt_idx[t & ~r]]
+    both = r & t
+    if both.any():
+        rgb[both] = ((ref_t[ref_idx[both]].astype(np.uint16) + tgt_t[tgt_idx[both]]) // 2).astype(np.uint8)
+    return rgb
+
+
+def _overview_all(source, names):
+    """모든 CNT 층을 한 장에 겹친 (정렬 전 rgb, 정렬 후 rgb, reference 패턴 블록). 층마다 한 번에 하나씩만 전체 해상도 배열을 쓴다.
+
+    정렬 후는 비교 영역(reference valid ∩ 이동한 target valid) 안만 비교하고 밖은 회색이다. 한 칸에 변경(한쪽만)과 같은 모양이 같이 있으면 변경이 위에 온다."""
+    dx, dy = source.offset_px
+    height, width = source.ref_valid.shape
+    step = source.step
+    shape = (int(math.ceil(height / float(step))), int(math.ceil(width / float(step))))
+    empty = np.zeros(source.ref_valid.shape, dtype=bool)
+    valid_p = _plain(source.tgt_valid, source.ref_valid.shape)
+    valid_s = change_map._shift_crop(source.tgt_valid, dy, dx, 0, height, 0, width)
+    comp = source.ref_valid & valid_s
+    gray_after = ~_block(comp, step, 'any')
+    pattern = np.zeros(shape, dtype=bool)
+    idx = {key: np.full(shape, -1, dtype=np.int8) for key in ('ref_b', 'tgt_b', 'ref_a', 'tgt_a', 'same_a')}
+    for k, name in enumerate(names):
+        level = k % SHADE_LEVELS
+        ref = (np.asarray(source.ref_layers[name], dtype=bool) & source.ref_valid) if name in source.ref_layers else empty
+        tgt_p = (_plain(np.asarray(source.tgt_layers[name], dtype=bool), source.ref_valid.shape) & valid_p
+                 if name in source.tgt_layers else empty)
+        ref_b, tgt_b = _block(ref, step, 'any'), _block(tgt_p, step, 'any')
+        idx['ref_b'][ref_b] = level
+        idx['tgt_b'][tgt_b] = level
+        pattern |= ref_b
+        del tgt_p
+        tgt_s = (change_map._shift_crop(np.asarray(source.tgt_layers[name], dtype=bool), dy, dx, 0, height, 0, width) & comp
+                 if name in source.tgt_layers else empty)
+        ref_c = ref & comp
+        idx['same_a'][_block(ref_c & tgt_s, step, 'any')] = level
+        idx['ref_a'][_block(ref_c & ~tgt_s, step, 'any')] = level
+        idx['tgt_a'][_block(tgt_s & ~ref_c, step, 'any')] = level
+        del ref, ref_c, tgt_s
+    none = np.zeros(shape, dtype=bool)
+    before = _shade(idx['ref_b'], idx['tgt_b'], None, none)
+    after = _shade(idx['ref_a'], idx['tgt_a'], idx['same_a'], gray_after)
+    return before, after, pattern
+
+
+def _change_map_image(source, windows, pattern):
+    """3절: 층별 hotspot 합집합 변화의 층 OR = 빨강, 변경 없는 패턴 연회색, 비교 영역 밖 진회색, 선정 ROI 초록 사각형·순위."""
+    step = source.step
+    observed = source.observed
+    shape = observed.shape
+    changed = np.zeros(shape, dtype=bool)
+    for layer in source.heat:
+        changed |= source.heat[layer]['union'] > 0
+    quiet = np.zeros(shape, dtype=bool)
+    if pattern is not None:
+        quiet |= pattern
+    if source.hot_any is not None:
+        quiet |= source.hot_any
+    rgb = np.empty(shape + (3,), dtype=np.uint8)
+    rgb[:] = MAP_BG
+    rgb[quiet] = MAP_PATTERN
+    rgb[~observed] = MAP_OUTSIDE
+    rgb[changed & observed] = MAP_CHANGED
+    for rank, window in enumerate(windows, start=1):
+        y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
+        y0, x0, y1, x1 = y // step, x // step, (y + w - 1) // step, (x + w - 1) // step
+        _rect(rgb, y0, x0, y1, x1, RECT_COLOUR)
+        _rect(rgb, y0 - 1, x0 - 1, y1 + 1, x1 + 1, RECT_COLOUR)
+        _label(rgb, str(rank), y0 + 2, x0 + 2)
+    return rgb
+
+
+def _position_base(source, pattern):
+    """ROI 위치 그림의 바탕(한 변 <= POSITION_MAX_PX) 과 총 축소 배수. 모든 ROI 가 같은 바탕을 쓴다."""
+    observed = source.observed
+    quiet = np.array(pattern, dtype=bool) if pattern is not None else np.zeros(observed.shape, dtype=bool)
+    if source.hot_any is not None:
+        quiet |= source.hot_any
+    extra = _step_for(observed.shape, POSITION_MAX_PX)
+    quiet, obs = _block(quiet, extra, 'any'), _block(observed, extra, 'any')
+    rgb = np.empty(quiet.shape + (3,), dtype=np.uint8)
+    rgb[:] = POS_BG
+    rgb[quiet] = POS_PATTERN
+    rgb[~obs] = OUTSIDE_GRAY
+    return rgb, source.step * extra
+
+
+def _position_image(base, total_step, window):
+    """frame 전체(base)에 이 ROI 창만 굵은(3 px) 빨강 사각형."""
+    rgb = np.array(base)
+    y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
+    y0, x0, y1, x1 = y // total_step, x // total_step, (y + w - 1) // total_step, (x + w - 1) // total_step
+    for grow in (0, 1, 2):
+        _rect(rgb, y0 - grow, x0 - grow, y1 + grow, x1 + grow, POS_RECT)
+    return rgb
 
 
 def _plain(array, shape):
@@ -300,22 +446,11 @@ def _fit(rgb_inputs, limit):
 
 
 def _crop_images(source, window, hot, limit):
-    """ROI 하나의 [(제목, rgb)]: CNT 층별 겹침(정렬 후) + hotspot 합집합 reference/target 겹침."""
-    dx, dy = source.offset_px
+    """ROI 하나의 [(제목, rgb)]: 대표 층 hotspot 합집합 reference/target 겹침 한 장(CNT 정렬 crop 은 2절로 옮겼다)."""
     y0, y1, x0, x1 = hot['box']
     y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
     rect = (y - y0, x - x0, y + w - 1 - y0, x + w - 1 - x0)
-    images = []
-    names = sorted(set(source.ref_layers) & set(source.tgt_layers))
-    if names:
-        valid_t = change_map._shift_crop(source.tgt_valid, dy, dx, y0, y1, x0, x1)
-        gray = ~(source.ref_valid[y0:y1, x0:x1] & valid_t)
-        for name in names:
-            ref = np.asarray(source.ref_layers[name][y0:y1, x0:x1], dtype=bool) & source.ref_valid[y0:y1, x0:x1]
-            tgt = change_map._shift_crop(np.asarray(source.tgt_layers[name], dtype=bool), dy, dx, y0, y1, x0, x1) & valid_t
-            images.append((name + ' (정렬 후)', _fit((ref, tgt, gray, rect), limit)))
-    images.append(('hotspot 합집합 (' + window['layer'] + ')', _fit((hot['ref'], hot['tgt'], ~hot['obs'], rect), limit)))
-    return images
+    return [('hotspot 합집합 (대표 층 ' + window['layer'] + ')', _fit((hot['ref'], hot['tgt'], ~hot['obs'], rect), limit))]
 
 
 # --------------------------------------------------------------------------- HTML
@@ -327,7 +462,23 @@ STYLE = (
     '.note{color:#555;font-size:13px}.figs{display:flex;flex-wrap:wrap;gap:12px}figure{margin:0}'
     'figure img{max-width:100%;border:1px solid #999;image-rendering:pixelated}figcaption{font-size:12px;color:#555}'
     '.roi{border-top:2px solid #888;margin-top:1.2rem;padding-top:.4rem}.missing{border:1px dashed #999;color:#777;padding:.4rem;font-size:12px}'
-    '.sw{display:inline-block;width:.9em;height:.9em;vertical-align:middle;border:1px solid #666}')
+    '.sw{display:inline-block;width:.9em;height:.9em;vertical-align:middle;border:1px solid #666;margin-right:2px}'
+    '.badge{display:inline-block;padding:3px 12px;border-radius:12px;font-weight:bold;color:#fff;font-size:14px}'
+    '.badge.ok{background:#1f8f4e}.badge.uncertain{background:#d9822b}.badge.failed{background:#c62828}'
+    '.frame-warn{border:2px solid #c80;background:#fff7e6;padding:.5rem .8rem;font-size:13px}'
+    'tr.app td{background:#e9f8ee}tr.dis td{background:#fdecec}td.hi{color:#c62828;font-weight:bold}td.num{text-align:right}'
+    '.key{color:#888;font-size:11px}code{background:#f2f2f2;padding:0 3px;font-size:12px}'
+    'details summary{cursor:pointer;color:#36c;font-size:13px}a{color:#1a56c4}')
+
+BADGE = {'aligned': ('ok', '정렬됨'), 'aligned_uncertain': ('uncertain', '불확실'),
+         'alignment_failed_identity_used': ('failed', '실패')}
+CHANGE_KIND_TEXT = {'appeared': '새로 생김', 'disappeared': '사라짐', 'shifted': '형상 변화', 'reshaped': '형상 변화',
+                    'mixed_undetermined': '형상 변화'}
+PRESENT_TEXT = {'both': '둘 다', 'reference': 'reference 만', 'target': 'target 만'}
+ELECTRODE_FLAG_TEXT = {'new_electrode': '새 전극', 'removed_electrode': '없어진 전극'}
+CONTRIBUTION_TOP_ROWS = 10
+QUADRANTS = (('top_left', '위', '왼쪽'), ('top_right', '위', '오른쪽'),
+             ('bottom_left', '아래', '왼쪽'), ('bottom_right', '아래', '오른쪽'))
 
 
 def _json(value):
@@ -375,7 +526,69 @@ def _legend():
             % (REF_COLOUR, TGT_COLOUR, BOTH_COLOUR, GRAY))
 
 
-def _summary(alignment):
+def _swatch(colour):
+    return '<span class="sw" style="background:rgb%s"></span>' % (tuple(colour),)
+
+
+def _legend_layers(names):
+    """2a 범례: 층 이름 + 견본(reference / target / 같은 모양). 층 > SHADE_LEVELS 이면 명도 반복 경고."""
+    parts = ['<div style="font-size:13px;max-width:360px"><b>범례</b><br>']
+    for k, name in enumerate(names):
+        level = k % SHADE_LEVELS
+        parts.append(_swatch(REF_SHADES[level]) + _swatch(TGT_SHADES[level]) + _swatch(SAME_SHADES[level]) +
+                     ' ' + escape(name) + '<br>')
+    parts.append(_swatch(REF_SHADES[3]) + ' reference 파랑 · ' + _swatch(TGT_SHADES[3]) + ' target 주황 · ' +
+                 _swatch(SAME_SHADES[3]) + ' 두 모델 같음(회색~검정) · ' + _swatch(OUTSIDE_GRAY) + ' 비교 안 함<br>')
+    if len(names) > SHADE_LEVELS:
+        parts.append('<span class="warn">층이 %d개라 명도 반복: %d번째 층부터 앞의 층과 같은 명도를 씁니다. 층별 그림(2b)으로 구분하십시오.</span>'
+                     % (len(names), SHADE_LEVELS + 1))
+    else:
+        parts.append('<span class="note">층 순서는 이름 자연 정렬이다. 층마다 명도가 다르다(밝음 → 어두움).</span>')
+    parts.append('</div>')
+    return ''.join(parts)
+
+
+def _fmt2(value):
+    return '—' if value is None else '%.2f' % float(value)
+
+
+def _pct(value):
+    return '—' if value is None else '%.1f %%' % (float(value) * 100.0)
+
+
+def _frame_shape(alignment, source=None):
+    shape = alignment.get('frame_shape_reference_yx')
+    if shape is None and source is not None:
+        shape = list(source.ref_valid.shape)
+    return shape
+
+
+def position_text(centre_y_px, centre_x_px, shape):
+    """frame 안 위치 문구: (왼쪽/가운데/오른쪽) × (위/가운데/아래) + x %, y %. shape = (높이, 너비) px. 경계는 1/3, 2/3 에서 아래쪽 칸에 든다."""
+    if not shape or not shape[0] or not shape[1]:
+        return '—'
+    fy, fx = float(centre_y_px) / shape[0], float(centre_x_px) / shape[1]
+    horizontal = ('왼쪽', '가운데', '오른쪽')[min(2, max(0, int(fx * 3)))]
+    vertical = ('위', '가운데', '아래')[min(2, max(0, int(fy * 3)))]
+    where = '가운데' if horizontal == vertical == '가운데' else horizontal + ' ' + vertical
+    return '%s (x %d %%, y %d %%)' % (where, int(round(fx * 100)), int(round(fy * 100)))
+
+
+def _window_position(window, shape):
+    y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
+    return position_text(y + w / 2.0, x + w / 2.0, shape)
+
+
+def _badge_title(alignment):
+    css, text = BADGE.get(alignment['status'], ('uncertain', alignment['status']))
+    inputs = alignment.get('cnt_inputs') or {}
+    ids = {side: (inputs.get(side) or {}).get('product_id', '—') for side in ('reference', 'target')}
+    return ('<h1>CNT 정렬 · 변경점 ROI 보고서 <span class="badge %s">%s</span></h1>'
+            '<p class="note">기준 모델(reference) <code>%s</code> · 비교 모델(target) <code>%s</code> · pitch %s µm</p>'
+            % (css, escape(text), escape(str(ids['reference'])), escape(str(ids['target'])), escape(str(alignment.get('pitch_um')))))
+
+
+def _summary(alignment, n_rois=0):
     status = alignment['status']
     rows = [
         ('status', _Raw(escape(STATUS_TEXT.get(status, status)) + ' <code>' + escape(status) + '</code>')),
@@ -395,10 +608,14 @@ def _summary(alignment):
         parts.append('<p class="warn">경고: 정렬이 불확실합니다(alignment_uncertain). 상태는 ' + escape(STATUS_TEXT.get(status, status)) +
                      '입니다. 아래 변경 위치는 best-effort 이며 정렬이 틀렸으면 배치 이동 전체가 "변경"으로 잡힐 수 있습니다. '
                      '그림으로 정렬 후 겹침을 먼저 확인하십시오.</p>')
-    parts.append(_table(['항목', '값'], rows + _frame_rows(alignment)))
-    parts.append(_quadrant_table(alignment))
+    rows = rows + _frame_rows(alignment)
+    quadrant = _quadrant_table(alignment)
+    if quadrant:
+        rows.append(('사분면 offset (전역 대비 차이)', _Raw(quadrant)))
+    rows.append(('ROI 수', _Raw('%d (<a href="#list">ROI 목록</a>)' % n_rois)))
+    parts.append(_table(['항목', '값'], rows))
     if alignment.get('frame_shape_reference_yx') != alignment.get('frame_shape_target_yx') and 'frame_shape_target_yx' in alignment:
-        parts.append('<p class="note">unit size 차이로 frame 크기가 다릅니다. 비교는 두 frame 의 공통 영역만 합니다. resize 하지 않습니다.</p>')
+        parts.append('<p class="frame-warn">unit size 차이로 frame 크기가 다릅니다. 비교는 두 frame 의 공통 영역만 합니다. resize 하지 않습니다.</p>')
     return ''.join(parts)
 
 
@@ -419,16 +636,28 @@ def _frame_rows(alignment):
 
 
 def _quadrant_table(alignment):
+    """사분면 offset 2x2 표(안쪽 표). 칸마다 전역 offset 과의 거리(µm, 소수 2자리). ``align_layer_tolerance_um`` 초과 칸은 hi 클래스·⚠."""
     quadrants = alignment.get('quadrant_offsets_um') or {}
     if not quadrants:
         return ''
-    return '<p class="note">분면별 offset (quadrant_offsets_um)</p>' + _table(
-        ['분면', 'offset_xy_um'], [(name, quadrants[name]) for name in sorted(quadrants)])
+    tolerance = (alignment.get('args') or {}).get('align_layer_tolerance_um')
+    glob = alignment.get('offset_xy_um')
+    cells = {}
+    for key, _, _ in QUADRANTS:
+        value = quadrants.get(key)
+        if value is None or glob is None:
+            cells[key] = '<td>—</td>'
+            continue
+        diff = math.hypot(float(value[0]) - float(glob[0]), float(value[1]) - float(glob[1]))
+        over = tolerance is not None and diff > float(tolerance) + 1e-9
+        cells[key] = '<td%s>%s · 차이 %.2f µm%s</td>' % (' class="hi"' if over else '', escape(_json(value)), diff, ' ⚠' if over else '')
+    return ('<table><tr><th></th><th>왼쪽</th><th>오른쪽</th></tr>'
+            '<tr><th>위</th>%(top_left)s%(top_right)s</tr><tr><th>아래</th>%(bottom_left)s%(bottom_right)s</tr></table>' % cells)
 
 
 def _alternatives(alignment):
     alts = alignment['alternatives']
-    parts = ['<h2>2. 대안 offset</h2>']
+    parts = ['<h3>2c. 대안 offset · 합집합에 포함한 조합</h3><h4>대안 offset</h4>']
     if 'peak_ambiguous' in alignment['reasons']:
         parts.append('<p class="warn">정렬이 반복 주기만큼 틀렸을 수 있습니다(peak_ambiguous): 아래 대안 offset 이 최적과 비슷한 점수입니다.</p>')
     if not alts:
@@ -439,23 +668,109 @@ def _alternatives(alignment):
     return ''.join(parts)
 
 
-def _roi_text(rank, query, window):
+def split_case_key(case_key):
+    """case_key → (불량 유형, 전극 쌍, 층). ``change_map._key_text`` 형식 ``type|A|layerA|B|layerB|layer`` 가 아니면 (None, None, None)."""
+    fields = str(case_key).split('|')
+    if len(fields) != 6:
+        return None, None, None
+    failure, a, layer_a, b, layer_b, layer = fields
+    if layer_a == layer_b == layer:
+        pair = a + ' – ' + b
+    else:
+        pair = '%s (%s) – %s (%s)' % (a, layer_a, b, layer_b)
+    return failure, pair, layer
+
+
+def _case_layer(case, decomposed):
+    return decomposed if decomposed is not None else case.get('layer')
+
+
+def contribution_layers(query, window):
+    """불량 조합이 있는 층: merge_scope=all 이면 기여 case 의 ``layer``, 아니면 대표 층. 순서는 자연 정렬."""
+    layers = {c['layer'] for c in query['contributing_cases'] if 'layer' in c}
+    return sorted(layers or {window['layer']}, key=natural_key)
+
+
+def kind_counts(query):
+    """(새로 생김, 사라짐, 형상 변화) 기여 조합 수."""
+    counts = [0, 0, 0]
+    for c in query['contributing_cases']:
+        kind = c['change_kind']
+        counts[0 if kind == 'appeared' else 1 if kind == 'disappeared' else 2] += 1
+    return tuple(counts)
+
+
+def _case_row(case):
+    failure, pair, layer = split_case_key(case['case_key'])
+    layer = _case_layer(case, layer)
+    kind = case['change_kind']
+    kind_text = CHANGE_KIND_TEXT.get(kind, kind)
+    kind_cell = escape(kind_text) + ('' if kind == 'appeared' or kind == 'disappeared' else ' <code>' + escape(kind) + '</code>')
+    flags = [f for f in case.get('flags', ()) if f in CASE_FLAGS]
+    flag_cell = ', '.join(escape(ELECTRODE_FLAG_TEXT[f]) + ' <code>' + escape(f) + '</code>' for f in flags) or '—'
+    first = (escape(failure) if failure is not None else escape(case['case_key'])) + \
+        ' <br><span class="key">' + escape(case['case_key']) + '</span>'
+    if failure is None:
+        first = '<span class="key">' + escape(case['case_key']) + '</span>'
+    cells = [first, escape(pair) if pair is not None else '—', escape(str(layer)) if layer is not None else '—', kind_cell,
+             _fmt2(case['residual_um2']), _fmt2(case.get('area_reference_um2')),
+             _fmt2(case.get('area_target_um2')), escape(PRESENT_TEXT.get(case.get('present_in', 'both'), str(case.get('present_in')))),
+             '예' if case.get('layer_changed', False) else '아니오', flag_cell]
+    css = ' class="app"' if kind == 'appeared' else ' class="dis"' if kind == 'disappeared' else ''
+    numeric = (4, 5, 6)
+    return '<tr%s>%s</tr>' % (css, ''.join('<td%s>%s</td>' % (' class="num"' if i in numeric else '', c) for i, c in enumerate(cells)))
+
+
+CONTRIBUTION_HEADER = ('불량 유형', '전극 쌍', '층', '변경 종류', '창 안 변경 면적 µm²', 'reference 면적 µm²', 'target 면적 µm²',
+                       '있는 모델', '층 바뀜', '전극 표시')
+
+
+def _contribution_table(cases):
+    """기여 조합 표(한글). 창 안 변경 면적 큰 순(입력 순서 그대로), 상위 CONTRIBUTION_TOP_ROWS 행 밖은 <details> 로 접는다."""
+    head = '<tr>' + ''.join('<th>' + escape(h) + '</th>' for h in CONTRIBUTION_HEADER) + '</tr>'
+    rows = [_case_row(c) for c in cases]
+    out = '<h4>기여 조합 (창 안 변경 면적 큰 순)</h4><table>' + head + ''.join(rows[:CONTRIBUTION_TOP_ROWS]) + '</table>'
+    if len(rows) > CONTRIBUTION_TOP_ROWS:
+        out += ('<details><summary>나머지 %d행 보기 (상위 %d행 외)</summary><table>%s%s</table></details>'
+                % (len(rows) - CONTRIBUTION_TOP_ROWS, CONTRIBUTION_TOP_ROWS, head, ''.join(rows[CONTRIBUTION_TOP_ROWS:])))
+    return out
+
+
+def _roi_list(queries, windows, shape):
+    """4절 ROI 목록 표. 순위 칸은 5절 상세(``roi<순위>``)로 가는 링크."""
+    header = ('순위', '대표 층', '불량 조합이 있는 층', '중심 (µm)', 'frame 안 위치', '점수 µm²', '새로 생김', '사라짐', '형상 변화', '상태')
+    out = ['<h2 id="list">4. ROI 목록</h2>']
+    if not queries:
+        out.append('<p class="note">선정된 ROI 가 없습니다.</p>')
+        return ''.join(out)
+    out.append('<table><tr>' + ''.join('<th>' + escape(h) + '</th>' for h in header) + '</tr>')
+    for rank, (query, window) in enumerate(zip(queries, windows), start=1):
+        new, gone, shape_change = kind_counts(query)
+        centre = '[%.2f, %.2f]' % (query['center_xy_um'][0], query['center_xy_um'][1])
+        out.append('<tr><td><a href="#roi%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="num">%s</td>'
+                   '<td>%d</td><td>%d</td><td>%d</td><td>%s</td></tr>'
+                   % (rank, rank, escape(str(window['layer'])), escape(', '.join(contribution_layers(query, window))),
+                      escape(centre), escape(_window_position(window, shape)), _fmt2(query['score_um2']), new, gone, shape_change,
+                      escape(str(query.get('status', '—')))))
+    out.append('</table>')
+    return ''.join(out)
+
+
+def _roi_text(rank, query, window, shape):
     flags = query['flags']
-    head = [('score_um2 (합집합 변화, 순위 기준)', query['score_um2']), ('score_layer', query['score_layer']),
-            ('sum_residual_um2', query['sum_residual_um2']), ('changed_case_count', query['changed_case_count']),
-            ('union_delta_um2', query['union_delta_um2']), ('union_area_reference_um2', query['union_area_reference_um2']),
-            ('union_area_target_um2', query['union_area_target_um2']), ('observed_fraction', query['observed_fraction']),
+    head = [('score_um2 (합집합 변화, 순위 기준)', _fmt2(query['score_um2'])), ('score_layer', query['score_layer']),
+            ('sum_residual_um2', _fmt2(query['sum_residual_um2'])), ('changed_case_count', query['changed_case_count']),
+            ('union_delta_um2', _fmt2(query['union_delta_um2'])),
+            ('union_area_reference_um2', _fmt2(query['union_area_reference_um2'])),
+            ('union_area_target_um2', _fmt2(query['union_area_target_um2'])), ('observed_fraction', _pct(query['observed_fraction'])),
             ('flags', _Raw('<br>'.join('<code>' + escape(f) + '</code> ' + escape(FLAG_TEXT.get(f, '')) for f in flags) or '—')),
             ('cnt_change_um2_by_layer', query['cnt_change_um2_by_layer'])]
-    cases = [(c['case_key'], c['change_kind'], c['residual_um2'], c['iou_global'], c['iou_local'],
-              c.get('present_in', 'both'), c.get('layer_changed', False),
-              _Raw(', '.join('<code>' + escape(f) + '</code>' for f in c.get('flags', ()) if f in CASE_FLAGS) or '—'))
-             for c in query['contributing_cases']]
-    title = ('<h3>순위 %d · 층 %s · 중심 %s µm · <code>%s</code></h3>'
-             % (rank, escape(str(window['layer'])), escape(_json(query['center_xy_um'])), escape(str(query['region_id']))))
-    return title, _table(['항목', '값'], head) + _table(
-        ['기여 조합 case_key', 'change_kind', 'residual_um2', 'iou_global', 'iou_local', 'present_in', 'layer_changed',
-         'electrode_flags'], cases)
+    title = ('<h3>순위 %d · 대표 층 %s · 불량 조합 층 %s · 중심 %s µm · 창 원점 %s px · frame %s · <code>%s</code></h3>'
+             % (rank, escape(str(window['layer'])), escape(', '.join(contribution_layers(query, window))),
+                escape('[%.2f, %.2f]' % (query['center_xy_um'][0], query['center_xy_um'][1])),
+                escape(_json(list(window['window_origin_px']))), escape(_window_position(window, shape)),
+                escape(str(query['region_id']))))
+    return title, _table(['항목', '값'], head) + _contribution_table(query['contributing_cases'])
 
 
 def _pairing_summary(stats):
@@ -464,14 +779,14 @@ def _pairing_summary(stats):
             'new_electrode_included', 'removed_electrode_included')
     rows = [(key, stats.get(key, 0)) for key in keys]
     rows.append(('excluded_by_reason', _Raw('<code>' + escape(_json(stats.get('excluded_by_reason', {}))) + '</code>')))
-    return ('<h2>2b. 합집합에 포함한 조합</h2>'
+    return ('<h4>합집합에 포함한 조합</h4>'
             '<p class="note">한쪽 모델에만 있거나 층이 바뀐 조합은 그쪽 합집합에만 들어갑니다. '
             '전극이 한쪽 모델에만 있는 조합도 포함하며 new_electrode / removed_electrode 로 표시합니다.</p>'
             + _table(['항목', '값'], rows))
 
 
 def _footnotes():
-    return ('<h2>6. 각주</h2><ul class="note">'
+    return ('<h2>7. 각주</h2><ul class="note">'
             '<li>순위는 층별 합집합 변화(<code>score_um2</code>, 6회차 Δ_union 과 같은 기준)이다. 층 사이 합집합은 만들지 않는다.</li>'
             '<li>조합별 잔차 합(<code>sum_residual_um2</code>)과 변경 case 수(<code>changed_case_count</code>)는 순위가 아니라 속성이다.</li>'
             '<li>union 은 짝지어진 조합과 한쪽 조합으로 계산한다(<code>union_basis: paired_and_one_sided_cases</code>). '
@@ -480,6 +795,15 @@ def _footnotes():
             '<code>new_electrode</code>(target 에만 있는 전극) 또는 <code>removed_electrode</code>(reference 에만 있는 전극)가 붙는다.</li>'
             '<li>한 ROI 의 직접 쌍들은 중심을 공유한다(같은 창에 기여한 조합마다 쌍이 하나씩이다).</li>'
             '<li>열지도는 블록 축소한 값이다: 합집합 변화는 블록 안 변화 칸 수, 조합별 잔차 합은 블록 안 최댓값(겹친 조합 수).</li>'
+            '<li>창 안 변경 면적(<code>residual_um2</code>)은 한 조합의 reference 와 target hotspot 을 정렬 offset 으로 맞춘 뒤 '
+            '변경 허용 오차를 넘어 창 안에 남는 칸의 면적이다. 조합마다 따로 구하며 합집합 변화(<code>score_um2</code>)와 같은 값이 아니다.</li>'
+            '<li>reference 면적 / target 면적은 창 안·비교 영역 안 그 조합의 hotspot 면적이다. 한쪽에만 있는 조합은 없는 쪽이 0 이다. '
+            '두 frame 크기가 달라 두 면적의 분모(관측 영역)가 다를 수 있다.</li>'
+            '<li>frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. resize 하지 않으며 비교 영역 밖은 회색이다.</li>'
+            '<li><code>--merge-scope all</code> 에서는 창이 층을 넘어 병합되지만 순위·점수·위치는 대표 층 하나의 합집합 변화 기준이다. '
+            '다른 층의 변경은 기여 조합 표(층 칸)로만 보이며 층 사이 합집합은 만들지 않는다.</li>'
+            '<li><code>--suppress-overlap</code> 을 쓰면 순위가 앞선 대표 창과 겹침 비율이 기준 이상인 창은 층 구분 없이 목록에서 빠진다. '
+            '빠진 창의 변경은 앞선 ROI 의 창에서 이미 보인다.</li>'
             '</ul>')
 
 
@@ -491,51 +815,64 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     반환 ``(html 바이트, {'path', 'bytes', 'downscaled', 'crops_omitted', 'n_images'})``."""
     limit = MAX_HTML_BYTES if max_bytes is None else max_bytes
     n_images = 0
-    prefix = [_summary(alignment), _alternatives(alignment)]
-    if pairing_stats is not None:
-        prefix.append(_pairing_summary(pairing_stats))
-    # 3. 층별 전체 겹침
-    prefix.append('<h2>3. 층별 전체 겹침 (정렬 전 / 정렬 후)</h2>')
+    shape = _frame_shape(alignment, source)
+    prefix = [_badge_title(alignment), _summary(alignment, len(queries))]
+    # 2. CNT 정렬과 정렬 진단
+    prefix.append('<h2>2. CNT 정렬과 정렬 진단</h2><h3>2a. 전체 CNT 층 겹침 — 정렬 전 / 정렬 후</h3>')
+    pattern = None
+    names = sorted(set(source.ref_layers) | set(source.tgt_layers), key=natural_key) if source is not None else []
     if source is None:
         prefix.append('<p class="note">그림을 만들지 않았습니다: ' + escape(skipped_reason or '') + '</p>')
+    elif not names:
+        prefix.append('<p class="note">CNT 층 영상이 없어 겹침 그림이 없습니다.</p>')
     else:
+        before, after, pattern = _overview_all(source, names)
+        figs = []
+        for caption, rgb in (('전체 CNT 층 · 정렬 전 (offset 0)', before),
+                             ('전체 CNT 층 · 정렬 후 (offset ' + _json(alignment['offset_xy_px']) + ' px): 같은 모양은 회색~검정, 남은 색이 변경', after)):
+            figs.append(_figure(_uri(_png(rgb)), caption))
+            n_images += 1
+        prefix.append('<div class="figs">' + ''.join(figs) + _legend_layers(names) + '</div>')
+        del before, after
+        # 2b. 층별 CNT 겹침 (접어 둠)
+        prefix.append('<h3>2b. 층별 CNT 겹침 (정렬 전 / 정렬 후)</h3><details><summary>층별 그림 펼치기 (%d층)</summary>' % len(names))
         prefix.append(_legend())
-        names = sorted(set(source.ref_layers) | set(source.tgt_layers))
-        if not names:
-            prefix.append('<p class="note">CNT 층 영상이 없어 겹침 그림이 없습니다.</p>')
         for name in names:
             before, after = _overview_pair(source, name)
             figs = []
             for caption, rgb in (('정렬 전 (offset 0)', before), ('정렬 후 (offset ' + _json(alignment['offset_xy_px']) + ' px)', after)):
                 figs.append(_figure(_uri(_png(rgb)), name + ' · ' + caption))
                 n_images += 1
-            prefix.append('<h3>CNT ' + escape(name) + '</h3><div class="figs">' + ''.join(figs) + '</div>')
-    # 4. 열지도
-    prefix.append('<h2>4. 변경 지도 열지도 (hotspot 층별)</h2>')
+            prefix.append('<h4>CNT ' + escape(name) + '</h4><div class="figs">' + ''.join(figs) + '</div>')
+        prefix.append('</details>')
+    prefix.append(_alternatives(alignment))
+    if pairing_stats is not None:
+        prefix.append(_pairing_summary(pairing_stats))
+    # 3. 변경 강조 지도
+    prefix.append('<h2>3. 변경 강조 지도</h2>')
+    position_base = None
     if source is None:
         prefix.append('<p class="note">그림을 만들지 않았습니다.</p>')
-    elif not source.heat:
-        prefix.append('<p class="note">짝지어진 case 가 없어 열지도가 없습니다.</p>')
+    elif source.observed is None:
+        prefix.append('<p class="note">변경 지도를 수집하지 않아 그림이 없습니다.</p>')
     else:
-        prefix.append('<p class="note">흰색 = 변화 없음, 노랑→빨강 = 많음, 회색 = 비교 영역 밖. 초록 사각형과 숫자 = 선정 ROI 창과 순위.</p>')
-        heat = _heat_images(source, windows)
-        for layer in sorted(heat):
-            figs = []
-            for (rgb, vmax), caption in zip(heat[layer], ('합집합 변화 RU (블록당 변화 칸 수, 최대 %d)', '조합별 잔차 합 count_map (블록 최대 겹침 수, 최대 %d)')):
-                figs.append(_figure(_uri(_png(rgb)), '층 ' + layer + ' · ' + caption % vmax))
-                n_images += 1
-            prefix.append('<h3>층 ' + escape(layer) + '</h3><div class="figs">' + ''.join(figs) + '</div>')
-    prefix.append('<h2>5. 선정 ROI 상세 (순위 순)</h2>')
+        rgb = _change_map_image(source, windows, pattern)
+        prefix.append('<div class="figs">' + _figure(_uri(_png(rgb)),
+                      '변경 강조 지도: 빨강 = 변경 · 연회색 = 변경 없는 패턴 · 진회색 = 비교 안 함 · 초록 사각형·번호 = ROI 순위') + '</div>')
+        n_images += 1
+        position_base = _position_base(source, pattern)
+    del pattern
+    prefix.append(_roi_list(queries, windows, shape))
+    prefix.append('<h2>5. ROI 상세 (순위 순)</h2>')
     if not queries:
         prefix.append('<p class="note">선정된 ROI 가 없습니다.</p>')
-    suffix = _footnotes()
+    suffix = _heat_section(source, windows) + _footnotes()
+    n_images += _heat_count(source)
 
     def encode(text):
         return text.encode('utf-8')
     head = ('<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>alignment.html</title><style>' + STYLE +
-            '</style></head><body><h1>CNT 정렬과 변경 지도 확인 (alignment_report)</h1>'
-            '<p class="note">정렬이 불확실해도 best-effort 로 진행한 결과를 눈으로 확인하는 보고서입니다. 용어는 출력 키(alignment.json, '
-            'candidate_queries_v1.json) 그대로 병기합니다.</p>')
+            '</style></head><body>')
     tail = '</body></html>\n'
     fixed = encode(head + ''.join(prefix)) + encode(suffix + tail)
 
@@ -544,17 +881,22 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     def section(i, level):
         if (i, level) in sections:
             return sections[(i, level)]
-        title, text = _roi_text(i + 1, queries[i], windows[i])
+        title, text = _roi_text(i + 1, queries[i], windows[i], shape)
         figs = ''
-        if level < 2 and source is not None and i < len(source.hot):
-            side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
-            items = _crop_images(source, windows[i], source.hot[i], side)
-            figs = '<div class="figs">' + ''.join(_figure(_uri(_png(rgb)), caption) for caption, rgb in items) + '</div>'
-        elif level == 2 and source is not None:
-            figs = '<p class="missing">그림 생략: 파일 크기 상한(%d MiB) 때문에 이 ROI 의 crop 그림을 뺐습니다.</p>' % (limit // (1024 * 1024))
-        elif source is None:
+        if source is None:
             figs = '<p class="missing">그림을 만들지 않았습니다.</p>'
-        sections[(i, level)] = encode('<div class="roi">' + title + figs + text + '</div>')
+        else:
+            items = []
+            if position_base is not None:
+                rgb = _position_image(position_base[0], position_base[1], windows[i])
+                items.append(_figure(_uri(_png(rgb)), '위치: frame 전체에서 이 ROI 만 굵은 빨강 사각형'))
+            if level < 2 and i < len(source.hot):
+                side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
+                items.extend(_figure(_uri(_png(rgb)), caption) for caption, rgb in _crop_images(source, windows[i], source.hot[i], side))
+            figs = '<div class="figs">' + ''.join(items) + '</div>'
+            if level == 2:
+                figs += '<p class="missing">그림 생략: 파일 크기 상한(%d MiB) 때문에 이 ROI 의 crop 그림을 뺐습니다.</p>' % (limit // (1024 * 1024))
+        sections[(i, level)] = encode('<div class="roi" id="roi%d">' % (i + 1) + title + figs + text + '</div>')
         return sections[(i, level)]
 
     count = len(queries) if source is not None else 0
@@ -575,7 +917,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
                 keep -= 1
         body = [section(i, level) for i in range(keep)] + [section(i, 2) for i in range(keep, count)]
         omitted = list(range(keep + 1, count + 1))
-        n_images += sum(section_images(source, i) for i in range(keep))
+        has_position = 1 if position_base is not None else 0
+        n_images += sum(section_images(source, i) + has_position for i in range(keep)) + has_position * (count - keep)
     prefix_bytes = encode(head + ''.join(prefix))
     data = prefix_bytes + b''.join(body) + encode(suffix + tail)
     return data, {'path': 'alignment.html', 'bytes': len(data), 'downscaled': bool(downscaled),
@@ -583,5 +926,30 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
 
 
 def section_images(source, i):
-    """ROI i 의 crop 그림 장수 = CNT 공통 층 수 + hotspot 1."""
-    return len(set(source.ref_layers) & set(source.tgt_layers)) + 1
+    """ROI i 의 crop 그림 장수 = 대표 층 hotspot 합집합 1 (위치 그림은 따로 센다)."""
+    return 1 if i < len(source.hot) else 0
+
+
+def _heat_count(source):
+    return 2 * len(source.heat) if source is not None and source.observed is not None else 0
+
+
+def _heat_section(source, windows):
+    """6절 변경 지도 열지도(참고, 접어 둠). 그림 수는 ``_heat_count``."""
+    parts = ['<h2>6. 변경 지도 열지도 (참고)</h2>']
+    if source is None:
+        parts.append('<p class="note">그림을 만들지 않았습니다.</p>')
+    elif not source.heat or source.observed is None:
+        parts.append('<p class="note">짝지어진 case 가 없어 열지도가 없습니다.</p>')
+    else:
+        parts.append('<p class="note">흰색 = 변화 없음, 노랑→빨강 = 많음, 회색 = 비교 영역 밖. 초록 사각형과 숫자 = 선정 ROI 창과 순위.</p>'
+                     '<details><summary>층별 열지도 펼치기 (%d층)</summary>' % len(source.heat))
+        heat = _heat_images(source, windows)
+        for layer in sorted(heat):
+            figs = []
+            for (rgb, vmax), caption in zip(heat[layer], ('합집합 변화 RU (블록당 변화 칸 수, 최대 %d)',
+                                                          '조합별 잔차 합 count_map (블록 최대 겹침 수, 최대 %d)')):
+                figs.append(_figure(_uri(_png(rgb)), '층 ' + layer + ' · ' + caption % vmax))
+            parts.append('<h4>층 ' + escape(layer) + '</h4><div class="figs">' + ''.join(figs) + '</div>')
+        parts.append('</details>')
+    return ''.join(parts)

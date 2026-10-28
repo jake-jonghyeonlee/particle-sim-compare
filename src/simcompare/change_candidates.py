@@ -548,7 +548,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     outputs.append('alignment.json')      # 파일은 변경 지도 뒤에 쓴다(비교 영역 픽셀 수를 그 계산에서 재사용)
     offset_px = (int(alignment['offset_xy_px'][0]), int(alignment['offset_xy_px'][1]))
     # alignment.html 의 그림: 만들기 전에 메모리 추정으로 허용 여부를 정한다(넘으면 표만 쓰고 경고, 계산은 그대로).
-    images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved)
+    images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k)
     report_source = (alignment_report.ImageSource(cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
                                                   tgt.frame.valid, offset_px) if images_ok else None)
     if alignment['status'] != 'aligned':
@@ -832,7 +832,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # --- alignment.html: 정렬이 실패·불확실해도 항상 쓴다. 그림 생성을 허용하지 않았으면 표만 쓰고 경고(exit 3)
     skipped = None
     if report_source is None:
-        need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape)
+        need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k)
         skipped = f'estimated {need} bytes + {reserved} reserved > operation limit {limit}'
         warnings.append({'code': 'alignment_report_images_skipped', 'estimated_bytes': need, 'reserved_bytes': reserved,
                          'max_operation_bytes': limit})
