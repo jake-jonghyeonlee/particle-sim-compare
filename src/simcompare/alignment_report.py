@@ -212,7 +212,7 @@ def estimate_report_bytes(ref_shape, tgt_shape, n_rois=0, n_layers=HEAT_LAYERS_A
       블록 축소 중간 배열 2*hr 이하(reduceat 는 한 축만 줄인 (ny, W) 배열) → 9*hr, 정렬 전 target 한 장분 ht.
     - 2a 두 장의 층 인덱스·rgb 와 3절·6절 블록 지도(블록 단위 uint8/bool/uint32/rgb 합쳐 칸당 24 바이트 이하) → 24*nb.
     - ImageSource.heat 는 hotspot 층마다 합집합 변화(uint32)와 조합별 잔차 합(최대 uint32) 블록 지도를 놓는다 → n_layers * 8*nb.
-      hotspot 층 수는 이 시점에 모르므로 기본값은 보수적 상수 HEAT_LAYERS_ASSUMED 다.
+      호출부(change_candidates)가 두 dataset 의 실제 hotspot 층 수를 넘긴다. 모를 때만 보수적 상수 HEAT_LAYERS_ASSUMED 를 쓴다.
     - ROI 위치 그림은 ROI 마다 따로 만들어 바이트로 바꾼 뒤 놓는다: 바탕 rgb 와 그림 하나, 블록 배열 → n_rois > 0 이면 4*POSITION_MAX_PX**2 (ROI 수와 무관).
     - ROI crop(window_px > 0 일 때): 상자 한 변 <= 2*window_px 로 ROI 마다 비교 영역 bool 1개 + hotspot 층마다 reference·target bool 2개 +
       층 묶음 바탕 최대 MAX_BUNDLES 층 x 2개 = (2*n_layers + 1 + 2*MAX_BUNDLES) 개를 잡는다.
@@ -925,7 +925,8 @@ def _footnotes():
             'target 은 정렬 offset 으로 reference 좌표에 옮겼다. 층이 ' + str(MAX_BUNDLES) + '개를 넘으면 창 안 변경 면적 합이 큰 층부터 ' +
             str(MAX_BUNDLES) + '개만 그린다. 전극 PNG 가 없거나 읽을 수 없으면 바탕 없이 그리고 "전극 형상 없음"이라고 적는다.</li>'
             '<li>reference 면적 / target 면적은 창 안·비교 영역 안 그 조합의 hotspot 면적이다. 한쪽에만 있는 조합은 없는 쪽이 0 이다. '
-            '두 frame 크기가 달라 두 면적의 분모(관측 영역)가 다를 수 있다.</li>'
+            '두 면적은 frame 크기가 달라도 같은 창·같은 공통 비교 영역에서 세므로 바로 비교할 수 있다. '
+            '공통 비교 영역은 두 frame 어느 쪽보다 작을 수 있다.</li>'
             '<li>frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. resize 하지 않으며 비교 영역 밖은 회색이다.</li>'
             '<li><code>--merge-scope all</code> 에서는 창이 층을 넘어 병합되지만 순위·점수·위치는 대표 층 하나의 합집합 변화 기준이다. '
             '다른 층의 변경은 기여 조합 표(층 칸)로만 보이며 층 사이 합집합은 만들지 않는다.</li>'

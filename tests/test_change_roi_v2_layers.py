@@ -215,6 +215,7 @@ def test_admission_limit_drops_only_the_backgrounds_and_warns(two_layer_world, r
     html = read(out)
     alts = {alt: rgb for alt, rgb in pictures(html) if alt.startswith('ROI 층 ')}
     assert len(alts) == 6 and all('전극 형상 없음' in a and not base_mask(rgb).any() for a, rgb in alts.items())
+    assert all('읽기 생략: 메모리 한도' in a and '파일 없음' not in a for a in alts)   # the skip reason, not "no file"
     assert 'data:image' in html                                       # the other pictures are still there
     assert payload['directions'] == default_run.payload['directions']      # the calculation is untouched
     assert tcc.load(out, 'funnel.json') == tcc.load(default_run.out, 'funnel.json')

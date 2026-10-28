@@ -269,7 +269,8 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 - 층 사이 합집합을 만들지 않는다. 층이 바뀐 조합은 위처럼 한쪽 조합 둘이다.
 - 실데이터 규모, 메모리·시간, ETX Linux 실행은 아직 검증하지 않았다(`docs/plan/change_roi/README.md`).
 - frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. 왼쪽 위 인덱스를 맞추고 offset 만 더하며 resize 하지 않는다. unit 별 offset(2단계)은 보류다.
-- 면적 지표(`area_reference_um2`, `area_target_um2`, `union_area_*`)는 창 안·비교 영역 안의 값이라, 두 frame 크기가 다르면 두 모델 면적의 분모(관측 영역)가 다를 수 있다.
+- 면적 지표(`area_reference_um2`, `area_target_um2`, `union_area_*`)는 두 모델 모두 같은 reference 좌표 창과 같은 공통 비교 영역(침식 후)에서 센다. 그래서 frame 크기가 달라도 두 값을 바로 비교할 수 있다. 공통 비교 영역은 두 frame 어느 쪽보다 작을 수 있으며, frame 전체 대비 비율(`alignment.json`의 `fraction_of_reference`·`fraction_of_target`)은 분모가 각 frame 이라 서로 다르다.
+- `alignment_report_layer_base_skipped` 경고의 `estimated_bytes`·`reserved_bytes` 에는 보고서 그림이 이미 잡고 있는 바이트가 들어가지 않는다. 그래서 "추정 + 예약 ≤ 한도"로 보여도 바탕이 빠질 수 있다.
 
 **alignment.html 구성(v3 순서).** 1 요약(정렬 상태·offset·frame 크기·합집합 조합 수), 2 CNT 정렬과 정렬 진단(층별 겹침 정렬 전·후, 대안 offset), 3 변경 강조 지도(변경 위치를 빨강으로), 4 ROI 목록(순위 표, 각 ROI 로 이동), 5 ROI 상세(위치 그림, 기여 조합 표, 그 ROI 에 불량 조합이 있는 층마다 층 묶음 = 비교·reference·target 그림에 전극 형상 바탕. 층이 4개를 넘으면 창 안 변경 면적 합이 큰 4개만, 기여 조합이 없는 ROI 는 묶음 없이 한 줄), 6 변경 지도 열지도(참고, 접어 둠), 7 각주. 파일 크기가 상한을 넘으면 순위가 낮은 ROI 의 crop 부터 줄이거나 뺀다.
 
