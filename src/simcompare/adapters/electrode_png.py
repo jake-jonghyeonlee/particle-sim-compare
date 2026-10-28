@@ -217,11 +217,23 @@ def scan_electrode_layers(root, model):
     return layers
 
 
-def load_electrode_layer(root, model, frame, fs_rels):
+def _caused_by_memory_error(exc):
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, MemoryError):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def load_electrode_layer(root, model, frame, fs_rels, errors=None):
     """change-roi-v2/T3b: 한 층의 전극 PNG 여러 장을 frame 크기 bool(검정 = 형상)로 합집합해 돌려준다. 읽지 못한 파일은 건너뛴다.
 
     ``fs_rels`` 는 ``scan_electrode_layers`` 의 값. 디코드·frame 크기 오류(``NumericContractError``)와 파일 읽기 오류(``OSError``)는
     이 함수 안에서 그 파일만 건너뛰며(보고서 그림 전용이라 실행을 멈추지 않는다), 읽은 파일이 하나도 없으면 ``None`` 이다.
+    건너뛴 파일의 오류 코드(``NumericContractError.code`` 또는 ``os_error``)는 ``errors`` 목록에 더한다(주면). ``_decode`` 가
+    ``MemoryError`` 를 ``png_decode_failed`` 로 바꾼 경우는 건너뛰지 않고 ``MemoryError`` 를 다시 올린다.
     sha256·경고를 기록하지 않는다: 이 값은 alignment.html 그림에만 쓰이고 계산·JSON 에 들어가지 않는다."""
     root = Path(root)
     _check_frame(frame)
@@ -230,7 +242,11 @@ def load_electrode_layer(root, model, frame, fs_rels):
         try:
             marked, _ = _decode(resolve_path(root, fs_rel).read_bytes(), fs_rel)
             cropped = _crop(marked, frame.shape_yx, fs_rel)
-        except (NumericContractError, OSError):
+        except (NumericContractError, OSError) as exc:
+            if _caused_by_memory_error(exc):
+                raise MemoryError(str(exc)) from exc
+            if errors is not None:
+                errors.append(exc.code if isinstance(exc, NumericContractError) else 'os_error')
             continue
         union = cropped.copy() if union is None else (union | cropped)
         del marked, cropped

@@ -64,7 +64,8 @@ def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance
     if not Path(cnt_root).is_dir():
         raise _bad('cnt_dl1_root_missing',
                    f'--cnt-from-dl1-root 경로가 없습니다: {cnt_root} (resolved: {Path(cnt_root).resolve()})')
-    if electrode_png_root is not None and (not isinstance(electrode_png_root, (str, Path)) or not Path(electrode_png_root).is_dir()):
+    if electrode_png_root is not None and (not isinstance(electrode_png_root, (str, Path)) or not str(electrode_png_root)
+                                           or not Path(electrode_png_root).is_dir()):
         raise _bad('electrode_png_root_missing',
                    f'--electrode-png-root 경로가 폴더가 아닙니다: {electrode_png_root} (resolved: {Path(str(electrode_png_root)).resolve()})')
     if mask_derivation_rule is None:
@@ -519,20 +520,32 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
     if not wanted:
         return
     ref_shape, tgt_shape = products['reference'].frame.valid.shape, products['target'].frame.valid.shape
-    if not alignment_report.electrode_fits(ref_shape, tgt_shape, limit, reserved):
+    held = source.held_bytes()
+    if not alignment_report.electrode_fits(ref_shape, tgt_shape, limit, reserved, held):
         warnings.append({'code': 'alignment_report_layer_base_skipped',
                          'estimated_bytes': alignment_report.electrode_read_bytes(ref_shape, tgt_shape),
                          'reserved_bytes': reserved, 'max_operation_bytes': limit})
+        for layer in wanted:
+            for side in ('ref', 'tgt'):
+                source.base_reason[(layer, side)] = '읽기 생략: 메모리 한도'
         return
 
-    def loader(name):
+    def loader(name, side):
         item = products[name]
 
         def load(layer):
             names = files[name].get(layer)
-            return load_electrode_layer(root, item.product_id, item.frame, names) if names else None
+            if not names:
+                folder = (Path(root) / item.product_id).is_dir()
+                source.base_reason[(layer, side)] = '파일 없음' if folder else '제품 폴더 없음'
+                return None
+            errors = []
+            union = load_electrode_layer(root, item.product_id, item.frame, names, errors)
+            if union is None:
+                source.base_reason[(layer, side)] = '읽기 실패: ' + (errors[0] if errors else 'unreadable')
+            return union
         return load
-    source.collect_bases(wanted, loader('reference'), loader('target'))
+    source.collect_bases(wanted, loader('reference', 'ref'), loader('target', 'tgt'))
 
 
 def _frame_record(ref_shape, tgt_shape, stats, bbox):
@@ -589,8 +602,11 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     offset_px = (int(alignment['offset_xy_px'][0]), int(alignment['offset_xy_px'][1]))
     # alignment.html 의 그림: 만들기 전에 메모리 추정으로 허용 여부를 정한다(넘으면 표만 쓰고 경고, 계산은 그대로).
     window_px = change_map._round_px(window_um, pitch)
+    # hotspot 층 수: 두 dataset case 의 analysis_layer 합집합(변경 지도 층의 상한). 알 수 없으면 보수적 상수.
+    hot_layers = len({case.analysis_layer for side in sides.values() for case in getattr(side.dataset, 'cases', ())})
+    n_hot_layers = hot_layers or alignment_report.HEAT_LAYERS_ASSUMED
     images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k,
-                                      alignment_report.HEAT_LAYERS_ASSUMED, window_px)
+                                      n_hot_layers, window_px)
     report_source = (alignment_report.ImageSource(cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
                                                   tgt.frame.valid, offset_px) if images_ok else None)
     electrode_root = args.get('electrode_png_root', args['cnt_from_dl1_root'])
@@ -882,7 +898,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                              limit, reserved, warnings)
     if report_source is None:
         need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k,
-                                                      alignment_report.HEAT_LAYERS_ASSUMED, window_px)
+                                                      n_hot_layers, window_px)
         skipped = f'estimated {need} bytes + {reserved} reserved > operation limit {limit}'
         warnings.append({'code': 'alignment_report_images_skipped', 'estimated_bytes': need, 'reserved_bytes': reserved,
                          'max_operation_bytes': limit})

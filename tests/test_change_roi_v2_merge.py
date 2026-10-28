@@ -174,13 +174,14 @@ def _far_window_ids(merged_from, layer='L2'):
             if rid in merged_from}
 
 
-def test_chain_merge_case_changed_only_in_a_far_member_window_is_not_a_contributing_case(tmp_path_factory, tmp_path):
+def test_chain_merge_case_changed_only_in_a_far_member_window_is_not_a_contributing_case(tmp_path_factory, tmp_path, all_run):
     """Case-level view of the pinned limitation: the L2 case AD2 changes only in member windows far from the representative."""
     masks = two_layer_masks(tcc.hotspot_masks, ad2_dy=FAR_AD2_DY)('target')
     dy, dx = tcc.OFFSET[1], tcc.OFFSET[0]
-    in_target = int(masks[CASE_AD2].sum())
-    in_reference = int(np.roll(masks[CASE_AD2], (-dy, -dx), axis=(0, 1)).sum())      # target mask mapped back by the layout offset
-    assert in_target == in_reference == 100                                          # AD2 lies inside the frame in both
+    ys, xs = np.nonzero(masks[CASE_AD2])
+    assert len(ys) == 100                                                            # AD2 has 100 px in the target frame
+    # mapped back to reference coordinates by the layout offset, the box stays inside the frame (no wrap-around involved)
+    assert ys.min() - dy >= 0 and ys.max() - dy < tcc.SHAPE[0] and xs.min() - dx >= 0 and xs.max() - dx < tcc.SHAPE[1]
     world = build_world(tmp_path_factory, ad2_dy=FAR_AD2_DY)
     code, out = run(world, tmp_path/'out', '--merge-scope', 'all')
     assert code in (0, 3)                                                            # 3: top_k not filled
@@ -192,7 +193,7 @@ def test_chain_merge_case_changed_only_in_a_far_member_window_is_not_a_contribut
     assert any('|D|L1|' in key for key in keys)            # AD (L1, near the representative) contributes
     assert KEY_AD2 not in keys                         # AD2 is not re-scored: it does not contribute although its windows merged
     # control: the default AD2 beside AD contributes to the same kind of query
-    near = {c['case_key'] for c in queries(tcc.load(run(build_world(tmp_path_factory), tmp_path/'near', '--merge-scope', 'all')[1]))[0]['contributing_cases']}
+    near = {c['case_key'] for c in queries(all_run.payload)[0]['contributing_cases']}      # module fixture: default world, --merge-scope all
     assert KEY_AD2 in near
 
 

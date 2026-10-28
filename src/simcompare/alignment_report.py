@@ -237,13 +237,15 @@ def fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes, n_rois=0, n_
 def electrode_read_bytes(ref_shape, tgt_shape):
     """층 묶음 바탕을 읽을 때 동시에 보유하는 최대 바이트(한 번에 (모델, 층) 하나씩 읽는다).
 
-    DL1 전극 PNG 는 frame 보다 사방 500 px 큰 이미지다(fw = (H + 1000)*(W + 1000)). 디코드 중 RGBA 4 바이트 + 검정 판정·marked 각 1 바이트,
-    PNG 원본 바이트·중간 사본 여유까지 8*fw, frame 크기 bool 합집합 하나와 crop 사본 둘(2*H*W)을 잡는다. 두 모델 중 큰 쪽."""
-    return max(8 * (int(s[0]) + 1000) * (int(s[1]) + 1000) + 2 * int(s[0]) * int(s[1]) for s in (ref_shape, tgt_shape))
+    DL1 전극 PNG 는 frame 보다 사방 500 px 큰 이미지다(fw = (H + 1000)*(W + 1000)). 디코드 정점은 16*fw 로 잡는다: RGBA 4 바이트,
+    ``convert('RGBA')`` 사본 4 바이트, rgb 비교 중간 배열·검정 판정·marked 와 PNG 원본 바이트·중간 사본 여유. 여기에 frame 크기 bool
+    합집합 하나와 crop 사본 둘(2*H*W)을 더한다. 두 모델 중 큰 쪽. ImageSource 가 이미 쥔 바이트는 ``electrode_fits`` 의 ``held_bytes`` 로 뺀다."""
+    return max(16 * (int(s[0]) + 1000) * (int(s[1]) + 1000) + 2 * int(s[0]) * int(s[1]) for s in (ref_shape, tgt_shape))
 
 
-def electrode_fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes):
-    return electrode_read_bytes(ref_shape, tgt_shape) <= max_operation_bytes - reserved_bytes
+def electrode_fits(ref_shape, tgt_shape, max_operation_bytes, reserved_bytes, held_bytes=0):
+    """held_bytes: ImageSource 가 이미 보유한 바이트(``ImageSource.held_bytes()``: 열지도 블록, hotspot crop)."""
+    return electrode_read_bytes(ref_shape, tgt_shape) <= max_operation_bytes - reserved_bytes - int(held_bytes)
 
 
 class ImageSource:
@@ -259,6 +261,7 @@ class ImageSource:
         self.hot_any = None       # 모든 hotspot 층의 reference ∪ target 합집합 블록(3절·위치 그림의 연회색 패턴)
         self.hot = []             # ROI 순서: {'box', 'obs', 'layers': {층: {'ref', 'tgt'}}}
         self.base = {}            # (ROI 번호, 층, 'ref' | 'tgt') → 상자 크기 전극 형상 bool 또는 None (collect_bases)
+        self.base_reason = {}     # (층, 'ref' | 'tgt') → 바탕이 없는 사유 문구(호출자가 채운다). 없으면 '파일 없음'
 
     def collect(self, maps, windows):
         """``change_maps`` 결과(maps)에서 열지도용 블록 값과 선정 창의 hotspot 합집합 crop 을 뽑는다. 호출 뒤 maps 를 놓아도 된다."""
@@ -286,6 +289,17 @@ class ImageSource:
                 if ref.any() or tgt.any() or layer == window['layer']:
                     layers[layer] = {'ref': ref, 'tgt': tgt}
             self.hot.append({'box': box, 'layers': layers, 'obs': np.array(maps['D'][y0:y1, x0:x1], dtype=bool)})
+
+    def held_bytes(self):
+        """``collect`` 가 보유 중인 배열 바이트(열지도 블록, 관측 블록, hotspot crop). 전극 PNG 읽기 admission 이 한도에서 뺀다."""
+        total = sum(int(a.nbytes) for a in (self.observed, self.hot_any) if a is not None)
+        for item in self.heat.values():
+            total += sum(int(a.nbytes) for a in item.values())
+        for hot in self.hot:
+            total += int(hot['obs'].nbytes)
+            for crops in hot['layers'].values():
+                total += int(crops['ref'].nbytes) + int(crops['tgt'].nbytes)
+        return total
 
     def collect_bases(self, wanted, load_reference, load_target):
         """층 묶음 바탕(전극 형상) crop. wanted: ``{층: [ROI 번호(0 부터)]}``, load_*(층) → frame 크기 bool 또는 None(전극 PNG 없음).
@@ -514,7 +528,7 @@ def layer_bundles(query, window):
     """ROI 의 층 묶음 계획: ``(보일 묶음 목록, 생략한 층 이름 목록)``.
 
     묶음 = ``{'layer', 'area', 'n', 'counts': (형상 변화, 새로 생김, 사라짐)}``. 층은 기여 case 의 ``layer``(merge_scope=all)이고
-    없으면 대표 층 하나다. 순서는 창 안 변경 면적(``residual_um2``) 합이 큰 순(같으면 이름 자연 정렬), MAX_BUNDLES 개까지 보이고 나머지는 생략한다."""
+    기여 case 가 없는 ROI 는 묶음이 없다(빈 목록). 순서는 창 안 변경 면적(``residual_um2``) 합이 큰 순(같으면 이름 자연 정렬), MAX_BUNDLES 개까지 보이고 나머지는 생략한다."""
     stats = {}
     for case in query['contributing_cases']:
         item = stats.setdefault(case.get('layer', window['layer']), {'area': 0.0, 'n': 0, 'counts': [0, 0, 0]})
@@ -522,8 +536,6 @@ def layer_bundles(query, window):
         item['n'] += 1
         kind = case['change_kind']
         item['counts'][1 if kind == 'appeared' else 2 if kind == 'disappeared' else 0] += 1
-    if not stats:
-        stats[window['layer']] = {'area': 0.0, 'n': 0, 'counts': [0, 0, 0]}
     ordered = sorted(stats, key=lambda layer: (-stats[layer]['area'], natural_key(layer)))
     bundles = [{'layer': layer, 'area': stats[layer]['area'], 'n': stats[layer]['n'], 'counts': tuple(stats[layer]['counts'])}
                for layer in ordered]
@@ -548,14 +560,17 @@ def _bundle_images(source, i, window, layer, limit):
     gray = ~hot['obs']
     base_ref, base_tgt = source.base.get((i, layer, 'ref')), source.base.get((i, layer, 'tgt'))
     both = base_ref if base_tgt is None else base_tgt if base_ref is None else (base_ref | base_tgt)
-    missing = [name for name, base in (('reference', base_ref), ('target', base_tgt)) if base is None]
-    compare_note = '' if not missing else ' · 전극 형상 없음' if len(missing) == 2 else ' · 전극 형상 없음 (' + missing[0] + ')'
+    reason = {side: source.base_reason.get((layer, side), '파일 없음') for side in ('ref', 'tgt')}
+    missing = [(name, side) for name, side, base in (('reference', 'ref', base_ref), ('target', 'tgt', base_tgt)) if base is None]
+    compare_note = ('' if not missing else ' · 전극 형상 없음 (' + ' · '.join(name + ': ' + reason[side] for name, side in missing) + ')')
     return [
         ('ROI 층 ' + layer + ' · 비교: 파랑 = reference 만 · 주황 = target 만 · 검정 = 둘 다' + compare_note,
          _fit((ref, tgt, gray, rect), limit, both)),
-        ('ROI 층 ' + layer + ' · reference: 전극 형상 + hotspot' + ('' if base_ref is not None else ' · 전극 형상 없음'),
+        ('ROI 층 ' + layer + ' · reference: 전극 형상 + hotspot' +
+         ('' if base_ref is not None else ' · 전극 형상 없음 (' + reason['ref'] + ')'),
          _fit((ref, empty, gray, rect), limit, base_ref)),
-        ('ROI 층 ' + layer + ' · target: 전극 형상 + hotspot' + ('' if base_tgt is not None else ' · 전극 형상 없음'),
+        ('ROI 층 ' + layer + ' · target: 전극 형상 + hotspot' +
+         ('' if base_tgt is not None else ' · 전극 형상 없음 (' + reason['tgt'] + ')'),
          _fit((empty, tgt, gray, rect), limit, base_tgt))]
 
 
@@ -1006,7 +1021,10 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
             if level < 2 and i < len(source.hot):
                 side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
                 shown, omitted_layers = layer_bundles(queries[i], windows[i])
-                figs += '<p class="note">이 ROI 에 불량 조합이 있는 층마다 한 묶음: 비교 · reference · target. 바탕 회색 = 그 층 전극 형상, 색 = 그 층 hotspot 합집합, 초록 = ROI 창.</p>'
+                if not shown:
+                    figs += '<p class="note">이 ROI 에 기여 조합이 없다.</p>'
+                else:
+                    figs += '<p class="note">이 ROI 에 불량 조합이 있는 층마다 한 묶음: 비교 · reference · target. 바탕 회색 = 그 층 전극 형상, 색 = 그 층 hotspot 합집합, 초록 = ROI 창.</p>'
                 for bundle in shown:
                     pictures = _bundle_images(source, i, windows[i], bundle['layer'], side)
                     figs += ('<div class="bundle"><h4>' + escape(bundle_title(bundle)) + '</h4><div class="figs">' +

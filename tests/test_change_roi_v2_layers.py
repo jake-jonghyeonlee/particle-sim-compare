@@ -341,3 +341,89 @@ def test_window_scoped_wording_for_appeared_and_disappeared():
     assert '<td>새로 생김</td>' not in html and '<th>새로 생김</th>' not in html
     assert ('변경 종류는 창 단위다: 그 창 안에서 한 모델의 hotspot 이 없으면 새로 생김/사라짐이다. '
             'case 자체는 두 모델에 다 있을 수 있다(있는 모델 열).') in html
+
+
+# --- T6 follow-ups (T3b review e30ed7c2) -------------------------------------------------------------------------------
+
+def test_empty_electrode_png_root_exits_2_before_writing(two_layer_world, roots, tmp_path, capsys):
+    out = tmp_path / 'out'
+    assert run(two_layer_world, out, roots.default, '--electrode-png-root', '') == 2
+    assert not out.exists()
+    assert 'electrode_png_root_missing' in capsys.readouterr().err
+
+
+def test_missing_electrode_captions_name_the_reason(two_layer_world, roots, tmp_path):
+    # 파일 없음: root only_l1 has no L2 electrode files
+    out = tmp_path / 'no_file'
+    run(two_layer_world, out, roots.only_l1, '--merge-scope', 'all')
+    l2 = [alt for alt, _ in pictures(read(out)) if alt.startswith('ROI 층 L2')]
+    assert len(l2) == 3 and all('전극 형상 없음' in a and '파일 없음' in a for a in l2)
+    assert not any('전극 형상 없음' in alt for alt, _ in pictures(read(out)) if alt.startswith('ROI 층 L1'))
+    # 읽기 실패: the shared world's tiny PNGs are listed but cannot be used
+    out = tmp_path / 'unreadable'
+    run(two_layer_world, out, two_layer_world.dl1, '--merge-scope', 'all')
+    alts = [alt for alt, _ in pictures(read(out)) if alt.startswith('ROI 층 L1')]
+    assert len(alts) == 3 and all('전극 형상 없음 (' in a and '읽기 실패: electrode_frame_mismatch' in a for a in alts)
+    # 제품 폴더 없음: an electrode root without the target product folder
+    root = tmp_path / 'no_target_folder'
+    shutil.copytree(roots.default, root)
+    shutil.rmtree(root / tcc.PRODUCTS['target'])
+    out = tmp_path / 'no_folder'
+    run(two_layer_world, out, roots.default, '--merge-scope', 'all', '--electrode-png-root', str(root))
+    alts = [alt for alt, _ in pictures(read(out)) if alt.startswith('ROI 층 L1 · target')]
+    assert len(alts) == 1 and '전극 형상 없음 (제품 폴더 없음)' in alts[0]
+    assert not any('전극 형상 없음' in alt for alt, _ in pictures(read(out)) if alt.startswith('ROI 층 L1 · reference'))
+
+
+def test_load_electrode_layer_reports_codes_and_reraises_memory_error(tmp_path, monkeypatch):
+    shape = (12, 16)
+    tcc.save_black(tmp_path / 'M' / 'D' / '1-L1.png', np.zeros((5, 5), bool))         # wrong size
+    errors = []
+    assert electrode_png.load_electrode_layer(tmp_path, 'M', tiny_frame(shape), ['M/D/1-L1.png'], errors) is None
+    assert len(errors) == 1 and errors[0]
+    assert electrode_png.load_electrode_layer(tmp_path, 'M', tiny_frame(shape), ['M/missing/1-L1.png'], errors) is None
+    assert len(errors) == 2
+
+    def boom(data, rel):
+        try:
+            raise MemoryError('oom')
+        except MemoryError as exc:
+            raise electrode_png.NumericContractError('png_decode_failed', rel) from exc
+    monkeypatch.setattr(electrode_png, '_decode', boom)
+    with pytest.raises(MemoryError):
+        electrode_png.load_electrode_layer(tmp_path, 'M', tiny_frame(shape), ['M/D/1-L1.png'], [])
+
+
+def test_electrode_read_estimate_counts_16_bytes_per_png_pixel_and_the_held_bytes():
+    shape = (100, 200)
+    assert alignment_report.electrode_read_bytes(shape, shape) == 16 * 1100 * 1200 + 2 * 100 * 200
+    need = alignment_report.electrode_read_bytes(shape, shape)
+    assert alignment_report.electrode_fits(shape, shape, need, 0)
+    assert not alignment_report.electrode_fits(shape, shape, need, 0, 1)
+    alignment, qs, windows, source = synthetic_source(2)
+    held = source.held_bytes()
+    assert held >= source.observed.nbytes + sum(a.nbytes for item in source.heat.values() for a in item.values())
+    assert alignment_report.electrode_fits(shape, shape, need + held, 0, held)
+    assert not alignment_report.electrode_fits(shape, shape, need + held - 1, 0, held)
+
+
+def test_report_admission_uses_the_real_hotspot_layer_count(two_layer_world, roots, tmp_path, monkeypatch):
+    seen = []
+    real = alignment_report.fits
+
+    def spy(*args, **kwargs):
+        seen.append(args[5] if len(args) > 5 else kwargs.get('n_layers'))
+        return real(*args, **kwargs)
+    monkeypatch.setattr(alignment_report, 'fits', spy)
+    run(two_layer_world, tmp_path / 'out', roots.default, '--merge-scope', 'all')
+    assert seen == [2]                                                         # layers L1 and L2, not HEAT_LAYERS_ASSUMED
+
+
+def test_roi_without_contributing_cases_has_no_bundles_and_says_so():
+    alignment, qs, windows, source = synthetic_source(1)
+    query = {**qs[0], 'contributing_cases': []}
+    assert alignment_report.layer_bundles(query, windows[0]) == ([], [])
+    assert alignment_report.section_images(source, 0, query, windows[0]) == 0
+    html = alignment_report.build_alignment_html(alignment, queries=[query], windows=windows[:1], source=source)[0].decode('utf-8')
+    assert '이 ROI 에 기여 조합이 없다.' in html and '<div class="bundle">' not in html
+    assert not any(alt.startswith('ROI 층 ') for alt, _ in pictures(html))
