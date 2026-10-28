@@ -15,7 +15,7 @@ import re
 from .numeric_schema import NumericContractError
 
 SCHEMA = 'compare_models_v1'
-KEY_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+KEY_PATTERN = re.compile(r'[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9_-])?')   # used with fullmatch: no trailing newline, no trailing '.'
 CONFIGURED = 'configured'
 ASSETS_PENDING = 'assets_pending'
 
@@ -38,7 +38,7 @@ def check_product_keys(keys):
     """Folder-safe model keys: pattern, no '.'/'..', no case-insensitive duplicates (models_product_id_unsafe)."""
     seen = {}
     for key in keys:
-        if not isinstance(key, str) or KEY_PATTERN.match(key) is None or key in ('.', '..'):
+        if not isinstance(key, str) or KEY_PATTERN.fullmatch(key) is None or key in ('.', '..'):
             raise NumericContractError('models_product_id_unsafe', f'{key!r}: {KEY_PATTERN.pattern}')
         folded = key.lower()
         if folded in seen:
@@ -63,13 +63,17 @@ def _reference_path(section, key):
     return ref['path']
 
 
-def load_models(models_path, cfg, config_real=None):
+def load_models(models_path, cfg, config_real=None, config_products=None):
     """Validate models.yaml against the loaded config and load the datasets of the models whose data exists.
 
     Returns {'path', 'sha256', 'target_product_id', 'models': {key: entry}}. Entry keys: product_id, section, status
     (configured|assets_pending), dataset/root/manifest_path/product/real (configured only), data_dir (as written),
     manifest_sha256, asset_manifest_sha256, electrode_import_record_sha256 (configured only).
-    config_real: whether the config reference/target are real_hotspot_v1 sources (a mixed model is refused)."""
+    config_real: whether the config reference/target are real_hotspot_v1 sources (a mixed model is refused).
+    config_products: {'reference': product_id, 'target': product_id} of the datasets actually loaded; when given they
+    replace the declared products in the target / config-side checks (a declaration that differs from the dataset
+    fails earlier in the dataset load). Without it the declared products are used.
+    A pending model's section is not inspected beyond data_dir/manifest_path/product_id (checked when its data exists)."""
     import yaml
     from . import pipeline
     from .correspondence import _dataset_product
@@ -87,14 +91,15 @@ def load_models(models_path, cfg, config_real=None):
     config_dir = Path(cfg['_config_dir']).resolve()
     if path.parent != config_dir:
         raise NumericContractError('models_config_dir_mismatch', f'{path.parent} != {config_dir}')
-    target_product = section_product(cfg.get('target'))
+    products = dict(config_products) if config_products else {name: section_product(cfg.get(name)) for name in ('reference', 'target')}
+    target_product = products.get('target')
     if not isinstance(data.get('target_product_id'), str) or data['target_product_id'] != target_product:
         raise NumericContractError('models_target_mismatch', f'{data.get("target_product_id")!r} != config target {target_product!r}')
     sections = data.get('models')
     if not isinstance(sections, dict) or not sections:
         raise NumericContractError('invalid_models_config', 'models must be a non-empty mapping')
     check_product_keys(list(sections))
-    config_side = {section_product(cfg.get(name)) for name in ('reference', 'target')} - {None}
+    config_side = {products.get('reference'), products.get('target')} - {None}
     for key in sections:
         if key in config_side:
             raise NumericContractError('models_product_is_config_side', key)
@@ -140,6 +145,60 @@ def load_models(models_path, cfg, config_real=None):
         entry['electrode_import_record_sha256'] = None if relative is None else _file_sha(root, relative, f'{key}.electrode_import_record')
         models[key] = entry
     return {'path': str(path), 'sha256': _sha256_bytes(raw), 'target_product_id': data['target_product_id'], 'models': models}
+
+
+def derive_config(cfg, loaded, key):
+    """compare-windows --model: a shallow copy of cfg with reference = the original target section, target = the model section.
+
+    No path is rewritten (models.yaml shares the config folder, so _config_dir resolves both sections); output_dir, map,
+    review_rois and compare stay as they are. The model must be configured."""
+    entry = loaded['models'].get(key)
+    if entry is None:
+        raise NumericContractError('model_not_in_models', key)
+    if entry['status'] != CONFIGURED:
+        raise NumericContractError('model_assets_pending', key)
+    derived = dict(cfg)
+    derived['reference'] = cfg['target']
+    derived['target'] = entry['section']
+    return derived
+
+
+def model_provenance(loaded, key):
+    """local_delta.json provenance.model for a configured model (inputs of the model side)."""
+    entry = loaded['models'][key]
+    return {'product_id': entry['product_id'], 'models_sha256': loaded['sha256'], 'manifest_sha256': entry['manifest_sha256'],
+            'asset_manifest_sha256': entry['asset_manifest_sha256'],
+            'electrode_import_record_sha256': entry['electrode_import_record_sha256']}
+
+
+def _existing_products(path):
+    """(a product_id, b product_id) of an existing local_delta.json, or None when it cannot be read as one."""
+    import json
+    try:
+        products = json.loads(Path(path).read_text(encoding='utf-8'))['products']
+        return products['a']['product_id'], products['b']['product_id']
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def prepare_model_run(cfg, models_path, key, out):
+    """Everything compare-windows --model checks before it may write anything. Returns (derived cfg, provenance.model).
+
+    Raises NumericContractError (model_out_required, models errors, model_not_in_models, model_assets_pending,
+    model_out_conflict); the caller writes no file for these."""
+    from . import pipeline
+    if out is None:
+        raise NumericContractError('model_out_required', '--model 은 --out 이 필요합니다(기본 출력 폴더는 reference 용)')
+    loaded = load_models(models_path, cfg)
+    derived = derive_config(cfg, loaded, key)
+    target_product = section_product(cfg.get('target'))
+    out_path = Path(out).resolve()
+    if cfg.get('output_dir') is not None and out_path == Path(pipeline._numeric_path(cfg, cfg['output_dir'])).resolve():
+        raise NumericContractError('model_out_conflict', f'--out {out} 은 config 기본 compare-windows 출력 폴더입니다')
+    existing = out_path/'local_delta.json'
+    if existing.exists() and _existing_products(existing) != (target_product, key):
+        raise NumericContractError('model_out_conflict', f'{existing} 의 제품 쌍이 ({target_product}, {key}) 와 다릅니다')
+    return derived, model_provenance(loaded, key)
 
 
 def model_pair_id(direction, query_roi_id, rank, product_id, centre):

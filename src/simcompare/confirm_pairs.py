@@ -764,7 +764,8 @@ def _prepare(cfg, candidates_dir, matches, problems, models_path=None):
     models, guarded = None, datasets
     if models_path is not None:
         from .models import CONFIGURED, load_models
-        models = load_models(models_path, cfg, config_real=all(item['real'] for item in datasets.values()))
+        models = load_models(models_path, cfg, config_real=all(item['real'] for item in datasets.values()),
+                             config_products={name: item['product'] for name, item in datasets.items()})
         guarded = {**datasets, **{'model:' + key: {'dataset': entry['dataset']}
                                   for key, entry in models['models'].items() if entry['status'] == CONFIGURED}}
     cands = _load_candidates(candidates_dir, cfg, problems, guarded, matches)

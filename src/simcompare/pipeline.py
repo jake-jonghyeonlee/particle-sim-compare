@@ -1088,8 +1088,12 @@ def _load_stage6_artefact(output, reference, target):
 
 
 def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter_um=None, sort_diameter_um=None,
-                            compact_json=False, config_path=None):
-    """compare-windows: same physical window around corresponding positions, b − a."""
+                            compact_json=False, config_path=None, model=None):
+    """compare-windows: same physical window around corresponding positions, b − a.
+
+    model (compare-multiproduct T2): provenance.model of a --model run (cfg is then the derived cfg: reference = the
+    target, target = the model). It adds that one provenance key and keeps the reference's stage-2 masks out of the
+    model run; nothing else changes."""
     from simcompare.correspondence import bind_pairs, load_correspondence
     from simcompare.local_delta import compute_local_delta, correspondence_hash, write_local_delta
     from simcompare.local_delta_report import write_local_delta_html
@@ -1111,7 +1115,7 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
     # B3 / RB-A5: admission after the pairs are bound, before any compute, decode or cache allocation, and before the
     # artefact is read (the reuse estimate prices its packed masks); a candidate that turns out unusable is admitted again
     # as a recompute before compute_areas runs.
-    output_dir, _ = _stage6_artefact_candidate(cfg, reference, target)
+    output_dir = None if model is not None else _stage6_artefact_candidate(cfg, reference, target)[0]
     guard_stage_compare_windows('compare-windows', reference, target, layouts_cfg=cfg, pairs=pairs, sizes=sizes,
                                 jitter_um=jitter_um, reuse=output_dir is not None)
     areas = None
@@ -1134,7 +1138,8 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
                                                  'correspondence_producer': payload['producer'],
                                                  'correspondence_warnings': payload['warnings'],
                                                  'config_path': str(cfg.get('_config_path', config_path or '')) or None,
-                                                 'config_sha256': cfg.get('_config_sha256')})
+                                                 'config_sha256': cfg.get('_config_sha256'),
+                                                 **({'model': model} if model is not None else {})})
         paths = write_local_delta(staging, result, compact=compact_json)
         paths += write_local_delta_html(staging, result, cfg=cfg, reference=reference, target=target)
         publication.commit()

@@ -163,6 +163,8 @@ def _parser() -> argparse.ArgumentParser:
     windows.add_argument("--sort-diameter-um", type=float, help="명시할 때만 이 지름의 |Δ|로 쌍을 정렬")
     windows.add_argument("--compact-json", action="store_true",
                          help="JSON에서 행별 세부 지표를 빼고 CSV에만 남김(수십 쌍 × 여러 창일 때 용량 절약)")
+    windows.add_argument("--models", help="compare_models_v1 models.yaml(--config 와 같은 폴더). --model 과 함께 쓴다")
+    windows.add_argument("--model", help="models.yaml 의 모델 키. a = config target, b = 이 모델로 비교한다(--out 필수)")
     windows.add_argument("--out", help="출력 디렉터리")
     merge = _korean_help(sub.add_parser(
         "merge-exports", add_help=False,
@@ -347,16 +349,32 @@ def main(argv: list[str] | None = None) -> int:
             _print(result)
             return result["exit_code"]
         from simcompare import pipeline
-        cfg = pipeline.load_numeric_config(args.config)
+        model_run = args.command == "compare-windows" and (args.models is not None or args.model is not None)
+        derived, model_provenance = None, None
+        if model_run:
+            # --model 실행의 인수·models·충돌 검사는 어떤 파일도 쓰기 전에 끝난다: 실패하면 stderr 오류와 종료 2 뿐이다(공용 오류 처리기 제외).
+            from simcompare import models as models_module
+            from simcompare.numeric_schema import NumericContractError
+            try:
+                if args.models is None or args.model is None:
+                    raise NumericContractError("model_arguments_paired", "--models 와 --model 은 함께 지정해야 합니다")
+                cfg = pipeline.load_numeric_config(args.config)
+                derived, model_provenance = models_module.prepare_model_run(cfg, args.models, args.model, args.out)
+            except (NumericContractError, OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc:
+                print(f"오류: {exc}", file=sys.stderr)
+                return 2
+        else:
+            cfg = pipeline.load_numeric_config(args.config)
         if getattr(args, "min_count", None) is not None:
             cfg.setdefault("map", {})["min_count"] = args.min_count
         if getattr(args,"per_cell_text",False):
             cfg.setdefault("map",{})["per_cell_text"]=True
         if args.command == "compare-windows":
-            result = pipeline.run_numeric_local_delta(cfg, args.out, correspondence=args.correspondence,
+            result = pipeline.run_numeric_local_delta(derived if model_run else cfg, args.out, correspondence=args.correspondence,
                                                       window_sizes_um=args.window_sizes, jitter_um=args.jitter_um,
                                                       sort_diameter_um=args.sort_diameter_um,
-                                                      compact_json=args.compact_json, config_path=args.config)
+                                                      compact_json=args.compact_json, config_path=args.config,
+                                                      **({"model": model_provenance} if model_run else {}))
         else:
             runners = {"compare":pipeline.run_numeric_compare,"electrode-map":pipeline.run_numeric_map,
                        "validate-data":pipeline.run_numeric_validate,"export-review-rois":pipeline.run_numeric_roi_export}
