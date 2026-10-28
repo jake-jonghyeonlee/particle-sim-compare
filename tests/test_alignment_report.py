@@ -44,8 +44,8 @@ def expected_images(payload, alignment, with_cnt=True):
     n_cnt = len(set(f['layer'] for f in alignment['cnt_inputs']['reference']['files'])) if with_cnt else 0
     rois = len(queries(payload, 'reference_to_target'))
     heat_layers = {q['score_layer'] for q in queries(payload, 'reference_to_target')}
-    # v3: 2a two pictures + 2b two per layer + 3 one map + 6 two heat maps per layer + per ROI (position + hotspot crop)
-    return (2 + 2*n_cnt if n_cnt else 0) + 1 + 2*len(heat_layers) + rois*2
+    # v3: 2a two pictures + 2b two per layer + 3 one map + 6 two heat maps per layer + per ROI (position + T3b layer bundle of 3; one layer per ROI here)
+    return (2 + 2*n_cnt if n_cnt else 0) + 1 + 2*len(heat_layers) + rois*(1 + 3)
 
 
 @pytest.fixture(scope='module')
@@ -67,7 +67,7 @@ def test_aligned_report_is_self_contained_and_has_the_expected_figures(aligned):
     assert 'alignment.html' in load(aligned.out, 'execution.json')['outputs']
     caps = captions(html)
     rois = len(queries(payload, 'reference_to_target'))
-    assert len(caps) == html.count('data:image/png;base64,') == expected_images(payload, alignment) == 11 + 2*rois
+    assert len(caps) == html.count('data:image/png;base64,') == expected_images(payload, alignment) == 11 + 4*rois
     assert sum(c.startswith('전체 CNT 층 · 정렬 ') for c in caps) == 2                    # 2a: all layers, before and after
     for name in ('CNT1', 'CNT2', 'CNT3'):          # 2b: one before and one after picture per CNT layer
         assert sum(c.startswith(f'{name} · ') for c in caps) == 2
@@ -75,7 +75,8 @@ def test_aligned_report_is_self_contained_and_has_the_expected_figures(aligned):
         assert sum(c == f'{name} (정렬 후)' for c in caps) == 0       # V2: no CNT crop in the ROI detail
     assert sum(c.startswith('위치') for c in caps) == rois and sum(c.startswith('변경 강조 지도') for c in caps) == 1
     assert sum(c.startswith('층 L1 · ') for c in caps) == 2                                # RU + count_map heat maps
-    assert sum('합집합' in c for c in caps) == 1 + rois and all('CNT' not in c for c in caps if '합집합' in c)   # RU + hotspot only
+    assert sum(c.startswith('ROI 층 L1 · ') for c in caps) == 3*rois                       # T3b: one layer bundle (compare, reference, target) per ROI
+    assert sum('합집합' in c for c in caps) == 1 and all('CNT' not in c for c in caps if '합집합' in c)   # RU only
     first = IMG.search(html).group(1)
     image = Image.open(io.BytesIO(base64.b64decode(first)))
     assert image.format == 'PNG' and image.mode == 'RGB' and max(image.size) <= alignment_report.OVERVIEW_MAX_PX
@@ -154,7 +155,7 @@ def test_failed_alignment_still_writes_a_report_with_a_warning_and_no_cnt_figure
     assert not any('정렬 전' in c or '정렬 후' in c for c in caps)
     heat = [c for c in caps if c.startswith('층 ')]
     rois = len(queries(payload, 'reference_to_target'))
-    assert len(heat) == 2 and len(caps) == 1 + 2 + 2*rois     # change map + heat maps + (position + hotspot crop) per ROI; no CNT pictures
+    assert len(heat) == 2 and len(caps) == 1 + 2 + 4*rois     # change map + heat maps + (position + 3 bundle pictures) per ROI; no CNT pictures
     assert '<h3>2a.' in html and 'CNT 층 영상이 없어 겹침 그림이 없습니다' in html
     assert payload['alignment_report']['bytes'] == (out/'alignment.html').stat().st_size
 
@@ -211,7 +212,7 @@ def test_size_steps_are_ordered_on_a_synthetic_source():
     data, info = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source)
     sizes['full'] = info['bytes']
     assert info == {'path': 'alignment.html', 'bytes': len(data), 'downscaled': False, 'crops_omitted': [], 'n_images': info['n_images']}
-    assert info['n_images'] == 2 + 4 + 1 + 2 + 3*2          # 2a, 2b (2 layers), map, heat, per ROI (position + hotspot)
+    assert info['n_images'] == 2 + 4 + 1 + 2 + 3*4          # 2a, 2b (2 layers), map, heat, per ROI (position + one layer bundle of 3)
     data, info = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source, max_bytes=sizes['full']-1)
     assert info['downscaled'] and info['crops_omitted'] == [] and info['bytes'] < sizes['full']
     sizes['half'] = info['bytes']
@@ -229,7 +230,7 @@ def test_size_steps_are_ordered_on_a_synthetic_source():
     assert seen[0] == [3] and seen[-1] == [1, 2, 3] and all(a == sorted(a) for a in seen)
     assert all(set(x) < set(y) for x, y in zip(seen, seen[1:]))
     html = data.decode('utf-8')
-    assert html.count('그림 생략') == 3 and len(captions(html)) == 2 + 4 + 1 + 2 + 3   # overview + map + heat + positions stay
+    assert html.count('그림 생략') == 3 and len(captions(html)) == 2 + 4 + 1 + 2 + 3   # overview + map + heat + positions stay (the bundles go)
     for n in (1, 2, 3):
         assert f'순위 {n} ' in html                                                  # the ROI tables stay
 
@@ -293,8 +294,14 @@ def test_overlay_colours_and_rank_labels():
 
 def test_estimate_and_fits_use_the_reserved_bytes():
     need = alignment_report.estimate_report_bytes((100, 200), (100, 200))
-    assert need == 9*20000 + 20000 + 24*20000                       # 9*hr + ht + 24*nb (step 1 here)
-    assert alignment_report.estimate_report_bytes((100, 200), (100, 200), 3) == need + 3*4*alignment_report.POSITION_MAX_PX**2
+    heat = alignment_report.HEAT_LAYERS_ASSUMED * 8 * 20000
+    assert need == 9*20000 + 20000 + 24*20000 + heat               # 9*hr + ht + 24*nb (step 1 here) + n_layers*8*nb
+    # the position pictures are made one at a time: the term is one picture, whatever the ROI count
+    assert alignment_report.estimate_report_bytes((100, 200), (100, 200), 3) == need + 4*alignment_report.POSITION_MAX_PX**2
+    assert alignment_report.estimate_report_bytes((100, 200), (100, 200), 30) == need + 4*alignment_report.POSITION_MAX_PX**2
+    assert alignment_report.estimate_report_bytes((100, 200), (100, 200), 0, n_layers=1) == need - heat + 8*20000
+    crops = alignment_report.estimate_report_bytes((100, 200), (100, 200), 2, 3, 30) - alignment_report.estimate_report_bytes((100, 200), (100, 200), 2, 3)
+    assert crops == 2*(60*60)*(2*3 + 1 + 2*alignment_report.MAX_BUNDLES)    # per ROI: box area x (hotspot layers x 2 + obs + bundle bases)
     assert alignment_report.fits((100, 200), (100, 200), need, 0)
     assert not alignment_report.fits((100, 200), (100, 200), need, 1)
     assert not alignment_report.fits((100, 200), (100, 200), need-1, 0)
@@ -437,7 +444,7 @@ def test_contribution_table_is_korean_with_row_classes_and_folds_after_ten_rows(
     assert '새 전극 <code>new_electrode</code>' in html and '없어진 전극 <code>removed_electrode</code>' in html
     assert 'target 만' in html and 'reference 만' in html and '<td>예</td>' in html
     assert '<td class="num">0.00</td><td class="num">4.50</td>' in html
-    assert '<td>A0 – B</td><td>L1</td><td>새로 생김</td>' in html
+    assert '<td>A0 – B</td><td>L1</td><td>창 안 새로 생김</td>' in html and '창 안 사라짐' in html
     assert html.count('나머지 2행 보기') == 1 and html.count('<summary>나머지') == 1
     assert 'odd-key' in html and '<td>M9</td>' in html                                  # undecomposable key stays verbatim
     short = [{**qs[0], 'contributing_cases': cases[:10]}]
