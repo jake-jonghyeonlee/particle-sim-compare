@@ -178,10 +178,23 @@ def test_config_real_mismatch_is_refused(demo):
 
 
 def test_key_rule_accepts_ordinary_ids():
-    check_product_keys(['QA4_C00', 'a', 'A.b-c_9', 'x'*64])
-    for bad in ('', '-a', '.a', 'a b', 'ä', '한글', 'a/b', 'a'*65, None, 7):
+    check_product_keys(['QA4_C00', 'a', 'A.b-c_9', 'x'*64, 'C', 'A.B-1'])
+    for bad in ('', '-a', '.a', 'a b', 'ä', '한글', 'a/b', 'a'*65, None, 7, 'C\n', 'C.', 'a.b.', '\nC'):
         with pytest.raises(NumericContractError):
             check_product_keys([bad])
+
+
+def test_config_side_checks_use_the_loaded_dataset_products_when_given(demo):
+    make_model(demo, 'C')
+    path = write_models(demo, {'C': model_section(demo, 'C')})
+    cfg = cfg_of(demo)
+    load_models(path, cfg, config_products={'reference': 'reference', 'target': 'target'})
+    with pytest.raises(NumericContractError) as caught:
+        load_models(path, cfg, config_products={'reference': 'reference', 'target': 'other'})
+    assert caught.value.code == 'models_target_mismatch'
+    with pytest.raises(NumericContractError) as caught:
+        load_models(path, cfg, config_products={'reference': 'C', 'target': 'target'})
+    assert caught.value.code == 'models_product_is_config_side'
 
 
 def test_model_pair_id_depends_on_product_and_inputs_only():
