@@ -815,7 +815,7 @@ def test_an_electrode_only_one_model_has_is_compared_and_flagged(tmp_path, monke
     case = top['contributing_cases'][0]
     assert (case['case_key'], case['change_kind'], case['present_in']) == (AD_KEY, kind, only) and flag in case['flags']
     html = (out/'alignment.html').read_text(encoding='utf-8')
-    assert flag in html and f'<td>{only}</td>' in html
+    assert flag in html and f'<td>{only} 만</td>' in html      # v3: Korean 있는 모델 column
     pair = load(out, 'direct/roi_correspondence.json')['pairs'][0]
     assert pair['status'] == 'ready'
     item = load(out, 'direct/direct_pairs_sidecar.json')['pairs'][pair['pair_id']]

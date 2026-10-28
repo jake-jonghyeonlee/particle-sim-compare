@@ -36,7 +36,7 @@ def assert_self_contained(html):
     assert '<script' not in html.lower()
     assert 'http:' not in html and 'https:' not in html
     refs = re.findall(r'(?:src|href)\s*=\s*"([^"]*)"', html) + re.findall(r'url\(([^)]*)\)', html)
-    assert all(r.startswith('data:image/png;base64,') for r in refs), refs
+    assert all(r.startswith('data:image/png;base64,') or r.startswith('#') for r in refs), refs      # v3: in-page anchors (ROI list)
     assert html.startswith('<!doctype html>') and '<meta charset="utf-8">' in html
 
 
@@ -44,7 +44,8 @@ def expected_images(payload, alignment, with_cnt=True):
     n_cnt = len(set(f['layer'] for f in alignment['cnt_inputs']['reference']['files'])) if with_cnt else 0
     rois = len(queries(payload, 'reference_to_target'))
     heat_layers = {q['score_layer'] for q in queries(payload, 'reference_to_target')}
-    return 2*n_cnt + 2*len(heat_layers) + rois*(n_cnt + 1)
+    # v3: 2a two pictures + 2b two per layer + 3 one map + 6 two heat maps per layer + per ROI (position + hotspot crop)
+    return (2 + 2*n_cnt if n_cnt else 0) + 1 + 2*len(heat_layers) + rois*2
 
 
 @pytest.fixture(scope='module')
@@ -65,13 +66,16 @@ def test_aligned_report_is_self_contained_and_has_the_expected_figures(aligned):
     assert_self_contained(html)
     assert 'alignment.html' in load(aligned.out, 'execution.json')['outputs']
     caps = captions(html)
-    assert len(caps) == html.count('data:image/png;base64,') == expected_images(payload, alignment) == 12
-    for name in ('CNT1', 'CNT2', 'CNT3'):          # one before and one after picture per CNT layer
+    rois = len(queries(payload, 'reference_to_target'))
+    assert len(caps) == html.count('data:image/png;base64,') == expected_images(payload, alignment) == 11 + 2*rois
+    assert sum(c.startswith('전체 CNT 층 · 정렬 ') for c in caps) == 2                    # 2a: all layers, before and after
+    for name in ('CNT1', 'CNT2', 'CNT3'):          # 2b: one before and one after picture per CNT layer
         assert sum(c.startswith(f'{name} · ') for c in caps) == 2
-        assert f'<h3>CNT {name}</h3>' in html
-        assert sum(c == f'{name} (정렬 후)' for c in caps) == 1       # the ROI crop
+        assert f'<h4>CNT {name}</h4>' in html
+        assert sum(c == f'{name} (정렬 후)' for c in caps) == 0       # V2: no CNT crop in the ROI detail
+    assert sum(c.startswith('위치') for c in caps) == rois and sum(c.startswith('변경 강조 지도') for c in caps) == 1
     assert sum(c.startswith('층 L1 · ') for c in caps) == 2                                # RU + count_map heat maps
-    assert sum('합집합' in c for c in caps) == 2 and all('CNT' not in c for c in caps if '합집합' in c)   # RU + hotspot only
+    assert sum('합집합' in c for c in caps) == 1 + rois and all('CNT' not in c for c in caps if '합집합' in c)   # RU + hotspot only
     first = IMG.search(html).group(1)
     image = Image.open(io.BytesIO(base64.b64decode(first)))
     assert image.format == 'PNG' and image.mode == 'RGB' and max(image.size) <= alignment_report.OVERVIEW_MAX_PX
@@ -96,11 +100,11 @@ def test_roi_section_lists_ranking_attributes_and_contributions(aligned):
     for key in ('score_um2', 'sum_residual_um2', 'changed_case_count', 'union_delta_um2', 'observed_fraction', 'flags'):
         assert f'<td>{key}' in html
     for case in top['contributing_cases']:
-        assert case['case_key'] in html and case['change_kind'] in html
+        assert case['case_key'] in html
     assert 'union_unchanged_pair_changed' in html
     assert 'union_basis: paired_and_one_sided_cases' in html and 'Δ_union' in html
-    assert '2b. 합집합에 포함한 조합' in html and '<td>one_sided_included_target</td>' in html
-    assert '<th>present_in</th>' in html and '<th>layer_changed</th>' in html
+    assert '합집합에 포함한 조합' in html and '<td>one_sided_included_target</td>' in html      # 2b → 2c in v3
+    assert '<th>있는 모델</th>' in html and '<th>층 바뀜</th>' in html                           # Korean columns replace present_in/layer_changed
 
 
 def test_payload_records_the_report_and_union_basis(aligned):
@@ -150,7 +154,8 @@ def test_failed_alignment_still_writes_a_report_with_a_warning_and_no_cnt_figure
     assert not any('정렬 전' in c or '정렬 후' in c for c in caps)
     heat = [c for c in caps if c.startswith('층 ')]
     rois = len(queries(payload, 'reference_to_target'))
-    assert len(heat) == 2 and len(caps) == 2 + rois           # heat maps + one hotspot crop per ROI, no CNT crops
+    assert len(heat) == 2 and len(caps) == 1 + 2 + 2*rois     # change map + heat maps + (position + hotspot crop) per ROI; no CNT pictures
+    assert '<h3>2a.' in html and 'CNT 층 영상이 없어 겹침 그림이 없습니다' in html
     assert payload['alignment_report']['bytes'] == (out/'alignment.html').stat().st_size
 
 
@@ -173,7 +178,7 @@ def test_cap_lowers_resolution_then_drops_crops_from_the_lowest_rank(world, tmp_
     report = load(gone)['alignment_report']
     assert report['downscaled'] is True and report['crops_omitted'] == [1]
     html = read(gone)
-    assert '그림 생략' in html and len(captions(html)) == 8        # overview 6 + heat 2; the overview and heat maps stay
+    assert '그림 생략' in html and len(captions(html)) == 12       # 2a 2 + 2b 6 + map 1 + heat 2 + the position picture; no crop
     assert 'cnt_inputs' not in html and report['bytes'] == (gone/'alignment.html').stat().st_size
 
 
@@ -206,7 +211,7 @@ def test_size_steps_are_ordered_on_a_synthetic_source():
     data, info = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source)
     sizes['full'] = info['bytes']
     assert info == {'path': 'alignment.html', 'bytes': len(data), 'downscaled': False, 'crops_omitted': [], 'n_images': info['n_images']}
-    assert info['n_images'] == 4 + 2 + 3*3
+    assert info['n_images'] == 2 + 4 + 1 + 2 + 3*2          # 2a, 2b (2 layers), map, heat, per ROI (position + hotspot)
     data, info = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source, max_bytes=sizes['full']-1)
     assert info['downscaled'] and info['crops_omitted'] == [] and info['bytes'] < sizes['full']
     sizes['half'] = info['bytes']
@@ -224,7 +229,7 @@ def test_size_steps_are_ordered_on_a_synthetic_source():
     assert seen[0] == [3] and seen[-1] == [1, 2, 3] and all(a == sorted(a) for a in seen)
     assert all(set(x) < set(y) for x, y in zip(seen, seen[1:]))
     html = data.decode('utf-8')
-    assert html.count('그림 생략') == 3 and len(captions(html)) == 4 + 2           # overview + heat stay
+    assert html.count('그림 생략') == 3 and len(captions(html)) == 2 + 4 + 1 + 2 + 3   # overview + map + heat + positions stay
     for n in (1, 2, 3):
         assert f'순위 {n} ' in html                                                  # the ROI tables stay
 
@@ -288,7 +293,8 @@ def test_overlay_colours_and_rank_labels():
 
 def test_estimate_and_fits_use_the_reserved_bytes():
     need = alignment_report.estimate_report_bytes((100, 200), (100, 200))
-    assert need == 6*20000 + 20000
+    assert need == 9*20000 + 20000 + 24*20000                       # 9*hr + ht + 24*nb (step 1 here)
+    assert alignment_report.estimate_report_bytes((100, 200), (100, 200), 3) == need + 3*4*alignment_report.POSITION_MAX_PX**2
     assert alignment_report.fits((100, 200), (100, 200), need, 0)
     assert not alignment_report.fits((100, 200), (100, 200), need, 1)
     assert not alignment_report.fits((100, 200), (100, 200), need-1, 0)
@@ -301,3 +307,150 @@ def test_reason_text_covers_every_alignment_reason():
         assert alignment_report.reason_text(code) != code
     assert 'CNT2' in alignment_report.reason_text('cnt_empty_target_CNT2')
     assert alignment_report.reason_text('something_new') == 'something_new'
+
+
+# --- change-roi-v2/T3a: v3 layout ------------------------------------------------------------------------------------
+
+def h2_titles(html):
+    return re.findall(r'<h2[^>]*>(.*?)</h2>', html)
+
+
+def test_section_order_and_status_badge_colours():
+    alignment, qs, windows, source = synthetic_source()
+    classes = {}
+    for status, css in (('aligned', 'ok'), ('aligned_uncertain', 'uncertain'), ('alignment_failed_identity_used', 'failed')):
+        data, _ = alignment_report.build_alignment_html({**alignment, 'status': status}, queries=qs, windows=windows, source=source)
+        html = data.decode('utf-8')
+        titles = h2_titles(html)
+        assert [t.split('.')[0] for t in titles] == ['1', '2', '3', '4', '5', '6', '7']
+        assert titles[0].startswith('1. 요약') and titles[1].startswith('2. CNT 정렬') and titles[2].startswith('3. 변경 강조')
+        assert titles[3].startswith('4. ROI 목록') and titles[4].startswith('5. ROI 상세') and titles[5].startswith('6. 변경 지도 열지도')
+        assert titles[6].startswith('7. 각주')
+        assert html.index('<h3>2a.') < html.index('<h3>2b.') < html.index('<h3>2c.')
+        assert html.index('<h1>') < html.index('<h2')
+        classes[status] = re.search(r'<span class="badge (\w+)">', html).group(1)
+        assert css == classes[status]
+    assert len(set(classes.values())) == 3
+
+
+def test_quadrant_difference_over_tolerance_is_highlighted():
+    alignment, qs, windows, source = synthetic_source()
+    alignment = {**alignment, 'offset_xy_um': [0.3, 0.2], 'args': {'align_layer_tolerance_um': 0.3},
+                 'quadrant_offsets_um': {'top_left': [0.3, 0.2], 'top_right': [0.8, 0.2], 'bottom_left': None,
+                                         'bottom_right': [0.3, 0.4]}}
+    html = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source)[0].decode('utf-8')
+    assert html.count('<td class="hi">') == 1 and html.count('⚠') == 1
+    assert '<td class="hi">[0.8, 0.2] · 차이 0.50 µm ⚠</td>' in html
+    assert '<td>[0.3, 0.4] · 차이 0.20 µm</td>' in html and '<td>—</td>' in html
+
+
+def tiny_source(n_layers, shape=(24, 24)):
+    valid = np.ones(shape, bool)
+    layers, other = {}, {}
+    for k in range(n_layers):
+        a = np.zeros(shape, bool)
+        a[2:6, 2 + k:3 + k] = True
+        layers['CNT%d' % (k + 1)] = a
+        other['CNT%d' % (k + 1)] = a.copy()
+    return alignment_report.ImageSource(layers, other, valid, valid, (0, 0))
+
+
+def test_aligned_overlap_is_grey_not_blue_or_orange():
+    shape = (24, 24)
+    valid = np.ones(shape, bool)
+    tgt_valid = valid.copy()
+    tgt_valid[:, -1] = False
+    ref, tgt = np.zeros(shape, bool), np.zeros(shape, bool)
+    ref[2:6, 2:6] = tgt[2:6, 2:6] = True            # in both
+    ref[10:14, 2:6] = True                          # reference only
+    tgt[2:6, 10:14] = True                          # target only
+    source = alignment_report.ImageSource({'CNT1': ref, 'CNT2': np.zeros(shape, bool)}, {'CNT1': tgt, 'CNT2': np.zeros(shape, bool)},
+                                          valid, tgt_valid, (0, 0))
+    before, after, pattern = alignment_report._overview_all(source, ['CNT1', 'CNT2'])
+    blue = {tuple(c) for c in alignment_report.REF_SHADES}
+    orange = {tuple(c) for c in alignment_report.TGT_SHADES}
+    assert tuple(after[3, 3]) == alignment_report.SAME_SHADES[0] and tuple(after[3, 3]) not in blue | orange
+    assert tuple(after[11, 3]) == alignment_report.REF_SHADES[0] and tuple(after[3, 11]) == alignment_report.TGT_SHADES[0]
+    assert tuple(after[20, 20]) == alignment_report.WHITE and set(map(tuple, after[:, -1])) == {alignment_report.OUTSIDE_GRAY}
+    assert tuple(before[3, 3]) not in blue | orange | {alignment_report.SAME_SHADES[0]}       # pre-mixed colour, not a layer shade
+    assert tuple(before[11, 3]) == alignment_report.REF_SHADES[0] and tuple(before[3, 11]) == alignment_report.TGT_SHADES[0]
+    assert pattern[3, 3] and pattern[11, 3] and not pattern[3, 11]
+    again = alignment_report._overview_all(source, ['CNT1', 'CNT2'])
+    assert all(np.array_equal(a, b) for a, b in zip((before, after, pattern), again))
+
+
+def test_more_than_six_layers_warn_about_repeating_shades():
+    alignment, qs, windows, _ = synthetic_source()
+    for n, expected in ((6, False), (7, True)):
+        data, _ = alignment_report.build_alignment_html(alignment, queries=[], windows=[], source=tiny_source(n))
+        html = data.decode('utf-8')
+        assert ('명도 반복' in html) is expected
+        assert all('CNT%d' % k in html for k in range(1, n + 1))                        # the legend names every layer
+    assert alignment_report.natural_key('CNT2') < alignment_report.natural_key('CNT10')
+
+
+def test_position_text_uses_a_three_by_three_grid():
+    text = alignment_report.position_text
+    shape = (300, 300)
+    assert text(0, 0, shape) == '왼쪽 위 (x 0 %, y 0 %)'
+    assert text(150, 150, shape) == '가운데 (x 50 %, y 50 %)'
+    assert text(299, 299, shape).startswith('오른쪽 아래')
+    assert text(99, 199, shape).startswith('가운데 위') and text(100, 200, shape).startswith('오른쪽 가운데')
+    assert text(1, 1, None) == '—'
+
+
+def test_roi_list_links_match_the_detail_ids():
+    alignment, qs, windows, source = synthetic_source(3)
+    qs[0] = {**qs[0], 'status': 'blocked',
+             'contributing_cases': [{**qs[0]['contributing_cases'][0], 'layer': 'M3'}, {**qs[0]['contributing_cases'][0], 'layer': 'M2'}]}
+    html = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source)[0].decode('utf-8')
+    table = html[html.index('<h2 id="list">'):html.index('<h2>5.')]
+    assert table.count('<tr>') == 1 + len(qs)
+    for rank in (1, 2, 3):
+        assert f'<a href="#roi{rank}">{rank}</a>' in table and f'id="roi{rank}"' in html
+    assert '<td>L1</td><td>M2, M3</td><td>[1.00, 2.00]</td>' in table and '<td>L1</td><td>L1</td>' in table
+    assert '<td>blocked</td>' in table and 'ROI 목록</a>' in html
+    assert '<td>왼쪽 위 (x ' in table or '<td>가운데' in table or '<td>오른쪽' in table or '<td>왼쪽' in table
+
+
+def contribution_case(i, kind='shifted', **extra):
+    return {'case_key': 'lateral_short|A%d|L1|B|L1|L1' % i, 'change_kind': kind, 'residual_um2': 20.0 - i, 'area_reference_um2': 3.0,
+            'area_target_um2': 4.5, 'iou_global': 0.1, 'iou_local': 0.5, 'local_shift_um': 0.3, 'present_in': 'both',
+            'layer_changed': False, **extra}
+
+
+def test_contribution_table_is_korean_with_row_classes_and_folds_after_ten_rows():
+    alignment, qs, windows, source = synthetic_source(1)
+    cases = [contribution_case(0, 'appeared', present_in='target', flags=['new_electrode'], area_reference_um2=0.0),
+             contribution_case(1, 'disappeared', present_in='reference', flags=['removed_electrode'], layer_changed=True)]
+    cases += [contribution_case(i) for i in range(2, 11)] + [{**contribution_case(11), 'case_key': 'odd-key', 'layer': 'M9'}]
+    qs = [{**qs[0], 'contributing_cases': cases}]
+    html = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows[:1], source=source)[0].decode('utf-8')
+    for column in ('불량 유형', '전극 쌍', '층', '변경 종류', '창 안 변경 면적 µm²', 'reference 면적 µm²', 'target 면적 µm²',
+                   '있는 모델', '층 바뀜', '전극 표시'):
+        assert f'<th>{column}</th>' in html
+    assert 'iou_global' not in html and 'iou_local' not in html and 'local_shift_um' not in html
+    for case in cases:
+        assert case['case_key'] in html
+    assert html.count('<tr class="app">') == 1 and html.count('<tr class="dis">') == 1
+    assert '새로 생김' in html and '사라짐' in html and '형상 변화 <code>shifted</code>' in html
+    assert '새 전극 <code>new_electrode</code>' in html and '없어진 전극 <code>removed_electrode</code>' in html
+    assert 'target 만' in html and 'reference 만' in html and '<td>예</td>' in html
+    assert '<td class="num">0.00</td><td class="num">4.50</td>' in html
+    assert '<td>A0 – B</td><td>L1</td><td>새로 생김</td>' in html
+    assert html.count('나머지 2행 보기') == 1 and html.count('<summary>나머지') == 1
+    assert 'odd-key' in html and '<td>M9</td>' in html                                  # undecomposable key stays verbatim
+    short = [{**qs[0], 'contributing_cases': cases[:10]}]
+    html = alignment_report.build_alignment_html(alignment, queries=short, windows=windows[:1], source=source)[0].decode('utf-8')
+    assert '<summary>나머지' not in html
+
+
+def test_tiny_operation_limit_skips_pictures_but_keeps_the_tables():
+    alignment, qs, windows, _ = synthetic_source()
+    assert not alignment_report.fits((300, 320), (300, 320), 1000, 0, 3)
+    data, info = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=None,
+                                                       skipped_reason='estimated too many bytes')
+    html = data.decode('utf-8')
+    assert '<img' not in html and 'data:image' not in html and info['n_images'] == 0
+    assert '그림을 만들지 않았습니다' in html and 'estimated too many bytes' in html
+    assert html.count('id="roi') == 3 and '<h2 id="list">' in html and '기여 조합' in html
