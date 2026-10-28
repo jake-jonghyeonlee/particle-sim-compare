@@ -101,18 +101,23 @@ DL2를 실제로 연결할 때 하나씩 확인한다. 1~10은 계획 초안(PLA
 
 ## change-roi-v2 (2026-10-28)
 
-Run `20261028-change-roi-v2`(기준 `feat/template-export` @ `0717947`). 계획 v1.3, 기록은 `~/git/paseo-ops/migration/runs/20261028-change-roi-v2/`(`CHECKPOINT.md`, `PLAN_v1.1.md`, 계약 `T*_CONTRACT.md`). 모든 Task는 독립 리뷰 PASS 뒤 이 브랜치 사슬(t1 → t2 → t4b → t3a → t3b → t6)에 쌓였다.
+기준 `feat/template-export` @ `0717947`, 계획 v1.3. 모든 Task는 독립 리뷰 PASS 뒤 브랜치 사슬(t1 → t2 → t4b → t3a → t3b → t6)에 쌓였다.
 
-**문제(Task 기준 요약).**
-1. 두 모델의 frame 크기가 다를 때 `alignment.json`에 크기·비교 영역 기록이 없었다.
-2. 병합이 층 안에서만 일어나 같은 위치의 다른 층 변경이 별개 ROI로 남았다.
-3. 서로 크게 겹치는 ROI가 top-k를 차지했다.
-4. 기여 조합 표에 case별 면적·창 안 변경 종류가 없고 한글 표현이 어색했다.
-5. `alignment.html`에서 정렬 결과와 ROI 안 불량 조합이 있는 층의 reference/target 모양을 한눈에 볼 수 없었다.
+**문제(사용자가 `alignment.html`로 본 것).**
+1. CNT 정렬: reference frame 2004 px, target frame 2014 px. pitch는 같고(0.1 µm) 제품 unit size가 조금 달라서 생긴 차이다.
+2. 중앙 2×2 frame을 쓰다 보니 ROI 후보가 많이 겹친다(층마다 따로 병합, 창 격자 W/4 에서 겹침 50 % 미만 창은 남음).
+3. ROI 상세에 후보별 CNT 정렬 crop만 있어 frame 어디인지 모른다. 전 층 겹침 비교, layout 변경 강조, ROI 위치 표시가 필요하다.
+4. `alignment.html` "기여 조합" 상세가 이해되지 않는다. 한글로 바꾸고 판단에 확실한 요소만 남긴다.
+5. 문제 1과 연계: unit size가 다를 때의 비교 방식.
 
-**사용자 결정(2026-10-28, "추천대로").**
-- D0: 새 선택 인수의 기본값은 이전 동작이다. D1: `frame_shape_differs`는 정보(note)이며 경고·정렬 불확실 사유가 아니다. D3: 4회차 예시 인수는 `--merge-scope all --suppress-overlap 0.3`이다. D2·D4–D6, Q4와 번호별 원문은 Run 폴더의 `CHECKPOINT.md`와 `PLAN_v1.1.md`에 있다.
-- V1: CNT 정렬·진단을 앞쪽 절로. V2: ROI 상세에서 전층 합친 CNT crop을 뺀다. V3: ROI 안에 불량 조합이 있는 층마다 비교·reference·target 한 묶음(최대 4층)이며 바탕은 전극 형상이다(`--electrode-png-root`, 생략 시 `--cnt-from-dl1-root`).
+**사용자 결정(2026-10-28).**
+- D0: 새 인수는 선택 인수이고 기본값은 이전 동작이다. 인수를 준 경우에만 `change_args`·`execution.json`의 `args`에 키를 적는다.
+- D1: frame 크기 차이는 info note `frame_shape_differs`로만 기록한다. 경고나 `aligned_uncertain` 사유가 아니다.
+- D2: `--merge-scope {layer,all}`과 `--suppress-overlap X`를 둘 다 추가한다. D3: ETX 예시는 `--merge-scope all --suppress-overlap 0.3`이며 예시 값이다.
+- D4: 전 층 겹침 색은 side 2색(reference 파랑 계열, target 주황 계열) × 층 명도다. D5: 새 그림은 기본 포함이다. D6: `area_reference_um2`·`area_target_um2`를 JSON에 더한다.
+- Q4: `shifted`·`reshaped`·`mixed_undetermined`는 HTML에서 "형상 변화" 하나로 합치고 IoU 값은 HTML에서 뺀다(JSON은 유지). 리뷰 뒤 appeared/disappeared 문구는 "창 안 새로 생김 / 창 안 사라짐"이 되었다(창 단위 판정).
+- 문제 5의 1단계는 "공통 영역 교집합 명시 + 크기 차이 기록"까지다. resize/warp는 하지 않는다(`docs/open_questions.md` N1).
+- 화면 검토(목업 v2·v3): 정렬 상태 배지, ROI 목록, 사분면 offset의 허용값 초과 강조, 공통 영역 밖 회색, 층 명도 최대 6단계, 한글 표의 행 강조·10행 접기. V1: CNT 정렬·정렬 진단을 앞쪽 절로. V2: ROI 상세에서 CNT 정렬 crop을 뺀다. V3: ROI 안에 불량 조합이 있는 층마다 비교·reference·target 한 묶음(최대 4층)이며 바탕은 그 층 전극 형상이다(`--electrode-png-root`, 생략 시 `--cnt-from-dl1-root`).
 
 **Task와 후보 commit.**
 
