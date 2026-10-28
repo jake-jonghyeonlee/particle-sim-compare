@@ -251,8 +251,9 @@ def test_bbox_starts_after_an_invalid_margin():
 
 def test_bbox_shrinks_by_a_nonzero_offset():
     full = np.ones((30, 40), bool)
-    y0, y1, x0, x1 = _maps(full, full, offset=(3, 0))['domain_bbox_px']
-    assert (y0, y1) == (0, 30) and (x0, x1) in ((3, 40), (0, 37))
+    # offset_px = (dx, dy) = (3, 0) with p_target = p_reference + offset: reference pixel x is observed in the target at x + 3
+    # (_shift_crop: out[x] = tgt[x + dx]), which exists only for x + 3 < 40, i.e. x in [0, 37). y is unshifted: [0, 30).
+    assert _maps(full, full, offset=(3, 0))['domain_bbox_px'] == [0, 30, 0, 37]
 
 
 def test_alignment_record_writes_a_null_bbox_for_an_empty_domain():
