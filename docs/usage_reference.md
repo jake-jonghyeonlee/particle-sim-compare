@@ -115,6 +115,19 @@ py -3.12 -m venv .venv-cmd
 
 endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`로 blocked가 된다. `to-dl2-relations`는 양쪽 roi_id가 있는 ready 쌍만 `similar`로 쓴다. `check_candidate_coverage.py`는 라벨 위치가 전극 수 지도 영역 안에 드는 비율을 threshold별로 보고하는 읽기 전용 점검이다.
 
+### 모델 쌍 창 비교 인수 (`--models` / `--model` / `--case-window-um` / `--case-diameter-um`)
+
+다제품 흐름(6m회차)에서 `compare-windows`에 더하는 선택 인수다. 모두 생략하면 위 동작·출력이 그대로다. 흐름은 `docs/usage.md`의 "모델이 여럿일 때".
+
+| 인수 | 값 | 필수 조건 | 설명 |
+|---|---|---|---|
+| `--models` | `models.yaml`(`compare_models_v1`, `--config`와 같은 폴더) | `--model`과 함께 | `models.yaml`의 모든 configured 모델을 로드한다 |
+| `--model` | 모델 키(= product_id) | `--models`와 `--out`과 함께 | a = config target, b = 모델, Δ = 모델 − target. 마스크는 2회차 `comparison_masks.zip`을 재사용하지 않고 두 쪽을 다시 계산한다 |
+| `--case-window-um` | µm, `--window-sizes` 안의 값 | `--model`, `--case-diameter-um`과 함께 | 이 창에서 모델 쌍의 관측 hotspot case 구성 차이를 `window_cases.json/csv`로 낸다 |
+| `--case-diameter-um` | µm, 두 데이터셋에 있는 지름 | `--model`, `--case-window-um`과 함께 | `window_cases` 지름. 쌍×case 마다 마스크를 다시 읽는다 |
+
+어기면 파일을 쓰지 않고 종료 2다(`model_arguments_paired`, `case_args_require_model`, `case_args_incomplete`, `case_window_not_in_sizes`, `case_diameter_missing`). 필드는 [데이터 계약](data_contract.md)의 `window_cases_v1`.
+
 ## 통합 HTML 보고서 (report)
 
 이미 만든 출력 폴더를 읽어 **HTML 한 파일**(PNG는 base64, 그래프는 inline SVG, 외부 URL·`<script src>` 없음, `file://`로 열림)을 만든다. 수치는 다시 계산하지 않고 수율·밀도 단위 환산(보류)도 넣지 않는다. 계획: [report_html_plan_v1](plan/report_html_plan_v1.md).
@@ -352,6 +365,7 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
   - 한 봉투 두 방향: DL2 실행기는 질의 dataset 하나로 봉투 하나를 쓴다. 같은 파일을 `--match reference_to_target=F --match target_to_reference=F`로 줄 수 있다. 각 방향은 자기 질의 export 해시의 ranking 만 쓰고, 반대 방향 해시의 ranking 은 건너뛰며 방향별 `rankings_skipped_other_direction`에 센다. 어느 방향 해시와도 다른 ranking 은 `match_input_hash_mismatch`(종료 2). 한 방향의 ranking 이 0개이면 그 방향 `warnings=["no_rankings_for_direction"]`이다.
   - 후보별 사용 불가(`--list`의 `unavailable_candidates`에 사유와 함께 보이고, accept 하면 `candidate_match_unavailable`로 종료 코드 2): `candidate_product_unverifiable`(후보 제품을 담은 source 가 없거나 그 `product_ids`가 `null`), `candidate_product_not_configured`(config의 reference/target에 없는 제품), `candidate_same_product`(질의와 같은 제품), `unsupported_search_scope`(`primary`/`supplementary` 외). `search_scope=supplementary` 후보는 목록에 보이며 `search_scope`와 `flags.supplementary`가 표시된다.
   - 출력은 NCC 경로와 같은 쌍 단위 `roi_correspondence.json`(a=reference, `producer.kind=manual`)이다. 사이드카의 `inputs.matches.<direction>`에 `match_schema`, `index_sources_kind`(`sources`|`single_export`), `index_sources_used`(후보 제품을 담은 source 의 `export_sha256`·`product_ids`), `index_export_verification`, `rankings_skipped_other_direction`, `warnings`, `checkpoint_fingerprint`, `view_fingerprint`, `arguments`가, 쌍의 `candidates[]`에 `match_schema`, `rank`, `search_scope`, `candidate_roi_id`가 더해진다.
+- **`--models <models.yaml>`(선택, 다제품)**: `compare_models_v1` 파일(`--config`와 같은 폴더, 아니면 `models_config_dir_mismatch`)을 주면 reference↔target 출력은 그대로 두고 모델 후보를 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(자산 대기 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`으로 따로 낸다. `--list`에는 모델 후보와 `model_status`가 같이 나온다. 모델 쌍은 target 질의(`target_to_reference`) 후보에서만 생기며 reference 질의의 모델 후보를 accept 하면 `candidate_model_query_not_target`(종료 2)이다. 모델 쌍은 a = target 질의, b = 모델이다.
 - 방향: `target_to_reference` 후보는 **뒤집어서** 항상 a = reference, b = target 이다. 질의 쪽 side는 질의 export 행(endpoints·failure_type·roi_id 포함)에서 그대로 가져오고, 후보 쪽 side는 후보 중심·frame·반대 index export의 design_version·질의의 `analysis_layer`만 가진다(endpoints·roi_id·failure_type 없음).
 - `source = {kind: manual, labelled_by, labelled_at}`(UTC, 한 실행에서 한 번). `pair_id`는 방향·질의 roi_id·rank·후보 중심의 해시이며 `labelled_at`에는 의존하지 않는다.
 - `mutual`/`one_way`: 반대 방향에서 accept 된 쌍의 a·b 중심이 모두 `--mutual-tolerance-um` 이내면 `mutual`, 아니면 `one_way`(표시만 한다). 두 방향이 같은 대응을 accept 했으면 쌍은 **하나**만 내보내고(pair_id가 작은 쪽) 사이드카에 `merged_with`를 적는다. 반대 방향의 reject·미결정 후보는 `opposite_candidates_within_tolerance`에 정보로만 남는다. 병합은 두 쌍의 분석층(a·b 양쪽)이 같고, failure_type이 양쪽에 있으면 같을 때만 한다. 맥락이 다르면 `mutual` 표시는 두되 **두 쌍 모두 내보내고** 사이드카에 `mutual_context_differs: true`를 적는다(accept 한 측정은 버리지 않는다).
@@ -359,6 +373,25 @@ python -m psdl2.baseline_ncc --all-ready --query-export candidates_k3/target_exp
 - **큰 export 사전 게이트**: real 데이터셋에서는 candidates export 네 개(`*_export`, `*_index_export`의 `review_rois.json`)를 읽기 **전에** 파일 크기를 확인한다. 파싱한 객체는 파일 바이트의 약 1.9~2.5배(Python 3.8/3.11 실측; 텍스트 포함 순간 최대 약 3.5배)를 차지하므로 `합계 × 5 + 가장 큰 파일 × 3`(합계에는 `--match` DL2 JSON 파일의 디스크 크기도 들어간다)이 `max_operation_bytes`(두 데이터셋 중 작은 값)를 넘으면 아무것도 읽지 않고 `oversized_real_operation: confirm-pairs (stage-5 export read: B bytes in F files x 5 parsed): estimated X bytes exceed limit Y; rerun candidates with --max-candidates ...`(코드 2)로 멈춘다. 파싱 뒤에는 읽는 쪽이 쓰지 않는 `region_coverages`를 버린다. numeric 데이터셋에는 한도가 없어 게이트가 없다.
 - 출력: `roi_correspondence.json`(`validate_correspondence` 통과, `load_correspondence`로 재적재), `confirmed_pairs_sidecar.json`(pair_id별 candidate_id·점수·순위·flags·score_gap·template_sha256·implementation_revision·결정 메모·mutual/one_way·입력 파일 sha256·blocked 사유), `confirm_funnel.json`/`.csv`(match 후보 → accept/reject/미결정 → blocked(사유) → 병합 → 출력), `execution.json`. **점수는 대응 파일에 없고 어떤 판정·정렬에도 쓰이지 않는다.**
 - 종료 코드: 0 = 쌍이 나갔고 blocked 없음, 3 = blocked 쌍이 있거나 accept 0건(출력은 씀), 2 = 입력·정합성 오류(출력 없음). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다.
+
+## 모델별 리포트 (model-report)
+
+행 = target 질의 ROI, 열 = 모델(reference 포함)인 한 장 표다. 수치는 기존 출력에서 복사하며 새로 계산하지 않는다. 모든 인수가 필수이고 기본값이 없다. 입력 폴더의 세대·제품 방향·미완료 여부가 어긋나면 아무것도 쓰지 않고 종료 2다. 필드와 검증 목록은 [데이터 계약](data_contract.md)의 `model_report_v1`.
+
+| 인수 | 값 | 설명 |
+|---|---|---|
+| `--candidates` | candidates-change 출력 폴더 | ROI 행과 변경 속성(점수·case 수·union 변화) |
+| `--confirm` | `confirm-pairs --models` 출력 폴더 | 확정 쌍(reference, 모델별)과 `models/decisions.json` |
+| `--windows` | `<product_id>=<compare-windows 폴더>`, 제품마다 반복 | reference 쌍 폴더는 reference product_id 키(6회차를 DL2 경로 대응 파일로 실행한 폴더), 모델은 모델 키(6m회차 폴더) |
+| `--diameter-um` | µm | 표시 지름. `local_delta_rows.csv`에 있어야 한다 |
+| `--window-um` | µm | 표시 창. `window_sizes_um` 안, 모델 `window_cases`가 있으면 그 창과 같아야 한다 |
+| `--out` | 새 폴더 | 입력 폴더 밖이어야 한다(`output_dir_exists`/`output_is_input`) |
+
+```text
+python -m simcompare model-report --candidates data/changes --confirm data/confirmed --windows QA4_R00=data/local --windows QA4_C00=data/local/models/QA4_C00 --diameter-um 5 --window-um 20 --out data/model_report
+```
+
+부호: 원값 `delta_um2`는 b − a(모델 쌍 = 모델 − target, reference 쌍 = target − reference)이고 `delta_model_minus_target_um2`가 reference 쌍만 뒤집어 모델 − target으로 통일한다. case 구성 차이는 인과를 뜻하지 않는다. 출력: `model_report.html/.csv/.json`, `execution.json`.
 
 ## 종료 코드
 

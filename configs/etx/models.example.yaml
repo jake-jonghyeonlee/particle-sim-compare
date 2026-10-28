@@ -5,6 +5,8 @@
 # 모델 폴더 data/models/<product_id>/ 는 reference 와 같은 1·3회차 산출물이다:
 #   import-hotspots --root <모델 hotspot> --expected-cases-from-roots <target hotspot> --out data/models/<product_id> (+ pairs.csv 복사)
 # manifest.json 이 아직 없으면 그 모델은 assets_pending 이다(후보는 보이고, accept 하면 deferred.json 에 남고 종료 3).
+# 실행기 경로와 맞춤(bundles/etx/): 1m 은 data/models/<product_id> 로 import, 3m 은 data/assets/models/<product_id> 에 쓴 뒤 data/models/<product_id>/ 로 복사,
+# 5m/6m 은 이 파일을 BASE_DIR 의 models.yaml 로 읽는다. 3m 의 assignment_<product_id>.json 은 아래 condition_assignment 와 같은 내용이다.
 schema_version: compare_models_v1
 target_product_id: QA4_T00
 models:

@@ -27,9 +27,19 @@
 
 수치를 새로 만드는 것은 2회차(면적)와 6회차(창별 ΔCA)이고 나머지는 입력을 준비하고 짝을 고르는 단계다. 6회차 `compare-windows`는 reference가 a, target이 b이며 방향은 b − a다.
 
-### 모델이 여럿일 때 (`confirm-pairs --models`, 선택)
+### 모델이 여럿일 때 (다제품 흐름 1m → 3m → 5m → 6m → 7, 선택)
 
-reference·target 외에 비교할 모델(제품)이 더 있으면 `models.yaml`(`compare_models_v1`)에 적고 5회차에 `--models`를 더한다. `--models`가 없으면 5회차의 코드 경로와 출력은 그대로다. 예시 파일은 `configs/etx/models.example.yaml`이다.
+reference·target 외에 비교할 모델(제품)이 더 있으면 `models.yaml`(`compare_models_v1`)에 적고 아래 한 흐름을 따른다. 기존 1~6회차의 코드 경로와 출력은 바뀌지 않는다(`--models`가 없으면 5회차는 그대로다). 예시 파일은 `configs/etx/models.example.yaml`, 회차별 실행기는 `bundles/etx/simcompare_job_{1m,3m,5m,6m,7}_*.py`다.
+
+| 회차 | 명령 | 하는 일 | 회차 뒤 할 일 |
+|---|---|---|---|
+| 1m | `import-hotspots --root data/input/hotspot/<모델> --expected-cases-from-roots data/input/hotspot/<target> --out data/models/<모델>` | 모델 hotspot import(모델마다 한 번) | `pairs.csv`를 `data/models/<모델>/`에 복사 |
+| 3m (선택) | `import-electrode-assets … --numeric-data-dir data/models/<모델> --out data/assets/models/<모델>` | 모델 전극 PNG import | 출력의 `review_assets.json`·`electrode_asset_import_record.json`·`assets/`를 `data/models/<모델>/`로 복사하고 `models.yaml`에 `asset_manifest`·`electrode_import_record`(sha256) 기입 |
+| 5m | `confirm-pairs --list/--models …` | 5회차를 대신하는 모델 포함 확정(reference 쌍도 같은 출력에 나온다. DL2 `search_batch.json` 하나를 두 `--match`에 줄 수 있고 `--out`은 `data/confirmed`) | `data/confirmed/models/<모델>/roi_correspondence.json` 확인 |
+| 6m | `compare-windows --models … --model <모델> --case-window-um … --case-diameter-um … --out data/local/models/<모델>` | 모델 쌍 창별 ΔCA + case 구성 | 6회차를 `data/confirmed/roi_correspondence.json`으로 한 번 더 실행해 reference 쌍 `data/local`을 둔다 |
+| 7 | `model-report …` | 행 = target ROI, 열 = 모델 한 장 표 | `data/model_report/model_report.html` |
+
+모델 자산은 사용자가 나중에 모델별 폴더로 준다. 폴더가 없는 모델은 `assets_pending`이라 후보만 보이고, 자산이 오면 1m(필요하면 3m)부터 해당 모델만 다시 하고 5m 이후는 새 `--out`으로 돌린다. 6m은 모델마다 한 번씩 돌리고 `--out`은 모델별 폴더다. 6m은 2회차 마스크를 재사용하지 않고 target·모델 두 쪽 면적을 다시 계산해 6회차보다 시간·메모리가 더 들고, `--models`는 `models.yaml`의 모든 configured 모델을 로드하며, `--case-*` 인수는 쌍×case 마다 마스크를 다시 읽는다. 실규모 시간은 로그의 `compare-windows exit N in Ns` 줄로 확인한다. 주의: 6회차가 `data/local`을 한 세대로 교체하므로(관리 파일 이름만 교체) `data/local/models/`는 지워지지 않지만, 모델 폴더가 reference 폴더 안에 있으므로 7회차는 두 폴더를 각각 `--windows`로 따로 준다.
 
 - `models.yaml`은 `real.yaml`과 **같은 폴더**에 둔다(다르면 `models_config_dir_mismatch`, 종료 2). 모델 절의 상대 경로는 `real.yaml`의 reference/target 절과 같은 기준으로 읽는다. 모델 폴더는 reference와 같은 1·3회차 산출물(`manifest.json`, `pairs.csv`, 3회차 뒤 `review_assets.json` 등)이며 `data/models/<product_id>/`에 둔다.
 - `data_dir/manifest.json`이 아직 없는 모델은 `assets_pending`이다. 후보는 `--list`에 `model_status`로 보이고, accept 하면 쌍 없이 `models/<product_id>/deferred.json`에 남고 종료 코드는 3이다. 자산이 오면 새 `--out`으로 다시 돌린다.
@@ -38,25 +48,25 @@ reference·target 외에 비교할 모델(제품)이 더 있으면 `models.yaml`
 
 ```text
 python -m simcompare confirm-pairs --list --config real.yaml --models models.yaml --candidates data/changes --match target_to_reference=data/dl2/search_batch.json
-python -m simcompare confirm-pairs --config real.yaml --models models.yaml --candidates data/changes --match reference_to_target=data/dl2/search_batch.json --match target_to_reference=data/dl2/search_batch.json --decisions decisions.csv --labelled-by jdoe --mutual-tolerance-um 5 --out data/confirmed_models
+python -m simcompare confirm-pairs --config real.yaml --models models.yaml --candidates data/changes --match reference_to_target=data/dl2/search_batch.json --match target_to_reference=data/dl2/search_batch.json --decisions decisions.csv --labelled-by jdoe --mutual-tolerance-um 5 --out data/confirmed
 ```
 
 모델 한 개의 창 비교는 `compare-windows`에 `--models`와 `--model`을 같이 준다. 두 인수와 `--out`이 모두 필요하고, a = config target, b = 모델이며 Δ = 모델 − target이다. `--out`은 reference 용 `data/local`과 다른 폴더(예 `data/local/models/<key>`)여야 하며, 인수 오류는 파일을 하나도 쓰지 않고 종료 2이다.
 
 ```text
-python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed_models/models/QA4_C00/roi_correspondence.json --window-sizes 20 --out data/local/models/QA4_C00
+python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed/models/QA4_C00/roi_correspondence.json --window-sizes 20 --out data/local/models/QA4_C00
 ```
 
 모델 쌍의 "창 안 관측 case 구성 차이"(둘 다 / target 에만 / 모델에만, 개수와 이름)는 같은 명령에 `--case-window-um`과 `--case-diameter-um`을 함께 주면 `window_cases.json`·`window_cases.csv`로 나온다. 창은 `--window-sizes` 안의 값이어야 하고 지름은 두 데이터셋에 있어야 하며 기본값은 없다. 목록·개수일 뿐 인과를 뜻하지 않는다([데이터 계약](data_contract.md)의 `window_cases_v1`).
 
 ```text
-python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed_models/models/QA4_C00/roi_correspondence.json --window-sizes 20 --case-window-um 20 --case-diameter-um 5 --out data/local/models/QA4_C00
+python -m simcompare compare-windows --config real.yaml --models models.yaml --model QA4_C00 --correspondence data/confirmed/models/QA4_C00/roi_correspondence.json --window-sizes 20 --case-window-um 20 --case-diameter-um 5 --out data/local/models/QA4_C00
 ```
 
-모델별 한 장 표(행 = target 질의 ROI, 열 = 모델, 셀 = 쌍 목록과 불량 변화 Δ)는 `model-report`가 만든다. 모든 인수가 필수이고 수치는 기존 출력에서 복사하며, 입력 폴더의 세대가 어긋나면(대응 파일 sha256, 제품 방향, target 입력, 미완료 폴더 등) 아무것도 쓰지 않고 종료 2이다. `--windows`는 reference 쌍 폴더(키 = reference product_id)와 모델 폴더(키 = 모델 product_id)를 제품마다 하나씩 준다. 부호는 모델 − target으로 통일한 열이 따로 있고 원값(b − a)도 함께 나온다. case 구성 차이는 인과를 뜻하지 않는다. 필드와 검증 목록은 [데이터 계약](data_contract.md)의 `model_report_v1` 절에 있다.
+모델별 한 장 표(행 = target 질의 ROI, 열 = 모델, 셀 = 쌍 목록과 불량 변화 Δ)는 `model-report`가 만든다. 모든 인수가 필수이고 수치는 기존 출력에서 복사하며, 입력 폴더의 세대가 어긋나면(대응 파일 sha256, 제품 방향, target 입력, 미완료 폴더 등) 아무것도 쓰지 않고 종료 2이다. `--windows`는 reference 쌍 폴더(키 = reference product_id)와 모델 폴더(키 = 모델 product_id)를 제품마다 하나씩 준다. reference 폴더는 6회차를 DL2 경로의 `data/confirmed/roi_correspondence.json`으로 돌린 결과여야 한다(4회차 직접 대응으로 만든 폴더면 `model_report_correspondence_mismatch`). 같은 쌍을 두 경로(사이드카 `target_to_reference` 후보, 후보 payload `region_id`)로 연결했는데 서로 다른 ROI이면 사이드카 쪽을 쓰고 행에 `link_mismatch`를 표시한다(CSV/JSON 열 `link_source`·`link_flags`). 부호는 모델 − target으로 통일한 열이 따로 있고 원값(b − a)도 함께 나온다. case 구성 차이는 인과를 뜻하지 않는다. 필드와 검증 목록은 [데이터 계약](data_contract.md)의 `model_report_v1` 절에 있다.
 
 ```text
-python -m simcompare model-report --candidates data/changes --confirm data/confirmed_models --windows QA4_R00=data/local --windows QA4_C00=data/local/models/QA4_C00 --diameter-um 5 --window-um 20 --out data/model_report
+python -m simcompare model-report --candidates data/changes --confirm data/confirmed --windows QA4_R00=data/local --windows QA4_C00=data/local/models/QA4_C00 --diameter-um 5 --window-um 20 --out data/model_report
 ```
 
 `confirm-pairs --models`의 출력은 기존 파일(reference↔target 쌍만) 외에 `models/<product_id>/roi_correspondence.json`, `confirmed_pairs_sidecar.json`, `deferred.json`(pending 모델에 accept 가 있을 때만), `models/decisions.json`, `models/index.json`이다. 스키마는 [데이터 계약](data_contract.md)의 확정 쌍 절에 있다. 같은 봉투 파일을 두 `--match`에 줘도 모델 후보는 한 번만 센다.

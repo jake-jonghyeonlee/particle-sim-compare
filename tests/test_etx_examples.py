@@ -50,6 +50,45 @@ def test_stage4_example_adds_only_asset_evidence_to_stage2():
         assert stage4[side]['condition_assignment'] == stage2[side]['condition_assignment']
 
 
+NEW_STAGES = ('1m_import_models', '3m_import_model_assets', '5m_confirm_pairs_models', '6m_compare_windows_models', '7_model_report')
+
+
+def _stages():
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    try:
+        import build_etx_stage_runners as stages
+    finally:
+        sys.path.pop(0)
+    return stages.STAGES
+
+
+def test_every_runner_job_parses_with_the_real_cli_parser():
+    from simcompare.cli import _parser
+    parser = _parser()
+    stages = _stages()
+    assert set(NEW_STAGES) <= set(stages)
+    for stage, (_, jobs) in stages.items():
+        assert jobs, stage
+        for command, args, _ in jobs:
+            parsed = parser.parse_args([command, *args])
+            assert parsed.command == command, stage
+
+
+def test_new_runner_stages_carry_the_multiproduct_arguments():
+    stages = _stages()
+    jobs = {stage: stages[stage][1] for stage in NEW_STAGES}
+    assert [c for c, _, _ in jobs['1m_import_models']] == ['import-hotspots']
+    assert [c for c, _, _ in jobs['3m_import_model_assets']] == ['import-electrode-assets']
+    assert [c for c, _, _ in jobs['5m_confirm_pairs_models']] == ['confirm-pairs', 'confirm-pairs']
+    assert all('--models' in args for _, args, _ in jobs['5m_confirm_pairs_models'])
+    ((_, six, _),) = jobs['6m_compare_windows_models']
+    for flag in ('--models', '--model', '--case-window-um', '--case-diameter-um'):
+        assert flag in six
+    assert six[six.index('--out') + 1] == 'data/local/models/QA4_C00'
+    ((_, seven, _),) = jobs['7_model_report']
+    assert [seven[i + 1] for i, a in enumerate(seven) if a == '--windows'] == ['QA4_R00=data/local', 'QA4_C00=data/local/models/QA4_C00']
+
+
 def test_stage_runners_are_current_and_parse(tmp_path):
     sys.path.insert(0, str(ROOT / 'scripts'))
     try:
