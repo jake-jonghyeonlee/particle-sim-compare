@@ -29,5 +29,6 @@ Paseo Run `20261027-deltav`. `feat/template-export` @ `8eaf7cb` 로 병합했다
 
 ## 미해결 별건
 - ETX 3회차 `invalid_electrode_png_name`(CNO 이름의 하이픈). 별도 Run 은 사용자 지시로 폐기했다. 전극 이름에 `-` 를 허용하면 case 폴더 이름 분해와 `dv-grade` 의 `pair_key`(`a-b`)가 영향을 받는다.
+  - 2026-10-28 change-roi-v2/T9: `cno/` 안의 PNG 파일 이름 `<n>-<layer>.png`(실자료 형식, 예 `1-PXL.png`)를 받도록 고쳤다(예전 `<n>_<layer>.png` 도 계속 받는다). 전극 **이름**(폴더 이름) 자체에 `-` 가 들어가는 경우는 위 이유로 여전히 별개 문제다.
 
 진행 기록: `~/git/paseo-ops/migration/runs/20261027-deltav/CHECKPOINT.md` (저장소 밖).

@@ -355,6 +355,23 @@ def test_malformed_png_name_is_an_error(tmp_path):
     _case_error(tmp_path, root, r'invalid_electrode_png_name.*PRODUCT/A/M2\.png')
 
 
+def test_cno_name_accepts_hyphen_like_electrodes_and_still_accepts_underscore(tmp_path):
+    # 실자료 DL1: <model>/<electrode>/1-PXL.png 와 같은 위상의 cno/1-PXL.png(하이픈). 예전 자료 cno/7_CNT.png(밑줄)도 그대로 읽는다.
+    root = dl1_tree(tmp_path)
+    save(root / 'PRODUCT' / 'cno' / '8-PXL.png', pattern(5))
+    scan = electrode_png._scan_dl1_model(root, 'PRODUCT')
+    assert sorted((r['filename_number'], r['layer']) for r in scan['cno']) == [(7, 'CNT'), (8, 'PXL')]
+    assert sorted(scan['electrodes']) == ['A', 'B', 'C']          # cno 는 전극 목록에 들어가지 않는다
+    assert electrode_png.list_dl1_electrodes(root, 'PRODUCT') == ['A', 'B', 'C']
+
+
+def test_cno_name_without_number_separator_is_still_an_error(tmp_path):
+    root = dl1_tree(tmp_path)
+    save(root / 'PRODUCT' / 'cno' / 'PXL.png', pattern(5))
+    with pytest.raises(NumericContractError, match=r'invalid_electrode_png_name.*PRODUCT/cno/PXL\.png'):
+        electrode_png._scan_dl1_model(root, 'PRODUCT')
+
+
 def test_layer_name_casefold_collision_with_stack_order_rejects(tmp_path):
     root = dl1_tree(tmp_path)
     save(root / 'PRODUCT/B/8-m2.png', pattern(2))

@@ -46,7 +46,8 @@ SOURCE_KIND_CONTRACT = {
 }
 SEMANTICS_TAG = {'binary': 'b', 'binary_zero_is_marked': 'z'}
 ELECTRODE_NAME = re.compile(r'^(\d+)-(.+)\.png$', re.IGNORECASE)
-CNO_NAME = re.compile(r'^(\d+)_(.+)\.png$', re.IGNORECASE)
+# cno 는 실자료(ETX)에서 전극과 같이 `<n>-<layer>.png` 이고 예전 자료는 `<n>_<layer>.png` 다. DL1 png_source 와 같게 둘 다 받는다.
+CNO_NAME = re.compile(r'^(\d+)[-_](.+)\.png$', re.IGNORECASE)
 
 
 def _error(code, detail=''):
