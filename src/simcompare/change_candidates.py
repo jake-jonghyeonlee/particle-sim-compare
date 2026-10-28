@@ -50,8 +50,14 @@ def _finite(label, value, *, minimum=None, positive=False, unit_interval=False):
         raise _bad('invalid_candidates_change_argument', f'{label}는 (0, 1] 범위여야 합니다')
 
 
+MERGE_SCOPES = ('layer', 'all')
+MERGE_POLICY = {'layer': 'per_layer_window_overlap_intersection_over_min_area_union_find_region_id_order',
+                'all': 'all_layers_window_overlap_intersection_over_min_area_union_find_region_id_order'}
+SUPPRESS_POLICY = 'greedy_score_order_window_overlap_ge_x_all_layers'
+
+
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
-                   mask_derivation_rule):
+                   mask_derivation_rule, merge_scope=None, suppress_overlap=None):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
     if not Path(cnt_root).is_dir():
@@ -71,6 +77,10 @@ def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance
     _finite('--merge-overlap', overlap, unit_interval=True)
     if type(top_k) is not int or top_k < 1:
         raise _bad('invalid_candidates_change_argument', '--top-k는 1 이상의 정수여야 합니다')
+    if merge_scope is not None and merge_scope not in MERGE_SCOPES:
+        raise _bad('invalid_candidates_change_argument', f'--merge-scope는 {"|".join(MERGE_SCOPES)} 중 하나여야 합니다')
+    if suppress_overlap is not None:
+        _finite('--suppress-overlap', suppress_overlap, unit_interval=True)
 
 
 class _Product:
@@ -304,7 +314,7 @@ def _direct_pairs(plan, contrib, pair_by_key, ref, tgt, shift, alignment, rows_i
                                   'change_kind': contribution['classification'],
                                   'residual_um2': contribution['residual_um2'], 'iou_global': contribution['iou_global'],
                                   'iou_local': contribution['iou_local'],
-                                  'local_shift_um': contribution['local_shift_um']}
+                                  'local_shift_um': contribution['local_shift_um'], **_layer_key(contribution)}
     for record in found.values():
         if failed:
             reasons = ['alignment_failed']
@@ -341,7 +351,8 @@ def _direct_documents(records, alignment, commit, inputs):
             'region_id': r['region_id'], 'one_sided_case': r['one_sided_case'], 'present_in': r['present_in'],
             'layer_changed': r['layer_changed'], 'change_kind': r['change_kind'], 'residual_um2': r['residual_um2'],
             'iou_global': r['iou_global'], 'iou_local': r['iou_local'], 'local_shift_um': r['local_shift_um'],
-            'observed_fraction': r['observed_fraction'], 'flags': r['flags'], 'directions': sorted(r['directions'])}
+            'observed_fraction': r['observed_fraction'], 'flags': r['flags'], 'directions': sorted(r['directions']),
+            **_layer_key(r)}
     sidecar = {'schema_version': DIRECT_SIDECAR_SCHEMA, 'method': DIRECT_SOURCE['method'],
                'sign': 'p_target = p_reference + offset', 'alignment': summary, 'inputs': inputs,
                'limitations': [DIRECT_LIMITATION], 'pairs': pairs}
@@ -376,8 +387,14 @@ def _stack_order(side):
     return {row['actual_layer']: row['stack_order'] for row in stack}
 
 
-def _funnel(direction, n_candidates, n_merged, queries, top_k):
+def _layer_key(contribution):
+    """merge_scope=all 에서만 기여 case 에 ``layer`` 가 있다(case 가 속한 층). layer 범위면 키를 만들지 않는다."""
+    return {'layer': contribution['layer']} if 'layer' in contribution else {}
+
+
+def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None):
     kept = len(queries)
+    survivors = n_merged if n_suppressed is None else n_suppressed
     ready = sum(q['status'] == 'ready' for q in queries)
     blocked_reasons = {}
     for q in queries:
@@ -389,19 +406,26 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k):
         {'stage': 'change_candidates', 'count': n_candidates, 'dropped': 0, 'reasons': {}},
         {'stage': 'merged', 'count': n_merged, 'dropped': n_candidates - n_merged,
          'reasons': {'merged_overlap': n_candidates - n_merged} if n_candidates > n_merged else {}},
-        {'stage': 'top_k', 'count': kept, 'dropped': n_merged - kept,
-         'reasons': ({'cut_by_top_k': n_merged - kept} if n_merged > kept else
+        {'stage': 'top_k', 'count': kept, 'dropped': survivors - kept,
+         'reasons': ({'cut_by_top_k': survivors - kept} if survivors > kept else
                      ({'top_k_not_filled': shortfall} if shortfall else {}))},
         {'stage': 'exported_ready', 'count': ready, 'dropped': kept - ready, 'reasons': dict(sorted(blocked_reasons.items()))}]
-    return {'direction': direction, 'stages': stages, 'change_candidates': n_candidates, 'merged': n_merged,
+    if n_suppressed is not None:
+        stages.insert(2, {'stage': 'suppressed', 'count': n_suppressed, 'dropped': n_merged - n_suppressed,
+                          'reasons': {'suppressed_overlap': n_merged - n_suppressed} if n_merged > n_suppressed else {}})
+    doc = {'direction': direction, 'stages': stages, 'change_candidates': n_candidates, 'merged': n_merged,
             'top_k': top_k, 'top_k_not_filled': shortfall, 'exported_ready': ready, 'blocked': kept - ready,
             'note': 'reasons 값은 사유 코드별 질의 수이며 한 질의가 여러 사유를 가질 수 있어 dropped와 합이 다를 수 있다'}
+    if n_suppressed is not None:
+        doc['suppressed'] = n_suppressed
+    return doc
 
 
 # --------------------------------------------------------------------------- 실행
 
 def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um,
-                          change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule):
+                          change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule,
+                          merge_scope=None, suppress_overlap=None):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
     reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
     direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
@@ -414,7 +438,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     """
     from . import pipeline
     _validate_args(cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um, change_tolerance_um,
-                   window_um, merge_overlap, top_k, mask_derivation_rule)
+                   window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap)
     out = Path(out)
     if out.exists() or out.is_symlink():
         raise _bad('output_dir_exists', str(out))
@@ -452,6 +476,10 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
             'align_min_dice': align_min_dice, 'align_layer_tolerance_um': align_layer_tolerance_um,
             'change_tolerance_um': change_tolerance_um, 'window_um': window_um, 'merge_overlap': merge_overlap,
             'top_k': top_k, 'max_operation_bytes': limit, 'mask_derivation_rule': mask_derivation_rule}
+    if merge_scope is not None:
+        args['merge_scope'] = merge_scope
+    if suppress_overlap is not None:
+        args['suppress_overlap'] = suppress_overlap
     track, cleanup = candidates.output_tracker()
     out.mkdir()
     track(out, is_dir=True)
@@ -558,17 +586,27 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                       'target_yx': list(tgt_shape), 'delta_px': alignment_doc['frame_shape_delta_px']})
     candidates.write_text(out / 'alignment.json', json.dumps(alignment_doc, ensure_ascii=False, indent=2, sort_keys=True,
                                                              allow_nan=False) + '\n', track)
-    by_id, merged = {}, []
+    by_id, merged, all_infos = {}, [], []
     ref_bbox = tuple(float(v) for v in ref.frame.bbox_um)
+    merge_all = args.get('merge_scope') == 'all'
+    suppress = args.get('suppress_overlap')
     for layer in sorted({c['layer'] for c in found['candidates']}):
         layer_candidates = [c for c in found['candidates'] if c['layer'] == layer]
         infos = change_map.to_region_infos(layer_candidates, ref.product_id, ref.design_version, ref.frame_id, ref_bbox)
         for candidate, info in zip(layer_candidates, infos):
             by_id[info.region_id] = candidate
-        merged.extend(candidates.merge_regions(infos, window_um, args['merge_overlap'],
-                                               rank_key=change_map.region_rank_key))
+        if merge_all:
+            all_infos.extend(infos)
+        else:
+            merged.extend(candidates.merge_regions(infos, window_um, args['merge_overlap'],
+                                                   rank_key=change_map.region_rank_key))
+    if merge_all:      # group 이 (제품, design, frame) 이라 한 번 호출하면 층을 넘어 병합된다
+        merged = candidates.merge_regions(all_infos, window_um, args['merge_overlap'], rank_key=change_map.region_rank_key)
     merged.sort(key=lambda m: (-m['representative'].score, -m['representative'].max_count, m['representative'].layer,
                                m['representative'].center_xy_um[0], m['representative'].center_xy_um[1]))
+    n_merged_total = len(merged)
+    if suppress is not None:
+        merged = change_map.suppress_overlap(merged, window_um, suppress)
     kept = merged[:top_k]
     windows = [by_id[m['representative'].region_id] for m in kept]
     if report_source is not None:      # alignment.html 용 열지도 블록·창 crop 만 남기고 큰 지도는 놓는다
@@ -576,9 +614,26 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     del maps
 
     # --- 5. 기여 case (두 번째 패스) + CNT 변경 면적
-    contrib = change_map.case_contributions(
-        pairs, windows, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
-        tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved)['windows']
+    if merge_all:
+        # 병합 구성원 층마다 대표 창과 같은 위치·크기의 창을 만들어 그 층의 case 도 센다(전체 층 합친 뒤 창별로 다시 모은다).
+        expanded, owner = [], []
+        for i, (m, window) in enumerate(zip(kept, windows)):
+            for layer in sorted({member.layer for member in m['members']}):
+                expanded.append({**window, 'layer': layer})
+                owner.append((i, layer))
+        scored = change_map.case_contributions(
+            pairs, expanded, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
+            tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved)['windows']
+        contrib = [{'window_index': i, 'layer': window['layer'], 'center_xy_um': list(window['center_xy_um']),
+                    'contributing_cases': []} for i, window in enumerate(windows)]
+        for (i, layer), result in zip(owner, scored):
+            contrib[i]['contributing_cases'].extend({**c, 'layer': layer} for c in result['contributing_cases'])
+        for item in contrib:
+            item['contributing_cases'].sort(key=lambda e: (-e['residual_um2'], e['case_key']))
+    else:
+        contrib = change_map.case_contributions(
+            pairs, windows, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
+            tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved)['windows']
     cnt_change = [_cnt_change_by_layer(w, cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
                                        tgt.frame.valid, offset_px, pitch) for w in windows]
 
@@ -653,7 +708,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
 
     # --- 8. 연결: 요청 키 → 반환 행
     directions, funnels, rows_index = [], [], {}
-    n_candidates, n_merged = len(found['candidates']), len(merged)
+    n_candidates, n_merged = len(found['candidates']), n_merged_total
     for direction, query_name, index_name in candidates.DIRECTIONS:
         side, item = sides[query_name], products[query_name]
         rows_by_key = {}
@@ -712,14 +767,15 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                      'iou_global': c['iou_global'], 'iou_local': c['iou_local'],
                      'local_shift_um': c['local_shift_um'], 'flags': c['flags'],
                      'present_in': pair_by_key[c['case_key']].present_in,
-                     'layer_changed': pair_by_key[c['case_key']].layer_changed}
+                     'layer_changed': pair_by_key[c['case_key']].layer_changed, **_layer_key(c)}
                     for c in contrib[i]['contributing_cases']],
                 'one_sided_cases': [
                     {'case_key': c['case_key'], 'present_in': pair_by_key[c['case_key']].present_in,
-                     'layer_changed': pair_by_key[c['case_key']].layer_changed}
+                     'layer_changed': pair_by_key[c['case_key']].layer_changed, **_layer_key(c)}
                     for c in contrib[i]['contributing_cases'] if pair_by_key[c['case_key']].present_in != 'both'],
                 'cnt_change_um2_by_layer': cnt_change[i]})
-        funnel = _funnel(direction, n_candidates, n_merged, queries, top_k)
+        funnel = _funnel(direction, n_candidates, n_merged, queries, top_k,
+                         len(merged) if suppress is not None else None)
         funnels.append(funnel)
         if funnel['top_k_not_filled']:
             warnings.append({'code': 'top_k_not_filled', 'direction': direction, 'requested': top_k,
@@ -807,6 +863,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     funnel_doc = {'schema_version': 'candidate_funnel_v1', 'directions': funnels, 'top_k': top_k,
                   'top_k_scope': 'per_direction', 'index_coverage': coverage,
                   'direct_pairs_ready': direct_ready, 'direct_pairs_blocked': direct_blocked}
+    if suppress is not None:
+        funnel_doc['suppressed'] = len(merged)
     exec_inputs = {'config_sha256': inputs['config_sha256'],
                    'reference': {k: sides['reference'].input_record.get(k)
                                  for k in ('manifest_sha256', 'asset_manifest', 'electrode_import_record')},
@@ -826,6 +884,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     alignment_summary = {k: alignment[k] for k in ('status', 'reasons', 'offset_xy_um', 'dice_best', 'peak_ratio')}
     change_args = {k: args[k] for k in ('align_search_um', 'align_min_dice', 'align_layer_tolerance_um',
                                         'change_tolerance_um', 'window_um', 'merge_overlap', 'top_k')}
+    change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap') if k in args})
     payload = {'schema_version': candidates.SCHEMA_VERSION, 'roi_source': ROI_SOURCE, 'producer_commit': commit,
                'args': {'min_count': None, 'window_um': window_um, 'merge_overlap': args['merge_overlap'],
                         'max_candidates': top_k, 'representative_diameter_um': DIAMETER_UM},
@@ -843,7 +902,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                'mask_derivation_rule': args['mask_derivation_rule'], 'mask_derivation_files': mask_derivation_files,
                'status': 'available' if complete else 'partial',
                'policy': {'roi_source': 'cnt_alignment_plus_hotspot_xor_residual_windows',
-                          'merge': 'per_layer_window_overlap_intersection_over_min_area_union_find_region_id_order',
+                          'merge': MERGE_POLICY['all' if merge_all else 'layer'],
                           'window': 'square_centered_at_window_center_in_reference_coordinates',
                           'representative': 'score_um2_desc_sum_residual_um2_desc_layer_asc_center_asc_region_id_asc',
                           'score_basis': change_map.SCORE_BASIS,
@@ -851,6 +910,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                           'wiring_change_um2': 'not_computed_here',
                           'mutual_one_way': 'not_computed_here',
                           'index_export': 'one_manual_roi_per_dataset_case_index_only_not_queries_no_region_provenance'}}
+    if suppress is not None:
+        payload['policy']['suppress'] = SUPPRESS_POLICY
     emit('candidate_queries_v1.json', json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     emit('funnel.json', json.dumps(funnel_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     candidates.write_funnel_csv(out / 'funnel.csv', funnels, coverage, track)

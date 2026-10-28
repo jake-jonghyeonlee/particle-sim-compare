@@ -662,6 +662,26 @@ def region_rank_key(info):
     return (-info.score, -info.max_count, info.layer, info.center_xy_um[0], info.center_xy_um[1], info.region_id)
 
 
+def suppress_overlap(merged, window_um, threshold):
+    """순위 순서의 병합 목록에서 전역 greedy NMS: 이미 남긴 대표와 창 겹침 비율 ``ox*oy/(W*W) >= threshold - OVERLAP_EPS`` 이면 버린다.
+
+    층·병합 구분 없이 대표 창만 비교한다(같은 W 의 정사각 창이라 intersection/min(area) = intersection/area).
+    입력 순서를 그대로 우선순위로 쓰므로 결정적이다. 남긴 항목을 같은 순서로 돌려준다."""
+    from .candidates import OVERLAP_EPS
+    kept, kx, ky = [], [], []
+    for item in merged:
+        cx, cy = item['representative'].center_xy_um
+        if kept:
+            ox = np.maximum(0.0, window_um - np.abs(np.array(kx) - cx))
+            oy = np.maximum(0.0, window_um - np.abs(np.array(ky) - cy))
+            if bool(np.any(ox * oy / (window_um * window_um) >= threshold - OVERLAP_EPS)):
+                continue
+        kept.append(item)
+        kx.append(cx)
+        ky.append(cy)
+    return kept
+
+
 def to_region_infos(candidates, product_id, design_version, frame_id, frame_bbox_um=None):
     """후보를 ``candidates.RegionInfo`` 로 바꾼다. ``score`` 에는 스칼라(score_um2 = 합집합 변화 면적)만 싣고,
     area_um2 = score_um2, ``max_count`` = 창 안 조합별 잔차 합(정수 셀 수; 두 번째 순위 키).

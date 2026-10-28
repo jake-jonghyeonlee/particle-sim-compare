@@ -97,6 +97,10 @@ def _parser() -> argparse.ArgumentParser:
     change.add_argument("--change-tolerance-um", required=True, type=float, help="변경 판정 허용 이동 거리 µm (이 안의 이동은 변경으로 세지 않음)")
     change.add_argument("--window-um", required=True, type=float, help="변경 창 한 변(µm)")
     change.add_argument("--merge-overlap", required=True, type=float, help="두 창의 intersection/min(area) 병합 기준 (0,1]")
+    change.add_argument("--merge-scope", choices=("layer", "all"),
+                        help="선택. 창 병합 범위: layer(생략 시, 층마다 병합) 또는 all(층을 넘어 병합)")
+    change.add_argument("--suppress-overlap", type=float,
+                        help="선택. (0,1]. 병합 뒤 순위 순서로 앞선 대표 창과 겹침 비율이 이 값 이상이면 버린다(층 구분 없음). 생략하면 억제 없음")
     change.add_argument("--top-k", required=True, type=int, help="방향(reference_to_target / target_to_reference)별 질의 수")
     change.add_argument("--mask-derivation-rule", required=True,
                         help="DL2 mask_derivation 규칙: between_stack_order_v1 만 허용(기본값 없음). 질의·index export 폴더마다 mask_derivation.json 을 쓴다")
@@ -273,7 +277,8 @@ def main(argv: list[str] | None = None) -> int:
                 cfg, Path(args.out), cnt_from_dl1_root=args.cnt_from_dl1_root, align_search_um=args.align_search_um,
                 align_min_dice=args.align_min_dice, align_layer_tolerance_um=args.align_layer_tolerance_um,
                 change_tolerance_um=args.change_tolerance_um, window_um=args.window_um,
-                merge_overlap=args.merge_overlap, top_k=args.top_k, mask_derivation_rule=args.mask_derivation_rule)
+                merge_overlap=args.merge_overlap, top_k=args.top_k, mask_derivation_rule=args.mask_derivation_rule,
+                merge_scope=args.merge_scope, suppress_overlap=args.suppress_overlap)
             _print(result)
             return result["exit_code"]
         if args.command == "candidates-dv":
