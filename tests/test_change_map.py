@@ -613,6 +613,61 @@ def test_pair_flags_reach_the_contributing_cases():
     assert cases['c']['flags'] == ['reference:csv_area_mismatch'] and cases['d']['flags'] == []
 
 
+def _only_window(pairs, **kw):
+    maps, found = run(pairs, **kw)
+    return case_contributions(pairs, found['candidates'][:1], max_operation_bytes=BIG, **kw)['windows'][0]['contributing_cases']
+
+
+def test_case_areas_equal_classify_pixel_counts_times_pitch_squared():
+    shape = (300, 300)
+    kw = kwargs(shape)
+    # shifted: ref 20x10 = 200 px, tgt 20x10 = 200 px  -> 200 * 0.1 * 0.1 = 2.0 um2 each
+    shifted = MaskPair('shift', 'M1', rect(shape, 40, 40, 20, 10), rect(shape, 40, 48, 20, 10))
+    # reshaped (other place): ref 20x20 = 400 px -> 4.0 um2, tgt 20x36 = 720 px -> 7.2 um2
+    reshaped = MaskPair('reshape', 'M1', rect(shape, 40, 200, 20, 20), rect(shape, 40, 200, 20, 36))
+    for pair, ref_um2, tgt_um2 in ((shifted, 2.0, 2.0), (reshaped, 4.0, 7.2)):
+        got = _only_window([pair], **kw)
+        assert len(got) == 1
+        assert got[0]['area_reference_um2'] == pytest.approx(ref_um2) and got[0]['area_target_um2'] == pytest.approx(tgt_um2)
+
+
+def test_case_area_of_the_missing_side_is_zero_for_appeared_and_disappeared():
+    shape = (200, 200)
+    kw = kwargs(shape)
+    zero = np.zeros(shape, bool)
+    appeared = _only_window([MaskPair('a', 'M1', zero, rect(shape, 50, 50, 15, 15))], **kw)[0]
+    gone = _only_window([MaskPair('v', 'M1', rect(shape, 50, 50, 15, 15), zero)], **kw)[0]
+    assert appeared['classification'] == 'appeared' and gone['classification'] == 'disappeared'
+    assert appeared['area_reference_um2'] == 0 and appeared['area_target_um2'] == pytest.approx(2.25)   # 225 px * 0.01
+    assert gone['area_target_um2'] == 0 and gone['area_reference_um2'] == pytest.approx(2.25)
+    assert isinstance(appeared['area_reference_um2'], (int, float)) and appeared['area_reference_um2'] is not None
+
+
+def test_case_area_leaves_out_hotspot_outside_the_comparison_domain():
+    shape = (300, 300)
+    ref_valid = np.ones(shape, bool)
+    ref_valid[:, :50] = False                    # the left part of the hotspot lies on invalid reference area
+    kw = kwargs(shape, ref_valid=ref_valid)
+    a = rect(shape, 40, 40, 20, 20) | rect(shape, 140, 120, 5, 5)
+    b = rect(shape, 40, 40, 20, 20) | rect(shape, 140, 120, 5, 5) | rect(shape, 40, 70, 20, 10)
+    got = _only_window([MaskPair('c', 'M1', a, b)], **kw)
+    assert len(got) == 1
+    full_um2 = 20 * 20 * PITCH * PITCH
+    # a at columns 40..59, valid from column 50, eroded by r = 2 px -> columns 52..59 count: 8 * 20 px = 1.6 um2
+    assert got[0]['area_reference_um2'] == pytest.approx(1.6) and got[0]['area_reference_um2'] < full_um2
+    assert got[0]['area_target_um2'] > got[0]['area_reference_um2']
+
+
+def test_case_areas_survive_a_different_target_frame_size():
+    ref_shape, tgt_shape = (300, 300), (320, 310)
+    kw = kwargs(ref_shape, tgt_shape, offset=(3, 2))
+    a = np.zeros(ref_shape, bool)
+    b = np.zeros(tgt_shape, bool)
+    b[100:110, 100:110] = True
+    got = _only_window([MaskPair('c', 'M1', a, b)], **kw)
+    assert got[0]['area_reference_um2'] == 0 and got[0]['area_target_um2'] == pytest.approx(1.0)   # 100 px * 0.01
+
+
 def test_case_contributions_admission_is_the_first_stage_only_and_does_not_load_masks():
     shape = (120, 130)
     kw = kwargs(shape)

@@ -19,7 +19,7 @@ LAYER_STACK = [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer':
 CASE_AD2 = 'lateral_short-A-L2-D-L2'
 
 
-def two_layer_masks(original):
+def two_layer_masks(original, ad_dx=40):
     def masks(side, extra_target_case=False):
         base = original(side, False)
         out = dict(base)
@@ -27,18 +27,17 @@ def two_layer_masks(original):
             out[case.replace('-L1', '-L2')] = mask
         if side == 'target':
             dy, dx = tcc.OFFSET[1], tcc.OFFSET[0]
-            y, x = tcc.CHANGE[0].start+dy, tcc.CHANGE[1].start+dx+40
+            y, x = tcc.CHANGE[0].start+dy, tcc.CHANGE[1].start+dx+ad_dx
             out[tcc.CASE_AD] = tcc.rect(y, x, 20, 30)
             out[CASE_AD2] = tcc.rect(y+5, x+5, 10, 10)
         return out
     return masks
 
 
-@pytest.fixture(scope='module')
-def two_layer_world(tmp_path_factory):
+def build_world(tmp_path_factory, ad_dx=40):
     base = tmp_path_factory.mktemp('merge_world')
     mp = pytest.MonkeyPatch()
-    mp.setattr(tcc, 'hotspot_masks', two_layer_masks(tcc.hotspot_masks))
+    mp.setattr(tcc, 'hotspot_masks', two_layer_masks(tcc.hotspot_masks, ad_dx))
     try:
         datas, assignments = {}, {}
         for side in ('reference', 'target'):
@@ -47,6 +46,11 @@ def two_layer_world(tmp_path_factory):
     finally:
         mp.undo()
     return SimpleNamespace(base=base, config=config, dl1=base/'dl1')
+
+
+@pytest.fixture(scope='module')
+def two_layer_world(tmp_path_factory):
+    return build_world(tmp_path_factory)
 
 
 def run(world, out, *extra, **kw):
@@ -115,6 +119,28 @@ def test_one_sided_case_on_the_non_representative_layer_reaches_manual_rows_and_
     assert all('layer' in p for p in sidecar['pairs'].values())
 
 
+def test_scope_all_case_area_keys_are_on_every_layer_case_and_on_sidecar_pairs(all_run):
+    q = queries(all_run.payload)[0]
+    assert {c['layer'] for c in q['contributing_cases']} == {'L1', 'L2'}
+    for c in q['contributing_cases']:
+        assert c['area_reference_um2'] >= 0 and c['area_target_um2'] >= 0, c
+        if c['present_in'] == 'reference':
+            assert c['area_target_um2'] == 0 and c['area_reference_um2'] > 0
+        if c['present_in'] == 'target':
+            assert c['area_reference_um2'] == 0 and c['area_target_um2'] > 0
+    sidecar = tcc.load(all_run.out, 'direct/direct_pairs_sidecar.json')
+    l2 = [p for p in sidecar['pairs'].values() if p['layer'] == 'L2']
+    assert l2 and all('area_reference_um2' in p and 'area_target_um2' in p for p in sidecar['pairs'].values())
+
+
+def test_policy_attributes_key_only_for_scope_all(all_run, layer_run, two_layer_world, tmp_path_factory):
+    expected = 'score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
+    assert all_run.payload['policy']['attributes'] == expected
+    assert 'attributes' not in layer_run.payload['policy']
+    explicit = make_run(two_layer_world, tmp_path_factory, '--merge-scope', 'layer')
+    assert 'attributes' not in explicit.payload['policy']
+
+
 def test_chain_merge_rescores_only_the_representative_window(two_layer_world, tmp_path, monkeypatch):
     """Pinned limitation: members far from the representative window are not re-scored (only its origin, once per layer)."""
     seen = []
@@ -131,6 +157,18 @@ def test_chain_merge_rescores_only_the_representative_window(two_layer_world, tm
     windows = seen[0]
     assert [w['layer'] for w in windows] == ['L1', 'L2']
     assert len({tuple(w['window_origin_px']) for w in windows}) == 1
+
+
+def test_chain_merge_case_changed_only_in_a_far_member_window_is_not_a_contributing_case(all_run, tmp_path_factory, tmp_path):
+    """Case-level view of the pinned limitation: electrode D cases (AD, AD2) change only far from the representative window."""
+    near = {c['case_key'] for c in queries(all_run.payload)[0]['contributing_cases']}
+    assert any('|D|' in key for key in near)               # near the representative window the D cases do contribute
+    world = build_world(tmp_path_factory, ad_dx=130)
+    code, out = run(world, tmp_path/'out', '--merge-scope', 'all')
+    q = queries(tcc.load(out))[0]
+    assert len(q['merged_from']) > 2
+    keys = {c['case_key'] for c in q['contributing_cases']}
+    assert keys and not any('|D|' in key for key in keys)  # the far windows' D cases are not re-scored
 
 
 def _region(x, y, layer='L1'):
