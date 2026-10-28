@@ -113,3 +113,120 @@ def test_default_run_hashes_are_pinned(pinned_run):
     if pinned_run.root != EXPECTED_WORLD_ROOT:
         pytest.skip('hashes were recorded with the world at %s' % EXPECTED_WORLD_ROOT)
     assert baseline_hashes(pinned_run.out) == EXPECTED
+
+
+# --- T1: frame 크기 차이와 비교 영역 기록 ------------------------------------------------------------------------------
+import numpy as np
+
+import test_change_candidates as tcc
+from simcompare import change_map
+
+
+def _run_with_target_shape(tmp_path, delta):
+    """target hotspot mask 를 (dy, dx) 만큼 크게(양수, 아래·오른쪽 0 채움) 또는 작게(음수, 아래·오른쪽 자름) 만든 world 를 돌린다."""
+    original = tcc.hotspot_masks
+    mp = pytest.MonkeyPatch()
+
+    def resized(side, extra_target_case=False):
+        masks = original(side, extra_target_case)
+        if side != 'target' or delta == (0, 0):
+            return masks
+        dy, dx = delta
+        out = {}
+        for case, mask in masks.items():
+            if dy >= 0 and dx >= 0:
+                big = np.zeros((mask.shape[0]+dy, mask.shape[1]+dx), bool)
+                big[:mask.shape[0], :mask.shape[1]] = mask
+                out[case] = big
+            else:
+                out[case] = mask[:mask.shape[0]+dy, :mask.shape[1]+dx]
+        return out
+
+    mp.setattr(tcc, 'hotspot_masks', resized)
+    try:
+        base = tmp_path/'world'
+        base.mkdir()
+        datas, assignments = {}, {}
+        for side in ('reference', 'target'):
+            if side == 'target':      # electrode PNGs and CNT layers of the target are 1000 px larger than its frame
+                mp.setattr(tcc, 'FULL', (tcc.FULL[0]+delta[0], tcc.FULL[1]+delta[1]))
+            datas[side], assignments[side] = tcc.build_product(base, side)
+        mp.undo()
+        mp.setattr(tcc, 'hotspot_masks', resized)
+        config = tcc.write_config(base, datas, assignments, map_spec={'diameter_um': 5})
+        world = SimpleNamespace(base=base, config=config, dl1=base/'dl1')
+        out = tmp_path/'out'
+        code = tcc.run_change(world, out)
+    finally:
+        mp.undo()
+    return code, out
+
+
+def _notes(out):
+    return [n for n in load(out)['notes'] if n.get('code') == 'frame_shape_differs']
+
+
+@pytest.mark.parametrize('delta', [(10, 6), (-10, -6)])
+def test_unequal_frames_are_recorded_and_noted_without_changing_the_exit_code(tmp_path, delta):
+    code, out = _run_with_target_shape(tmp_path, delta)
+    alignment = load(out, 'alignment.json')
+    ref, tgt = alignment['frame_shape_reference_yx'], alignment['frame_shape_target_yx']
+    assert [t-r for r, t in zip(ref, tgt)] == list(delta) == alignment['frame_shape_delta_px']
+    assert alignment['frame_anchor'] == 'top_left_index'
+    domain = alignment['comparison_domain']
+    assert domain['reference_frame_pixels'] == ref[0]*ref[1] and domain['target_frame_pixels'] == tgt[0]*tgt[1]
+    assert 0 < domain['pixels'] <= domain['pixels_before_erosion'] <= min(ref[0]*ref[1], tgt[0]*tgt[1])
+    assert domain['fraction_of_reference'] == round(domain['pixels_before_erosion']/(ref[0]*ref[1]), 6)
+    assert domain['fraction_of_target'] == round(domain['pixels_before_erosion']/(tgt[0]*tgt[1]), 6)
+    y0, y1, x0, x1 = domain['bbox_px']
+    assert 0 <= y0 < y1 <= ref[0] and 0 <= x0 < x1 <= ref[1]
+    note = _notes(out)
+    assert note == [{'code': 'frame_shape_differs', 'severity': 'info', 'reference_yx': ref, 'target_yx': tgt,
+                     'delta_px': list(delta)}]
+    execution = json.loads((out/'execution.json').read_text(encoding='utf-8'))
+    assert [n for n in execution['notes'] if n.get('code') == 'frame_shape_differs'] == note
+    assert not any(w.get('code') == 'frame_shape_differs' for w in load(out)['warnings'])
+    assert code in (0, 3)
+    html = (out/'alignment.html').read_text(encoding='utf-8')
+    assert 'resize 하지 않습니다' in html
+
+
+def test_equal_frames_record_the_shape_and_add_no_note(pinned_run):
+    alignment = load(pinned_run.out, 'alignment.json')
+    assert alignment['frame_shape_reference_yx'] == alignment['frame_shape_target_yx']
+    assert alignment['frame_shape_delta_px'] == [0, 0]
+    assert _notes(pinned_run.out) == []
+    assert 'resize 하지 않습니다' not in (pinned_run.out/'alignment.html').read_text(encoding='utf-8')
+
+
+class _Pair:
+    layer = 'L1'
+    case_key = 'k'
+
+    def load(self):
+        return None, None
+
+
+def _maps(ref_valid, tgt_valid, offset=(0, 0)):
+    return change_map.change_maps([_Pair()], ref_valid=ref_valid, tgt_valid=tgt_valid, offset_px=offset, pitch_um=0.1,
+                                  tolerance_um=0.1, max_operation_bytes=1 << 30)
+
+
+def test_domain_bbox_and_counts_for_a_domain_with_a_hole():
+    ref = np.ones((30, 40), bool)
+    ref[10:14, 10:16] = False                          # hole
+    tgt = np.ones((34, 38), bool)                      # taller, narrower: common area is 30 x 38
+    result = _maps(ref, tgt)
+    assert result['domain_bbox_px'] == [0, 30, 0, 38]
+    stats = result['stats']
+    assert stats['domain_pixels_before_erosion'] == 30*38 - 24
+    assert stats['domain_pixels'] < stats['domain_pixels_before_erosion']
+    assert stats['frame_pixels'] == 30*40
+
+
+def test_empty_domain_has_no_bbox():
+    ref = np.zeros((20, 20), bool)
+    tgt = np.ones((25, 15), bool)
+    result = _maps(ref, tgt)
+    assert result['domain_bbox_px'] is None
+    assert result['stats']['domain_pixels_before_erosion'] == 0 and result['stats']['domain_pixels'] == 0

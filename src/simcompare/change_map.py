@@ -499,6 +499,9 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
             raise NumericContractError('change_map_counter_overflow', f'layer {layer}: {count} cases >= 2^32')
     full_domain = _comparison_domain(ref_valid, tgt_valid, dy, dx)
     domain_before = int(np.count_nonzero(full_domain))
+    # 침식 전 영역의 bbox [y0, y1, x0, x1] (reference 픽셀, 끝은 포함하지 않는다). 빈 영역이면 None.
+    rows, cols = _extent(full_domain.any(axis=1), 0), _extent(full_domain.any(axis=0), 0)
+    domain_bbox = None if rows is None else [rows[0], rows[1], cols[0], cols[1]]
     domain = _erode(full_domain, r)
     del full_domain
     maps = {layer: np.zeros(ref_valid.shape, dtype=np.uint32) for layer in layers}
@@ -531,6 +534,7 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     union_change = {layer: _residual(union_ref[layer], union_tgt[layer], domain, r) for layer in layers}
     union_pixels = {layer: int(np.count_nonzero(union_change[layer])) for layer in layers}
     return {'maps': maps, 'D': domain, 'union_change': union_change, 'union_ref': union_ref, 'union_tgt': union_tgt,
+            'domain_bbox_px': domain_bbox,
             'stats': {'pairs': len(pairs), 'pairs_by_layer': per_layer, 'pairs_with_change_by_layer': changed,
                       'union_change_pixels_by_layer': union_pixels,
                       'residual_pixels': residual_pixels, 'tolerance_px': r, 'offset_px': [dx, dy],

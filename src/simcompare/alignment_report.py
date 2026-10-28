@@ -395,8 +395,35 @@ def _summary(alignment):
         parts.append('<p class="warn">경고: 정렬이 불확실합니다(alignment_uncertain). 상태는 ' + escape(STATUS_TEXT.get(status, status)) +
                      '입니다. 아래 변경 위치는 best-effort 이며 정렬이 틀렸으면 배치 이동 전체가 "변경"으로 잡힐 수 있습니다. '
                      '그림으로 정렬 후 겹침을 먼저 확인하십시오.</p>')
-    parts.append(_table(['항목', '값'], rows))
+    parts.append(_table(['항목', '값'], rows + _frame_rows(alignment)))
+    parts.append(_quadrant_table(alignment))
+    if alignment.get('frame_shape_reference_yx') != alignment.get('frame_shape_target_yx') and 'frame_shape_target_yx' in alignment:
+        parts.append('<p class="note">unit size 차이로 frame 크기가 다릅니다. 비교는 두 frame 의 공통 영역만 합니다. resize 하지 않습니다.</p>')
     return ''.join(parts)
+
+
+def _frame_rows(alignment):
+    """frame 모양 두 줄과 비교 영역 한 줄. 키가 없는 이전 alignment.json 이면 줄을 더하지 않는다."""
+    if 'frame_shape_reference_yx' not in alignment:
+        return []
+    domain = alignment.get('comparison_domain') or {}
+    anchor = alignment.get('frame_anchor')
+    return [('frame 모양 reference (y, x)', alignment['frame_shape_reference_yx']),
+            ('frame 모양 target (y, x)', _Raw(escape(str(alignment['frame_shape_target_yx'])) + ' 차이 ' +
+                                              escape(str(alignment['frame_shape_delta_px'])) + ' · 기준 <code>' +
+                                              escape(str(anchor)) + '</code>')),
+            ('비교 영역', _Raw('%s px (침식 전 %s px) · reference 의 %s · target 의 %s · bbox [y0, y1, x0, x1] %s' % (
+                escape(str(domain.get('pixels'))), escape(str(domain.get('pixels_before_erosion'))),
+                escape(str(domain.get('fraction_of_reference'))), escape(str(domain.get('fraction_of_target'))),
+                escape(str(domain.get('bbox_px'))))))]
+
+
+def _quadrant_table(alignment):
+    quadrants = alignment.get('quadrant_offsets_um') or {}
+    if not quadrants:
+        return ''
+    return '<p class="note">분면별 offset (quadrant_offsets_um)</p>' + _table(
+        ['분면', 'offset_xy_um'], [(name, quadrants[name]) for name in sorted(quadrants)])
 
 
 def _alternatives(alignment):

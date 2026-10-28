@@ -462,6 +462,20 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         raise
 
 
+def _frame_record(ref_shape, tgt_shape, stats, bbox):
+    """alignment.json 에 더하는 frame 크기와 비교 영역. 수치는 change_maps 가 이미 센 값을 쓴다(새 frame 크기 할당 없음)."""
+    ref_pixels, tgt_pixels = int(ref_shape[0]) * int(ref_shape[1]), int(tgt_shape[0]) * int(tgt_shape[1])
+    before = int(stats['domain_pixels_before_erosion'])
+    return {'frame_shape_reference_yx': list(ref_shape), 'frame_shape_target_yx': list(tgt_shape),
+            'frame_shape_delta_px': [tgt_shape[0] - ref_shape[0], tgt_shape[1] - ref_shape[1]],
+            'frame_anchor': 'top_left_index',
+            'comparison_domain': {'pixels_before_erosion': before, 'pixels': int(stats['domain_pixels']),
+                                  'reference_frame_pixels': ref_pixels, 'target_frame_pixels': tgt_pixels,
+                                  'fraction_of_reference': round(before / ref_pixels, 6) if ref_pixels else 0.0,
+                                  'fraction_of_target': round(before / tgt_pixels, 6) if tgt_pixels else 0.0,
+                                  'bbox_px': None if bbox is None else [int(v) for v in bbox]}}
+
+
 def _run(cfg, out, track, sides, products, pitch, limit, args):
     from .adapters.electrode_png import list_dl1_electrodes, load_cnt_layers
     from .adapters.real_hotspot import MAP_SLIM_ROW_BYTES, dataset_held_bytes
@@ -498,7 +512,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         (out / name).write_bytes(data)
         outputs.append(name)
 
-    emit('alignment.json', json.dumps(alignment_doc, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + '\n')
+    outputs.append('alignment.json')      # 파일은 변경 지도 뒤에 쓴다(비교 영역 픽셀 수를 그 계산에서 재사용)
     offset_px = (int(alignment['offset_xy_px'][0]), int(alignment['offset_xy_px'][1]))
     # alignment.html 의 그림: 만들기 전에 메모리 추정으로 허용 여부를 정한다(넘으면 표만 쓰고 경고, 계산은 그대로).
     images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved)
@@ -537,6 +551,13 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         union_tgt=maps['union_tgt'], pitch_um=pitch, window_um=window_um, max_operation_bytes=limit,
         origin_xy_um=(ref.frame.origin_xy_um[0], ref.frame.origin_xy_um[1]), reserved_bytes=reserved)
     map_stats = maps['stats']
+    ref_shape, tgt_shape = tuple(int(v) for v in ref.frame.valid.shape), tuple(int(v) for v in tgt.frame.valid.shape)
+    alignment_doc.update(_frame_record(ref_shape, tgt_shape, map_stats, maps['domain_bbox_px']))
+    if ref_shape != tgt_shape:      # 정보다: 경고도 종료 코드 3 도 아니고 정렬 불확실 사유도 아니다
+        notes.append({'code': 'frame_shape_differs', 'severity': 'info', 'reference_yx': list(ref_shape),
+                      'target_yx': list(tgt_shape), 'delta_px': alignment_doc['frame_shape_delta_px']})
+    candidates.write_text(out / 'alignment.json', json.dumps(alignment_doc, ensure_ascii=False, indent=2, sort_keys=True,
+                                                             allow_nan=False) + '\n', track)
     by_id, merged = {}, []
     ref_bbox = tuple(float(v) for v in ref.frame.bbox_um)
     for layer in sorted({c['layer'] for c in found['candidates']}):
