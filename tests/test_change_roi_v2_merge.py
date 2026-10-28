@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 import test_change_candidates as tcc
@@ -19,7 +20,8 @@ LAYER_STACK = [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer':
 CASE_AD2 = 'lateral_short-A-L2-D-L2'
 
 
-def two_layer_masks(original, ad_dx=40):
+def two_layer_masks(original, ad_dx=40, ad2_dy=0):
+    """ad2_dy moves only AD2 (rows, in pixels, relative to its default place beside AD)."""
     def masks(side, extra_target_case=False):
         base = original(side, False)
         out = dict(base)
@@ -29,15 +31,15 @@ def two_layer_masks(original, ad_dx=40):
             dy, dx = tcc.OFFSET[1], tcc.OFFSET[0]
             y, x = tcc.CHANGE[0].start+dy, tcc.CHANGE[1].start+dx+ad_dx
             out[tcc.CASE_AD] = tcc.rect(y, x, 20, 30)
-            out[CASE_AD2] = tcc.rect(y+5, x+5, 10, 10)
+            out[CASE_AD2] = tcc.rect(y+5+ad2_dy, x+5, 10, 10)
         return out
     return masks
 
 
-def build_world(tmp_path_factory, ad_dx=40):
+def build_world(tmp_path_factory, ad_dx=40, ad2_dy=0):
     base = tmp_path_factory.mktemp('merge_world')
     mp = pytest.MonkeyPatch()
-    mp.setattr(tcc, 'hotspot_masks', two_layer_masks(tcc.hotspot_masks, ad_dx))
+    mp.setattr(tcc, 'hotspot_masks', two_layer_masks(tcc.hotspot_masks, ad_dx, ad2_dy))
     try:
         datas, assignments = {}, {}
         for side in ('reference', 'target'):
@@ -159,16 +161,39 @@ def test_chain_merge_rescores_only_the_representative_window(two_layer_world, tm
     assert len({tuple(w['window_origin_px']) for w in windows}) == 1
 
 
-def test_chain_merge_case_changed_only_in_a_far_member_window_is_not_a_contributing_case(all_run, tmp_path_factory, tmp_path):
-    """Case-level view of the pinned limitation: electrode D cases (AD, AD2) change only far from the representative window."""
-    near = {c['case_key'] for c in queries(all_run.payload)[0]['contributing_cases']}
-    assert any('|D|' in key for key in near)               # near the representative window the D cases do contribute
-    world = build_world(tmp_path_factory, ad_dx=130)
+FAR_AD2_DY = -110                   # AD2 moves 110 px (11 um) up: reference rows 195..205 (y 69.5..70.5 um) instead of beside AD (y 80..82 um)
+KEY_AD2 = 'lateral_short|A|L2|D|L2|L2'
+
+
+def _far_window_ids(merged_from, layer='L2'):
+    """region_ids of the member windows that cover AD2 and neither CHANGE nor AD: centre y 65..70 um (window 10 um, stride 2.5 um).
+
+    CHANGE and AD lie at y >= 80 um, so only windows centred at y >= 75 um see them; the chain still links the two groups
+    because the y = 72.5 um windows overlap the y = 77.5 um windows by half."""
+    return {rid for rid in (change_map.region_id_for(layer, (80.0+2.5*i, 65.0+2.5*j)) for i in range(-1, 5) for j in range(0, 3))
+            if rid in merged_from}
+
+
+def test_chain_merge_case_changed_only_in_a_far_member_window_is_not_a_contributing_case(tmp_path_factory, tmp_path):
+    """Case-level view of the pinned limitation: the L2 case AD2 changes only in member windows far from the representative."""
+    masks = two_layer_masks(tcc.hotspot_masks, ad2_dy=FAR_AD2_DY)('target')
+    dy, dx = tcc.OFFSET[1], tcc.OFFSET[0]
+    in_target = int(masks[CASE_AD2].sum())
+    in_reference = int(np.roll(masks[CASE_AD2], (-dy, -dx), axis=(0, 1)).sum())      # target mask mapped back by the layout offset
+    assert in_target == in_reference == 100                                          # AD2 lies inside the frame in both
+    world = build_world(tmp_path_factory, ad2_dy=FAR_AD2_DY)
     code, out = run(world, tmp_path/'out', '--merge-scope', 'all')
+    assert code in (0, 3)                                                            # 3: top_k not filled
     q = queries(tcc.load(out))[0]
-    assert len(q['merged_from']) > 2
+    far_windows = _far_window_ids(set(q['merged_from']))
+    assert far_windows, 'no AD2-covering window in merged_from'                      # AD2's windows were chained into the query
+    assert q['region_id'] in q['merged_from'] and q['region_id'] not in far_windows  # the representative is not one of them
     keys = {c['case_key'] for c in q['contributing_cases']}
-    assert keys and not any('|D|' in key for key in keys)  # the far windows' D cases are not re-scored
+    assert any('|D|L1|' in key for key in keys)            # AD (L1, near the representative) contributes
+    assert KEY_AD2 not in keys                         # AD2 is not re-scored: it does not contribute although its windows merged
+    # control: the default AD2 beside AD contributes to the same kind of query
+    near = {c['case_key'] for c in queries(tcc.load(run(build_world(tmp_path_factory), tmp_path/'near', '--merge-scope', 'all')[1]))[0]['contributing_cases']}
+    assert KEY_AD2 in near
 
 
 def _region(x, y, layer='L1'):

@@ -276,6 +276,21 @@ def test_contributing_cases_context_and_roi_links_match(first_run):
     assert queries(payload, 'reference_to_target')[0]['query_id'] != queries(payload, 'target_to_reference')[0]['query_id']
 
 
+def test_layer_scope_case_area_keys_are_on_cases_and_direct_sidecar_pairs(first_run):
+    """Default (layer) scope: every contributing case and every direct sidecar pair carries numeric, non-negative areas."""
+    def numeric(item):
+        for key in ('area_reference_um2', 'area_target_um2'):
+            assert isinstance(item[key], (int, float)) and not isinstance(item[key], bool) and item[key] >= 0, (key, item)
+    cases = [c for d in first_run.payload['directions'] for q in d['queries'] for c in q['contributing_cases']]
+    assert cases
+    for case in cases:
+        numeric(case)
+    pairs = load(first_run.out, 'direct/direct_pairs_sidecar.json')['pairs']
+    assert pairs
+    for pair in pairs.values():
+        numeric(pair)
+
+
 def test_query_attributes_cnt_change_and_extra_keys(first_run):
     payload = first_run.payload
     top = queries(payload, 'reference_to_target')[0]

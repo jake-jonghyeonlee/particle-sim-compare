@@ -625,9 +625,10 @@ def test_case_areas_equal_classify_pixel_counts_times_pitch_squared():
     shifted = MaskPair('shift', 'M1', rect(shape, 40, 40, 20, 10), rect(shape, 40, 48, 20, 10))
     # reshaped (other place): ref 20x20 = 400 px -> 4.0 um2, tgt 20x36 = 720 px -> 7.2 um2
     reshaped = MaskPair('reshape', 'M1', rect(shape, 40, 200, 20, 20), rect(shape, 40, 200, 20, 36))
-    for pair, ref_um2, tgt_um2 in ((shifted, 2.0, 2.0), (reshaped, 4.0, 7.2)):
+    for pair, ref_um2, tgt_um2, classification in ((shifted, 2.0, 2.0, 'shifted'), (reshaped, 4.0, 7.2, 'reshaped')):
         got = _only_window([pair], **kw)
         assert len(got) == 1
+        assert got[0]['classification'] == classification, got[0]
         assert got[0]['area_reference_um2'] == pytest.approx(ref_um2) and got[0]['area_target_um2'] == pytest.approx(tgt_um2)
 
 
