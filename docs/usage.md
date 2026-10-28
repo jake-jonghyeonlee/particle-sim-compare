@@ -16,7 +16,7 @@
 | 1 | `import-hotspots` | hotspot 폴더(모델별) | `data/imported/reference`, `target` | `pairs.csv`를 두 출력 폴더 안에 복사 |
 | 2 | `validate-data`, `compare` | `real.yaml` | `comparison.json`, `comparison.csv`, `comparison_masks.zip` | 3회차용 `assignment_<side>.json` 준비 |
 | 3 | `import-electrode-assets` | 전극 PNG, assignment JSON | `data/assets/reference`, `target` | 출력을 각 `data_dir`로 복사하고 `real.yaml`에 경로·sha256 기입 |
-| 4 | `candidates-change` | `real.yaml`, DL1 PNG root | `data/changes`(`alignment.html`, `direct/roi_correspondence.json`, `*_export`) | 인수 예시 값을 제품에 맞게 확인. 로그의 `candidates-change exit N`과 `alignment.html` 확인 |
+| 4 | `candidates-change` | `real.yaml`, DL1 PNG root | `data/changes`(`alignment.html`, `alignment.json`, `direct/roi_correspondence.json`, `*_export`) | 인수 예시 값을 제품에 맞게 확인(선택 인수 `--merge-scope`·`--suppress-overlap`·`--electrode-png-root` 포함). 로그의 `candidates-change exit N`과 `alignment.html` 확인 |
 | 4b (선택) | `candidates-dv` | `real.yaml`(3회차 뒤), 0b회차 `dv-grade` 출력 둘 | `data/changes_dv`(`vulnerability_v1.json`, `grade_maps/`, `*_export`) | 인수 예시 값을 제품에 맞게 확인. 로그의 `candidates-dv exit N` 확인. 4회차와 독립. [상세](dv_candidates.md) |
 | 4c (선택) | `vulnerability-report` | 4b회차 출력 폴더 | `data/vulnerability_report/report.html` | 4b회차와 같은 서버에서 이어서 실행. [상세](dv_candidates.md) |
 | (DL2) | 선택 | `data/changes/*_export/review_rois.json` | `data/dl2/ncc_*.json`, `decisions.csv` | 다른 제품 탐색이 필요할 때만 |
@@ -43,7 +43,11 @@
 1. 회차 1: 실행기 1. 두 모델을 각각 import하며 `--expected-cases-from-roots`로 다른 모델 root를 함께 준다. 기대 case 목록이 없으면 4회차의 모든 ROI가 `blocked`(`map_coverage_incomplete`)가 된다. 끝나면 `pairs.csv`를 `data/imported/reference/`와 `data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시는 거부).
 2. 회차 2: `configs/etx/real.stage2.example.yaml`을 `real.yaml`로 복사해 `data_dir`(서버 절대 경로)와 필요한 값을 고친 뒤 실행기 2(`validate-data`, `compare`)를 돌린다. 종료 코드 3은 partial 항목이 있다는 뜻이므로 `reasons`를 본다.
 3. 회차 3: `assignment_reference.json`, `assignment_target.json`을 만든다(`real.yaml`의 `condition_assignment`와 같은 내용, JSON에는 주석을 쓸 수 없다). 실행기 3을 돌리고 `--max-asset-memory-mb`는 예시값(16384)을 서버에 맞게 고친다. 끝나면 각 출력의 `review_assets.json`, `electrode_asset_import_record.json`, `assets/`를 해당 `data_dir`로 복사하고, `real.yaml`의 reference·target에 `asset_manifest`와 `electrode_import_record`(`{path, sha256}`)를 넣는다. sha256은 방금 복사한 파일 값이다. 전극 role은 `electrode_role_policy: electrode_id`로 pair 표의 전극 이름을 그대로 쓴다.
-4. 회차 4: 실행기 4(`candidates-change`, 파일 이름은 `simcompare_job_4_candidates.py` 그대로). 두 제품의 CNT 3층을 한 offset으로 정렬하고 변경 위치 ROI를 방향별 top-k로 뽑는다. 모든 인수가 필수이며 EDIT 블록의 값은 **예시**다(탐색 반경 30 µm, 최소 Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 20 µm, 병합 0.5, top-k 20, `--mask-derivation-rule between_stack_order_v1`): 제품에 맞게 바꾼다. 탐색 반경의 최소값은 pixel pitch의 2배 이상이고(코드 검사), 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값이다. `--cnt-from-dl1-root`는 3회차와 같은 DL1 PNG root다. 끝나면 `data/changes/alignment.html`을 열어 정렬 상태(`aligned`/`aligned_uncertain`/`alignment_failed_identity_used`)와 변경 지도를 확인하고 로그의 `candidates-change exit N`을 본다(실행기는 3도 '계속'으로 처리한다). 존재하지 않는 DL1 root는 쓰기 전에 종료 코드 2(`cnt_dl1_root_missing`)로 멈추고 `--out`을 만들지 않으며 실행기도 멈춘다(로그의 `오류:` 줄과 `--cnt-from-dl1-root '…' -> <절대 경로>` 줄을 본다). 질의·index export 폴더마다 DL2용 `mask_derivation.json`도 생긴다. 상세는 [상세 레퍼런스](usage_reference.md)의 "ROI 선정".
+4. 회차 4: 실행기 4(`candidates-change`, 파일 이름은 `simcompare_job_4_candidates.py` 그대로). 두 제품의 CNT 3층을 한 offset으로 정렬하고 변경 위치 ROI를 방향별 top-k로 뽑는다. 필수 인수에는 기본값이 없고 EDIT 블록의 값은 **예시**다(탐색 반경 30 µm, 최소 Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 20 µm, 병합 0.5, top-k 20, `--mask-derivation-rule between_stack_order_v1`): 제품에 맞게 바꾼다. 탐색 반경의 최소값은 pixel pitch의 2배 이상이고(코드 검사), 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값이다. `--cnt-from-dl1-root`는 3회차와 같은 DL1 PNG root다. `--merge-overlap 0.5`는 두 창이 50 % 이상 겹치면 병합한다는 뜻이다(50 % 미만으로 겹친 창은 따로 남는다).
+   - **선택 인수 3개**(생략하면 이전 동작): `--merge-scope all`은 층이 달라도 겹친 창을 하나의 ROI로 병합한다(생략하면 층마다 따로). `--suppress-overlap 0.3`은 병합 뒤 순위가 앞선 ROI와 30 % 이상 겹치는 ROI를 층 구분 없이 뺀다(생략하면 억제 없음). 실행기 예시에는 이 두 값이 들어 있고 **예시 값**이다. `--electrode-png-root <폴더>`는 alignment.html 층 묶음의 바탕(전극 형상)을 읽을 PNG root이며, 생략하면 `--cnt-from-dl1-root`를 쓴다. 전극 PNG가 DL1 root에 함께 있으면 넣지 않아도 된다.
+   - **두 제품의 frame 크기가 다를 때**(예: unit size 차이로 2004 px와 2014 px): 오류가 아니다. 정렬 후 두 frame이 겹치는 공통 영역만 비교하고 resize하지 않는다. `alignment.json`에 두 frame 크기·차이·공통 영역(픽셀 수, 비율, 위치)이 기록되고 `candidate_queries_v1.json` notes에 `frame_shape_differs`(정보, 종료 코드 영향 없음)가 남는다. 공통 영역 밖 띠는 변경 후보가 되지 않는다.
+   - **alignment.html 확인 순서**: 1절 요약(맨 위 정렬 상태 배지, frame 크기·공통 영역, 사분면 offset — 허용값 초과 칸은 빨강) → 2절 CNT 정렬 정렬 전·후 겹침(정렬 후 같은 패턴은 회색~검정, 남은 색이 변경) → 3절 변경 강조 지도(빨강 = 변경, ROI 번호) → 4절 ROI 목록 → 5절 ROI 상세(위치 그림, 불량 조합이 있는 층마다 비교·reference·target 묶음, 한글 기여 조합 표). "창 안 새로 생김/사라짐"은 그 창 안에서 한쪽 모델의 hotspot이 없다는 뜻이고 case 자체는 두 모델에 다 있을 수 있다(있는 모델 열). 정렬 상태가 `aligned`가 아니면(`aligned_uncertain`/`alignment_failed_identity_used`) 2절 그림을 먼저 확인한다.
+   - 로그의 `candidates-change exit N`을 본다(실행기는 3도 '계속'으로 처리한다). 그림이 메모리 한도로 빠지면 `alignment_report_images_skipped` 또는 `alignment_report_layer_base_skipped`(층 묶음 바탕만 빠짐) 경고와 함께 3이며, 계산 결과(JSON)는 같다. 존재하지 않는 DL1 root는 쓰기 전에 종료 코드 2(`cnt_dl1_root_missing`)로 멈추고 `--out`을 만들지 않으며 실행기도 멈춘다(로그의 `오류:` 줄과 `--cnt-from-dl1-root '…' -> <절대 경로>` 줄을 본다). 질의·index export 폴더마다 DL2용 `mask_derivation.json`도 생긴다. 상세는 [상세 레퍼런스](usage_reference.md)의 "ROI 선정".
 4b. 회차 4b(선택, 0b회차와 3회차 뒤): 실행기 4b(`candidates-dv`, 파일 이름은 `simcompare_job_4b_candidates_dv.py`). 0b회차의 `dv-grade` 출력 폴더 둘(제품마다 하나)과 3회차 뒤 `real.yaml`이 필요하다. 모든 인수가 필수이며 EDIT 블록의 값(K 4, `--roi-grade high`, 창 20 µm, 병합 0.5)은 **예시**다. 종료 코드 3은 '계속'으로 처리되므로 로그의 `candidates-dv exit N` 줄과 `candidate_queries_v1.json`의 `warnings`를 본다. 4회차와 독립이다. 상세는 [dv_candidates.md](dv_candidates.md).
 4c. 회차 4c(선택, 4b회차 뒤): 실행기 4c(`vulnerability-report`, 파일 이름은 `simcompare_job_4c_vulnerability_report.py`). 4b회차 출력 폴더를 읽어 `data/vulnerability_report/report.html`을 만든다. 입력 기록의 `data_dir`(절대 경로)로 전극 layout을 다시 읽으므로 4b회차와 같은 서버에서 이어서 실행한다.
 5. 6회차 입력 고르기: **직접 대응**을 쓰면 `data/changes/direct/roi_correspondence.json`이 6회차 입력이므로 DL2와 5회차를 건너뛴다. 다른 제품 탐색이 필요할 때만 아래 DL2 경로를 쓴다.
@@ -56,6 +60,8 @@
 **회차 사이 수작업을 빠뜨리지 않는다**: 1회차 뒤 `pairs.csv` 복사, 3회차 뒤 import 결과 배치와 `electrode_import_record.sha256` 갱신.
 
 **처음부터 다시 할 때**: `--out`은 없는 경로여야 하고 3·4·5회차도 기존 출력 폴더를 거부하므로, 다음 폴더를 먼저 옮기거나 이름을 바꾼다: `data/imported/reference`, `data/imported/target`, `data/assets/reference`, `data/assets/target`, `data/changes`, `data/confirmed`. `data/local`은 6회차가 한 세대로 교체하므로 그대로 둬도 된다. 그다음 1회차부터 위 수작업까지 모두 다시 한다.
+
+**4회차만 다시 할 때**(4회차 코드나 인수만 바뀐 경우): 1~3회차 출력은 그대로 쓴다. 기존 `data/changes`를 옮기거나 이름을 바꾼 뒤 새 실행기 4를 돌린다. 그다음 직접 대응이면 6회차를, DL2 경로면 DL2 → 5회차 → 6회차를 다시 돈다. 실행기들은 묶인 코드가 모두 같으므로 `bundles/etx/` 안의 파일을 전부 같이 교체한다.
 
 **실행기만 교체해서 이어갈 때**: 1회차 import 결과(`.npz`, 옛 `.npy`)는 그대로 읽힌다. 쓰는 실행기를 모두 새 파일로 바꾸고(`JOBS`, `BASE_DIR`은 다시 고친다) 2회차부터 다시 돈다. 이미 끝난 2회차 출력은 유효하지만, 새 실행기로 `compare`를 다시 돌려야 `comparison_masks.zip`이 생겨 6회차가 면적 계산을 건너뛴다. 4회차 이후 폴더는 새 경로를 쓴다.
 
@@ -87,6 +93,8 @@
 | `real_hotspot_output_exists`, `electrode_output_exists`, `output_dir_exists`(종료 코드 2) | `--out`이 이미 있다. 기존 폴더를 옮기거나 이름을 바꾸고 다시 돌린다. 기존 폴더는 건드리지 않았다 |
 | `expected_case_folder_missing` | 오류가 아니라 진단이다(종료 코드 3). 기대 case 목록(두 모델 root에서 발견된 case 이름의 합집합)에 있는데 이 모델에는 case 폴더가 없다는 뜻이다. 그 case의 모든 지름이 누락으로 기록된다. 두 모델 모두에 없는 case는 찾을 수 없다 |
 | `expected_case_inventory_unprovided` | import 때 기대 case 목록을 주지 않았다. coverage가 `unconfirmed`라 4회차 ROI가 모두 막히므로 `--expected-cases-from-roots`로 1회차부터 다시 한다 |
+| `cnt_dl1_root_missing`, `electrode_png_root_missing`(종료 코드 2) | 4회차 `--cnt-from-dl1-root` 또는 `--electrode-png-root` 경로가 폴더가 아니다(빈 문자열 포함). `--out`을 만들지 않고 멈췄으므로 경로를 고쳐 같은 `--out`으로 다시 돌린다 |
+| `alignment_report_images_skipped`, `alignment_report_layer_base_skipped`(종료 코드 3) | 4회차 alignment.html 그림(또는 층 묶음 바탕만)이 메모리 한도로 빠졌다. 표와 JSON 결과는 같다. 그림이 필요하면 `max_operation_bytes`를 물리 메모리 안에서 올린다 |
 | `map_coverage_incomplete` | 지도 coverage가 불완전해 ROI가 막혔다. 기대 case 목록 없이 import했다면 1회차부터 다시 한다 |
 | `electrode_role_required_for_matching` | role이 없는 전극이 있다. `electrode_role_policy: electrode_id`를 쓰고 3회차를 다시 돌려 sha256을 갱신한다 |
 | `comparison_recovery_unreadable`, `local_delta_recovery_unreadable` | 강제 종료 뒤 복구 기록을 읽을 수 없다. 아무것도 지우지 않고 멈춘 것이므로 원인(권한·I/O)을 고쳐 다시 실행한다. 복구 방법은 레퍼런스의 공개 절 참조 |
@@ -126,7 +134,7 @@ py -3.12 -m venv .venv-cmd
 **ETX와 다른 점**
 
 - 실행기 `.py`와 `BASE_DIR`이 없다. 명령을 `.venv-cmd\Scripts\python.exe -m simcompare <명령>`으로 직접 친다. 경로는 `D:\...` 절대 경로를 따옴표로 감싼다.
-- 6회차 흐름(import → compare → 전극 asset → candidates → DL2 → confirm-pairs → compare-windows)은 같지만 Windows에서 실자료 전체 흐름은 아직 검증되지 않았다. 확인된 것은 설치·`pip check`·도움말까지다.
+- 6회차 흐름(import → compare → 전극 asset → candidates-change → (선택 DL2 → confirm-pairs) → compare-windows)은 같지만 Windows에서 실자료 전체 흐름은 아직 검증되지 않았다. 확인된 것은 설치·`pip check`·도움말까지다.
 - 모든 명령 옵션은 [상세 레퍼런스](usage_reference.md)에 있다. 통합 HTML 보고서(`report`)와 대응 파일 변환(`simcompare.correspondence`)도 거기에 있다.
 
 ## 공통

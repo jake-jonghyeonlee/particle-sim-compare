@@ -8,7 +8,7 @@
 #   주기가 탐색 반경 안에 있으면 peak_ambiguous 와 대안 offset 으로 표시된다), --align-min-dice(정렬 최소 Dice), --align-layer-tolerance-um(층별 offset 허용 µm),
 # --change-tolerance-um(이 거리 안의 이동은 변경이 아님), --window-um(변경 창 한 변), --merge-overlap(창 병합 기준), --top-k(방향별 ROI 수),
 # --mask-derivation-rule(DL2 mask_derivation 규칙. between_stack_order_v1 만 허용).
-# 선택 인수: --merge-scope all(층을 넘어 창 병합), --suppress-overlap 0.3(겹치는 ROI 억제 비율). 예시 값(D3) — 생략하면 이전 동작(층별 병합, 억제 없음).
+# 선택 인수: --merge-scope all(층을 넘어 창 병합), --suppress-overlap 0.3(겹치는 ROI 억제 비율). 예시 값이다 — 생략하면 이전 동작(층별 병합, 억제 없음).
 # 선택: --electrode-png-root(alignment.html 층 묶음의 전극 형상 PNG root), 생략 시 --cnt-from-dl1-root.
 # 결과: alignment.html(정렬 요약·변경 지도), direct/roi_correspondence.json(6회차 입력), *_export/·*_index_export/ 의 review_rois.json + mask_derivation.json(DL2 입력).
 # 종료 코드 3(부분 결과)이어도 실행기는 계속한다. 결과는 로그의 'candidates-change exit N' 줄로 판정한다.
