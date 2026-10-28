@@ -208,7 +208,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | `--change-tolerance-um` | 변경 판정 허용 이동 거리(µm). 이 안의 이동은 변경으로 세지 않는다 | 0.5. 정렬 오차와 공정 변동을 합친 값으로 둔다 |
 | `--window-um` | 변경 창 한 변(µm) | 20. 6회차 창 10/20/30 µm 중 가운데 값이다 |
 | `--merge-overlap` | 두 창의 `intersection/min(area)`가 이 값 이상이면 병합한다(기본은 층 안에서). `(0, 1]`. 0.5이면 두 창이 50 % 이상 겹칠 때 병합하고 50 % 미만으로 겹치는 창은 따로 남는다. 창 격자 간격은 W/4이다 | 0.5 |
-| `--merge-scope` | 선택(생략 시 `layer`, 이전 동작). `all`이면 층을 넘어 병합한다. 대표 창과 같은 위치의 구성원 층 case를 모두 다시 세어 기여 case에 `layer`를 붙인다. 한계: 연쇄 병합에서 대표 창과 먼 구성 창에서만 일어난 변경은 다시 세지 않는다 | 생략 |
+| `--merge-scope` | 선택(생략 시 `layer`, 이전 동작). `all`이면 층을 넘어 병합한다. 대표 창과 같은 위치의 구성원 층 case를 모두 다시 세어 기여 case에 `layer`를 붙인다. `score_um2`·`score_layer`·`sum_residual_um2`·`union_*`는 대표 층 창의 값이고, `changed_case_count`·`contributing_cases`·`one_sided_cases`는 `layers`의 모든 층 case를 센다. 한계: 연쇄 병합에서 대표 창과 먼 구성 창에서만 일어난 변경은 다시 세지 않는다 | 생략 |
 | `--suppress-overlap` | 선택(생략 시 억제 없음). `(0, 1]`. 병합·정렬 뒤 `top-k` 전에, 순위가 앞선 대표 창과 겹침 비율(`ox*oy/W²`)이 이 값 이상인 대표 창을 층 구분 없이 버린다. funnel에 `suppressed` 단계가 생긴다 | 생략 |
 | `--top-k` | 방향(`reference_to_target`, `target_to_reference`)별 질의 수 | 20. 설계자가 보는 ROI 수에 맞춘다 |
 | `--mask-derivation-rule` | DL2 `mask_derivation` 규칙. `between_stack_order_v1`만 허용한다(없거나 다른 값이면 종료 코드 2: `mask_derivation_rule_required`·`mask_derivation_rule_unknown`) | `between_stack_order_v1` |
