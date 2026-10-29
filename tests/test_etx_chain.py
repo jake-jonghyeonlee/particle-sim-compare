@@ -102,7 +102,7 @@ def _write_dl1(dl1, side, product=None):
 
 def _write_new_structure(dl1, side, product=None):
     """The new input structure (layer-align): ``Merged_Layer/<electrode>/`` (names only matter), ``Layer/<n>-<layer>.png`` (two layers,
-    the full 2x2 unit image size, black = shape). The stage stage-3 import sees only ``CNO`` (written first), so this runs after it."""
+    the full 2x2 unit image size, black = shape). Written before stage 1, next to ``CNO``; no electrode folder at the top level."""
     dx, dy = OFFSET
     model = dl1 / (product or PRODUCTS[side])
     for electrode in ROLES:
@@ -209,10 +209,12 @@ def _build_chain(python, tmp, with_models=False):
     for side, model in MODELS.items():
         _write_hotspot_tree(base / 'data/input/hotspot' / model, side)
         _write_dl1(base / 'data/input/dl1', side)
+        _write_new_structure(base / 'data/input/dl1', side)      # the real data has the new structure from the start
         (base / f'assignment_{side}.json').write_text(json.dumps(_assignment(side)), encoding='utf-8')
     if with_models:
         _write_model_tree(base / 'data/input/hotspot' / MODEL_FOLDER)
         _write_dl1(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
+        _write_new_structure(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
         (base / f'assignment_{MODEL_FOLDER}.json').write_text(json.dumps(_assignment('target', MODEL_PRODUCT)), encoding='utf-8')
 
     def stage(name, jobs, label=None):
@@ -238,7 +240,6 @@ def _build_chain(python, tmp, with_models=False):
         (data / 'assets').mkdir(exist_ok=True)
         for path in (out / 'assets').iterdir():
             shutil.copyfile(path, data / 'assets' / path.name)
-        _write_new_structure(base / 'data/input/dl1', side)    # Merged_Layer electrode folders (names) + Layer PNGs for stage 4
     if with_models:
         stage('3m_import_model_assets', _jobs('3m_import_model_assets'))
         out, data = base / f'data/assets/models/{MODEL_FOLDER}', base / f'data/models/{MODEL_FOLDER}'
@@ -247,7 +248,6 @@ def _build_chain(python, tmp, with_models=False):
         (data / 'assets').mkdir(exist_ok=True)
         for path in (out / 'assets').iterdir():
             shutil.copyfile(path, data / 'assets' / path.name)
-        _write_new_structure(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
         _write_models_yaml(base, with_assets=True)
     _config(base, with_assets=True)
     stage('4_candidates', _jobs('4_candidates', STAGE_ARGS))
