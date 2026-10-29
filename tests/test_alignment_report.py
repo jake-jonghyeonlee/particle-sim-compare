@@ -206,6 +206,51 @@ def synthetic_source(n_rois=3, shape=(300, 320), seed=0):
     return alignment, [dict(query) for _ in range(n_rois)], windows, source
 
 
+def position_source(shape=(300, 320)):
+    """조밀한 CNT 패턴(절반)과 한 곳(rows 100-109, cols 200-209)에만 변경이 있는 source."""
+    rng = np.random.default_rng(1)
+    valid = np.ones(shape, bool)
+    layers = {'CNT1': rng.random(shape) > 0.5}
+    change = np.zeros(shape, bool)
+    change[100:110, 200:210] = True
+    maps = {'maps': {'L1': change.astype(np.uint32)}, 'D': valid, 'union_change': {'L1': change},
+            'union_ref': {'L1': rng.random(shape) > 0.5}, 'union_tgt': {'L1': rng.random(shape) > 0.5}}
+    source = alignment_report.ImageSource(layers, layers, valid, valid, (0, 0))
+    source.collect(maps, [])
+    return source
+
+
+def colour_mask(rgb, colour):
+    return np.all(rgb == np.array(colour, dtype=np.uint8), axis=2)
+
+
+def test_position_base_ignores_dense_cnt_pattern_and_marks_only_changed_blocks():
+    source = position_source()
+    base, total = alignment_report._position_base(source)
+    assert total == 2 and base.shape[:2] == (150, 160)
+    assert not colour_mask(base, (190, 190, 190)).any()          # the old pattern grey
+    changed = colour_mask(base, alignment_report.POS_CHANGED)
+    assert changed.any() and not changed[:50].any() and not changed[:, :100].any() and not changed[55:].any()
+    assert changed[50:55, 100:105].all()                       # frame rows 100-109, cols 200-209 → 2 px blocks 50-54 / 100-104
+    assert colour_mask(base, alignment_report.POS_BG).sum() > 0.9*base.shape[0]*base.shape[1]
+
+
+def test_position_rect_has_a_minimum_size_and_quadrant_lines_cross_at_the_frame_centre():
+    source = position_source()
+    base, total = alignment_report._position_base(source)
+    row, col = (300//2)//total, (320//2)//total
+    assert colour_mask(base, alignment_report.POS_LINE)[row, 5] and colour_mask(base, alignment_report.POS_LINE)[5, col]
+    assert (base[row, 0:5] == alignment_report.POS_LINE).all() and (base[0:5, col] == alignment_report.POS_LINE).all()
+    window = {'window_origin_px': [140, 60], 'window_px': 2}                    # 1 px after reduction
+    rgb = alignment_report._position_image(base, total, window)
+    rect = colour_mask(rgb, alignment_report.POS_RECT)
+    ys, xs = np.nonzero(rect)
+    assert ys.max() - ys.min() + 1 >= alignment_report.POS_MIN_RECT_PX and xs.max() - xs.min() + 1 >= alignment_report.POS_MIN_RECT_PX
+    assert rect[ys.min(), xs.min():xs.max() + 1].all() and rect[ys.min():ys.max() + 1, xs.min()].all()
+    big = alignment_report._position_image(base, total, {'window_origin_px': [20, 20], 'window_px': 100})
+    assert colour_mask(big, alignment_report.POS_RECT).any()
+
+
 def test_size_steps_are_ordered_on_a_synthetic_source():
     alignment, qs, windows, source = synthetic_source()
     sizes = {}

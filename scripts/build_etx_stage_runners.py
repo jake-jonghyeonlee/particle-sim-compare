@@ -127,11 +127,11 @@ STAGES = {
          "DL2 없이 직접 대응을 쓰면 5회차를 건너뛰고 6회차로 간다."],
         [("candidates-change", ["--config", CONFIG, "--cnt-from-dl1-root", f"{DATA}/input/dl1",
                                 "--align-search-um", "30", "--align-min-dice", "0.3", "--align-layer-tolerance-um", "1",
-                                "--change-tolerance-um", "0.5", "--window-um", "20", "--merge-overlap", "0.5",
+                                "--change-tolerance-um", "0.5", "--window-um", "10", "--merge-overlap", "0.5",
                                 "--top-k", "20", "--mask-derivation-rule", "between_stack_order_v1",
                                 "--merge-scope", "all", "--suppress-overlap", "0.3",
                                 "--electrode-png-root", f"{DATA}/input/dl1", "--out", f"{DATA}/changes"],
-          "예시 — 제품에 맞게 바꾼다: 탐색 30 µm, Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 20 µm, top-k 20. 기본값이 아니다")]),
+          "예시 — 제품에 맞게 바꾼다: 탐색 30 µm, Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 10 µm, top-k 20. 기본값이 아니다")]),
     "4b_candidates_dv": (
         ["4b회차(선택, 0b회차와 3회차 뒤): ΔV 등급으로 가중한 취약점 ROI(candidates-dv). 변경점 ROI(4회차)와 독립이며 출력 폴더도 따로 쓴다.",
          "두 제품 모두 real_hotspot_v1이어야 하고, 0b회차의 dv-grade 출력 폴더 둘(제품마다 하나, 서로 다른 폴더)이 필요하다.",

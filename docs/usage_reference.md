@@ -206,7 +206,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 ```
 
 ```bat
-.venv-cmd\Scripts\python.exe -m simcompare candidates-change --config config.yaml --cnt-from-dl1-root dl1 --align-search-um 30 --align-min-dice 0.3 --align-layer-tolerance-um 1 --change-tolerance-um 0.5 --window-um 20 --merge-overlap 0.5 --top-k 20 --mask-derivation-rule between_stack_order_v1 --out changes
+.venv-cmd\Scripts\python.exe -m simcompare candidates-change --config config.yaml --cnt-from-dl1-root dl1 --align-search-um 30 --align-min-dice 0.3 --align-layer-tolerance-um 1 --change-tolerance-um 0.5 --window-um 10 --merge-overlap 0.5 --top-k 20 --mask-derivation-rule between_stack_order_v1 --out changes
 ```
 
 **인수.** 모두 필수이며 기본값이 없다. 예시 값은 쓰기 쉬운 출발점일 뿐이고 제품에 맞게 바꾼다.

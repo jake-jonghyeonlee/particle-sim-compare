@@ -10,7 +10,7 @@ change-roi-v2/T3a: 절 순서는 제목 줄 / 1 요약 / 2 CNT 정렬과 정렬 
   정렬 전은 reference 파랑 계열 / target 주황 계열(겹치면 미리 섞은 색), 정렬 후는 같은 픽셀 = 회색~검정, 한쪽만 = 파랑·주황, 비교 영역 밖 = 회색.
 - 2b 층별 CNT 겹침: CNT 층마다 정렬 전·후 두 장(접어 둠).
 - 3 변경 강조 지도: 층별 hotspot 합집합 변화의 층 OR 을 빨강, 변경 없는 패턴 연회색, 비교 영역 밖 진회색, 선정 ROI 초록 사각형·순위.
-- 5 ROI 상세: frame 전체에 이 ROI 만 굵은 빨강 사각형인 위치 그림(한 변 <= POSITION_MAX_PX)과, 이 ROI 에 불량 조합이 있는 층마다 한 묶음
+- 5 ROI 상세: frame 전체에 변경 위치(연빨강)·사분면 경계선과 이 ROI 만 굵은 사각형인 위치 그림(한 변 <= POSITION_MAX_PX)과, 이 ROI 에 불량 조합이 있는 층마다 한 묶음
   (change-roi-v2/T3b): [비교, reference, target] 세 그림(한 변 <= CROP_MAX_PX). 바탕 DDDDDD = 그 모델의 그 층 전극 PNG 합집합(target 은 offset 으로
   reference 좌표에 옮김), 색 = 그 층 hotspot 합집합. 층이 MAX_BUNDLES 를 넘으면 창 안 변경 면적 합이 큰 층부터 MAX_BUNDLES 개. 전극 PNG 가 없으면 바탕 없이 그린다.
 - 6 열지도: hotspot 층마다 합집합 변화(RU)와 조합별 잔차 합(count_map)(접어 둠).
@@ -51,8 +51,10 @@ MAP_PATTERN = (208, 208, 208)                   # 변경 없는 패턴
 MAP_OUTSIDE = (160, 160, 160)                   # 비교 영역 밖
 MAP_CHANGED = (224, 32, 32)                     # 변경(빨강)
 POS_BG = (244, 244, 244)
-POS_PATTERN = (190, 190, 190)
+POS_LINE = (150, 150, 150)                      # 위치 그림의 frame 사분면 경계선
+POS_CHANGED = (246, 170, 170)                   # 위치 그림의 변경 위치(연빨강)
 POS_RECT = (224, 32, 32)
+POS_MIN_RECT_PX = 7                             # 위치 그림에서 ROI 사각형의 최소 한 변
 
 REF_COLOUR = (40, 90, 220)
 TGT_COLOUR = (235, 140, 20)
@@ -258,7 +260,7 @@ class ImageSource:
         self.step = _step_for(ref_valid.shape, OVERVIEW_MAX_PX)
         self.heat = {}
         self.observed = None
-        self.hot_any = None       # 모든 hotspot 층의 reference ∪ target 합집합 블록(3절·위치 그림의 연회색 패턴)
+        self.hot_any = None       # 모든 hotspot 층의 reference ∪ target 합집합 블록(3절의 연회색 패턴)
         self.hot = []             # ROI 순서: {'box', 'obs', 'layers': {층: {'ref', 'tgt'}}}
         self.base = {}            # (ROI 번호, 층, 'ref' | 'tgt') → 상자 크기 전극 형상 bool 또는 None (collect_bases)
         self.base_reason = {}     # (층, 'ref' | 'tgt') → 바탕이 없는 사유 문구(호출자가 채운다). 없으면 '파일 없음'
@@ -450,26 +452,39 @@ def _change_map_image(source, windows, pattern):
     return rgb
 
 
-def _position_base(source, pattern):
-    """ROI 위치 그림의 바탕(한 변 <= POSITION_MAX_PX) 과 총 축소 배수. 모든 ROI 가 같은 바탕을 쓴다."""
+def _position_base(source):
+    """ROI 위치 그림의 바탕(한 변 <= POSITION_MAX_PX) 과 총 축소 배수. 모든 ROI 가 같은 바탕을 쓴다.
+
+    그리는 순서: 바탕색, 비교 영역 밖 회색, frame 가운데 사분면 경계선(1 px), 변경 위치(모든 층 hotspot 합집합 변화 OR, 비교 영역 안만).
+    CNT 패턴은 그리지 않는다(조밀한 패턴이 그림 전체를 채워 회백색이 된다)."""
     observed = source.observed
-    quiet = np.array(pattern, dtype=bool) if pattern is not None else np.zeros(observed.shape, dtype=bool)
-    if source.hot_any is not None:
-        quiet |= source.hot_any
+    changed = np.zeros(observed.shape, dtype=bool)
+    for layer in source.heat:
+        changed |= source.heat[layer]['union'] > 0
     extra = _step_for(observed.shape, POSITION_MAX_PX)
-    quiet, obs = _block(quiet, extra, 'any'), _block(observed, extra, 'any')
-    rgb = np.empty(quiet.shape + (3,), dtype=np.uint8)
+    total = source.step * extra
+    changed, obs = _block(changed, extra, 'any'), _block(observed, extra, 'any')
+    rgb = np.empty(obs.shape + (3,), dtype=np.uint8)
     rgb[:] = POS_BG
-    rgb[quiet] = POS_PATTERN
     rgb[~obs] = OUTSIDE_GRAY
-    return rgb, source.step * extra
+    height, width = source.ref_valid.shape
+    rgb[min((height // 2) // total, obs.shape[0] - 1), :] = POS_LINE
+    rgb[:, min((width // 2) // total, obs.shape[1] - 1)] = POS_LINE
+    rgb[changed & obs] = POS_CHANGED
+    return rgb, total
 
 
 def _position_image(base, total_step, window):
-    """frame 전체(base)에 이 ROI 창만 굵은(3 px) 빨강 사각형."""
+    """frame 전체(base)에 이 ROI 창만 굵은(3 px) 진한 사각형. 축소 뒤 창이 POS_MIN_RECT_PX 보다 작으면 창 중심에 그 크기로 그린다."""
     rgb = np.array(base)
     y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
     y0, x0, y1, x1 = y // total_step, x // total_step, (y + w - 1) // total_step, (x + w - 1) // total_step
+    if y1 - y0 + 1 < POS_MIN_RECT_PX:
+        y0 = (y0 + y1) // 2 - POS_MIN_RECT_PX // 2
+        y1 = y0 + POS_MIN_RECT_PX - 1
+    if x1 - x0 + 1 < POS_MIN_RECT_PX:
+        x0 = (x0 + x1) // 2 - POS_MIN_RECT_PX // 2
+        x1 = x0 + POS_MIN_RECT_PX - 1
     for grow in (0, 1, 2):
         _rect(rgb, y0 - grow, x0 - grow, y1 + grow, x1 + grow, POS_RECT)
     return rgb
@@ -988,7 +1003,7 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
         prefix.append('<div class="figs">' + _figure(_uri(_png(rgb)),
                       '변경 강조 지도: 빨강 = 변경 · 연회색 = 변경 없는 패턴 · 진회색 = 비교 안 함 · 초록 사각형·번호 = ROI 순위') + '</div>')
         n_images += 1
-        position_base = _position_base(source, pattern)
+        position_base = _position_base(source)
     del pattern
     prefix.append(_roi_list(queries, windows, shape))
     prefix.append('<h2>5. ROI 상세 (순위 순)</h2>')
@@ -1017,7 +1032,7 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
             items = []
             if position_base is not None:
                 rgb = _position_image(position_base[0], position_base[1], windows[i])
-                items.append(_figure(_uri(_png(rgb)), '위치: frame 전체에서 이 ROI 만 굵은 빨강 사각형'))
+                items.append(_figure(_uri(_png(rgb)), '위치: frame 전체 · 연빨강 = 변경 위치 · 회색 = 비교 영역 밖 · 가는 선 = 사분면 경계 · 굵은 사각형 = 이 ROI'))
             figs = '<div class="figs">' + ''.join(items) + '</div>'
             if level < 2 and i < len(source.hot):
                 side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
