@@ -736,11 +736,21 @@ def _collect_layer_figures(source, queries, windows, root, files, products, stac
         if rel is None:
             return None
         return load_layer_png(root, products[name].product_id, products[name].frame, rel)
+    # layer-align/T5b: 층별 비교용 층별 bool crop(ROI 수 x 층 수 x 2). 한도를 넘으면 층별 비교만 뺀다(Layer 그림은 그대로).
+    mask_bytes = 2 * len(style['order']) * sum((y1 - y0) * (x1 - x0) for y0, y1, x0, x1 in source.crop_boxes)
+    keep_masks = need + mask_bytes <= limit - reserved - source.held_bytes()
+    if not keep_masks:
+        source.compare_skipped = '메모리 한도'
+        warnings.append({'code': 'alignment_report_layer_compare_skipped', 'estimated_bytes': need + mask_bytes, 'reserved_bytes': reserved,
+                         'max_operation_bytes': limit})
     try:
-        source.collect_layers(style, load, offsets)
+        source.collect_layers(style, load, offsets, keep_masks)
     except NumericContractError as exc:
         source.layer_fraction.clear()
         source.layer_crop.clear()
+        source.layer_masks.clear()
+        source.layer_sides.clear()
+        source.compare_skipped = None
         source.layer_style = None
         warnings.append({'code': 'alignment_report_layer_figures_skipped', 'reason': getattr(exc, 'code', str(exc))})
         return False

@@ -65,6 +65,9 @@ POS_RECT_LAYER = (230, 20, 20)                  # Layer 그림의 ROI 창(빨강
 CROP_RECT_GROW = 2                              # Layer 주변 crop 의 창 사각형 두께(px)
 CROP_SIDE_WINDOWS = 4                           # Layer 주변 crop 한 변 = 4 x window_px
 LAYER_NOT_IN_STACK = 'layer_not_in_stack_order'
+# layer-align/T5b: 층별 비교(reference | target | 차이). 팔레트 번호: 0 흰색 · 1 검정(형상) · 2 공통 · 3 reference 만 · 4 target 만 · 5 비교 영역 밖 · 6 ROI 창.
+COMPARE_PALETTE = ((255, 255, 255), (0, 0, 0), (90, 90, 90), (30, 90, 230), (230, 40, 40), (215, 215, 215), (255, 150, 0))
+COMPARE_COMMON, COMPARE_REF_ONLY, COMPARE_TGT_ONLY, COMPARE_OUTSIDE, COMPARE_RECT = 2, 3, 4, 5, 6
 
 REF_COLOUR = (40, 90, 220)
 TGT_COLOUR = (235, 140, 20)
@@ -117,6 +120,20 @@ def _png(rgb):
         return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body) & 0xffffffff)
     return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) +
             chunk(b'IDAT', zlib.compress(raw.tobytes(), 6)) + chunk(b'IEND', b''))
+
+
+def _png_indexed(index, palette):
+    """(H, W) uint8 팔레트 번호 + 팔레트(rgb 튜플 목록) → 8-bit 팔레트 PNG 바이트(흑백·몇 색 그림을 작게 저장)."""
+    height, width = index.shape
+    raw = np.zeros((height, width + 1), dtype=np.uint8)
+    raw[:, 1:] = index
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body) & 0xffffffff)
+    plte = b''.join(bytes(bytearray(colour)) for colour in palette)
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 3, 0, 0, 0)) + chunk(b'PLTE', plte) +
+            chunk(b'IDAT', zlib.compress(raw.tobytes(), 9)) + chunk(b'IEND', b''))
 
 
 def _uri(png):
@@ -277,8 +294,9 @@ def estimate_report_bytes(ref_shape, tgt_shape, n_rois=0, n_layers=HEAT_LAYERS_A
       층 묶음 바탕 최대 MAX_BUNDLES 층 x 2개 = (2*n_layers + 1 + 2*MAX_BUNDLES) 개를 잡는다.
     - Layer 그림(n_layer_png > 0, layer-align/T5): 위치 그림용 블록 분율 uint8 → n_layer_png * nb, ROI 마다 주변 crop 두 장(rgb) → 2 * min(hr, (4*window_px)**2) * 3.
       Layer 한 층을 읽는 정점은 ``electrode_read_bytes`` 가 따로 센다.
+      layer-align/T5b: 층별 비교용 층별 bool crop(ROI 마다 층 수 x reference·target 2개) → n_layer_png * 2 * min(hr, (4*window_px)**2). 그림 한 장을 만드는 임시 배열은 작아 세지 않는다.
     식: 9*hr + ht + 24*nb + n_layers*8*nb + (4*POSITION_MAX_PX**2 if n_rois) + n_rois * min(hr, (2*window_px)**2) * (2*n_layers + 1 + 2*MAX_BUNDLES)
-        + n_layer_png * nb + n_rois * 2 * min(hr, (4*window_px)**2) * 3.
+        + n_layer_png * nb + n_rois * 2 * min(hr, (4*window_px)**2) * (3 + n_layer_png).
     열지도 수집 중 uint32 지도의 reduceat 중간 배열은 4*hr 이하라 더 작다."""
     hr = int(ref_shape[0]) * int(ref_shape[1])
     ht = int(tgt_shape[0]) * int(tgt_shape[1])
@@ -292,7 +310,7 @@ def estimate_report_bytes(ref_shape, tgt_shape, n_rois=0, n_layers=HEAT_LAYERS_A
     if n_layer_png:
         total += int(n_layer_png) * nb
         if n_rois and window_px:
-            total += int(n_rois) * 2 * min(hr, (CROP_SIDE_WINDOWS * int(window_px)) ** 2) * 3
+            total += int(n_rois) * 2 * min(hr, (CROP_SIDE_WINDOWS * int(window_px)) ** 2) * (3 + int(n_layer_png))
     return total
 
 
@@ -338,6 +356,11 @@ class ImageSource:
         self.layer_crop = {}      # (ROI 번호, 'ref' | 'tgt') → (h, w, 3) uint8 Layer stack 합성
         self.layer_offsets = []   # ROI 순서: ((dx, dy), 출처 문구) — target crop 에 쓴 적용 offset
         self.base_kind = {}       # (층, 'ref' | 'tgt') → 'Layer' | 'Merged' (층 묶음 바탕의 출처; Layer 그림을 쓸 때만)
+        # layer-align/T5b: 층별 비교. 같은 crop 상자의 층별 bool(target 은 적용 offset 으로 옮긴 것)을 collect_layers 가 함께 보관한다.
+        self.layer_masks = {}     # (ROI 번호, 층, 'ref' | 'tgt') → crop 상자 크기 bool
+        self.layer_sides = {}     # 층 → 그 Layer 가 있는 모델 집합 {'ref', 'tgt'}
+        self.compare_skipped = None    # 층별 비교를 뺀 사유 문구(호출자가 채운다). None 이면 뺀 것이 아니다
+        self._compare_cache = {}
 
     def position_step(self):
         """위치 그림 격자의 총 축소 배수(``_position_base`` 와 같은 값)."""
@@ -387,15 +410,17 @@ class ImageSource:
                 total += int(crops['ref'].nbytes) + int(crops['tgt'].nbytes)
         total += sum(int(a.nbytes) for a in self.crop_obs)
         total += sum(int(a.nbytes) for a in self.layer_fraction.values()) + sum(int(a.nbytes) for a in self.layer_crop.values())
+        total += sum(int(a.nbytes) for a in self.layer_masks.values())
         return total
 
-    def collect_layers(self, style, load, offsets):
+    def collect_layers(self, style, load, offsets, keep_masks=True):
         """Layer PNG 그림 자료: 위치 그림용 reference 블록 분율과 ROI 마다 4 x window_px 주변 crop 두 장(Layer stack 합성 rgb).
 
         style: ``stack_style`` 결과. load(side, 층) → frame 크기 bool 또는 None(그 모델에 그 층 Layer 없음); side 는 'ref' | 'tgt'.
         offsets: ROI 순서의 ``((dx, dy), 출처)`` — target crop 을 reference 좌표로 옮기는 그 ROI 의 적용 offset.
         층은 stack order 순(아래 → 위)으로 (모델, 층) 하나씩 읽어 분율·crop 에 섞고 바로 놓는다. 합성은 ``rgb = rgb·(1−α) + colour·α``,
-        crop 은 픽셀마다 α = LAYER_ALPHA(분율 1), 위치 그림은 블록 분율 f 로 α = LAYER_ALPHA·f."""
+        crop 은 픽셀마다 α = LAYER_ALPHA(분율 1), 위치 그림은 블록 분율 f 로 α = LAYER_ALPHA·f.
+        keep_masks(layer-align/T5b): 층별 bool crop 도 ``layer_masks`` 에 보관한다(Layer 를 다시 읽지 않고 층별 비교를 그리려고)."""
         total = self.position_step()
         self.layer_offsets = [((int(o[0][0]), int(o[0][1])), o[1]) for o in offsets]
         for i, (y0, y1, x0, x1) in enumerate(self.crop_boxes):
@@ -409,6 +434,7 @@ class ImageSource:
                     continue
                 if side == 'ref':
                     self.layer_fraction[layer] = _fraction(frame, total)
+                self.layer_sides.setdefault(layer, set()).add(side)
                 for i, (y0, y1, x0, x1) in enumerate(self.crop_boxes):
                     if side == 'ref':
                         crop = np.array(frame[y0:y1, x0:x1], dtype=bool)
@@ -420,6 +446,8 @@ class ImageSource:
                         (dx, dy), _ = self.layer_offsets[i]
                         crop = change_map._shift_crop(frame, dy, dx, y0, y1, x0, x1)
                     _blend(self.layer_crop[(i, side)], crop, colour, LAYER_ALPHA)
+                    if keep_masks:
+                        self.layer_masks[(i, layer, side)] = crop
                 del frame
         self.layer_style = style
 
@@ -656,6 +684,115 @@ def _crop_image(source, i, window, side, limit):
         _rect(rgb, rect[0] - grow, rect[1] - grow, rect[2] + grow, rect[3] + grow, POS_RECT_LAYER)
     _rect(rgb, rect[0] - CROP_RECT_GROW, rect[1] - CROP_RECT_GROW, rect[2] + CROP_RECT_GROW, rect[3] + CROP_RECT_GROW, WHITE)
     return rgb
+
+
+def _window_rect(source, i, window):
+    """crop 상자 안의 창 사각형 (y0, x0, y1, x1) — 끝 포함, crop 으로 자른다."""
+    cy0, cy1, cx0, cx1 = source.crop_boxes[i]
+    y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
+    return max(y - cy0, 0), max(x - cx0, 0), min(y + w - 1 - cy0, cy1 - cy0 - 1), min(x + w - 1 - cx0, cx1 - cx0 - 1)
+
+
+def _layer_mask(source, i, layer, side):
+    mask = source.layer_masks.get((i, layer, side))
+    if mask is None:
+        y0, y1, x0, x1 = source.crop_boxes[i]
+        mask = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+    return mask
+
+
+def compare_layers(source, i, window):
+    """ROI i 의 층별 비교 계획: 펼칠 층(``spread``)과 접을 층(``folded``)의 목록. 창 안·비교 영역 안에서 센다.
+
+    차이 층 = reference·target 이 한 픽셀이라도 다른 층, 또는 한쪽 모델에만 있는 층. 차이 픽셀 수 내림차순, 동률은 stack order.
+    각 항목 ``{'layer', 'n_diff', 'ref_only', 'tgt_only', 'only': None | 'ref' | 'tgt'}``. 층별 bool crop 이 없으면 둘 다 빈 목록."""
+    key = (i, window['window_origin_px'][0], window['window_origin_px'][1], window['window_px'])
+    if key in source._compare_cache:
+        return source._compare_cache[key]
+    spread, folded = [], []
+    if source.layer_style is not None and i < len(source.crop_boxes) and source.layer_masks:
+        ry0, rx0, ry1, rx1 = _window_rect(source, i, window)
+        obs = source.crop_obs[i][ry0:ry1 + 1, rx0:rx1 + 1]
+        rank = {name: k for k, name in enumerate(source.layer_style['order'])}
+        for layer in source.layer_style['order']:
+            if (i, layer, 'ref') not in source.layer_masks and (i, layer, 'tgt') not in source.layer_masks:
+                continue
+            ref = _layer_mask(source, i, layer, 'ref')[ry0:ry1 + 1, rx0:rx1 + 1] & obs
+            tgt = _layer_mask(source, i, layer, 'tgt')[ry0:ry1 + 1, rx0:rx1 + 1] & obs
+            sides = source.layer_sides.get(layer, set())
+            item = {'layer': layer, 'ref_only': int((ref & ~tgt).sum()), 'tgt_only': int((tgt & ~ref).sum()),
+                    'only': None if len(sides) != 1 else next(iter(sides))}
+            item['n_diff'] = item['ref_only'] + item['tgt_only']
+            (spread if item['n_diff'] or item['only'] else folded).append(item)
+        spread.sort(key=lambda item: (-item['n_diff'], rank[item['layer']]))
+    source._compare_cache[key] = {'spread': spread, 'folded': folded}
+    return source._compare_cache[key]
+
+
+def _compare_pictures(source, i, window, layer, limit):
+    """한 층의 [reference, target, 차이] 팔레트 PNG 바이트. 한 변 > limit 이면 블록 any 로 줄인다(1:1 보다 크게 늘리지 않는다)."""
+    ref, tgt = _layer_mask(source, i, layer, 'ref'), _layer_mask(source, i, layer, 'tgt')
+    gray = ~source.crop_obs[i]
+    rect = _window_rect(source, i, window)
+    size = max(ref.shape)
+    if size > limit:
+        step = int(math.ceil(size / float(limit)))
+        ref, tgt, gray = _block(ref, step, 'any'), _block(tgt, step, 'any'), _block(gray, step, 'any')
+        rect = tuple(v // step for v in rect)
+    one = lambda mask: np.where(mask, 1, 0).astype(np.uint8)       # noqa: E731
+    diff = np.zeros(ref.shape, dtype=np.uint8)
+    diff[ref & ~tgt], diff[tgt & ~ref], diff[ref & tgt] = COMPARE_REF_ONLY, COMPARE_TGT_ONLY, COMPARE_COMMON
+    out = []
+    for index in (one(ref), one(tgt), diff):
+        index[gray] = COMPARE_OUTSIDE
+        y0, x0, y1, x1 = rect
+        if y0 <= y1 and x0 <= x1:
+            index[y0, x0:x1 + 1] = index[y1, x0:x1 + 1] = COMPARE_RECT
+            index[y0:y1 + 1, x0] = index[y0:y1 + 1, x1] = COMPARE_RECT
+        out.append(_png_indexed(index, COMPARE_PALETTE))
+    return out
+
+
+def _compare_title(item, pitch_um):
+    area = '' if not pitch_um else ' (%.4g µm²)' % (item['n_diff'] * float(pitch_um) ** 2)
+    text = '층 %s · 창 안 차이 %d 픽셀%s · reference 만 %d 픽셀 · target 만 %d 픽셀' % (
+        item['layer'], item['n_diff'], area, item['ref_only'], item['tgt_only'])
+    if item['only']:
+        text += ' · ' + SIDE_TEXT[item['only']] + ' 에만 있는 층'
+    return text
+
+
+def _compare_count(source, i, window):
+    """ROI i 의 층별 비교 그림 수(층 수 x 3)."""
+    plan = compare_layers(source, i, window)
+    return 3 * (len(plan['spread']) + len(plan['folded']))
+
+
+def _compare_block(source, i, window, limit, pitch_um):
+    """ROI 하나의 층별 비교 HTML 과 그림 수. 차이 층은 펼치고 차이 없는 층은 ``<details>`` 로 접는다."""
+    plan = compare_layers(source, i, window)
+    if not plan['spread'] and not plan['folded']:
+        return '', 0
+    (dx, dy), _ = source.layer_offsets[i]
+
+    def one(item):
+        layer = item['layer']
+        names = ('reference (검정 = 형상)', 'target (검정 = 형상; offset [%d, %d] px 로 reference 좌표에 옮김)' % (dx, dy),
+                 '차이 (파랑 = reference 만, 빨강 = target 만, 진회색 = 공통)')
+        pics = _compare_pictures(source, i, window, layer, limit)
+        figs = ''.join(_figure(_uri(png), '층별 비교 · %s · %s' % (layer, name)) for png, name in zip(pics, names))
+        return '<div class="bundle"><h4>' + escape(_compare_title(item, pitch_um)) + '</h4><div class="figs">' + figs + '</div></div>'
+    html = ['<h4>층별 비교</h4><p class="note">층마다 reference · target · 차이. 형상 = 검정, 바탕 = 흰색. 차이: '
+            + _swatch(COMPARE_PALETTE[COMPARE_COMMON]) + ' 공통 · ' + _swatch(COMPARE_PALETTE[COMPARE_REF_ONLY]) + ' reference 만 · '
+            + _swatch(COMPARE_PALETTE[COMPARE_TGT_ONLY]) + ' target 만 · ' + _swatch(COMPARE_PALETTE[0]) + ' 둘 다 없음 · '
+            + _swatch(COMPARE_PALETTE[COMPARE_OUTSIDE]) + ' 비교 영역 밖 · ' + _swatch(COMPARE_PALETTE[COMPARE_RECT]) + ' ROI 창. '
+            '차이 층(창 안에서 한 픽셀이라도 다른 층)은 차이 픽셀 수 순으로 펼쳤다.</p>']
+    html.extend(one(item) for item in plan['spread'])
+    if not plan['spread']:
+        html.append('<p class="note">창 안에 차이가 있는 층이 없다.</p>')
+    if plan['folded']:
+        html.append('<details><summary>차이 없는 층 %d개</summary>' % len(plan['folded']) + ''.join(one(item) for item in plan['folded']) + '</details>')
+    return ''.join(html), _compare_count(source, i, window)
 
 
 def _plain(array, shape):
@@ -1396,6 +1533,11 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
                     items.append(_figure(_uri(_png(_crop_image(source, i, windows[i], crop_side, limit_px))),
                                          _crop_caption(source, i, crop_side)))
             figs = '<div class="figs">' + ''.join(items) + '</div>'
+            if layered and level < 2 and i < len(source.crop_boxes):
+                if source.compare_skipped:
+                    figs += '<p class="note">층별 비교 생략(' + escape(source.compare_skipped) + ').</p>'
+                else:
+                    figs += _compare_block(source, i, windows[i], CROP_MAX_PX if level == 0 else CROP_HALF_PX, alignment.get('pitch_um'))[0]
             if level < 2 and i < len(source.hot):
                 side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
                 shown, omitted_layers = layer_bundles(queries[i], windows[i])
@@ -1413,6 +1555,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
                     figs += '<p class="note">생략 %d개 층 (창 안 변경 면적 합이 작은 층): %s</p>' % (len(omitted_layers), escape(', '.join(omitted_layers)))
             if level == 2:
                 figs += '<p class="missing">그림 생략: 파일 크기 상한(%d MiB) 때문에 이 ROI 의 crop 그림을 뺐습니다.</p>' % (limit // (1024 * 1024))
+                if layered and not source.compare_skipped and _compare_count(source, i, windows[i]):
+                    figs += '<p class="missing">층별 비교 생략(크기 상한)</p>'
         if i + 1 in local_items:
             figs += _local_table(local_items[i + 1], local_alignment.get('excluded_layers') or [],
                                  [b['layer'] for b in layer_bundles(queries[i], windows[i])[0]])
@@ -1442,6 +1586,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
                      has_position * (count - keep))
         if layered:      # ROI 주변 Layer crop 두 장은 level 0/1 인 ROI 에만 있다
             n_images += 2 * sum(1 for i in range(keep) if i < len(source.crop_boxes))
+            if not source.compare_skipped:      # 층별 비교 그림(층 수 x 3)도 같은 ROI 에만 있다
+                n_images += sum(_compare_count(source, i, windows[i]) for i in range(keep) if i < len(source.crop_boxes))
     prefix_bytes = encode(head + ''.join(prefix))
     data = prefix_bytes + b''.join(body) + encode(suffix + tail)
     return data, {'path': 'alignment.html', 'bytes': len(data), 'downscaled': bool(downscaled),

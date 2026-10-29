@@ -236,7 +236,7 @@ def test_e_the_estimate_adds_the_fractions_and_two_crops_per_roi_only_with_layer
     assert ar.estimate_report_bytes(ref, tgt, 5, 4, 100, 0) == base
     nb = 3000 * 3000 // 9                                              # step 3 → 1000 x 1000
     assert nb == 1000 * 1000
-    assert ar.estimate_report_bytes(ref, tgt, 5, 4, 100, 7) - base == 7 * nb + 5 * 2 * 400 * 400 * 3
+    assert ar.estimate_report_bytes(ref, tgt, 5, 4, 100, 7) - base == 7 * nb + 5 * 2 * 400 * 400 * (3 + 7)     # T5b: 층별 bool crop 2개 x 층 수
     assert ar.estimate_report_bytes(ref, tgt, 0, 4, 100, 7) - ar.estimate_report_bytes(ref, tgt, 0, 4, 100) == 7 * nb
     assert ar.fits(ref, tgt, base + 1, 0, 5, 4, 100) and not ar.fits(ref, tgt, base + 1, 0, 5, 4, 100, 7)
 
@@ -261,6 +261,152 @@ def test_f_bundle_captions_name_the_base_only_when_layer_figures_are_on():
     source.base[(0, 'L1', 'tgt')] = None
     caps = [c for c, _ in ar._bundle_images(source, 0, windows[0], 'L1', 400)]
     assert caps[0].endswith(' · 바탕: Layer') and '전극 형상 없음' in caps[0] and '바탕:' not in caps[2]
+
+
+# --- T5b: 층별 비교 (reference | target | 차이) ----------------------------------------------------------------------------------
+
+def decode(png):
+    image = Image.open(io.BytesIO(png))
+    assert image.mode == 'P'                                           # 팔레트 PNG(작게 저장)
+    return np.array(image.convert('RGB'))
+
+
+def compare_world(layer_names=('A', 'B', 'C'), changed=('B',), tgt_missing=(), n_rois=1):
+    """층마다 고정 무늬. changed 층은 target 에서 창 안 한 곳이 다르다. tgt_missing 층은 target 에 Layer 가 없다."""
+    rng = np.random.default_rng(7)
+    base = {name: rng.random(SHAPE) > 0.6 for name in layer_names}
+
+    def fill(side, layer):
+        if side == 'tgt' and layer in tgt_missing:
+            return None
+        frame = base[layer].copy()
+        if side == 'tgt' and layer in changed:
+            frame[40:46, 60:70] = ~frame[40:46, 60:70]
+        return frame
+    return layered_source(n_rois=n_rois, layer_names=layer_names, fill=fill, w=100)
+
+
+def test_t5b_only_the_changed_layer_is_spread_and_the_rest_are_folded():
+    alignment, qs, windows, source = compare_world()
+    plan = ar.compare_layers(source, 0, windows[0])
+    assert [item['layer'] for item in plan['spread']] == ['B'] and [item['layer'] for item in plan['folded']] == ['A', 'C']
+    assert plan['spread'][0]['n_diff'] == 60 and plan['spread'][0]['ref_only'] + plan['spread'][0]['tgt_only'] == 60
+    html = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source)[0].decode('utf-8')
+    block = html.split('<h4>층별 비교</h4>')[1].split('</details>')[0]
+    opened, folded = block.split('<details>')
+    assert '층 B · 창 안 차이 60 픽셀' in opened and 'µm²' in opened and '층 A ·' not in opened and '층 C ·' not in opened
+    assert '<summary>차이 없는 층 2개</summary>' in folded and '층 A ·' in folded and '층 C ·' in folded
+    caps = [c for c in captions(html) if c.startswith('층별 비교')]
+    assert len(caps) == 9 and caps[0] == '층별 비교 · B · reference (검정 = 형상)'
+    assert len(png_sizes(html, '층별 비교')) == 9
+
+
+def test_t5b_spread_layers_are_ordered_by_difference_pixels_then_stack_order():
+    rng = np.random.default_rng(3)
+    base = {name: rng.random(SHAPE) > 0.6 for name in ('A', 'B', 'C', 'D')}
+    rows = {'A': 4, 'B': 9, 'C': 4, 'D': 0}
+
+    def fill(side, layer):
+        frame = base[layer].copy()
+        if side == 'tgt':
+            frame[40:40 + rows[layer], 60] = ~frame[40:40 + rows[layer], 60]
+        return frame
+    alignment, qs, windows, source = layered_source(n_rois=1, layer_names=('A', 'B', 'C', 'D'), fill=fill)
+    plan = ar.compare_layers(source, 0, windows[0])
+    assert [item['layer'] for item in plan['spread']] == ['B', 'A', 'C']          # 9, 그다음 동률 4 는 stack order
+    assert [item['layer'] for item in plan['folded']] == ['D']
+
+
+def test_t5b_difference_picture_has_four_distinct_colours():
+    window = {'layer': 'L1', 'window_origin_px': [40, 50], 'window_px': 20}
+    source = blank_source(SHAPE, [window])
+    ref, tgt = np.zeros(SHAPE, bool), np.zeros(SHAPE, bool)
+    ref[45:50, 60:65] = True                                          # 공통 + reference 만
+    tgt[47:52, 62:67] = True                                          # 공통 + target 만
+    source.collect_layers(ar.stack_style({'L1': 1}), lambda side, layer: ref if side == 'ref' else tgt, [((0, 0), 'global')])
+    y0, _, x0, _ = source.crop_boxes[0]
+    source.crop_obs[0][:, :5] = False                                 # 왼쪽 몇 열은 비교 영역 밖
+    ref_png, tgt_png, diff_png = ar._compare_pictures(source, 0, window, 'L1', ar.CROP_MAX_PX)
+    rgb_ref, rgb_tgt, diff = decode(ref_png), decode(tgt_png), decode(diff_png)
+    assert rgb_ref.shape == (80, 80, 3) == diff.shape
+    pal = ar.COMPARE_PALETTE
+
+    def at(image, y, x):
+        return tuple(int(v) for v in image[y - y0, x - x0])
+    assert at(diff, 45, 60) == pal[ar.COMPARE_REF_ONLY]               # reference 만
+    assert at(diff, 51, 66) == pal[ar.COMPARE_TGT_ONLY]               # target 만
+    assert at(diff, 48, 63) == pal[ar.COMPARE_COMMON]                 # 공통
+    assert at(diff, 41, 52) == pal[0]                                 # 둘 다 없음(흰색)
+    assert at(rgb_ref, 45, 60) == (0, 0, 0) and at(rgb_ref, 51, 66) == (255, 255, 255) and at(rgb_tgt, 51, 66) == (0, 0, 0)
+    assert tuple(int(v) for v in diff[10, 0]) == pal[ar.COMPARE_OUTSIDE]       # 비교 영역 밖
+    assert at(diff, 40, 55) == pal[ar.COMPARE_RECT]                   # ROI 창 테두리
+    assert len({pal[ar.COMPARE_REF_ONLY], pal[ar.COMPARE_TGT_ONLY], pal[ar.COMPARE_COMMON], pal[0], pal[ar.COMPARE_RECT]}) == 5
+    assert pal[ar.COMPARE_RECT] not in (ar.POS_RECT_LAYER, ar.POS_CHANGED_LAYER, pal[ar.COMPARE_TGT_ONLY], pal[ar.COMPARE_REF_ONLY])
+
+
+def test_t5b_target_layer_is_moved_by_the_applied_offset_of_each_roi():
+    windows = [{'layer': 'L1', 'window_origin_px': [40, 50], 'window_px': 20}] * 2
+    marker = np.zeros(SHAPE, bool)
+    marker[50:54, 60:64] = True
+    offsets = [((0, 0), 'global'), ((5, 3), 'unit')]
+    source = blank_source(SHAPE, windows)
+    source.collect_layers(ar.stack_style({'L1': 1}), lambda side, layer: marker if side == 'tgt' else np.zeros(SHAPE, bool), offsets)
+    y0, _, x0, _ = source.crop_boxes[0]
+
+    def black(i):
+        image = decode(ar._compare_pictures(source, i, windows[i], 'L1', ar.CROP_MAX_PX)[1])
+        ys, xs = np.nonzero(np.all(image == 0, axis=2))
+        return int(ys.min()) + y0, int(xs.min()) + x0, int(ys.max()) + y0, int(xs.max()) + x0
+    assert black(0) == (50, 60, 53, 63)
+    assert black(1) == (47, 55, 50, 58)                                # target − offset (dy 3, dx 5)
+
+
+def test_t5b_a_layer_on_one_model_only_is_spread_with_a_one_sided_caption():
+    alignment, qs, windows, source = compare_world(changed=(), tgt_missing=('C',))
+    plan = ar.compare_layers(source, 0, windows[0])
+    assert [item['layer'] for item in plan['spread']] == ['C'] and plan['spread'][0]['only'] == 'ref'
+    assert plan['spread'][0]['tgt_only'] == 0 and plan['spread'][0]['ref_only'] > 0
+    html = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source)[0].decode('utf-8')
+    assert '층 C · 창 안 차이' in html and 'reference 에만 있는 층' in html and 'target 에만 있는 층' not in html
+    only_tgt = layered_source(n_rois=1, layer_names=('A', 'B'), fill=lambda side, layer: np.ones(SHAPE, bool) if (side, layer) != ('ref', 'B') else None)
+    html = ar.build_alignment_html(only_tgt[0], queries=only_tgt[1], windows=only_tgt[2], source=only_tgt[3])[0].decode('utf-8')
+    assert 'target 에만 있는 층' in html
+
+
+def test_t5b_the_size_ladder_halves_the_comparison_pictures_then_omits_them_with_a_sentence():
+    alignment, qs, windows, source = compare_world(n_rois=3)
+    full, info = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source)
+    html = full.decode('utf-8')
+    assert info['n_images'] == len(captions(html)) and len(png_sizes(html, '층별 비교')) == 27
+    assert max(max(size) for size in png_sizes(html, '층별 비교')) > ar.CROP_HALF_PX
+    half, info_half = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source, max_bytes=info['bytes'] - 1)
+    half_html = half.decode('utf-8')
+    assert info_half['downscaled'] and len(png_sizes(half_html, '층별 비교')) == 27
+    assert all(max(size) <= ar.CROP_HALF_PX for size in png_sizes(half_html, '층별 비교'))
+    assert info_half['n_images'] == len(captions(half_html))
+    none, info_none = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source, max_bytes=1)
+    none_html = none.decode('utf-8')
+    assert none_html.count('층별 비교 생략(크기 상한)') == 3 and not png_sizes(none_html, '층별 비교')
+    assert info_none['n_images'] == len(captions(none_html))
+
+
+def test_t5b_the_masks_are_kept_for_the_comparison_and_counted_in_the_held_bytes():
+    alignment, qs, windows, source = compare_world()
+    assert source.layer_masks and all(mask.dtype == bool for mask in source.layer_masks.values())
+    held = source.held_bytes()
+    skipped = blank_source(SHAPE, windows)
+    skipped.collect_layers(ar.stack_style({'A': 1}), lambda side, layer: np.ones(SHAPE, bool), [((0, 0), 'global')], keep_masks=False)
+    assert not skipped.layer_masks and held > skipped.held_bytes()
+    skipped.compare_skipped = '메모리 한도'
+    html = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=skipped)[0].decode('utf-8')
+    assert '층별 비교 생략(메모리 한도)' in html and not png_sizes(html, '층별 비교')
+
+
+def test_t5b_without_layer_data_there_is_no_comparison():
+    from test_alignment_report import synthetic_source
+    alignment, qs, windows, source = synthetic_source(n_rois=2)
+    html = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source)[0].decode('utf-8')
+    assert '층별 비교' not in html and not source.layer_masks and ar.compare_layers(source, 0, windows[0]) == {'spread': [], 'folded': []}
 
 
 # --- (g) stack order 출처 ------------------------------------------------------------------------------------------------------

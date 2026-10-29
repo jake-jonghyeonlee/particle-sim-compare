@@ -329,6 +329,8 @@ config(reference, target: real_hotspot_v1)      PNG root (<제품>/CNO/, Merged_
 
 **alignment.html 그림(새 구조 + Layer).** 5절 ROI 상세의 위치 그림은 reference Layer를 모든 층, stack order 순 색, 투명도로 쌓은 바탕 위에 변경 위치(진자홍)와 빨간 ROI 박스(흰 테)를 그린다. ROI 주변 crop(창의 3~5배, 원본 해상도)도 Layer stack에 빨간 박스를 그린다. 축소는 층 분율 블록 평균으로 해서 회백색 포화를 피한다. 크기는 `MAX_HTML_BYTES`(30 MiB) 상한 안에서 순위 낮은 ROI의 crop부터 줄이거나 뺀다. Layer 폴더가 없으면 예전 그림이다.
 
+**alignment.html 층별 비교(새 구조 + Layer).** ROI 마다 stack crop 두 장 아래에 층별 비교를 둔다. 층마다 한 줄에 세 장(reference · target · 차이)이며, 형상은 검정·바탕은 흰색이다. target 은 그 ROI 의 적용 offset 으로 reference 좌표에 옮긴 것이다. 차이 그림은 공통 = 진회색, reference 만 = 파랑, target 만 = 빨강, 둘 다 없음 = 흰색이고, 비교 영역 밖은 연회색, ROI 창은 주황 테두리다. 창 안·비교 영역 안에서 한 픽셀이라도 다른 층(또는 한쪽 모델에만 있는 층)은 차이 픽셀 수 순으로 펼치고, 나머지는 `차이 없는 층 n개` 로 접는다. 층 캡션에 창 안 차이 픽셀 수와 µm², reference 만·target 만 픽셀 수를 적는다. PNG 는 팔레트 PNG 다. 크기 상한에서는 crop 과 같이 반 해상도 → 생략("층별 비교 생략(크기 상한)") 순이다. 층별 bool crop 이 메모리 한도를 넘으면 층별 비교만 빼고 경고 `alignment_report_layer_compare_skipped`(종료 코드 3)를 남긴다.
+
 **alignment.html 구성(v3 순서).** 1 요약(정렬 상태·offset·frame 크기·합집합 조합 수), 2 CNT 정렬과 정렬 진단(층별 겹침 정렬 전·후, 대안 offset), 3 변경 강조 지도(변경 위치를 빨강으로), 4 ROI 목록(순위 표, 각 ROI 로 이동), 5 ROI 상세(위치 그림, 기여 조합 표, 그 ROI 에 불량 조합이 있는 층마다 층 묶음 = 비교·reference·target 그림에 전극 형상 바탕. 층이 4개를 넘으면 창 안 변경 면적 합이 큰 4개만, 기여 조합이 없는 ROI 는 묶음 없이 한 줄), 6 변경 지도 열지도(참고, 접어 둠), 7 각주. 파일 크기가 상한을 넘으면 순위가 낮은 ROI 의 crop 부터 줄이거나 뺀다.
 
 ### 취약점 ROI (candidates-dv) — 현행
