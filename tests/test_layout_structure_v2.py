@@ -94,6 +94,15 @@ def test_uppercase_cno_is_cnt_in_legacy_and_v2(tmp_path):
         assert 'CNO' not in scan['electrodes'] and 'cno' not in scan['electrodes']
 
 
+def test_any_casing_of_cno_is_cnt_in_legacy_too(tmp_path):
+    """layer-align/T4a R1 adv:5: 대소문자를 가리지 않는다 — ``Cno``·``cNO`` 도 legacy 에서 전극이 아니라 CNT 다(예전에는 전극이었다)."""
+    for index, name in enumerate(('Cno', 'cNO', 'CnO')):
+        root = legacy_tree(tmp_path, f'legacy_{index}', cno_name=name)
+        scan = electrode_png._scan_dl1_model(root, 'PRODUCT')
+        assert scan['structure'] == 'legacy' and [r['layer'] for r in scan['cno']] == ['CNT']
+        assert sorted(scan['electrodes']) == ['A', 'B', 'C'] and list_dl1_electrodes(root, 'PRODUCT') == ['A', 'B', 'C']
+
+
 def test_legacy_folder_named_layer_stays_an_electrode(tmp_path):
     root = legacy_tree(tmp_path)
     save(root / 'PRODUCT' / 'Layer' / '4-M2.png', pattern(8))

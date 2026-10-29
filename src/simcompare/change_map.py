@@ -293,7 +293,7 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um, ref_electrodes=None, tg
 
 # --------------------------------------------------------------------------- A5/A6. admission·검증
 
-def estimate_change_map_bytes(ref_shape, tgt_shape, n_layers, window_px, tolerance_px):
+def estimate_change_map_bytes(ref_shape, tgt_shape, n_layers, window_px, tolerance_px, field=False):
     """동시에 보유하는 배열의 바이트 수(할당 전 admission 용). 두 단계 중 큰 쪽이다.
 
     hr = H_ref*W_ref, ht = H_tgt*W_tgt, L = n_layers, w = window_px, r = tolerance_px.
@@ -310,12 +310,14 @@ def estimate_change_map_bytes(ref_shape, tgt_shape, n_layers, window_px, toleran
         창 합 + 덧셈 임시 2장 + 관측 수 1장              = 4*nwin*8
         격자 복사·패딩·bool 임시                         = 32*ng
         후보 버퍼(층마다 최대 ng 개)                     = CANDIDATE_BYTES*ng*L
+    field=True(offset 장 경로, layer-align/T4a adv:3)이면 1단계에 임시 배열 4*hr 를 더한다:
+        분할 검사 cover(uint8) + 이음새 띠 mask + 영역별 shifted target valid + 영역 조각 임시   = 4*hr
     """
     hr = int(ref_shape[0]) * int(ref_shape[1])
     ht = int(tgt_shape[0]) * int(tgt_shape[1])
     layers = max(int(n_layers), 0)
     dilation = 4 * hr if tolerance_px > 0 else 0
-    first = 3 * hr + ht + ht + 3 * hr + dilation + 4 * layers * hr + 4 * layers * hr
+    first = 3 * hr + ht + ht + 3 * hr + dilation + 4 * layers * hr + 4 * layers * hr + (4 * hr if field else 0)
     if int(window_px) <= 0:
         return int(first)
     w = int(window_px)
@@ -491,7 +493,8 @@ def _shift_crop_field(src, field, y0, y1, x0, x1):
 
 
 def _field_seam(field, shape):
-    """field 의 이음새 띠(True = 제외). 1×1·1×2·2×1·2×2 격자만 받는다. 모두 같은 offset 이면 빈 마스크."""
+    """field 의 이음새 띠(True = 제외). 1×1·1×2·2×1·2×2 격자만 받는다(unit 격자 전용: 그 밖의 분할은 모든 offset 이 같아도 거부한다).
+    모두 같은 offset 이면 빈 마스크."""
     from .layer_align import seam_band
     rows = sorted({(f[0], f[1]) for f in field})
     cols = sorted({(f[2], f[3]) for f in field})
@@ -589,7 +592,7 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px=None, pitch_um, t
     layers = sorted({pair.layer for pair in pairs})
     r = _round_px(tolerance_um, pitch_um)
     window_px = 0 if window_um is None else _round_px(window_um, pitch_um)
-    need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), window_px, r)
+    need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), window_px, r, field=field is not None)
     _check_admission(need, max_operation_bytes, reserved_bytes)
     per_layer = {layer: 0 for layer in layers}
     for pair in pairs:
@@ -949,7 +952,7 @@ def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, 
             raise _bad(f'window {window.get("center_xy_um")} lies outside the frame {ref_valid.shape}')
     layers = sorted({window['layer'] for window in windows})
     # 이 패스는 층별 uint32 지도와 적분 영상을 만들지 않는다: 1단계 추정(window_px=0)만 검사한다.
-    need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), 0, r)
+    need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), 0, r, field=window_offsets is not None)
     _check_admission(need, max_operation_bytes, reserved_bytes)
     if window_offsets is not None:
         out = _contributions_recomputed(pairs, windows, list(window_offsets), ref_valid=ref_valid, tgt_valid=tgt_valid,

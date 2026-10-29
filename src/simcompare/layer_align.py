@@ -198,7 +198,9 @@ def choose_dice_first(per_layer_scores, s_xy, radius, *, min_dice, min_support=M
         info[k]['dice_at_chosen'] = _r6(dice[k][chosen]) if chosen in dice[k] else None
         if info[k]['_argmax'] != chosen:
             result['layers_disagreeing'].append(k)
-    if _cheb(chosen, (0, 0)) >= r - 1:
+    if float(dice[l1][chosen]) < float(min_dice):      # R1 adv:2 / X7: 선택 δ 에서의 L1 Dice 로 판정한다(best 가 아니다)
+        result['status'] = 'low_score'
+    elif _cheb(chosen, (0, 0)) >= r - 1:
         result['status'] = 'search_bound_hit'
     else:
         result['status'] = 'ok'
@@ -279,6 +281,25 @@ def unit_window_scores(ref_layer, tgt_layer, omega, s_xy, radius):
     inter = np.rint(np.fft.irfft2(np.conj(spec_a) * spec_b, s=size)[:n + 1, :n + 1]).astype(np.int64)
     sum_b = np.rint(np.fft.irfft2(np.conj(spec_o) * spec_b, s=size)[:n + 1, :n + 1]).astype(np.int64)
     return a, inter, sum_b
+
+
+def region_window_scores(ref_layer, tgt_layer, omega, region, s_xy, radius):
+    """``unit_window_scores`` 와 같은 값(a, I, b)을 reference 영역 ``region`` = (y0, y1, x0, x1) 상자 안에서만 계산한다.
+
+    omega 는 frame 모양 마스크이고 영역 밖 값은 쓰지 않는다. 영역 하나의 FFT 는 상자 크기로 작아서 4 영역 합이 frame 한 번 값이다.
+    target 은 상자를 s 만큼 옮기고 R 만큼 넓힌 부분만 잘라 쓴다(frame 밖 False)."""
+    y0, y1, x0, x1 = (int(v) for v in region)
+    r = int(radius)
+    sx, sy = int(s_xy[0]), int(s_xy[1])
+    ref_layer = np.asarray(ref_layer, dtype=bool)
+    tgt_layer = np.asarray(tgt_layer, dtype=bool)
+    h, w = y1 - y0, x1 - x0
+    sub = np.zeros((h + 2 * r, w + 2 * r), dtype=bool)
+    ty0, ty1, tx0, tx1 = y0 + sy - r, y1 + sy + r, x0 + sx - r, x1 + sx + r
+    cy0, cy1, cx0, cx1 = max(ty0, 0), min(ty1, tgt_layer.shape[0]), max(tx0, 0), min(tx1, tgt_layer.shape[1])
+    if cy0 < cy1 and cx0 < cx1:
+        sub[cy0 - ty0:cy1 - ty0, cx0 - tx0:cx1 - tx0] = tgt_layer[cy0:cy1, cx0:cx1]
+    return unit_window_scores(ref_layer[y0:y1, x0:x1], sub, np.asarray(omega, dtype=bool)[y0:y1, x0:x1], (r, r), r)
 
 
 def estimate_layer_bytes(ref_shape, tgt_shape, radius, n_regions=4):

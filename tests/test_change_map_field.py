@@ -74,7 +74,9 @@ def test_uniform_field_equals_scalar_offset():
         extra = set(fielded['stats']) - set(scalar['stats'])
         assert extra == {'offset_field', 'seam_excluded_pixels'}
         assert fielded['stats']['seam_excluded_pixels'] == 0
-        assert {k: v for k, v in fielded['stats'].items() if k not in extra} == scalar['stats']
+        same = {k: v for k, v in fielded['stats'].items() if k not in extra}
+        assert same.pop('estimated_bytes') > scalar['stats']['estimated_bytes']      # layer-align/T4a adv:3: field 임시 배열 4*hr
+        assert same == {k: v for k, v in scalar['stats'].items() if k != 'estimated_bytes'}
     assert 'offset_field' not in scalar['stats'] and 'seam_excluded_pixels' not in scalar['stats']
 
 

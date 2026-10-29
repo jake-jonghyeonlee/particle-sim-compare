@@ -259,6 +259,34 @@ def test_x1_low_score_and_insufficient_support_and_excluded_layers():
     assert both['per_layer']['layer:Z']['excluded_reason'] == 'png_errors:bad'
 
 
+def test_x7_low_score_is_judged_at_the_chosen_delta_not_at_the_best_l1_dice():
+    """R1 adv:2: L1 best 0.505 (>= min_dice 0.5), L2 picks the neighbour where L1 is 0.497 (inside epsilon) → low_score, not ok."""
+    scores = {'layer:L1': _scores(3, 1000, {(0, 0): 505, (0, 1): 497}), 'layer:L2': _scores(3, 1000, {(0, 0): 100, (0, 1): 400})}
+    out = _choose(scores, min_dice=0.5)
+    assert out['layer_order'] == ['layer:L1', 'layer:L2'] and out['best_dice'] == 0.505
+    assert out['status'] == 'low_score' and out['apply'] is False
+    assert out['delta_xy_px'] == [1, 0] and out['offset_xy_px'] == [1, 0] and out['dice'] == 0.497      # 선택은 기록하되 적용하지 않는다
+    assert out['decided_by_layer'] == 'layer:L2'
+    ok = _choose(scores, min_dice=0.49)
+    assert ok['status'] == 'ok' and ok['apply'] is True and ok['delta_xy_px'] == [1, 0]
+    first_gate = _choose(scores, min_dice=0.51)       # best 자체가 모자라면 선택 없이 low_score
+    assert first_gate['status'] == 'low_score' and first_gate['delta_xy_px'] is None
+
+
+@pytest.mark.parametrize('s_xy, region', [((0, 0), (0, 12, 0, 15)), ((4, -3), (12, 24, 0, 15)), ((-5, 2), (0, 12, 15, 30)),
+                                           ((3, 6), (12, 24, 15, 30))])
+def test_region_window_scores_equal_the_full_frame_scores_masked_to_the_region(s_xy, region):
+    rng = np.random.RandomState(5)
+    a_img, b_img = rng.rand(24, 30) < 0.4, rng.rand(28, 34) < 0.4
+    omega = la.fixed_omega(np.ones((24, 30), bool), np.ones((28, 34), bool), s_xy, 3, 1)
+    y0, y1, x0, x1 = region
+    masked = np.zeros_like(omega)
+    masked[y0:y1, x0:x1] = omega[y0:y1, x0:x1]
+    want = la.unit_window_scores(a_img, b_img, masked, s_xy, 3)
+    got = la.region_window_scores(a_img, b_img, omega, region, s_xy, 3)
+    assert got[0] == want[0] and (got[1] == want[1]).all() and (got[2] == want[2]).all() and got[1].dtype == np.int64
+
+
 def test_x1_search_bound_hit_within_one_pixel_of_edge_is_not_applied():
     for table in ({(0, 3): 900}, {(0, 2): 900}, {(-2, -1): 900}):
         out = _choose({'layer:L1': _scores(3, 1000, table)})
