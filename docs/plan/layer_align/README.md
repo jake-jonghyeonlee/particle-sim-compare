@@ -41,6 +41,7 @@ Layer PNG 를 정렬·그림에 쓰고, 정렬 결과를 변경 지도·순위·
 2. **상수 조정**: `--unit-align-um`·`--local-align-um`·`--unit-fold-tolerance-um`(기본 window / 4)·`--refine-pool`(기본 10 × top-k)·`--align-min-dice`, `AMBIGUITY_DELTA`, `MIN_SUPPORT_PX` 는 합성 기준 초기값이다.
 3. **DL1 T7**: DL1 저장소가 새 폴더 구조(대문자 `CNO`, `Merged_Layer`)를 읽게 한다. DL1 은 현재 대문자 `CNO` 를 오류로 거부한다. dl1-incr Run 이 끝난 뒤 이 Run 에서 이어서 한다. 시작 전 `paseo-editor-check` 를 다시 실행한다. DL1 의 정렬 통일은 사용자가 폐기했다(DL1 은 정렬을 측정하지 않음).
 4. **측정 재확인 (R2 adv:5)**: 재점수 비용은 합성 기준 0.04 s(풀 200)이다. 실자료 변경은 훨씬 크므로 풀 200 의 재점수 시간(창마다 `_classify` FFT 포함)을 실자료로 다시 잰다. field 경로의 `estimated_bytes` 도 실측과 비교한다(합성: scalar/field 1.0 GiB, unit 단계 +806 MiB 대 추정 501 MiB, ×2 admission).
+5. **Layer 있는 기본 실행의 시간 (R3 adv:9)**: 새 인수가 없어도 Layer PNG 를 2·L 번 디코드하고 sha256 을 계산한다. 실자료로 이 실행의 시간(2·L 디코드 + sha256)을 잰다.
 
 ## 열린 비차단 권고
 
@@ -51,7 +52,7 @@ Layer PNG 를 정렬·그림에 쓰고, 정렬 결과를 변경 지도·순위·
 | R1 adv:5 | 예전 구조도 casefold 라서 `Cno`·`cNO` 도 CNT | `docs/usage_reference.md` 에 적음 |
 | R1 adv:6 | `merge_scope=all` 의 기여 case 중복 | T4 에서 대표 창 1개 + 모든 층 기여로 해결 |
 | R1 adv:7 | `decided_by_layer` 는 선택이 없으면 `None` | `docs/data_contract.md` 에 적음 |
-| R2 adv:2 | 국소 Ω 는 unit 영역 한정, 침식 없음 | `docs/data_contract.md` 에 적음 |
+| R2 adv:2 | 국소 Ω 는 unit 영역으로 한정하고 unit 내부 경계 쪽만 r 침식(frame·상자 가장자리는 침식 안 함) | `docs/data_contract.md` 에 적음 |
 | R2 adv:6 | 경계 창에서 `cnt_change_um2_by_layer`(unit 스칼라 offset)와 점수(field)의 기준이 다름 | `docs/data_contract.md` 에 적음 |
 | R2 adv:8 | unit + local 진단 표의 g 는 전역 CNT offset | `docs/data_contract.md` 에 적음 |
 | R2 adv:9 | `zero_after_refine` 은 병합 다리를 놓지 않음, `ring_inconclusive` 는 unit offset 으로 되돌림 | `docs/data_contract.md` 에 적음. `ring_inconclusive` 되돌림은 계약에 없던 보수적 선택 |

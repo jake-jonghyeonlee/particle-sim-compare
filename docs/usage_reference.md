@@ -266,7 +266,7 @@ config(reference, target: real_hotspot_v1)      PNG root (<제품>/CNO/, Merged_
 - `diagnostic`(생략): 계산·순위는 이전과 같다. unit 정보는 `alignment.json`에만 더해진다.
 - `unit`: 변경 지도·창 재계산·target 방향 질의 중심·직접 쌍에 unit offset을 적용한다. 지도·열지도는 unit offset을 쓴다.
 - `local`: 창 후보 점수 상위 `--refine-pool`개를 국소 보정하고 재점수화한 뒤 병합 → 억제 → 접기 → `top-k` 순으로 진행한다. ROI의 기여 case·점수는 그 ROI의 **적용 offset**을 쓴다. 재점수 뒤 변경이 0이 된 창은 funnel `refine_pool`에서 `zero_after_refine`로 빠지고 병합 다리도 놓지 않는다.
-- 적용하지 않은 offset(`low_score`, `ambiguous` 등)은 기록만 하고 전역 offset을 쓴다. 잘 맞지 않는 ROI도 숨기지 않고 표시한다.
+- 적용하지 않은 offset(`low_score`, `ambiguous` 등)은 기록만 하고 시작점(`--unit-align-um`이 있으면 그 unit의 offset, 없으면 전역 offset)을 쓴다. 잘 맞지 않는 ROI도 숨기지 않고 표시한다.
 
 **소요 시간·메모리.** 아래는 개발기 **합성 기준** 측정이다(실자료 변경이 더 크면 재점수 비용이 늘 수 있으므로 실자료로 다시 잰다). 3000×3000 frame, Layer 10층 + CNT 10층, 창 3150, 풀 200: 전체 27.9 s(unit 정렬 10.6 s, 국소 보정 5.1 s, 재점수 0.04 s), 프로세스 peak RSS 3161 MB. 같은 크기의 `change_maps` scalar/field는 0.3 s에 ~1.0 GiB, unit 단계는 5.2 s에 +806 MiB(추정 501 MiB; `change_candidates`가 2배로 admission). ROI 200개 국소 정렬은 반경 10 px에서 4.3 s/530 MiB, 30 px에서 12.8 s/606 MiB. 실행마다 `execution.json`의 `timings_s`(`unit_align`, `layer_read`, `local_refine`, `local_layer_read`)가 단계별 초를 남긴다.
 
@@ -327,7 +327,7 @@ config(reference, target: real_hotspot_v1)      PNG root (<제품>/CNO/, Merged_
 - 면적 지표(`area_reference_um2`, `area_target_um2`, `union_area_*`)는 두 모델 모두 같은 reference 좌표 창과 같은 공통 비교 영역(침식 후)에서 센다. 그래서 frame 크기가 달라도 두 값을 바로 비교할 수 있다. 공통 비교 영역은 두 frame 어느 쪽보다 작을 수 있으며, frame 전체 대비 비율(`alignment.json`의 `fraction_of_reference`·`fraction_of_target`)은 분모가 각 frame 이라 서로 다르다.
 - `alignment_report_layer_base_skipped` 경고의 `estimated_bytes`·`reserved_bytes` 에는 보고서 그림이 이미 잡고 있는 바이트가 들어가지 않는다. 그래서 "추정 + 예약 ≤ 한도"로 보여도 바탕이 빠질 수 있다.
 
-**alignment.html 그림(새 구조 + Layer).** 5절 ROI 상세의 위치 그림은 reference Layer를 모든 층, stack order 순 색, 투명도로 쌓은 바탕 위에 변경 위치(진자홍)와 빨간 ROI 박스(흰 테)를 그린다. ROI 주변 crop(창의 3~5배, 원본 해상도)도 Layer stack에 빨간 박스를 그린다. 축소는 층 분율 블록 평균으로 해서 회백색 포화를 피한다. 크기는 `MAX_HTML_BYTES`(30 MiB) 상한 안에서 순위 낮은 ROI의 crop부터 줄이거나 뺀다. Layer 폴더가 없으면 예전 그림이다.
+**alignment.html 그림(새 구조 + Layer).** 5절 ROI 상세의 위치 그림은 reference Layer를 모든 층, stack order 순 색, 투명도로 쌓은 바탕 위에 변경 위치(진자홍)와 빨간 ROI 박스(흰 테)를 그린다. ROI 주변 crop(창 한 변의 4배(`CROP_SIDE_WINDOWS`), 원본 해상도 1:1이고 한 변이 상한을 넘으면 캡션에 적은 배율로 축소)도 Layer stack에 빨간 박스를 그린다. unit offset을 점수에 쓴 실행에서 국소 보정을 적용하지 않은 ROI의 crop이 offset이 다른 unit 영역을 걸치면 target crop·층별 비교는 unit 별 offset으로 옮기고 캡션에 "unit 별 offset(경계 창)"이라 적는다. 축소는 층 분율 블록 평균으로 해서 회백색 포화를 피한다. 크기는 `MAX_HTML_BYTES`(30 MiB) 상한 안에서 순위 낮은 ROI의 crop부터 줄이거나 뺀다. Layer 폴더가 없으면 예전 그림이다.
 
 **alignment.html 층별 비교(새 구조 + Layer).** ROI 마다 stack crop 두 장 아래에 층별 비교를 둔다. 층마다 한 줄에 세 장(reference · target · 차이)이며, 형상은 검정·바탕은 흰색이다. target 은 그 ROI 의 적용 offset 으로 reference 좌표에 옮긴 것이다. 차이 그림은 공통 = 진회색, reference 만 = 파랑, target 만 = 빨강, 둘 다 없음 = 흰색이고, 비교 영역 밖은 연회색, ROI 창은 주황 테두리다. 창 안·비교 영역 안에서 한 픽셀이라도 다른 층(또는 한쪽 모델에만 있는 층)은 차이 픽셀 수 순으로 펼치고, 나머지는 `차이 없는 층 n개` 로 접는다. 층 캡션에 창 안 차이 픽셀 수와 µm², reference 만·target 만 픽셀 수를 적는다. PNG 는 팔레트 PNG 다. 크기 상한에서는 crop 과 같이 반 해상도 → 생략("층별 비교 생략(크기 상한)") 순이다. 층별 bool crop 이 메모리 한도를 넘으면 층별 비교만 빼고 경고 `alignment_report_layer_compare_skipped`(종료 코드 3)를 남긴다.
 

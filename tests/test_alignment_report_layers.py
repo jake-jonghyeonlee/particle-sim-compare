@@ -550,3 +550,97 @@ def test_end_to_end_layer_figures_are_skipped_with_a_warning_when_the_layer_read
     warning = next(w for w in run.payload['warnings'] if w['code'] == 'alignment_report_layer_figures_skipped')
     assert warning['reason'] == 'png_decode_failed'
     monkeypatch.setattr(electrode_png, 'load_layer_png', real)
+
+
+# --- layer-align/T8 (R3 adv:4–8) ------------------------------------------------------------------------------------------------
+
+def boundary_world(use_field):
+    """두 unit 영역(x < 160: offset (2, 1), x >= 160: offset (3, 2))의 정확한 target(두 영역의 target 은 겹치지 않는다). 창 [150, 170) 은 경계를 넘는다."""
+    rng = np.random.default_rng(3)
+    ref = rng.random(SHAPE) > 0.5
+    field = [(0, 300, 0, 160, 2, 1), (0, 300, 160, 320, 3, 2)]
+    tgt = np.zeros(SHAPE, bool)
+    for y0, y1, x0, x1, dx, dy in field:                      # p_target = p_reference + offset
+        tgt[max(y0 + dy, 0):min(y1 + dy, SHAPE[0]), max(x0 + dx, 0):min(x1 + dx, SHAPE[1])] = \
+            ref[max(y0 + dy, 0) - dy:min(y1 + dy, SHAPE[0]) - dy, max(x0 + dx, 0) - dx:min(x1 + dx, SHAPE[1]) - dx]
+    window = {'layer': 'L1', 'window_origin_px': [140, 150], 'window_px': 20}
+    source = blank_source(SHAPE, [window])
+    offsets = [((2, 1), 'unit', tuple(field))] if use_field else [((2, 1), 'unit')]
+    source.collect_layers(ar.stack_style({'L1': 1}), lambda side, layer: ref if side == 'ref' else tgt, offsets)
+    return source, window
+
+
+def test_t8_a_boundary_window_is_moved_by_the_unit_field_so_the_exact_world_has_no_false_difference():
+    source, window = boundary_world(True)
+    plan = ar.compare_layers(source, 0, window)
+    assert plan['spread'] == [] and [item['layer'] for item in plan['folded']] == ['L1']
+    assert 'unit 별 offset(경계 창)' in ar._crop_caption(source, 0, 'tgt') and 'offset [2, 1]' not in ar._crop_caption(source, 0, 'tgt')
+    assert 'unit 별 offset(경계 창)' in ar._compare_block(source, 0, window, ar.CROP_MAX_PX, 0.1)[0]
+
+
+def test_t8_mutation_a_scalar_offset_shows_false_differences_in_the_neighbour_unit_part():
+    source, window = boundary_world(False)
+    plan = ar.compare_layers(source, 0, window)
+    assert [item['layer'] for item in plan['spread']] == ['L1'] and plan['spread'][0]['n_diff'] > 20
+    assert 'offset [2, 1] px (x, y), 출처 unit offset' in ar._crop_caption(source, 0, 'tgt')
+
+
+def test_t8_crop_caption_names_the_real_scale():
+    alignment, qs, windows, source = layered_source(n_rois=1, w=100)
+    y0, y1, x0, x1 = source.crop_boxes[0]
+    assert '원본 해상도 1:1' in ar._crop_caption(source, 0, 'ref', ar.CROP_MAX_PX)
+    step = int(np.ceil(max(y1 - y0, x1 - x0) / 100.0))
+    caption = ar._crop_caption(source, 0, 'tgt', 100)
+    assert '1:1' not in caption and '원본의 1/%d 로 축소' % step in caption
+    assert ar._crop_image(source, 0, windows[0], 'ref', 100).shape[0] == int(np.ceil((y1 - y0) / float(step)))
+    html = ar.build_alignment_html(alignment, queries=qs, windows=windows, source=source)[0].decode('utf-8')
+    assert any(c.startswith('ROI 주변 · reference') and '원본 해상도 1:1' in c for c in captions(html))
+
+
+def test_t8_without_layer_figures_the_source_keeps_no_crop_state_and_the_held_bytes_do_not_grow():
+    rng = np.random.default_rng(0)
+    valid = np.ones(SHAPE, bool)
+    maps = {'maps': {'L1': rng.integers(0, 4, SHAPE).astype(np.uint32)}, 'D': valid, 'union_change': {'L1': rng.random(SHAPE) > 0.9},
+            'union_ref': {'L1': rng.random(SHAPE) > 0.5}, 'union_tgt': {'L1': rng.random(SHAPE) > 0.5}}
+    windows = [{'layer': 'L1', 'window_origin_px': [20 + 70 * i, 30 + 60 * i], 'window_px': 100} for i in range(3)]
+    plain, layered = ar.ImageSource({}, {}, valid, valid, (0, 0)), ar.ImageSource({}, {}, valid, valid, (0, 0))
+    plain.collect(maps, windows, layer_crops=False)
+    layered.collect(maps, windows)
+    assert plain.crop_boxes == [] and plain.crop_obs == []
+    grown = sum(int(a.nbytes) for a in layered.crop_obs)
+    assert grown > 0 and layered.held_bytes() == plain.held_bytes() + grown
+    assert layered.held_bytes(layers=False) == plain.held_bytes()                  # 진단 admission 은 Layer 보유분을 빼고 센다
+
+
+def test_t8_when_only_the_layer_estimate_overflows_the_old_figures_stay(small, small_nolayer, monkeypatch, tmp_path_factory):
+    real = ar.fits
+    monkeypatch.setattr(ar, 'fits', lambda *a, **k: (len(a) < 8 or a[7] == 0) and real(*a, **k))      # n_layer_png > 0 이면 넘친다
+    run = make(small.world, tmp_path_factory, dl1=small.v2)
+    codes = [w['code'] for w in run.payload['warnings']]
+    assert codes.count('alignment_report_layer_figures_skipped') == 1 and 'alignment_report_images_skipped' not in codes
+    html = (run.out / 'alignment.html').read_text(encoding='utf-8')
+    assert html == (small_nolayer.out / 'alignment.html').read_text(encoding='utf-8') and captions(html)
+    assert 'ROI 주변 ·' not in html and 'layer_inputs' not in run.alignment
+
+
+def test_t8_diagnostic_run_with_layers_writes_the_same_local_alignment_as_without(small, monkeypatch, tmp_path_factory):
+    order = []
+    for name in ('_collect_layer_bases', '_collect_layer_figures'):
+        real = getattr(change_candidates, name)
+        monkeypatch.setattr(change_candidates, name, (lambda real, name: lambda *a, **k: order.append(name) or real(*a, **k))(real, name))
+    with_layer = make(small.world, tmp_path_factory, '--local-align-um', '1', dl1=small.v2)
+    assert order == ['_collect_layer_bases', '_collect_layer_figures']              # 진단은 바탕·진단 crop 이 먼저, Layer 그림은 그 뒤
+    del order[:]
+    without = make(small.world, tmp_path_factory, '--local-align-um', '1', dl1=small.nolayer)
+    assert order == ['_collect_layer_bases']
+    doc = (with_layer.out / 'roi_local_alignment.json').read_bytes()
+    assert doc == (without.out / 'roi_local_alignment.json').read_bytes() and b'diagnostic_memory_limit' not in doc
+    assert with_layer.code == without.code
+    html = (with_layer.out / 'alignment.html').read_text(encoding='utf-8')
+    assert any(c.startswith('ROI 주변 · target Layer stack') for c in captions(html))
+
+
+def test_t8_the_two_layer_fingerprints_follow_the_documented_meaning(small_base):
+    figure = {name: {f['layer'] for f in item['files']} for name, item in small_base.alignment['layer_inputs'].items()}
+    used = small_base.payload['inputs']['layers']
+    assert all(used[name]['n_files'] == len(figure[name]) for name in figure)       # 정렬 없이 그림만: 두 기록은 같은 파일 목록(모델별 전체 Layer)

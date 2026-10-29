@@ -57,7 +57,7 @@ MERGE_POLICY = {'layer': 'per_layer_window_overlap_intersection_over_min_area_un
 SUPPRESS_POLICY = 'greedy_score_order_window_overlap_ge_x_all_layers'
 SUPPRESS_POLICY_ANY = 'greedy_score_order_any_window_overlap_all_layers'
 ATTRIBUTES_POLICY_ALL_WINDOW_OFFSET = 'contributing_cases_all_layers_window_offset'
-ATTRIBUTES_POLICY_ALL ='score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
+ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
 
 
 APPLY_ALIGN_MODES = ('diagnostic', 'unit', 'local')
@@ -697,12 +697,13 @@ def _figure_stack_order(sides):
     return None
 
 
-def _collect_layer_figures(source, queries, windows, root, files, products, stack, offset_px, limit, reserved, warnings, notes):
+def _collect_layer_figures(source, queries, windows, root, files, products, stack, offset_px, limit, reserved, warnings, notes, field=None):
     """layer-align/T5: 5절 위치 그림 바탕(reference Layer 블록 분율)과 ROI 주변 Layer stack crop 두 장을 모은다. 성공하면 True.
 
     층은 stack order 순으로 (모델, 층) 하나씩 읽어 분율·crop 에 섞고 바로 놓는다. 읽기 admission(``electrode_fits``)과 보유할 crop 바이트가
     한도를 넘거나 Layer PNG 를 읽을 수 없으면 Layer 그림만 빼고(예전 그림) 경고 ``alignment_report_layer_figures_skipped`` 를 남긴다(계산·JSON 은 그대로).
-    target crop 은 그 ROI 의 적용 offset(``offset_xy_px_applied``, 없으면 전역 offset)으로 reference 좌표에 옮긴다."""
+    target crop 은 그 ROI 의 적용 offset(``offset_xy_px_applied``, 없으면 전역 offset)으로 reference 좌표에 옮긴다.
+    field(unit offset 장; unit 정렬을 점수에 쓴 실행만): 국소 미적용 ROI 의 주변 crop 이 offset 이 다른 unit 영역을 걸치면 스칼라 대신 이 장으로 옮긴다(layer-align/T8)."""
     import re
     from .adapters.electrode_png import load_layer_png
     if not source.crop_boxes or source.observed is None:
@@ -727,8 +728,18 @@ def _collect_layer_figures(source, queries, windows, root, files, products, stac
     for i in range(len(source.crop_boxes)):
         query = queries[i] if i < len(queries) else {}
         applied = query.get('offset_xy_px_applied')
-        offsets.append(((int(applied[0]), int(applied[1])), query.get('offset_source', 'global')) if applied is not None
-                       else ((int(offset_px[0]), int(offset_px[1])), 'global'))
+        if applied is None:
+            offsets.append(((int(offset_px[0]), int(offset_px[1])), 'global'))
+            continue
+        origin = query.get('offset_source', 'global')
+        item = ((int(applied[0]), int(applied[1])), origin)
+        if field is not None and origin != 'local':      # 국소 미적용 ROI 의 점수는 unit 장을 쓴다: 주변 crop 이 unit 경계를 넘으면 그림도 같은 장으로 옮긴다
+            y0, y1, x0, x1 = source.crop_boxes[i]
+            hit = {(region[4], region[5]) for region in field
+                   if max(region[0], y0) < min(region[1], y1) and max(region[2], x0) < min(region[3], x1)}
+            if len(hit) > 1:
+                item = item + (field,)
+        offsets.append(item)
 
     def load(side, layer):
         name = 'reference' if side == 'ref' else 'target'
@@ -776,7 +787,7 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
     if not wanted:
         return
     ref_shape, tgt_shape = products['reference'].frame.valid.shape, products['target'].frame.valid.shape
-    held = source.held_bytes()
+    held = source.held_bytes(layers=diag is None)      # 진단 실행의 admission 은 Layer 그림 보유분과 무관하다(layer-align/T8)
     if not alignment_report.electrode_fits(ref_shape, tgt_shape, limit, reserved, held):
         warnings.append({'code': 'alignment_report_layer_base_skipped',
                          'estimated_bytes': alignment_report.electrode_read_bytes(ref_shape, tgt_shape),
@@ -1229,7 +1240,7 @@ def _local_corrections(windows, products, cnt, layer_root, g, unit, radius, args
                 rx0 += r
             if rx1 < width:
                 rx1 -= r
-            inside =np.zeros(omega.shape, dtype=bool)
+            inside = np.zeros(omega.shape, dtype=bool)
             inside[max(ry0 - y0, 0):max(ry1 - y0, 0), max(rx0 - x0, 0):max(rx1 - x0, 0)] = True
             omega &= inside
         rec['omega_pixels'] = int(np.count_nonzero(omega))
@@ -1413,6 +1424,13 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     n_layer_png = len(set(layer_figure_files['reference']) | set(layer_figure_files['target'])) if layer_figure_files else 0
     images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k,
                                       n_hot_layers, window_px, n_layer_png)
+    if not images_ok and layer_figure_files is not None:      # Layer 를 넣어서만 넘치면 Layer 그림만 빼고 예전 추정으로 다시 정한다(layer-align/T8)
+        warnings.append({'code': 'alignment_report_layer_figures_skipped', 'reason': 'estimate',
+                         'estimated_bytes': alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k,
+                                                                                   n_hot_layers, window_px, n_layer_png),
+                         'reserved_bytes': reserved, 'max_operation_bytes': limit})
+        layer_figure_files = None
+        images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k, n_hot_layers, window_px)
     if not images_ok:
         layer_figure_files = None
     report_source = (alignment_report.ImageSource(cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
@@ -1528,7 +1546,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     kept = merged[:top_k]
     windows = [by_id[m['representative'].region_id] for m in kept]
     if report_source is not None:      # alignment.html 용 열지도 블록·창 crop 만 남기고 큰 지도는 놓는다
-        report_source.collect(maps, windows)
+        report_source.collect(maps, windows, layer_crops=layer_figure_files is not None)
     del maps
 
     # --- 5. 기여 case (두 번째 패스) + CNT 변경 면적
@@ -1774,10 +1792,19 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     diagnose = local_um is not None and not apply_local
     local_state = {'r_px': local_align.search_radius_px(local_um, pitch)} if diagnose else None
     layer_bases = None
-    if report_source is not None and layer_figure_files is not None:
+
+    def collect_figures():
+        if report_source is None or layer_figure_files is None:
+            return None
         if _collect_layer_figures(report_source, directions[0]['queries'], windows, electrode_root, layer_figure_files, products,
-                                  _figure_stack_order(sides), offset_px, limit, reserved, warnings, notes):
-            layer_bases = layer_figure_files
+                                  _figure_stack_order(sides), offset_px, limit, reserved, warnings, notes,
+                                  field=unit['field'] if use_field else None):
+            return layer_figure_files
+        report_source.drop_layer_figures()
+        return None
+    # 진단 실행은 Layer 그림보다 먼저 바탕·진단 crop 을 읽고 문서를 만든 뒤 놓는다: 진단 admission·메모리가 Layer 유무와 무관하다(layer-align/T8)
+    if local_state is None:
+        layer_bases = collect_figures()
     if report_source is not None:
         _collect_layer_bases(report_source, directions[0]['queries'], windows, electrode_root, electrode_files, products,
                              limit, reserved, warnings, diag=local_state, layer_files=layer_bases)
@@ -1789,6 +1816,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                                ref_shape) if diagnose else None)
     if report_source is not None:      # 진단용 넓은 crop 은 문서를 만든 직후 놓는다(HTML 렌더 전에 메모리 반환)
         report_source.diag_wide.clear()
+    if local_state is not None:
+        collect_figures()
     if report_source is None:
         need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k,
                                                       n_hot_layers, window_px)

@@ -19,6 +19,7 @@ import pytest
 
 import test_change_candidates as tcc
 import test_layer_align_cli as cli_t
+from test_alignment_report import captions
 from simcompare import change_candidates, change_map, layer_align, local_align
 from simcompare.adapters.real_hotspot import import_hotspots
 from simcompare.cli import main
@@ -176,6 +177,9 @@ def test_a_local_without_unit_align_starts_from_the_global_offset(world):
     got = make(world, '--local-align-um', '1', '--apply-align', 'local')
     assert 'unit_offsets' not in got.alignment and sorted(got.execution['timings_s']) == ['local_layer_read', 'local_refine']
     assert got.payload['inputs']['layers']['reference']['n_files'] == 3
+    for name in ('reference', 'target'):      # layer-align/T8 adv:8: inputs.layers(정렬이 읽은 공통 층)는 layer_inputs(그림용 전체 Layer)의 부분집합이다
+        used = got.payload['inputs']['layers'][name]['n_files']
+        assert used <= len(got.alignment['layer_inputs'][name]['files'])
     doc = local_doc(got)
     g = got.alignment['offset_xy_px']
     assert all(item['start_offset_xy_px'] == g for item in doc['rois'])
@@ -282,6 +286,17 @@ def test_c_boundary_window_uses_the_field_and_keeps_only_the_real_change(local_r
     for item in crossing:
         assert item['status'] == 'skipped' and item['reason'] == 'crosses_unit_boundary_field_used'
         assert item['applied_source'] == 'unit' and item['local_offset_xy_px'] is None
+
+
+def test_c_boundary_roi_figures_use_the_unit_field_and_the_other_rois_the_scalar(local_run):
+    """layer-align/T8 adv:4: 국소 미적용 + crop 이 unit 경계를 걸치는 ROI 는 target crop 캡션이 'unit 별 offset(경계 창)', 나머지는 스칼라 offset."""
+    html = (local_run.out / 'alignment.html').read_text(encoding='utf-8')
+    caps = [c for c in captions(html) if c.startswith('ROI 주변 · target Layer stack')]
+    assert len(caps) == len(queries(local_run))
+    assert any('unit 별 offset(경계 창)' in c for c in caps) and any('offset [' in c for c in caps)
+    boundary = [q for q in queries(local_run) if q['offset_source'] == 'unit' and 'crosses_unit_boundary_field_used' in q['flags']]
+    assert sum('unit 별 offset(경계 창)' in c for c in caps) >= len(boundary) > 0
+    assert not any('unit 별 offset(경계 창)' in c and '출처 ROI 국소' in c for c in caps)
 
 
 # --- (d) 상태별 적용·되돌림 ---------------------------------------------------------------------------------------------

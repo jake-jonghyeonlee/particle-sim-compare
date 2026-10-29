@@ -355,6 +355,7 @@ class ImageSource:
         self.crop_obs = []        # ROI 순서: 그 상자의 비교 영역 bool
         self.layer_crop = {}      # (ROI 번호, 'ref' | 'tgt') → (h, w, 3) uint8 Layer stack 합성
         self.layer_offsets = []   # ROI 순서: ((dx, dy), 출처 문구) — target crop 에 쓴 적용 offset
+        self.layer_fields = []    # ROI 순서: unit offset 장(영역 목록) 또는 None — 경계 창은 스칼라 대신 장으로 옮긴다(layer-align/T8)
         self.base_kind = {}       # (층, 'ref' | 'tgt') → 'Layer' | 'Merged' (층 묶음 바탕의 출처; Layer 그림을 쓸 때만)
         # layer-align/T5b: 층별 비교. 같은 crop 상자의 층별 bool(target 은 적용 offset 으로 옮긴 것)을 collect_layers 가 함께 보관한다.
         self.layer_masks = {}     # (ROI 번호, 층, 'ref' | 'tgt') → crop 상자 크기 bool
@@ -369,8 +370,11 @@ class ImageSource:
     def layered(self):
         return self.layer_style is not None and bool(self.layer_fraction)
 
-    def collect(self, maps, windows):
-        """``change_maps`` 결과(maps)에서 열지도용 블록 값과 선정 창의 hotspot 합집합 crop 을 뽑는다. 호출 뒤 maps 를 놓아도 된다."""
+    def collect(self, maps, windows, layer_crops=True):
+        """``change_maps`` 결과(maps)에서 열지도용 블록 값과 선정 창의 hotspot 합집합 crop 을 뽑는다. 호출 뒤 maps 를 놓아도 된다.
+
+        layer_crops(layer-align/T8): 4 x window_px 주변 상자와 그 비교 영역 crop 은 Layer 그림 전용이다. 호출부(change_candidates)는
+        Layer 그림을 쓰지 않는 실행에서 False 를 넘겨 보유 바이트(admission)를 예전과 같게 한다."""
         step = self.step
         self.observed = _block(np.asarray(maps['D'], dtype=bool), step, 'any')
         for layer in sorted(maps['maps']):
@@ -395,12 +399,20 @@ class ImageSource:
                 if ref.any() or tgt.any() or layer == window['layer']:
                     layers[layer] = {'ref': ref, 'tgt': tgt}
             self.hot.append({'box': box, 'layers': layers, 'obs': np.array(maps['D'][y0:y1, x0:x1], dtype=bool)})
-            cbox = _stack_box(y, x, w, height, width)
-            self.crop_boxes.append(cbox)
-            self.crop_obs.append(np.array(maps['D'][cbox[0]:cbox[1], cbox[2]:cbox[3]], dtype=bool))
+            if layer_crops:
+                cbox = _stack_box(y, x, w, height, width)
+                self.crop_boxes.append(cbox)
+                self.crop_obs.append(np.array(maps['D'][cbox[0]:cbox[1], cbox[2]:cbox[3]], dtype=bool))
 
-    def held_bytes(self):
-        """``collect`` 가 보유 중인 배열 바이트(열지도 블록, 관측 블록, hotspot crop). 전극 PNG 읽기 admission 이 한도에서 뺀다."""
+    def drop_layer_figures(self):
+        """Layer 그림을 쓰지 않기로 했을 때 Layer 전용 보유 배열(주변 상자·비교 영역 crop)을 놓는다."""
+        self.crop_boxes.clear()
+        self.crop_obs.clear()
+
+    def held_bytes(self, layers=True):
+        """``collect`` 가 보유 중인 배열 바이트(열지도 블록, 관측 블록, hotspot crop). 전극 PNG 읽기 admission 이 한도에서 뺀다.
+
+        layers=False 면 Layer 그림 전용 보유분(비교 영역 crop, 분율, crop, 층별 bool)을 뺀다(국소 정렬 진단 admission 이 Layer 유무와 무관하도록)."""
         total = sum(int(a.nbytes) for a in (self.observed, self.hot_any) if a is not None)
         for item in self.heat.values():
             total += sum(int(a.nbytes) for a in item.values())
@@ -408,21 +420,24 @@ class ImageSource:
             total += int(hot['obs'].nbytes)
             for crops in hot['layers'].values():
                 total += int(crops['ref'].nbytes) + int(crops['tgt'].nbytes)
-        total += sum(int(a.nbytes) for a in self.crop_obs)
-        total += sum(int(a.nbytes) for a in self.layer_fraction.values()) + sum(int(a.nbytes) for a in self.layer_crop.values())
-        total += sum(int(a.nbytes) for a in self.layer_masks.values())
+        if layers:
+            total += sum(int(a.nbytes) for a in self.crop_obs)
+            total += sum(int(a.nbytes) for a in self.layer_fraction.values()) + sum(int(a.nbytes) for a in self.layer_crop.values())
+            total += sum(int(a.nbytes) for a in self.layer_masks.values())
         return total
 
     def collect_layers(self, style, load, offsets, keep_masks=True):
         """Layer PNG 그림 자료: 위치 그림용 reference 블록 분율과 ROI 마다 4 x window_px 주변 crop 두 장(Layer stack 합성 rgb).
 
         style: ``stack_style`` 결과. load(side, 층) → frame 크기 bool 또는 None(그 모델에 그 층 Layer 없음); side 는 'ref' | 'tgt'.
-        offsets: ROI 순서의 ``((dx, dy), 출처)`` — target crop 을 reference 좌표로 옮기는 그 ROI 의 적용 offset.
+        offsets: ROI 순서의 ``((dx, dy), 출처)`` 또는 ``((dx, dy), 출처, 장)`` — target crop 을 reference 좌표로 옮기는 그 ROI 의 적용 offset.
+        장(unit offset 영역 목록)이 있으면 target crop·층별 비교는 스칼라 대신 그 장으로 옮긴다(점수와 같은 offset; layer-align/T8).
         층은 stack order 순(아래 → 위)으로 (모델, 층) 하나씩 읽어 분율·crop 에 섞고 바로 놓는다. 합성은 ``rgb = rgb·(1−α) + colour·α``,
         crop 은 픽셀마다 α = LAYER_ALPHA(분율 1), 위치 그림은 블록 분율 f 로 α = LAYER_ALPHA·f.
         keep_masks(layer-align/T5b): 층별 bool crop 도 ``layer_masks`` 에 보관한다(Layer 를 다시 읽지 않고 층별 비교를 그리려고)."""
         total = self.position_step()
         self.layer_offsets = [((int(o[0][0]), int(o[0][1])), o[1]) for o in offsets]
+        self.layer_fields = [o[2] if len(o) > 2 else None for o in offsets]
         for i, (y0, y1, x0, x1) in enumerate(self.crop_boxes):
             for side in ('ref', 'tgt'):
                 self.layer_crop[(i, side)] = np.full((y1 - y0, x1 - x0, 3), 255, dtype=np.uint8)
@@ -444,7 +459,9 @@ class ImageSource:
                             crop = full
                     else:
                         (dx, dy), _ = self.layer_offsets[i]
-                        crop = change_map._shift_crop(frame, dy, dx, y0, y1, x0, x1)
+                        field = self.layer_fields[i]
+                        crop = (change_map._shift_crop(frame, dy, dx, y0, y1, x0, x1) if field is None
+                                else change_map._shift_crop_field(frame, field, y0, y1, x0, x1))
                     _blend(self.layer_crop[(i, side)], crop, colour, LAYER_ALPHA)
                     if keep_masks:
                         self.layer_masks[(i, layer, side)] = crop
@@ -773,11 +790,15 @@ def _compare_block(source, i, window, limit, pitch_um):
     plan = compare_layers(source, i, window)
     if not plan['spread'] and not plan['folded']:
         return '', 0
-    (dx, dy), _ = source.layer_offsets[i]
+    if source.layer_fields[i] is not None:
+        moved = 'unit 별 offset(경계 창)으로'
+    else:
+        (dx, dy), _ = source.layer_offsets[i]
+        moved = 'offset [%d, %d] px 로' % (dx, dy)
 
     def one(item):
         layer = item['layer']
-        names = ('reference (검정 = 형상)', 'target (검정 = 형상; offset [%d, %d] px 로 reference 좌표에 옮김)' % (dx, dy),
+        names = ('reference (검정 = 형상)', 'target (검정 = 형상; %s reference 좌표에 옮김)' % moved,
                  '차이 (파랑 = reference 만, 빨강 = target 만, 진회색 = 공통)')
         pics = _compare_pictures(source, i, window, layer, limit)
         figs = ''.join(_figure(_uri(png), '층별 비교 · %s · %s' % (layer, name)) for png, name in zip(pics, names))
@@ -1340,15 +1361,30 @@ def _legend_stack(style):
     return ''.join(parts)
 
 
-def _crop_caption(source, i, side):
+def _crop_scale_text(source, i, limit):
+    """crop 그림의 실제 배율: 한 변 <= limit 이면 1:1, 아니면 ``_crop_image`` 와 같은 블록 평균 축소 1/n."""
+    y0, y1, x0, x1 = source.crop_boxes[i]
+    size = max(y1 - y0, x1 - x0)
+    if size <= limit:
+        return '원본 해상도 1:1'
+    return '원본의 1/%d 로 축소(블록 평균)' % int(math.ceil(size / float(limit)))
+
+
+def _offset_text(source, i):
+    """target 을 reference 좌표로 옮긴 offset 설명. 경계 창(unit 장으로 옮김)은 unit 별 offset 이라고 적는다."""
+    if source.layer_fields[i] is not None:
+        return 'unit 별 offset(경계 창)'
+    (dx, dy), origin = source.layer_offsets[i]
+    return 'offset [%d, %d] px (x, y), 출처 %s' % (dx, dy, ORIGIN_TEXT.get(origin, origin))
+
+
+def _crop_caption(source, i, side, limit=CROP_MAX_PX):
     """ROI 주변 Layer stack crop 캡션. target 은 이 ROI 의 적용 offset 과 출처를 적는다."""
     y0, y1, x0, x1 = source.crop_boxes[i]
-    size = '한 변 %d × %d px, 원본 해상도 1:1' % (x1 - x0, y1 - y0)
+    size = '한 변 %d × %d px, %s' % (x1 - x0, y1 - y0, _crop_scale_text(source, i, limit))
     if side == 'ref':
         return 'ROI 주변 · reference Layer stack (' + size + ')'
-    (dx, dy), origin = source.layer_offsets[i]
-    return ('ROI 주변 · target Layer stack (' + size + ') · reference 좌표로 옮김: offset [%d, %d] px (x, y), 출처 %s'
-            % (dx, dy, ORIGIN_TEXT.get(origin, origin)))
+    return 'ROI 주변 · target Layer stack (' + size + ') · reference 좌표로 옮김: ' + _offset_text(source, i)
 
 
 ORIGIN_TEXT = {'global': '전역 offset (CNT 정렬)', 'unit': 'unit offset (Layer 정렬)', 'local': 'ROI 국소 offset'}
@@ -1531,7 +1567,7 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
                 limit_px = CROP_MAX_PX if level == 0 else CROP_HALF_PX
                 for crop_side in ('ref', 'tgt'):
                     items.append(_figure(_uri(_png(_crop_image(source, i, windows[i], crop_side, limit_px))),
-                                         _crop_caption(source, i, crop_side)))
+                                         _crop_caption(source, i, crop_side, limit_px)))
             figs = '<div class="figs">' + ''.join(items) + '</div>'
             if layered and level < 2 and i < len(source.crop_boxes):
                 if source.compare_skipped:
