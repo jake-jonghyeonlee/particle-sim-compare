@@ -318,8 +318,10 @@ def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(
                  'direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json', 'reference_export/review_rois.json',
                  'target_export/review_rois.json', 'reference_index_export/review_rois.json', 'target_index_export/review_rois.json',
                  'reference_export/mask_derivation.json', 'target_export/mask_derivation.json',
-                 'reference_index_export/mask_derivation.json', 'target_index_export/mask_derivation.json'):
+                 'reference_index_export/mask_derivation.json', 'target_index_export/mask_derivation.json',
+                 'roi_local_alignment.json'):          # the stage-4 example passes --local-align-um 1
         assert (changes / name).is_file(), name
+    assert json.loads((changes / 'roi_local_alignment.json').read_text(encoding='utf-8'))['search_um'] == 1.0
     payload = json.loads((changes / 'candidate_queries_v1.json').read_text(encoding='utf-8'))
     assert payload['roi_source'] == 'cnt_change' and payload['alignment']['status'] == 'aligned'
     alignment = json.loads((changes / 'alignment.json').read_text(encoding='utf-8'))

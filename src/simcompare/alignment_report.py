@@ -735,7 +735,7 @@ def _badge_title(alignment):
             % (css, escape(text), escape(str(ids['reference'])), escape(str(ids['target'])), escape(str(alignment.get('pitch_um')))))
 
 
-def _summary(alignment, n_rois=0):
+def _summary(alignment, n_rois=0, local=None):
     status = alignment['status']
     rows = [
         ('status', _Raw(escape(STATUS_TEXT.get(status, status)) + ' <code>' + escape(status) + '</code>')),
@@ -761,6 +761,8 @@ def _summary(alignment, n_rois=0):
         rows.append(('사분면 offset (전역 대비 차이)', _Raw(quadrant)))
     rows.append(('ROI 수', _Raw('%d (<a href="#list">ROI 목록</a>)' % n_rois)))
     parts.append(_table(['항목', '값'], rows))
+    if local is not None:
+        parts.append(_local_summary_line(local))
     if alignment.get('frame_shape_reference_yx') != alignment.get('frame_shape_target_yx') and 'frame_shape_target_yx' in alignment:
         parts.append('<p class="frame-warn">unit size 차이로 frame 크기가 다릅니다. 비교는 두 frame 의 공통 영역만 합니다. resize 하지 않습니다.</p>')
     return ''.join(parts)
@@ -921,6 +923,64 @@ def _roi_text(rank, query, window, shape):
     return title, _table(['항목', '값'], head) + _contribution_table(query['contributing_cases'])
 
 
+LOCAL_STATUS_TEXT = {
+    'ok': '일치 확인', 'change_biased': '변경이 정렬을 끌어당김(링과 다름)', 'ring_inconclusive': '링 판정 불가', 'ambiguous': '모호',
+    'low_score': '점수 낮음', 'insufficient_support': '지지 부족', 'search_bound_hit': '탐색 경계', 'skipped': '진단 안 함'}
+LOCAL_SUMMARY_ORDER = (('ok', 'ok'), ('change_biased', '변경 편향'), ('ring_inconclusive', '링 판정 불가'), ('ambiguous', '모호'),
+                       ('low_score', '점수 낮음'), ('insufficient_support', '지지 부족'), ('search_bound_hit', '탐색 경계'),
+                       ('skipped', '진단 안 함'))
+
+
+def _local_summary_line(local):
+    """1절 요약 아래 한 줄: 상태별 ROI 수와 선형 적합(배율 추정) 또는 그 사유. local = roi_local_alignment.json 문서."""
+    summary = local.get('summary') or {}
+    counts = ' · '.join('%s %d' % (text, summary.get(key, 0)) for key, text in LOCAL_SUMMARY_ORDER)
+    fit = local.get('linear_fit')
+    if fit:
+        scale = '배율 추정 %s ppm, %s ppm (%d개 ROI)' % (fit['scale_ppm_xy'][0], fit['scale_ppm_xy'][1], fit['n'])
+    else:
+        scale = '배율 추정 없음: ' + str(local.get('linear_fit_reason') or '—')
+    return '<p class="note">ROI 국소 정렬 진단: ' + escape(counts) + ' · ' + escape(scale) + '</p>'
+
+
+def _local_table(item, excluded):
+    """5절 ROI 마다 국소 정렬 진단 표(작은 한글 표). item = roi_local_alignment.json 의 rois 항목, excluded = 문서의 excluded_layers."""
+    status = item.get('status', 'skipped')
+    rows = [('상태', escape(LOCAL_STATUS_TEXT.get(status, status)) + ' <code>' + escape(status) + '</code>', '')]
+    if item.get('reason') and item.get('reason') != status:
+        rows.append(('사유', '<code>' + escape(str(item['reason'])) + '</code>', ''))
+    if item.get('local_offset_xy_px') is not None:
+        rows.append(('국소 offset', escape('%s px = %s µm (x, y)' % (_json(item['local_offset_xy_px']), _json(item['local_offset_xy_um']))), ''))
+        rows.append(('전역 대비 차이', escape('%s µm, 크기 %s µm' % (_json(item['delta_from_global_xy_um']), item['delta_from_global_um'])), ''))
+    rows.append(('Dice 전역 / 국소', escape('%s / %s' % (_fmt3(item.get('dice_global')), _fmt3(item.get('dice_local')))), ''))
+    if item.get('ring_delta_xy_px') is not None or item.get('ring_reason'):
+        ring = '링 차이 %s px (x, y) · 링 Dice %s' % (_json(item['ring_delta_xy_px']) if item.get('ring_delta_xy_px') is not None else '—',
+                                                    _fmt3(item.get('ring_dice')))
+        if item.get('ring_reason'):
+            ring += ' · 링 사유 ' + str(item['ring_reason'])
+        rows.append(('링', escape(ring), ''))
+    used = ', '.join('%s:%s' % (u['source'], u['layer']) for u in item.get('layers_used') or [])
+    rows.append(('쓴 층', escape(used or '—'), ''))
+    rows.append(('제외 층', escape(', '.join('%s (%s)' % (e['key'], e['reason']) for e in excluded) or '—'), ''))
+    flags = item.get('flags') or []
+    rows.append(('플래그', ('<code>' + '</code> <code>'.join(escape(f) for f in flags) + '</code>') if flags else '—', 'hi' if flags else ''))
+    return ('<h4>국소 정렬 진단</h4><table>' +
+            ''.join('<tr><th>' + escape(k) + '</th><td' + (' class="%s"' % c if c else '') + '>' + v + '</td></tr>' for k, v, c in rows) +
+            '</table>')
+
+
+def _fmt3(value):
+    return '—' if value is None else '%.3f' % float(value)
+
+
+def _position_caption(alignment, total_step):
+    """5절 위치 그림 캡션. 변경 위치는 총 축소 배수 x pitch 크기 블록으로 칠해 실제 면적보다 크게 보일 수 있다."""
+    pitch = alignment.get('pitch_um')
+    block = ('약 %g µm' % round(float(total_step) * float(pitch), 2)) if isinstance(pitch, (int, float)) else '%d px' % total_step
+    return ('위치: frame 전체 · 연빨강 = 변경 위치 · 회색 = 비교 영역 밖 · 가는 선 = 사분면 경계 · 굵은 사각형 = 이 ROI · 변경 위치는 ' + block +
+            ' 블록 단위로 칠한다(실제 면적보다 크게 보일 수 있음)')
+
+
 def _pairing_summary(stats):
     """합집합에 포함·제외한 조합 수(``pair_cases`` stats)."""
     keys = ('pairs', 'one_sided_included_reference', 'one_sided_included_target', 'layer_changed_included',
@@ -933,8 +993,8 @@ def _pairing_summary(stats):
             + _table(['항목', '값'], rows))
 
 
-def _footnotes():
-    return ('<h2>7. 각주</h2><ul class="note">'
+def _footnotes(local=None):
+    notes = ('<h2>7. 각주</h2><ul class="note">'
             '<li>순위는 층별 합집합 변화(<code>score_um2</code>, 6회차 Δ_union 과 같은 기준)이다. 층 사이 합집합은 만들지 않는다.</li>'
             '<li>조합별 잔차 합(<code>sum_residual_um2</code>)과 변경 case 수(<code>changed_case_count</code>)는 순위가 아니라 속성이다.</li>'
             '<li>union 은 짝지어진 조합과 한쪽 조합으로 계산한다(<code>union_basis: paired_and_one_sided_cases</code>). '
@@ -956,20 +1016,28 @@ def _footnotes():
             '<li><code>--merge-scope all</code> 에서는 창이 층을 넘어 병합되지만 순위·점수·위치는 대표 층 하나의 합집합 변화 기준이다. '
             '다른 층의 변경은 기여 조합 표(층 칸)로만 보이며 층 사이 합집합은 만들지 않는다.</li>'
             '<li><code>--suppress-overlap</code> 을 쓰면 순위가 앞선 대표 창과 겹침 비율이 기준 이상인 창은 층 구분 없이 목록에서 빠진다. '
-            '빠진 창의 변경은 앞선 ROI 의 창에서 이미 보인다.</li>'
-            '</ul>')
+            '빠진 창의 변경은 앞선 ROI 의 창에서 이미 보인다.</li>')
+    if local is not None:
+        notes += ('<li>ROI 국소 정렬 진단(<code>--local-align-um</code>) 상태: 일치 확인(ok) = 전체와 링(창 둘레 띠)의 국소 offset 이 같다 · '
+                  '변경 편향(change_biased) = 링의 offset 이 전체와 다르다(변경이 정렬을 끌어당김) · 링 판정 불가(ring_inconclusive) = 링만으로는 정할 수 없다 · '
+                  '모호(ambiguous) = 최적과 비슷한 점수의 다른 후보가 멀리 있다 · 점수 낮음(low_score) = 최적 Dice 가 --align-min-dice 보다 낮다 · '
+                  '지지 부족(insufficient_support) = 비교할 전경 픽셀이 너무 적다 · 탐색 경계(search_bound_hit) = 최적이 탐색 반경 가장자리다 · '
+                  '진단 안 함(skipped) = 입력이 없거나 메모리 때문에 건너뛰었다.</li>'
+                  '<li>국소 정렬 진단은 계산(순위·기여 case·export)에 쓰이지 않는다. 참고 표시다.</li>')
+    return notes + '</ul>'
 
 
 def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=None, skipped_reason=None,
-                         pairing_stats=None):
+                         pairing_stats=None, local_alignment=None):
     """alignment: ``alignment.json`` 문서(dict). queries: reference_to_target 질의 목록(순위 순), windows: 같은 순서의 창 후보.
 
     source: ``ImageSource`` (``collect`` 를 마친 것) 또는 None(그림 없음). skipped_reason: 그림을 만들지 않은 이유(문장).
+    local_alignment: ``roi_local_alignment.json`` 문서 또는 None(None 이면 국소 정렬 표·요약 줄·각주를 더하지 않는다).
     반환 ``(html 바이트, {'path', 'bytes', 'downscaled', 'crops_omitted', 'n_images'})``."""
     limit = MAX_HTML_BYTES if max_bytes is None else max_bytes
     n_images = 0
     shape = _frame_shape(alignment, source)
-    prefix = [_badge_title(alignment), _summary(alignment, len(queries))]
+    prefix = [_badge_title(alignment), _summary(alignment, len(queries), local_alignment)]
     # 2. CNT 정렬과 정렬 진단
     prefix.append('<h2>2. CNT 정렬과 정렬 진단</h2><h3>2a. 전체 CNT 층 겹침 — 정렬 전 / 정렬 후</h3>')
     pattern = None
@@ -1019,7 +1087,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     prefix.append('<h2>5. ROI 상세 (순위 순)</h2>')
     if not queries:
         prefix.append('<p class="note">선정된 ROI 가 없습니다.</p>')
-    suffix = _heat_section(source, windows) + _footnotes()
+    suffix = _heat_section(source, windows) + _footnotes(local_alignment)
+    local_items = {item['rank']: item for item in local_alignment['rois']} if local_alignment is not None else {}
     n_images += _heat_count(source)
 
     def encode(text):
@@ -1042,7 +1111,7 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
             items = []
             if position_base is not None:
                 rgb = _position_image(position_base[0], position_base[1], windows[i])
-                items.append(_figure(_uri(_png(rgb)), '위치: frame 전체 · 연빨강 = 변경 위치 · 회색 = 비교 영역 밖 · 가는 선 = 사분면 경계 · 굵은 사각형 = 이 ROI'))
+                items.append(_figure(_uri(_png(rgb)), _position_caption(alignment, position_base[1])))
             figs = '<div class="figs">' + ''.join(items) + '</div>'
             if level < 2 and i < len(source.hot):
                 side = CROP_MAX_PX if level == 0 else CROP_HALF_PX
@@ -1059,6 +1128,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
                     figs += '<p class="note">생략 %d개 층 (창 안 변경 면적 합이 작은 층): %s</p>' % (len(omitted_layers), escape(', '.join(omitted_layers)))
             if level == 2:
                 figs += '<p class="missing">그림 생략: 파일 크기 상한(%d MiB) 때문에 이 ROI 의 crop 그림을 뺐습니다.</p>' % (limit // (1024 * 1024))
+        if i + 1 in local_items:
+            figs += _local_table(local_items[i + 1], local_alignment.get('excluded_layers') or [])
         sections[(i, level)] = encode('<div class="roi" id="roi%d">' % (i + 1) + title + figs + text + '</div>')
         return sections[(i, level)]
 

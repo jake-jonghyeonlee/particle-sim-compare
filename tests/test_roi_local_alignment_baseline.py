@@ -31,10 +31,15 @@ FINGERPRINT_KEYS = ('sha256', 'files_sha256', 'manifest_sha256', 'dataset_input_
 FP = '<SHA256>'
 DATA_URI = re.compile(r'data:image/png;base64,([A-Za-z0-9+/=]+)')
 
-EXPECTED = {   # recorded with the 13f0bb6 code (git archive copy), same normalisation; equal on Python 3.11/numpy 2.x and 3.9.14/numpy 1.23.5
-    'alignment.html': '9dafe31eb6cb5b406b6bb44a061b655ff3d990fca7b63eb5c9fc1b064209fee4',
+# recorded with the 13f0bb6 code (git archive copy), same normalisation; equal on Python 3.11/numpy 2.x and 3.9.14/numpy 1.23.5.
+# roi-detail/T3: only 'alignment.html' was re-recorded. Cause = the T3 adv:3 position-figure caption (figcaption and alt gain
+# "· 변경 위치는 약 <pitch x 축소 배수> µm 블록 단위로 칠한다(...)"); the normalised HTML differs from 13f0bb6 in those two lines only.
+# 'candidate_queries_v1.json' was re-recorded too: its alignment_report.bytes is the byte length of alignment.html, which grew with the caption
+# (all other keys unchanged). The other 14 hashes are still the 13f0bb6 values.
+EXPECTED = {
+    'alignment.html': '47312cba5f1186245b90d32af638280eadc2dc97ff0391abad7622156a2c236b',
     'alignment.json': '5d68280e5cdf8e45149e5c8c073772d8c6c4b067ed02e524cb20c4d632236617',
-    'candidate_queries_v1.json': '88c9ba247933c8d073e7f7467b97fb1c613633c0cb457ac3223a7a3ec00a0154',
+    'candidate_queries_v1.json': '0535fc868c99cf33feab2f4bfe079b52552f72a37e4c5e0d942e7c6c2ac221f1',
     'direct/direct_pairs_sidecar.json': 'ef5f9351a18e374765ce28b124be96cb28dadd88c288f837790fa42fb468607c',
     'direct/roi_correspondence.json': '2c929403e370f477e5e28dc8a0b482b6d60377310ac4e04d71a99e89691390c8',
     'execution.json': '852e6e6a34f98c896914668bb3bbf0312a9c6822ee9e628a457c577c384e4906',
@@ -132,6 +137,19 @@ def _walk(value, key=None):
         yield key, value
 
 
+def _walk_assets(value, key=None):
+    """Every dict that carries both ``path`` and ``sha256`` (the asset records of a ``source_assets`` block)."""
+    if isinstance(value, dict):
+        if 'path' in value and 'sha256' in value:
+            yield key, value
+        else:
+            for k, v in value.items():
+                yield from _walk_assets(v, k)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _walk_assets(v, key)
+
+
 def _file_sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -159,6 +177,24 @@ def test_fingerprints_match_the_input_files(pinned_run):
         files = alignment['cnt_inputs'][side]['files']
         assert queries['inputs']['cnt'][side]['files_sha256'] == change_candidates._sha_json(files)
         assert execution['inputs']['cnt'][side]['files_sha256'] == change_candidates._sha_json(files)
+    # roi-detail/T2 advice 5: the record hashes in execution.json / the sidecar and the hashes in the index export each match their own input file
+    sidecar = json.loads((out/'direct'/'direct_pairs_sidecar.json').read_text(encoding='utf-8'))
+    for side in ('reference', 'target'):
+        data = base/f'data_{side}'
+        spec = queries['inputs'][side]
+        for doc in (execution, sidecar):
+            record = doc['inputs'][side]
+            assert record['manifest_sha256'] == _file_sha(data/spec['manifest_path'])
+            for key in ('asset_manifest', 'electrode_import_record'):
+                assert record[key]['sha256'] == _file_sha(data/spec[key]['path']), (side, key)
+        index = json.loads((out/f'{side}_index_export'/'review_rois.json').read_text(encoding='utf-8'))
+        assert index['source_manifest_hash'] == spec['dataset_input_hash']
+        checked = 0
+        for roi in index['rois']:
+            for key, entry in _walk_assets(roi['source_assets']):
+                assert entry['sha256'] == _file_sha(base/f'adapter_{side}'/entry['path']), (side, key)
+                checked += 1
+        assert checked >= 4
     # every sha256 left in the exports names a file of the world (asset PNG/npz copies)
     world_hashes = {_file_sha(p) for p in base.rglob('*') if p.is_file()}
     for side in ('reference', 'target'):

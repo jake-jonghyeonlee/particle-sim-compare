@@ -133,3 +133,35 @@ DL2를 실제로 연결할 때 하나씩 확인한다. 1~10은 계획 초안(PLA
 **보류.** 2단계(E): unit 별·4분면 offset 보정과 T5 설계 메모는 사용자의 실자료 `alignment.json` 진단을 받은 뒤 착수 여부를 정한다. 지금은 frame 크기가 다르면 공통 영역만 비교한다(resize 없음).
 
 **남은 비차단 권고.** T2 adv:4: `--merge-scope all`의 층을 넘는 병합은 후보 수 N에 대해 O(N²)이다. 실자료 후보 수가 크면 다시 확인한다.
+
+## roi-detail (2026-10-29)
+
+**사용자 원문.** "4회차 실행했는데 5. roi 상세 순위순에 위치자체가 회백색 이미지로 나와. 그리고 정렬자체를 cnt으로 하다보니 overlap이 최대인 부분의 정렬이 완벽하게 맞지는 않네. 전극별 layer 이미지를 쓰니까 이걸 정렬 보조 수단으로 이용하는 방법이 있는지 확인해봐 … roi를 고정하다보니 case가 너무많이 나와. 좀더 roi크기를 줄여야할것 같아. 지금 roi는 140개 case나 나와" → "일단 10으로 줄여서 진행해볼게." 그다음 "병합하고 추천대로".
+
+**결정.** D1 = 진단 전용(A)을 먼저 하고, 국소 offset 을 계산에 반영하는 B 는 실자료 진단을 본 뒤 별도 계획으로 보류한다. D2 = 인수 `--local-align-um`(선택, 기본값 없음, ETX 예시 1 µm). D3 = 국소 offset 이 전역과 허용값 이상 다르면 정보 note 만(경고·종료 코드 변화 없음). D4 = "국소 보정 후" 세 번째 그림은 넣지 않고 표만 넣는다(HTML 크기). 초안의 A2(대안 offset 의 전극 Dice 재점수)와 전역 offset 수동 지정은 이번에 넣지 않았다.
+
+**Task.**
+
+| Task | 내용 | 후보 commit |
+|---|---|---|
+| T1 | 5절 위치 그림: 변경 위치와 사분면 선(CNT 패턴 대신), ETX 4회차 예시 창 10 µm | `13f0bb6ba3866469572def0dad69656614cd41d4` |
+| T2 | 국소 정렬 진단(`local_align.py`, `roi_local_alignment.json`, `--local-align-um`) | `roi-detail/t2` 브랜치 (기준 `508744d`) |
+| T3 | HTML 표·요약 줄·각주, 위치 그림 캡션, 문서, ETX 예시, bundles, 리뷰 권고 테스트 | `roi-detail/t3` 브랜치 head |
+
+**경과.** Fable 초안(1회) → Lead 검토 → Astra 점검(BLOCKING X1–X4: admission 공유, 인수 생략 불변 증명, 이동 valid 의 가짜 내부 최적, 평탄·빈 target 의 ok) → 계획 v1.2 → T2 구현 → Opus 리뷰 FAIL(ROI 별 shift 배선 테스트 없음 등) → 수정 → 재리뷰 권고를 T3 테스트로 반영.
+
+**알고리즘 요약.** ROI 상자(창 + 50 % 여백)마다 묶음 층 전극 합집합과 CNT 전 층을 합쳐 pooled Dice 를 정수로 센다. 전역 offset 둘레 ±r px(체비쇼프)의 모든 d 를 같은 비교 영역 Ω 에서 비교한다. 상태 사다리와 JSON 키는 `docs/data_contract.md` 의 `roi_local_alignment.json` 항목이다.
+
+**상수(시험값).** `MIN_SUPPORT_PX` 200, `MIN_RING_SUPPORT_PX` 100, `AMBIGUITY_DELTA` 1/100, `MAX_LOCAL_SEARCH_PX` 30(3 µm @ 0.1 µm). 근거는 `local_align.py` 머리 주석이다: ROI 상자 한 변이 보통 200 px 이고 전극 선폭이 수 px 이므로 전경이 200 px 미만이면 Dice 가 한 픽셀 차이로 뒤바뀐다. 모두 실자료로 다시 확인한다.
+
+**r 하한이 2 px 인 이유.** ambiguous 판정은 최적과 체비쇼프 거리 2 이상인 후보와 비교한다. r = 1 이면 그런 후보가 없어 평탄·주기 구조를 가려낼 수 없다. 그래서 round(R / pitch) < 2 는 종료 코드 2(`local_align_um_invalid`)다.
+
+**시간.** 점수를 직접 합으로 세므로 후보 수 (2r+1)² 에 비례한다. 실측: r = 10, ROI 5 개, 2 층, ETX Python 3.9 에서 0.38 s. 최악 추정(ETX 3.9, ROI 20, 7 층, 상자 400 px, r = 30)은 약 3 분이다(추정, 실측 아님).
+
+**오류 처리.** 진단 계산 중 예상하지 못한 예외는 실행 전체를 종료 코드 2 로 끝낸다(진단이 조용히 사라지지 않게 한다). 쓰기 중·직후 실패는 이 실행이 만든 파일을 지운다. 기존 출력 폴더는 거부한다.
+
+**3.9 고정 해시.** `tests/test_roi_local_alignment_baseline.py` 의 해시는 처음 numpy 2 에서만 맞았다. 원인은 입력 PNG 의 sha256 이 Pillow/zlib 버전(3.11 대 3.9.14/Pillow 10.1.0)에 따라 달라지는 것이다. 지문 키 값을 placeholder 로 바꾸고, 각 지문이 입력 파일의 실제 해시와 같은지는 별도 테스트로 단정한다. T3 에서 위치 그림 캡션이 바뀌어 `alignment.html` 과 `candidate_queries_v1.json`(`alignment_report.bytes`) 두 해시만 다시 기록했다. 나머지 14개는 `13f0bb6` 그대로다.
+
+**보류.** B(국소 offset 을 계산에 반영), A2(대안 offset 의 전극 Dice 재점수), 전역 offset 수동 지정.
+
+**실자료로 확인할 것.** (1) 상수 4 개가 실제 ROI 에 적정한가(지지 부족·모호가 너무 많거나 적지 않은가). (2) 전극 PNG 가 있는 층 수와 `excluded_layers`. (3) `alignment.json` 의 `quadrant_offsets_um` 와 `roi_local_alignment.json` 의 국소 offset 이 같은 방향의 어긋남을 보이는가. (4) 배율 추정(`linear_fit`)이 ppm 단위로 의미 있는 값인가.

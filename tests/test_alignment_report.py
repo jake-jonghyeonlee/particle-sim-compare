@@ -506,3 +506,110 @@ def test_tiny_operation_limit_skips_pictures_but_keeps_the_tables():
     assert '<img' not in html and 'data:image' not in html and info['n_images'] == 0
     assert '그림을 만들지 않았습니다' in html and 'estimated too many bytes' in html
     assert html.count('id="roi') == 3 and '<h2 id="list">' in html and '기여 조합' in html
+
+
+# --- roi-detail/T3: position figure (T1 advice) -------------------------------------------------------------------------
+
+def test_position_rect_in_a_frame_corner_keeps_its_seven_pixel_size_and_is_clipped_to_the_picture():
+    source = position_source()
+    base, total = alignment_report._position_base(source)
+    assert total == 2 and base.shape[:2] == (150, 160)
+    rect = colour_mask(alignment_report._position_image(base, total, {'window_origin_px': [0, 0], 'window_px': 2}), alignment_report.POS_RECT)
+    # window = block (0, 0); the 7 px square is centred on it → rows/cols -3..3, so the visible part ends at index 3 (+1, +2 for the thick lines)
+    assert rect[3, 0:4].all() and rect[0:4, 3].all() and rect[5, 0:6].all() and rect[0:6, 5].all()
+    assert not rect[6:].any() and not rect[:, 6:].any()
+    corner = colour_mask(alignment_report._position_image(base, total, {'window_origin_px': [298, 318], 'window_px': 2}),
+                         alignment_report.POS_RECT)
+    # window = block (149, 159) → rows 146..152 / cols 156..162; the visible top/left edges are at 146 and 156 (grown to 144 and 154)
+    assert corner[146, 156:160].all() and corner[146:150, 156].all() and corner[144, 154:160].all() and corner[144:150, 154].all()
+    assert not corner[:144].any() and not corner[:, :154].any()
+
+
+def test_quadrant_lines_of_an_odd_sized_frame_sit_on_the_centre_block():
+    source = position_source(shape=(301, 321))
+    base, total = alignment_report._position_base(source)
+    assert total == 2 and base.shape[:2] == (151, 161)
+    line = colour_mask(base, alignment_report.POS_LINE)
+    # independent expectation: the frame centre pixel is (301 // 2, 321 // 2) = (150, 160); with 2 px blocks that is block (75, 80)
+    rows, cols = np.nonzero(line)
+    assert set(rows[line.sum(axis=1)[rows] == 161]) == {75} and set(cols[line.sum(axis=0)[cols] == 151]) == {80}
+    assert line.sum() == 161 + 151 - 1
+
+
+def test_position_caption_states_the_real_block_size(tmp_path):
+    for pitch in (0.1, 0.25):
+        alignment, qs, windows, source = synthetic_source()
+        alignment['pitch_um'] = pitch
+        extra = alignment_report._step_for(source.observed.shape, alignment_report.POSITION_MAX_PX)
+        block = round(source.step * extra * pitch, 2)
+        data, _ = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source)
+        html = data.decode('utf-8')
+        text = '변경 위치는 약 %g µm 블록 단위로 칠한다(실제 면적보다 크게 보일 수 있음)' % block
+        assert html.count(text) == 2 * len(qs)                   # figcaption and alt of every ROI
+
+
+# --- roi-detail/T3: local alignment table -------------------------------------------------------------------------------
+
+def local_doc(n):
+    base = {'query_id': None, 'box_px': [0, 10, 0, 10], 'window_origin_px': [1, 1], 'window_px': 5, 'layers_used': [],
+            'status': 'skipped', 'reason': None, 'flags': [], 'local_offset_xy_px': None, 'local_offset_xy_um': None,
+            'delta_from_global_xy_um': None, 'delta_from_global_um': None, 'dice_global': None, 'dice_local': None,
+            'ring_delta_xy_px': None, 'ring_dice': None, 'ring_reason': None, 'per_layer': {}}
+    ok = dict(base, status='ok', flags=['local_offset_differs'], layers_used=[{'layer': 'L1', 'source': 'electrode'}, {'layer': 'CNT1', 'source': 'cnt'}],
+              local_offset_xy_px=[5, 3], local_offset_xy_um=[0.5, 0.3], delta_from_global_xy_um=[0.2, 0.1], delta_from_global_um=0.223607,
+              dice_global=0.5, dice_local=0.75, ring_delta_xy_px=[2, 1], ring_dice=0.7)
+    biased = dict(ok, status='change_biased', reason='change_biased', flags=[])
+    skipped = dict(base, reason='diagnostic_memory_limit')
+    rois = [dict([ok, biased, skipped][i % 3], rank=i + 1) for i in range(n)]
+    summary = {'n_rois': n, 'ok': 0, 'change_biased': 0, 'ring_inconclusive': 0, 'search_bound_hit': 0, 'ambiguous': 0, 'low_score': 0,
+               'insufficient_support': 0, 'skipped': 0}
+    for roi in rois:
+        summary[roi['status']] += 1
+    return {'schema': 'roi_local_alignment_v1', 'rois': rois, 'summary': summary, 'excluded_layers': [{'key': 'electrode:L2', 'reason': 'one_sided'}],
+            'linear_fit': {'n': 4, 'scale_ppm_xy': [1200.5, -800.25], 'intercept_um_xy': [0, 0], 'rms_um': 0.01}, 'linear_fit_reason': None}
+
+
+def test_local_alignment_table_summary_line_and_footnotes_appear_only_when_given():
+    alignment, qs, windows, source = synthetic_source(n_rois=3)
+    plain, _ = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source)
+    plain = plain.decode('utf-8')
+    assert '국소 정렬' not in plain
+    data, _ = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source, local_alignment=local_doc(3))
+    html = data.decode('utf-8')
+    assert html.count('<h4>국소 정렬 진단</h4>') == 3
+    assert 'ROI 국소 정렬 진단: ok 1 · 변경 편향 1 · 링 판정 불가 0 · 모호 0 · 점수 낮음 0 · 지지 부족 0 · 탐색 경계 0 · 진단 안 함 1' in html
+    assert '배율 추정 1200.5 ppm, -800.25 ppm (4개 ROI)' in html
+    assert '일치 확인 <code>ok</code>' in html and '변경이 정렬을 끌어당김(링과 다름) <code>change_biased</code>' in html
+    assert '진단 안 함 <code>skipped</code>' in html and '<code>diagnostic_memory_limit</code>' in html
+    assert '[5, 3] px = [0.5, 0.3] µm (x, y)' in html and '0.500 / 0.750' in html and '링 차이 [2, 1] px' in html
+    assert 'electrode:L1, cnt:CNT1' in html and 'electrode:L2 (one_sided)' in html
+    assert html.count('<td class="hi"><code>local_offset_differs</code></td>') == 1
+    assert '계산(순위·기여 case·export)에 쓰이지 않는다' in html
+    # the table of ROI 2 sits inside ROI 2's block
+    block = html.split('id="roi2"')[1].split('id="roi3"')[0]
+    assert 'change_biased' in block
+
+
+def test_local_alignment_summary_gives_the_reason_without_a_fit():
+    alignment, qs, windows, source = synthetic_source(n_rois=1)
+    doc = local_doc(1)
+    doc['linear_fit'], doc['linear_fit_reason'] = None, 'fewer_than_3_ok_rois'
+    html = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source, local_alignment=doc)[0].decode('utf-8')
+    assert '배율 추정 없음: fewer_than_3_ok_rois' in html
+
+
+def test_local_alignment_table_survives_the_size_cap():
+    alignment, qs, windows, source = synthetic_source(n_rois=3)
+    doc = local_doc(3)
+    full, info_full = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source, local_alignment=doc)
+    data, info = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=source, local_alignment=doc,
+                                                       max_bytes=len(full) // 4)
+    assert info['crops_omitted'] and info['bytes'] < info_full['bytes']
+    assert data.decode('utf-8').count('<h4>국소 정렬 진단</h4>') == 3
+
+
+def test_local_alignment_without_a_picture_source_still_gets_the_table():
+    alignment, qs, windows, source = synthetic_source(n_rois=2)
+    html = alignment_report.build_alignment_html(alignment, queries=qs, windows=windows, source=None, skipped_reason='x',
+                                                 local_alignment=local_doc(2))[0].decode('utf-8')
+    assert html.count('<h4>국소 정렬 진단</h4>') == 2

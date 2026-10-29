@@ -38,14 +38,17 @@ def target_of(pat, rois):
     return tgt
 
 
-def document(monkeypatch, rois):
+def document(monkeypatch, rois, tgt_valid=None, edit=None):
+    """edit(cnt_target, electrode_target) may change the two target layers in place; tgt_valid replaces the all-valid target mask."""
     monkeypatch.setattr(alignment_report, 'layer_bundles', lambda q, w: ([{'layer': 'E'}], []))
     cnt, el = pattern(1), pattern(2, n=1500, size=(3, 12))
-    src = alignment_report.ImageSource({'C1': cnt}, {'C1': target_of(cnt, rois)}, np.ones(REF_SHAPE, bool),
-                                       np.ones(TGT_SHAPE, bool), (DX, DY))
+    cnt_tgt, el_tgt = target_of(cnt, rois), target_of(el, rois)
+    if edit is not None:
+        edit(cnt_tgt, el_tgt)
+    src = alignment_report.ImageSource({'C1': cnt}, {'C1': cnt_tgt}, np.ones(REF_SHAPE, bool),
+                                       np.ones(TGT_SHAPE, bool) if tgt_valid is None else tgt_valid, (DX, DY))
     windows = [{'window_origin_px': [y, x], 'window_px': W, 'layer': 'L'} for (y, x), _ in rois]
     src.hot = [{'box': alignment_report._crop_box(y, x, W, *REF_SHAPE)} for (y, x), _ in rois]
-    el_tgt = target_of(el, rois)
     src.collect_bases({'E': list(range(len(rois)))}, lambda layer: el, lambda layer: el_tgt, diag_margin=R)
     queries = [{'query_id': 'q%d' % i} for i in range(len(rois))]
     args = {'align_layer_tolerance_um': 0.2, 'align_min_dice': 0.3, 'local_align_um': R * PITCH}
@@ -67,7 +70,6 @@ def test_each_roi_reports_its_own_local_offset_in_xy_order(monkeypatch):
         assert item['ring_delta_xy_px'] == [ddx, ddy]
         assert {u['source'] for u in item['layers_used']} == {'electrode', 'cnt'}
         assert item['dice_local'] == 1.0
-    assert doc['diagnostic_estimated_bytes'] if 'diagnostic_estimated_bytes' in doc else True
 
 
 def test_position_proportional_shift_gives_the_signed_scale_and_drops_non_ok_rois(monkeypatch):
@@ -76,17 +78,60 @@ def test_position_proportional_shift_gives_the_signed_scale_and_drops_non_ok_roi
     for oy, ox in origins:
         cx, cy = ox + W / 2.0, oy + W / 2.0
         rois.append(((oy, ox), (int(round(-0.015 * (cy - 200))), int(round(0.01 * (cx - 250))))))
+    rois.append(((50, 200), (R, 0)))              # shifted by exactly the search radius -> search_bound_hit: has a d, but is not ok
     rois.append(((300, 230), None))               # empty target -> not ok
     doc = document(monkeypatch, rois)
     statuses = [r['status'] for r in doc['rois']]
-    assert statuses[:-1] == ['ok'] * 6 and statuses[-1] == 'insufficient_support'
+    assert statuses == ['ok'] * 6 + ['search_bound_hit', 'insufficient_support']
+    assert doc['rois'][6]['local_offset_xy_px'] == [DX, DY + R]      # the non-ok ROI keeps its d in the document but stays out of the fit
     fit = doc['linear_fit']
     assert fit is not None and fit['n'] == 6
     xs = np.array([ox + W / 2.0 for _, ox in origins])
     ys = np.array([oy + W / 2.0 for oy, _ in origins])
-    px = np.array([s[1] for _, s in rois[:-1]]) + DX
-    py = np.array([s[0] for _, s in rois[:-1]]) + DY
+    px = np.array([s[1] for _, s in rois[:6]]) + DX
+    py = np.array([s[0] for _, s in rois[:6]]) + DY
     assert fit['scale_ppm_xy'] == [pytest.approx(np.polyfit(xs, px, 1)[0] * 1e6, abs=1e-2),
                                    pytest.approx(np.polyfit(ys, py, 1)[0] * 1e6, abs=1e-2)]
     assert 7000 < fit['scale_ppm_xy'][0] < 13000 and -19000 < fit['scale_ppm_xy'][1] < -11000      # x +, y -, about 1.0 % and -1.5 %
     assert doc['linear_fit_reason'] is None
+
+
+def box_of(origin):
+    return alignment_report._crop_box(origin[0], origin[1], W, *REF_SHAPE)
+
+
+def test_target_valid_band_is_cropped_with_the_global_offset_in_yx_order(monkeypatch):
+    """Target pixels outside the valid mask carry garbage; the diagnostic must ignore exactly them (dy/dx of the crop not swapped)."""
+    origin = (150, 200)
+    y0, y1, x0, x1 = box_of(origin)
+    rng = np.random.default_rng(5)
+
+    top = y0 + DY - R                    # target row of the top edge of the wide crop (global offset, search margin)
+
+    def edit(cnt_tgt, el_tgt):          # garbage foreground in the 14 top rows of the wide crop, marked invalid below
+        for arr in (cnt_tgt, el_tgt):
+            arr[top:top + 14, x0 + DX - R:x1 + DX + R] = rng.random((14, x1 - x0 + 2 * R)) > 0.3
+    valid = np.ones(TGT_SHAPE, bool)
+    valid[top:top + 14, :] = False
+    doc = document(monkeypatch, [(origin, (0, 0))], tgt_valid=valid, edit=edit)
+    item = doc['rois'][0]
+    assert item['status'] == 'ok' and item['dice_local'] == 1.0 and item['local_offset_xy_px'] == [DX, DY]
+
+
+def test_non_square_box_at_the_frame_edge_uses_the_window_box_in_yx_order(monkeypatch):
+    """Box clipped at the left (80 x 64 px): the ring is box minus window. The ring content is shifted differently from the window content."""
+    origin = (200, 4)
+    y0, y1, x0, x1 = box_of(origin)
+    assert (y1 - y0, x1 - x0) == (80, 64)
+    ring_shift, win_shift = (2, -3), (-2, 3)
+    cnt, el = pattern(1), pattern(2, n=1500, size=(3, 12))
+
+    def edit(cnt_tgt, el_tgt):
+        for tgt, pat in ((cnt_tgt, cnt), (el_tgt, el)):
+            tgt[:] = False
+            for (ddy, ddx), (a, b, c, d) in ((ring_shift, (y0, y1, x0, x1)), (win_shift, (200, 240, 4, 44))):
+                tgt[a + DY + ddy:b + DY + ddy, c + DX + ddx:d + DX + ddx] = pat[a:b, c:d]
+    doc = document(monkeypatch, [(origin, (0, 0))], edit=edit)
+    item = doc['rois'][0]
+    assert item['ring_delta_xy_px'] == [ring_shift[1], ring_shift[0]], item          # (x, y) order, from the ring only
+    assert item['ring_dice'] > 0.9 and item['ring_reason'] is None

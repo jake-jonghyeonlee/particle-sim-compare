@@ -66,7 +66,7 @@ def test_on_run_differs_only_in_the_allowed_places(off_run, on_run):
     assert sorted(set(on_files) - set(off_files)) == ['roi_local_alignment.json']
     assert sorted(set(off_files) - set(on_files)) == []
     for name in sorted(off_files):
-        if name in ('execution.json', 'candidate_queries_v1.json'):
+        if name in ('execution.json', 'candidate_queries_v1.json', 'alignment.html'):
             continue
         assert on_files[name].read_bytes() == off_files[name].read_bytes(), name       # alignment.json/.html, exports, direct/*, funnel
     on_exec, off_exec = (tcc.load(r.out, 'execution.json') for r in (on_run, off_run))
@@ -76,7 +76,12 @@ def test_on_run_differs_only_in_the_allowed_places(off_run, on_run):
     assert on_exec == off_exec
     on_q, off_q = (tcc.load(r.out) for r in (on_run, off_run))
     assert on_q['change_args'].pop('local_align_um') == 1.0
+    for q in (on_q, off_q):       # PLAN_v1.2 X2 (T3): the report meta follows the HTML, which now carries the diagnostic table
+        for key in ('bytes', 'downscaled', 'crops_omitted', 'n_images'):
+            q['alignment_report'].pop(key, None)
     assert on_q == off_q
+    on_html, off_html = (files(r.out)['alignment.html'].read_text(encoding='utf-8') for r in (on_run, off_run))
+    assert 'ROI 국소 정렬 진단' in on_html and 'ROI 국소 정렬 진단' not in off_html and '국소 정렬 진단' not in off_html
 
 
 def test_on_run_is_deterministic(two_layer_world, clean_root, on_run, tmp_path):
@@ -163,7 +168,24 @@ def test_diagnostic_memory_limit_skips_only_the_diagnostic(two_layer_world, clea
     assert d['summary']['skipped'] == len(d['rois']) and d['linear_fit'] is None
     assert d['diagnostic_estimated_bytes'] == 1 << 62 and isinstance(d['diagnostic_available_bytes'], int)
     assert d['diagnostic_available_bytes'] < d['diagnostic_estimated_bytes']
-    assert files(out)['alignment.html'].read_bytes() == files(off_run.out)['alignment.html'].read_bytes()
+    html = files(out)['alignment.html'].read_text(encoding='utf-8')      # the table is still there, every ROI marked skipped with the reason
+    assert html.count('<h4>국소 정렬 진단</h4>') == len(d['rois']) and 'diagnostic_memory_limit' in html and '진단 안 함' in html
+
+
+def test_diagnostic_admission_boundary_need_equal_to_room_runs_and_one_more_byte_skips(two_layer_world, clean_root, tmp_path, monkeypatch):
+    monkeypatch.setattr(local_align, 'estimate_bytes', lambda *a, **k: 1 << 62)
+    probe = tmp_path / 'probe'
+    run(two_layer_world, probe, clean_root, '--local-align-um', '1')
+    room = doc(probe)['diagnostic_available_bytes']
+    assert room > 0
+    for need, expected_status, expected_reason in ((room, 'ok', None), (room + 1, 'skipped', 'diagnostic_memory_limit')):
+        monkeypatch.setattr(local_align, 'estimate_bytes', lambda *a, _need=need, **k: _need)
+        out = tmp_path / ('need_%d' % (need - room))
+        run(two_layer_world, out, clean_root, '--local-align-um', '1')
+        d = doc(out)
+        assert [(r['status'], r['reason']) for r in d['rois']] == [(expected_status, expected_reason)] * len(d['rois'])
+        if expected_reason:
+            assert d['diagnostic_available_bytes'] == room and d['diagnostic_estimated_bytes'] == need
 
 
 def test_base_admission_failure_skips_every_roi_and_keeps_the_base_warning(two_layer_world, clean_root, tmp_path, monkeypatch):
@@ -202,7 +224,7 @@ def test_bad_radius_exits_two_and_creates_no_folder(two_layer_world, clean_root,
     assert value.replace('inf', 'inf') in capsys.readouterr().err
 
 
-def test_radius_limits_are_inclusive_at_one_and_thirty_pixels(two_layer_world, clean_root, tmp_path):
+def test_radius_limits_are_inclusive_at_two_and_thirty_pixels(two_layer_world, clean_root, tmp_path):
     for value, px in (('0.2', 2), ('3.0', 30)):
         out = tmp_path / ('out' + value)
         assert run(two_layer_world, out, clean_root, '--local-align-um', value) in (0, 3)
@@ -232,3 +254,12 @@ def test_existing_output_folder_is_refused_and_untouched(two_layer_world, clean_
     assert run(two_layer_world, out, clean_root, '--local-align-um', '1') == 2
     assert [p.name for p in out.iterdir()] == ['keep.txt'] and (out / 'keep.txt').read_text() == 'mine'
     capsys.readouterr()
+
+
+def test_on_run_html_carries_the_table_summary_line_and_footnote(on_run, off_run):
+    html = files(on_run.out)['alignment.html'].read_text(encoding='utf-8')
+    d = doc(on_run.out)
+    assert html.count('<h4>국소 정렬 진단</h4>') == len(d['rois'])
+    assert 'ROI 국소 정렬 진단: ok %d' % d['summary']['ok'] in html and '일치 확인 <code>ok</code>' in html
+    assert 'electrode:L1' in html and 'cnt:CNT1' in html and '계산(순위·기여 case·export)에 쓰이지 않는다' in html
+    assert '국소 정렬 진단' not in files(off_run.out)['alignment.html'].read_text(encoding='utf-8')

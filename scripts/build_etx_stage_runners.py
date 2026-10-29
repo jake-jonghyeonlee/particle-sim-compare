@@ -122,6 +122,7 @@ STAGES = {
          "선택 인수: --merge-scope all(층을 넘어 창 병합), --suppress-overlap 0.3(겹치는 ROI 억제 비율). 예시 값이다 — 생략하면 이전 동작(층별 병합, 억제 없음).",
          "--electrode-png-root: alignment.html 층 묶음의 층별 전극 형상을 읽는 DL1 전극 PNG root(<제품>/<전극>/<층>.png). hotspot 폴더의 case 이미지는 쓰지 않는다.",
          "  예시는 --cnt-from-dl1-root 와 같은 data/input/dl1 이다. 전극 PNG 가 다른 곳에 있으면 그 폴더로 바꾼다(생략하면 --cnt-from-dl1-root).",
+         "--local-align-um 1: ROI 국소 정렬 진단 1 µm, 예시 값이다(선택; 생략하면 진단 없음). round(값/pitch) 가 2..30 px 여야 한다. 결과는 roi_local_alignment.json 과 alignment.html 5절 표(참고용, 계산에는 쓰이지 않는다).",
          "결과: alignment.html(정렬 요약·변경 지도), direct/roi_correspondence.json(6회차 입력), *_export/·*_index_export/ 의 review_rois.json + mask_derivation.json(DL2 입력).",
          "종료 코드 3(부분 결과)이어도 실행기는 계속한다. 결과는 로그의 'candidates-change exit N' 줄로 판정한다.",
          "DL2 없이 직접 대응을 쓰면 5회차를 건너뛰고 6회차로 간다."],
@@ -130,7 +131,7 @@ STAGES = {
                                 "--change-tolerance-um", "0.5", "--window-um", "10", "--merge-overlap", "0.5",
                                 "--top-k", "20", "--mask-derivation-rule", "between_stack_order_v1",
                                 "--merge-scope", "all", "--suppress-overlap", "0.3",
-                                "--electrode-png-root", f"{DATA}/input/dl1", "--out", f"{DATA}/changes"],
+                                "--electrode-png-root", f"{DATA}/input/dl1", "--local-align-um", "1", "--out", f"{DATA}/changes"],
           "예시 — 제품에 맞게 바꾼다: 탐색 30 µm, Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 창 10 µm, top-k 20. 기본값이 아니다")]),
     "4b_candidates_dv": (
         ["4b회차(선택, 0b회차와 3회차 뒤): ΔV 등급으로 가중한 취약점 ROI(candidates-dv). 변경점 ROI(4회차)와 독립이며 출력 폴더도 따로 쓴다.",
