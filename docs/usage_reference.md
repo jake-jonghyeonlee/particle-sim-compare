@@ -78,7 +78,7 @@ py -3.12 -m venv .venv-cmd
 | `window_sensitivity.json/csv` | 창 크기별 Δ_union, 부호 일치, 크기 쌍 간 \|Δ\| 순위 상관, core 적용 가능 지름. 추천값은 없고 사용자가 G4를 정한다 |
 | `local_delta.html` | 쌍마다 a/b layout crop과 hotspot crop(조각 색), a/b/Δ 표. 정렬 지름의 \|Δ_union\| 내림차순. PNG 내장이라 `file://`로 열린다 |
 
-소요 시간은 개발기 합성 기준으로 2000×2000 frame에서 쌍·창당 약 0.13 s이고, 그 앞의 group 계산(`compare`와 같은 비용)이 case 수에 비례해 더 크다. `--compact-json`을 주면 JSON에서 행별 세부 지표를 빼고 CSV에만 남긴다(쌍 하나·창 하나가 약 0.4 MB이므로 수십 쌍 × 여러 창일 때 쓴다). 규칙: attributable core는 한 변 (창 − 지름)의 안쪽 정사각형이며 창 ≤ 지름이면 not_applicable이다. 창이 frame 밖으로 나가면 `window_clipped_<side>`, valid 구멍을 포함하면 `valid_incomplete_<side>` 사유로 해당 Δ는 null이고 실행은 exit 3이다. 원천 누락·미매핑은 창 측정도 partial로 만든다. **실자료에서는** `import-hotspots --expected-cases`로 case 목록을 확인하고 config에 `condition_assignment`와 pair 표를 넣어야 group이 available이 되며, 그 전에는 모든 창이 partial이고 Δ는 null이다. 대응 파일의 `repeats_per_frame`은 측정 2×2 frame 안의 반복 수이며 per-unit 수를 넣지 않는다. 대응 파일의 endpoints 순서는 export-review-rois가 case와 같은 순서로 비교하므로 case의 순서대로 적는다(창 측정 자체는 순서를 보지 않는다). `--jitter-um j`를 주면 중심을 ±j 이동한 네 창의 Δ_union 범위와 부호 일치를 기록한다. DL2 검색에서 온 쌍의 점수는 출처 표시일 뿐 수치에 들어가지 않는다.
+소요 시간은 개발기 합성 기준으로 2000×2000 frame에서 쌍·창당 약 0.13 s이고, 그 앞의 group 계산(`compare`와 같은 비용)이 case 수에 비례해 더 크다. `--compact-json`을 주면 JSON에서 행별 세부 지표를 빼고 CSV에만 남긴다(쌍 하나·창 하나가 약 0.4 MB이므로 수십 쌍 × 여러 창일 때 쓴다). 규칙: attributable core는 한 변 (창 − 지름)의 안쪽 정사각형이며 창 ≤ 지름이면 not_applicable이다. 창이 frame 밖으로 나가면 `window_clipped_<side>`, valid 구멍을 포함하면 `valid_incomplete_<side>` 사유로 해당 Δ는 null이고 실행은 exit 3이다. 원천 누락·미매핑은 창 측정도 partial로 만든다. **실자료에서는** `import-hotspots --expected-cases`로 case 목록을 확인하고 config에 `condition_assignment`와 pair 표를 넣어야 group이 available이 되며, 그 전에는 모든 창이 partial이고 Δ는 null이다. 대응 파일의 `repeats_per_frame`은 측정 hotspot frame(2×2 unit 원본 영상에서 사방 500 px를 잘라낸 중앙 영역) 안의 반복 수이며 per-unit 수를 넣지 않는다. 대응 파일의 endpoints 순서는 export-review-rois가 case와 같은 순서로 비교하므로 case의 순서대로 적는다(창 측정 자체는 순서를 보지 않는다). `--jitter-um j`를 주면 중심을 ±j 이동한 네 창의 Δ_union 범위와 부호 일치를 기록한다. DL2 검색에서 온 쌍의 점수는 출처 표시일 뿐 수치에 들어가지 않는다.
 
 **실자료 규모**: 결과 숫자와 파일은 이전과 같다(frozen 7bcb07a와 바이트 비교). 바뀐 것은 메모리·시간이다. (1) 한 명령 안에서만 사는 마스크 풀기 캐시(최대 32개: 양쪽 × 4 지표 × 4개, 오래된 것부터 버림)로 같은 그룹 마스크를 행마다 24번 풀지 않는다. 캐시는 원본 `PackedMask`를 붙들고 있어 다른 객체와 키가 겹치지 않는다. (2) 이름 붙은 case(named pair)는 (제품, design, frame, layer, 전극 쌍)으로 한 번 색인하고 pair 하나 동안은 그 case의 지름별 레코드를 한 번만 읽는다(창 크기마다 다시 읽지 않는다). (3) 전극 layout 마스크는 모든 case를 보관하지 않는다: 시작할 때 manifest를 검증하고 layout을 case 순서대로 한 번 읽어 인증만 하며(첫 읽기 실패는 이후 case의 layout을 막고 쪽 전체 사유가 되는 것까지 이전과 같다), 쓸 때 다시 읽어 쪽마다 최대 8 case만 둔다(읽기 실패는 `thumbnail`/`layout` 메모에 같은 사유 코드로 남는다). 인증과 달리 **인증 뒤에 파일이 바뀌면** 그 case만 layout 없음으로 처리한다(이전에는 시작할 때 읽은 사본을 계속 썼다).
 
@@ -95,7 +95,7 @@ py -3.12 -m venv .venv-cmd
 - *코드가 보장하지 않는 것.* 강제 종료 직후부터 다음 실행이 복구하기 전까지는 두 세대가 섞여 보일 수 있다(`.local_delta.publishing`/`.local_delta.committed`가 보이면 복구 전이다). 같은 출력 폴더에서 `compare-windows`를 동시에 두 개 돌리는 것은 지원하지 않는다. 공개 중에는 새 세대와 이전 세대(백업)가 디스크에 함께 있어야 하고, 공개가 끝나면 이전 세대는 사라진다. fsync 이후의 저장장치 거짓말(쓰기 캐시)은 막지 못한다.
 - *CLI 종료 코드와 `error.json`.* `compare-windows`가 공개 트랜잭션을 연 **뒤**(대응 파일·쌍 묶기·admission을 통과한 뒤) 오류로 끝나면 CLI는 `error.json`/`execution.json`만 쓰고 관리 리포트(`local_delta*`, `window_sensitivity*`)는 지우지 않는다 — 이전 세대가 마지막으로 성공한 실행의 결과로 남는다(`error.json`은 다음 성공 때 지워진다). 그 **전**의 입력·설정·admission 오류(창 크기, 대응 파일, 크기·admission 오류, 설정 오류)도 마찬가지로 `error.json`/`execution.json`만 쓰고 `local_delta*`·`window_sensitivity*`는 지우지 않는다. 즉 `compare-windows`는 어떤 오류에서도 이전 세대를 그대로 둔다. 공개 제어 파일(`.local_delta.publishing|committed`)이 남아 있으면 관리 파일을 지우지도 않으므로 강제 종료 뒤 `local_delta_recovery_unreadable`로 막히는 일이 없다.
 
-같은 실행의 `compare` 결과에는 `fraction_of_frame`(면적 / 2×2 frame 면적, 단위 없음)이 group별·delta별로 추가된다(`comparison_fractions.csv`, HTML의 "frame 면적 비율"). G2의 한 unit 환산 없이 유닛 크기가 다른 제품을 비교하는 제품 수준 지표다.
+같은 실행의 `compare` 결과에는 `fraction_of_frame`(면적 / hotspot frame 면적, 단위 없음. hotspot frame = 2×2 unit 원본 영상에서 사방 500 px를 잘라낸 중앙 영역)이 group별·delta별로 추가된다(`comparison_fractions.csv`, HTML의 "frame 면적 비율"). G2의 한 unit 환산 없이 유닛 크기가 다른 제품을 비교하는 제품 수준 지표다.
 
 권장 운용값(코드 기본값이 아니며 실행 때 명시한다): 정렬·썸네일 지름은 전극 수 지도의 대표 지름과 같은 **5 µm**, 창 후보는 **10 / 20 / 30 µm**(밀도가 큰 1~10 µm 이물에서 창 반폭 > d/2가 되는 크기), jitter는 **0.5 µm**(5 px, 라벨 찍기 오차 수준), DL2 위치 hit 허용오차는 **선택한 창의 반폭**. 민감도 표와 설계자 검토 결과에 따라 바꾼다.
 
@@ -186,7 +186,7 @@ ROI 선정 방식은 셋이다. **변경점 ROI(`candidates-change`)와 ΔV 취�
 **흐름.**
 
 ```text
-config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png, <제품>/<전극>/)
+config(reference, target: real_hotspot_v1)      PNG root (<제품>/CNO/, Merged_Layer/<전극>/, Layer/; 예전 구조도 읽는다)
         |                                              |
         +--> hotspot 마스크 (5 µm) ---+                v
         |                             |       CNT 3층(pcnt/gcnt/ocnt)을 한 offset으로 동시 정렬
@@ -214,7 +214,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | 인수 | 의미 | 예시 값과 근거 |
 |---|---|---|
 | `--config` | `numeric_config_v1` YAML. reference·target은 각각 real_hotspot_v1 단일 제품·단일 frame이다. 두 제품의 pixel pitch가 같아야 한다 | `real.yaml`(4회차 설정과 같다) |
-| `--cnt-from-dl1-root` | 두 제품의 `cno/` CNT 층 PNG와 전극 폴더가 있는 DL1 PNG root. 제품 폴더 이름 = `product_id`. 전극 폴더 이름은 두 모델의 전극 집합을 비교하는 데 쓴다 | 3회차 `--cnt-from-dl1-root`와 같은 root |
+| `--cnt-from-dl1-root` | 두 제품의 CNT 층 PNG(`CNO/`, 예전 `cno/`)와 전극 폴더, 새 구조면 `Layer/`가 있는 PNG root. 제품 폴더 이름 = `product_id`. 전극 폴더 이름은 두 모델의 전극 집합을 비교하는 데 쓴다. 폴더 구조는 아래 "입력 폴더 구조" | 3회차 `--cnt-from-dl1-root`와 같은 root |
 | `--align-search-um` | CNT 정렬 탐색 반경(µm). 최소값은 pixel pitch의 2배 이상이다(코드 검사) | 30. 권장값은 예상 레이아웃 이동과 반복 패턴 주기를 모두 덮는 값이다. 주기가 탐색 반경 안에 있으면 `peak_ambiguous`와 대안 offset으로 표시된다 |
 | `--align-min-dice` | 정렬 최소 Dice `[0, 1]`. 이보다 낮으면 `aligned_uncertain`이다 | 0.3. 층 패턴이 성기면 낮추고, 정렬을 엄격히 보려면 올린다 |
 | `--align-layer-tolerance-um` | 층별·4분면 offset이 전역 offset과 달라도 되는 거리(µm) | 1. 이를 넘으면 `layer_offsets_disagree`(불확실) |
@@ -222,14 +222,53 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | `--window-um` | 변경 창 한 변(µm) | 20. 6회차 창 10/20/30 µm 중 가운데 값이다 |
 | `--merge-overlap` | 두 창의 `intersection/min(area)`가 이 값 이상이면 병합한다(기본은 층 안에서). `(0, 1]`. 0.5이면 두 창이 50 % 이상 겹칠 때 병합하고 50 % 미만으로 겹치는 창은 따로 남는다. 창 격자 간격은 W/4이다 | 0.5 |
 | `--merge-scope` | 선택(생략 시 `layer`, 이전 동작). `all`이면 층을 넘어 병합한다. 대표 창과 같은 위치의 구성원 층 case를 모두 다시 세어 기여 case에 `layer`를 붙인다. `score_um2`·`score_layer`·`sum_residual_um2`·`union_*`는 대표 층 창의 값이고, `changed_case_count`·`contributing_cases`·`one_sided_cases`는 `layers`의 모든 층 case를 센다. 한계: 연쇄 병합에서 대표 창과 먼 구성 창에서만 일어난 변경은 다시 세지 않는다 | 생략 |
-| `--suppress-overlap` | 선택(생략 시 억제 없음). `(0, 1]`. 병합·정렬 뒤 `top-k` 전에, 순위가 앞선 대표 창과 겹침 비율(`ox*oy/W²`)이 이 값 이상인 대표 창을 층 구분 없이 버린다. funnel에 `suppressed` 단계가 생긴다 | 생략 |
-| `--electrode-png-root` | 선택(생략 시 `--cnt-from-dl1-root`, 이전 동작). `alignment.html` 5절 층 묶음의 전극 형상 바탕에만 쓰는 PNG root다. 폴더 구조는 DL1과 같다: `<root>/<product_id>/<전극>/<층>.png`. 전극 목록 비교(`electrode_set_differs`, 조합 짝짓기)에는 쓰지 않고 항상 `--cnt-from-dl1-root`를 쓴다. 폴더가 아니면 쓰기 전에 종료 코드 2(`electrode_png_root_missing`). 지정하면 `change_args`·`execution.json`의 `args`에 `electrode_png_root` 키가 생긴다. 그 층 PNG가 없거나 읽을 수 없으면 바탕 없이 그리고 "전극 형상 없음"으로 적는다. 메모리 추정이 한도를 넘으면 바탕만 빼고 경고 `alignment_report_layer_base_skipped`(종료 코드 3). 빈 문자열(`''`)은 폴더로 보지 않고 같은 종료 코드 2다. 바탕이 없는 그림의 캡션은 사유를 적는다: "전극 형상 없음 (파일 없음)", "(제품 폴더 없음)", "(읽기 실패: <코드>)", "(읽기 생략: 메모리 한도)" | 생략 |
-| `--local-align-um` | 선택(기본값 없음, 생략하면 진단 없음). ROI 국소 정렬 진단의 탐색 반경(µm). round(R / pitch) 가 2..30 px 가 아니면 쓰기 전에 종료 코드 2(`local_align_um_invalid`)이다. 예: pitch 0.1 µm 에서 0.15 µm 는 1 px 로 거부(부동소수 0.15/0.1 < 1.5), 0.04 µm 는 0 px 로 거부, 0.2 µm 는 2 px 로 허용. 지정하면 `roi_local_alignment.json` 을 더 쓰고 `alignment.html` 5절 ROI 마다 "국소 정렬 진단" 표, 1절에 상태별 개수 한 줄(선형 적합이 되면 배율 추정 ppm)을 더한다. 진단 전용이다: 순위·기여 case·export·경고·종료 코드는 바뀌지 않는다. 그림을 만들지 않았거나(`images_skipped`) 전극 바탕을 읽지 않았거나(`electrode_bases_skipped`) 진단 메모리 한도를 넘으면(`diagnostic_memory_limit`) 전 ROI 가 `skipped` 이고 표에 사유가 나온다 | 1 (예시 값). 상태 정의는 `docs/data_contract.md` |
+| `--suppress-overlap` | 선택(생략 시 억제 없음). `[0, 1]`. 병합·정렬 뒤 `top-k` 전에, 순위가 앞선 대표 창과 겹침 비율(`ox*oy/W²`)이 이 값 이상인 대표 창을 층 구분 없이 버린다. **`0` = 조금이라도 겹치면 억제**(겹침 > 0, 맞닿기만 한 창은 겹침이 아니다; 정책 문자열 `greedy_score_order_any_window_overlap_all_layers`). 예전 문서의 "0 은 첫 ROI 외 전부 억제"는 오류였고 고쳤다. funnel에 `suppressed` 단계가 생긴다 | 0.3(4회차 실행기는 `0.3`) |
+| `--unit-align-um` | 선택(생략 시 하지 않음). Layer 전역 교차 확인과 unit 4개 offset의 탐색 반경(µm). 두 모델 모두 새 입력 구조(`Merged_Layer` + `Layer/`)여야 한다(아니면 쓰기 전에 종료 코드 2 `layer_folder_required`). 반경(px) = round(값 / pitch)는 `2·|ΔU| + 2` px 이상, 300 px 이하여야 한다(아래 "반경 요구식"). 지정하면 `alignment.json`에 `layer_global_check`·`unit_offsets`·`unit_geometry`·`layer_inputs`가 더해진다. `--apply-align`을 주지 않으면 진단 전용이라 계산·순위는 바뀌지 않는다 | 3(예시 값. 실자료 ΔU로 맞춘다) |
+| `--apply-align` | 선택. `diagnostic`(생략 시, 기존 동작) / `unit` / `local`. `unit`은 unit offset 장(場)을 변경 지도·창 재계산·target 방향 질의 중심·직접 쌍에 적용한다(`--unit-align-um` 필요: `apply_align_requires_unit_align`). `local`은 그 위에 ROI마다 Layer 층 + CNT 층 Dice 우선 국소 offset을 구해 재점수화에 적용한다(`--local-align-um` 필요: `apply_align_requires_local_align`; `--unit-align-um`은 시작점용 선택). 아래 "정렬 적용" 참조 | `local` |
+| `--refine-pool` | 선택, `--apply-align local` 전용(아니면 `refine_pool_requires_local`). 창 후보 점수 상위 N개만 국소 보정·재점수화한다. 1 이상의 정수. 생략하면 `10 × top-k`. 풀 밖 창은 순위에서 빠지고 funnel `refine_pool` 단계에 `outside_refine_pool`로 센다 | 생략 |
+| `--unit-fold` | 선택(플래그). 억제 뒤·`top-k` 앞에서 서로 다른 unit의 같은 unit 안 위치 ROI를 대표 하나로 접는다. 기준은 reference 모델의 unit 크기다. 접힌 ROI는 대표의 `unit_fold.replicas`에 남는다 | 켬 |
+| `--unit-fold-tolerance-um` | 선택, `--unit-fold`와 함께만(아니면 `invalid_candidates_change_argument`). 접힌 좌표(unit 안 위치) 거리 허용값(µm, 0 이상). 생략하면 `--window-um / 4` | 생략 |
+| `--electrode-png-root` | 선택(생략 시 `--cnt-from-dl1-root`, 이전 동작). `alignment.html` 5절 층 묶음의 전극 형상 바탕에만 쓰는 PNG root다. 폴더 구조는 `--cnt-from-dl1-root`와 같은 두 가지(예전 `<root>/<product_id>/<전극>/<층>.png`, 새 `<root>/<product_id>/Merged_Layer/<전극>/<층>.png`)를 받는다. 전극 목록 비교(`electrode_set_differs`, 조합 짝짓기)에는 쓰지 않고 항상 `--cnt-from-dl1-root`를 쓴다. 폴더가 아니면 쓰기 전에 종료 코드 2(`electrode_png_root_missing`). 지정하면 `change_args`·`execution.json`의 `args`에 `electrode_png_root` 키가 생긴다. 그 층 PNG가 없거나 읽을 수 없으면 바탕 없이 그리고 "전극 형상 없음"으로 적는다. 메모리 추정이 한도를 넘으면 바탕만 빼고 경고 `alignment_report_layer_base_skipped`(종료 코드 3). 빈 문자열(`''`)은 폴더로 보지 않고 같은 종료 코드 2다. 바탕이 없는 그림의 캡션은 사유를 적는다: "전극 형상 없음 (파일 없음)", "(제품 폴더 없음)", "(읽기 실패: <코드>)", "(읽기 생략: 메모리 한도)" | 생략 |
+| `--local-align-um` | 선택(기본값 없음, 생략하면 진단 없음). ROI 국소 정렬 진단의 탐색 반경(µm). round(R / pitch) 가 2..30 px 가 아니면 쓰기 전에 종료 코드 2(`local_align_um_invalid`)이다. 예: pitch 0.1 µm 에서 0.15 µm 는 1 px 로 거부(부동소수 0.15/0.1 < 1.5), 0.04 µm 는 0 px 로 거부, 0.2 µm 는 2 px 로 허용. 지정하면 `roi_local_alignment.json` 을 더 쓰고 `alignment.html` 5절 ROI 마다 "국소 정렬 진단" 표, 1절에 상태별 개수 한 줄(선형 적합이 되면 배율 추정 ppm)을 더한다. `--apply-align local`을 주지 않으면 진단 전용이다: 순위·기여 case·export·경고·종료 코드는 바뀌지 않는다. `--apply-align local`이면 이 인수가 적용 경로의 탐색 반경이고, 진단 경로의 `2..30 px` 규칙 대신 `|ΔU| + 2 px`(`--unit-align-um` 없으면 `2·|ΔU| + 2 px`) 이상 300 px 이하여야 한다(아래 "반경 요구식"; 어긋나면 쓰기 전에 `local_align_um_too_small_for_unit_delta` 또는 `local_align_um_invalid`, 종료 코드 2). 그림을 만들지 않았거나(`images_skipped`) 전극 바탕을 읽지 않았거나(`electrode_bases_skipped`) 진단 메모리 한도를 넘으면(`diagnostic_memory_limit`) 전 ROI 가 `skipped` 이고 표에 사유가 나온다 | 1 (예시 값). 상태 정의는 `docs/data_contract.md` |
 | `--top-k` | 방향(`reference_to_target`, `target_to_reference`)별 질의 수 | 20. 설계자가 보는 ROI 수에 맞춘다 |
 | `--mask-derivation-rule` | DL2 `mask_derivation` 규칙. `between_stack_order_v1`만 허용한다(없거나 다른 값이면 종료 코드 2: `mask_derivation_rule_required`·`mask_derivation_rule_unknown`) | `between_stack_order_v1` |
 | `--out` | 새 출력 폴더. 이미 있으면 아무것도 건드리지 않고 종료 코드 2 | `data/changes` |
 
 대표 지름은 5 µm 하나로 고정이다. `map.diameter_um`이 5가 아니면 `candidates_change_diameter_fixed_5um`(코드 2)이다.
+
+**입력 폴더 구조(`--cnt-from-dl1-root`, `--electrode-png-root`).** 모델 폴더 안에 `Merged_Layer` 폴더(대소문자 무관)가 있으면 새 구조, 없으면 예전 구조다. 두 구조를 모두 읽는다.
+
+| | 새 구조 | 예전 구조 |
+|---|---|---|
+| CNT | `<root>/<모델>/CNO/<n>-<층>.png` | `<root>/<모델>/cno/<n>-<층>.png`(내부 동일) |
+| 전극 | `<root>/<모델>/Merged_Layer/<전극>/<n>-<층>.png` | `<root>/<모델>/<전극>/<n>-<층>.png` |
+| Layer | `<root>/<모델>/Layer/<n>-<층>.png`: 층마다 1장, 원본 층 영상, 크기 = 전극 PNG와 같은 2×2 unit 영역, 검정 = 형상 | 없음. `Layer`라는 이름의 폴더는 전극 폴더로 읽는다 |
+
+- CNT 폴더 이름은 `CNO`/`cno`/`Cno` 등 대소문자를 구분하지 않는다(casefold). 대소문자만 다른 CNT 폴더가 둘이면 `cnt_folder_duplicate`(코드 2). 예전 자료도 `cno` 소문자 그대로 읽는다. **예전 구조에서도 같은 규칙이라** `CNO`뿐 아니라 `Cno`·`cNO` 폴더도 CNT로 읽는다. 예전 코드는 이 폴더들을 전극 폴더로 읽었으므로 그런 이름의 전극 폴더가 있으면 이름을 바꾼다 (R1 adv:5).
+- 새 구조에서 `CNO`, `Merged_Layer`, `Layer` 외의 폴더가 PNG를 담으면 `layout_structure_mixed`, PNG가 없으면 경고 `unrelated_folder`(정보)다. `Merged_Layer`가 대소문자만 다르게 둘이면 `layout_structure_mixed`, `Layer`가 둘이면 `layer_folder_duplicate`다.
+- 같은 전극·층이 둘이면 `duplicate_electrode_layer`, 같은 Layer 층이 둘이면 `duplicate_layer_png`, Layer 파일 이름이 `<n>-<층>.png`가 아니면 `invalid_layer_png_name`이다(모두 코드 2).
+- Layer 폴더는 DL1 입력과 별개다(DL1은 읽지 않는다). Layer 폴더가 없으면 `--unit-align-um`·`--apply-align`·Layer 그림을 쓸 수 없고 예전 그림·예전 정렬만 쓴다.
+- 두 모델 중 하나라도 새 구조 + Layer PNG가 아니면서 `--unit-align-um`, `--apply-align unit|local`이 있으면 `layer_folder_required`(코드 2, 쓰기 전). 구조가 서로 다른 두 모델(예: reference 새 구조, target 예전 구조)도 마찬가지다.
+
+**unit 크기와 반경 요구식.** hotspot frame은 2×2 unit 원본 영상에서 사방 500 px를 잘라낸 중앙 영역이다. unit 크기(px) = (hotspot 크기 + 1000) / 2 (축마다, 홀수면 내림, `unit_size_odd_px`로 표시), 1 px = 0.1 µm. 두 모델의 unit 크기 차이 `ΔU` = target unit − reference unit (px, 축마다). 구하는 법: `alignment.json`의 `frame_shape_delta_px`를 2로 나눈다(`unit_geometry.delta_u_yx_px`에 이미 기록된다). `|ΔU|max`는 축별 `|ΔU|` 중 큰 값이다.
+
+| 인수 | 필요한 반경(px) | 상한 | 어기면(쓰기 전, 코드 2) |
+|---|---|---|---|
+| `--unit-align-um` | `2·|ΔU|max + 2` | 300 | `unit_align_um_too_small` / `unit_align_um_too_large` |
+| `--local-align-um`, `--apply-align local` + unit 정렬 | `|ΔU|max + 2` | 300 | `local_align_um_too_small_for_unit_delta` / `local_align_um_invalid` |
+| `--local-align-um`, `--apply-align local` + unit 정렬 없음 | `2·|ΔU|max + 2` | 300 | 같음 |
+| `--local-align-um` 진단 전용(`--apply-align local` 아님) | 2 ~ 30 (이전과 같음, 불변) | 30 | `local_align_um_invalid` |
+
+반경(px) = 값(µm) / pitch의 반올림이다. `--unit-align-um`은 .5 올림이고, `--local-align-um`(진단·적용 모두)은 Python `round`(짝수 반올림)다. 예: `--local-align-um 0.45`는 4 px(`--unit-align-um 0.45`는 5 px). 예시 값 `--unit-align-um 3`(30 px)은 `|ΔU|max ≤ 14`, `--local-align-um 1`(10 px)은 `|ΔU|max ≤ 8`까지 맞는다. 둘을 함께 쓰면 `|ΔU|max ≤ 8`이다. 실자료 ΔU로 `--unit-align-um ≥ (2|ΔU|+2)·0.1 µm`, `--local-align-um ≥ (|ΔU|+2)·0.1 µm`를 맞춘다.
+
+**정렬 적용(`--apply-align`).** 전역 정렬은 CNT 3층이 계속 정한다. Layer 정렬은 그것을 교차 확인하고(`layer_global_check`; CNT와 다르면 `layer_global_check_differs` 정보) unit 4개의 offset을 따로 구한다. 국소 정렬은 ROI마다 Layer 층 + CNT 층을 **Dice 우선**으로 맞춘다. 평균·중앙값은 쓰지 않는다. 층마다 후보 offset별 Dice를 구해 Dice가 가장 높은 층의 선택을 따르고, 그 층의 1·2위가 모호하면 다음 Dice 층으로 동률을 가린다. 변경된 층도 빼지 않는다. 상태와 규칙은 `docs/data_contract.md`.
+
+- `diagnostic`(생략): 계산·순위는 이전과 같다. unit 정보는 `alignment.json`에만 더해진다.
+- `unit`: 변경 지도·창 재계산·target 방향 질의 중심·직접 쌍에 unit offset을 적용한다. 지도·열지도는 unit offset을 쓴다.
+- `local`: 창 후보 점수 상위 `--refine-pool`개를 국소 보정하고 재점수화한 뒤 병합 → 억제 → 접기 → `top-k` 순으로 진행한다. ROI의 기여 case·점수는 그 ROI의 **적용 offset**을 쓴다. 재점수 뒤 변경이 0이 된 창은 funnel `refine_pool`에서 `zero_after_refine`로 빠지고 병합 다리도 놓지 않는다.
+- 적용하지 않은 offset(`low_score`, `ambiguous` 등)은 기록만 하고 전역 offset을 쓴다. 잘 맞지 않는 ROI도 숨기지 않고 표시한다.
+
+**소요 시간·메모리.** 아래는 개발기 **합성 기준** 측정이다(실자료 변경이 더 크면 재점수 비용이 늘 수 있으므로 실자료로 다시 잰다). 3000×3000 frame, Layer 10층 + CNT 10층, 창 3150, 풀 200: 전체 27.9 s(unit 정렬 10.6 s, 국소 보정 5.1 s, 재점수 0.04 s), 프로세스 peak RSS 3161 MB. 같은 크기의 `change_maps` scalar/field는 0.3 s에 ~1.0 GiB, unit 단계는 5.2 s에 +806 MiB(추정 501 MiB; `change_candidates`가 2배로 admission). ROI 200개 국소 정렬은 반경 10 px에서 4.3 s/530 MiB, 30 px에서 12.8 s/606 MiB. 실행마다 `execution.json`의 `timings_s`(`unit_align`, `layer_read`, `local_refine`, `local_layer_read`)가 단계별 초를 남긴다.
 
 **점수와 순위.** 순위 점수 `score_um2`는 층별 hotspot **합집합의 변화 면적**이다. 합집합 변화 = (reference 합집합 XOR 정렬한 target 합집합) 가운데 `--change-tolerance-um` 이동으로 설명되지 않는 부분이다. 6회차 보고서의 Δ_union과 같은 기준이다. 조합별 잔차의 합(`sum_residual_um2`), 바뀐 조합 수(`changed_case_count`), `union_area_reference_um2`, `union_area_target_um2`, `union_delta_um2`는 **속성**이며 순위에 쓰지 않는다. CNT 층별 변경 면적은 `cnt_change_um2_by_layer`에 속성으로 남는다. 점수가 같으면 잔차 합, 층, 중심, region id 순이다. 배선 변경 면적(`wiring_change_um2`)은 계산하지 않는다(보류).
 
@@ -251,7 +290,7 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 | `funnel.json`, `funnel.csv` | 방향별 깔때기(`change_candidates` → `merged` → `top_k` → `exported_ready`)와 직접 쌍 수 |
 | `execution.json` | 실행 요약 |
 
-**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전, `alignment_report_images_skipped`(그림 생성 메모리 추정이 한도 초과: 표만 쓴다), `alignment_report_layer_base_skipped`(전극 형상 바탕 읽기 메모리 추정이 한도 초과: 바탕만 뺀다) 등. 2 = 입력·인수 오류(필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류, 없는 `--cnt-from-dl1-root`, `--mask-derivation-rule` 누락·오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않거나 폴더가 아닌 `--cnt-from-dl1-root`는 **쓰기 전에** 종료 코드 2다: `오류: cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: <입력> (resolved: <절대 경로>)`. `--out`은 만들어지지 않고 ETX 실행기는 멈춘다(종료 2는 '계속'이 아니다). root는 있는데 모델 폴더나 `cno/`가 없으면 지금처럼 정렬 실패(종료 코드 3: `alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked)다.
+**종료 코드.** 0 = 경고 없이 완료. 3 = 부분 결과: 정렬 `aligned_uncertain`·`alignment_failed_identity_used`, blocked 질의, `direct_pairs_blocked`, `top_k_not_filled`, index coverage 불완전, `alignment_report_images_skipped`(그림 생성 메모리 추정이 한도 초과: 표만 쓴다), `alignment_report_layer_base_skipped`(전극 형상 바탕 읽기 메모리 추정이 한도 초과: 바탕만 뺀다), `alignment_report_layer_figures_skipped`(Layer stack 그림의 메모리 추정이 한도 초과이거나 Layer PNG를 읽지 못함: Layer 그림만 빼고 예전 그림으로 쓴다) 등. 2 = 입력·인수 오류. 새 오류 코드(전부 쓰기 전): `layer_folder_required`, `unit_align_um_too_small`, `unit_align_um_too_large`, `local_align_um_too_small_for_unit_delta`, `local_align_um_invalid`, `apply_align_requires_unit_align`, `apply_align_requires_local_align`, `refine_pool_requires_local`, `layout_structure_mixed`, `layer_folder_duplicate`, `cnt_folder_duplicate`, `duplicate_electrode_layer`, `duplicate_layer_png`, `invalid_layer_png_name`, 그리고 값 오류용 `invalid_candidates_change_argument`(`--apply-align` 값, `--refine-pool` < 1, `--unit-fold-tolerance-um` 단독·음수, `--suppress-overlap` 범위 밖). 그 밖의 2 = (필수 인수 누락, 이미 있는 `--out`, 인수 값 오류, config 종류 오류, 제품·frame 개수, pitch 불일치, 탐색 반경 < 2 × pitch, 창 크기 오류, 없는 `--cnt-from-dl1-root`, `--mask-derivation-rule` 누락·오류). 쓰는 도중 실패하면 이 실행이 만든 파일과 폴더만 지운다. **ETX 실행기는 3을 '계속'으로 처리하므로** 결과는 로그의 `candidates-change exit N` 줄과 `reasons`로 판정한다. 존재하지 않거나 폴더가 아닌 `--cnt-from-dl1-root`는 **쓰기 전에** 종료 코드 2다: `오류: cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: <입력> (resolved: <절대 경로>)`. `--out`은 만들어지지 않고 ETX 실행기는 멈춘다(종료 2는 '계속'이 아니다). root는 있는데 모델 폴더나 `cno/`가 없으면 지금처럼 정렬 실패(종료 코드 3: `alignment_failed`, `cnt_missing_reference`, `cnt_missing_target`, 직접 쌍 전부 blocked)다.
 
 **`mask_derivation.json`(R1).** DL2는 `1.png`/`2.png`를 case 처리 마스크로 보고, 두 제품의 마스크가 같은 방식으로 만들어졌을 때만 비교한다. 그 사실을 질의 export 2개와 index export 2개 폴더마다 `mask_derivation.json`(`psdl2_mask_derivation_v1`)으로 동봉한다. 형식·규칙은 `export-template-rois`와 같은 writer를 쓴다: 규칙 `between_stack_order_v1`, vertical 은 위 전극 마스크에서 두 끝 층 사이 층(제품의 `condition_assignment.layer_stack` 기준)을 제거, lateral 은 제거 없음(`processed_endpoint: null`), CNT 는 DL1 `cno` 합집합, VIA 미사용. 항목은 그 폴더 `review_rois.json`의 **ready 행** case(failure_type + 정렬한 endpoints)마다 하나다. blocked 행과 한쪽 조합(반대 모델에 case가 없어 행이 없음)은 항목이 없다(DL2 `mask_derivation_case_missing`은 ready 행에만 적용된다). 경로는 `candidate_queries_v1.json`의 `mask_derivation_files`(방향별 `query`/`index`)와 `execution.json`의 `outputs`에 있다. DL2 `psdl2_dataset_v1` 매니페스트의 `mask_derivation` 값으로 출력 폴더 기준 상대 경로를 그대로 쓴다. DL2 문서 흐름의 DB·후보는 제품별 `export-template-rois` 출력(template export)이고, 이 `*_index_export` 흐름도 같이 지원한다. 아래는 `*_index_export` 를 DB source 로 쓰는 예시다:
 
@@ -282,9 +321,13 @@ config(reference, target: real_hotspot_v1)      DL1 PNG root (<제품>/cno/*.png
 - 중간에 하드 실패하면 `alignment.html`은 없다. 정렬이 실패·불확실한 경우에는 항상 쓴다.
 - 층 사이 합집합을 만들지 않는다. 층이 바뀐 조합은 위처럼 한쪽 조합 둘이다.
 - 실데이터 규모, 메모리·시간, ETX Linux 실행은 아직 검증하지 않았다(`docs/plan/change_roi/README.md`).
-- frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. 왼쪽 위 인덱스를 맞추고 offset 만 더하며 resize 하지 않는다. unit 별 offset(2단계)은 보류다.
+- frame 크기가 다르면 두 frame 의 공통 영역만 비교한다. 왼쪽 위 인덱스를 맞추고 offset 만 더하며 resize 하지 않는다. unit 별 offset은 `--unit-align-um`/`--apply-align`으로 구한다(위 "정렬 적용").
+- X7 한계: 탐색 범위 밖의 진짜 peak와 안쪽 부차 peak가 함께 있으면 원리상 완전히 막지 못한다. 막는 장치는 `--align-min-dice`(선택 offset의 Dice가 그 미만이면 `low_score`)와 경계 1 px 안 선택의 `search_bound_hit`(적용 안 함)뿐이다.
+- Layer 그림 조건: 두 모델 모두 새 구조 + Layer PNG이고 그림을 만들 때만 그린다. 아니면 예전 그림이다. 국소 정렬 진단(`--local-align-um`, 적용 아님) 실행의 층 묶음 바탕은 계산에 쓰는 배열과 같아야 하므로 Merged 전극 PNG를 유지한다.
 - 면적 지표(`area_reference_um2`, `area_target_um2`, `union_area_*`)는 두 모델 모두 같은 reference 좌표 창과 같은 공통 비교 영역(침식 후)에서 센다. 그래서 frame 크기가 달라도 두 값을 바로 비교할 수 있다. 공통 비교 영역은 두 frame 어느 쪽보다 작을 수 있으며, frame 전체 대비 비율(`alignment.json`의 `fraction_of_reference`·`fraction_of_target`)은 분모가 각 frame 이라 서로 다르다.
 - `alignment_report_layer_base_skipped` 경고의 `estimated_bytes`·`reserved_bytes` 에는 보고서 그림이 이미 잡고 있는 바이트가 들어가지 않는다. 그래서 "추정 + 예약 ≤ 한도"로 보여도 바탕이 빠질 수 있다.
+
+**alignment.html 그림(새 구조 + Layer).** 5절 ROI 상세의 위치 그림은 reference Layer를 모든 층, stack order 순 색, 투명도로 쌓은 바탕 위에 변경 위치(진자홍)와 빨간 ROI 박스(흰 테)를 그린다. ROI 주변 crop(창의 3~5배, 원본 해상도)도 Layer stack에 빨간 박스를 그린다. 축소는 층 분율 블록 평균으로 해서 회백색 포화를 피한다. 크기는 `MAX_HTML_BYTES`(30 MiB) 상한 안에서 순위 낮은 ROI의 crop부터 줄이거나 뺀다. Layer 폴더가 없으면 예전 그림이다.
 
 **alignment.html 구성(v3 순서).** 1 요약(정렬 상태·offset·frame 크기·합집합 조합 수), 2 CNT 정렬과 정렬 진단(층별 겹침 정렬 전·후, 대안 offset), 3 변경 강조 지도(변경 위치를 빨강으로), 4 ROI 목록(순위 표, 각 ROI 로 이동), 5 ROI 상세(위치 그림, 기여 조합 표, 그 ROI 에 불량 조합이 있는 층마다 층 묶음 = 비교·reference·target 그림에 전극 형상 바탕. 층이 4개를 넘으면 창 안 변경 면적 합이 큰 4개만, 기여 조합이 없는 ROI 는 묶음 없이 한 줄), 6 변경 지도 열지도(참고, 접어 둠), 7 각주. 파일 크기가 상한을 넘으면 순위가 낮은 ROI 의 crop 부터 줄이거나 뺀다.
 
@@ -410,7 +453,7 @@ python -m simcompare model-report --candidates data/changes --confirm data/confi
 
 `comparison.json` 및 CSV/HTML은 line / pixel, pair exclusive/shared, transfer, 원 case CA, 지름/coverage, provenance를 기록한다. 세 failure pieces는 line / pixel과 다른 축이다. shared bucket이 pair별 CSV에 반복되더라도 총계에는 한 번만 포함된다. partial/unavailable의 value는 null이며 부분 합은 partial_value다. 관측 0은 available 0이고 누락을 대신하지 않는다.
 
-`electrode_map.json`은 한 제품의 layer별 count와 product maximum의 작은 summary다. counts와 valid는 압축 NPZ 상대 경로로 연결하고 shape/pitch/origin, count histogram, status/provenance와 파일 hash를 기록한다. 기본 셀별 CSV·JSON 배열·HTML 배열은 없다. `--per-cell-text`는 4096 cells 이하에서만 명시 셀별 텍스트를 추가한다. PNG는 정수 count마다 다른 색과 legend를 쓰고 sidecar는 원 frame, um extent, integer display scale을 기록한다. 2×2 domain을 그대로 표시한다. 기본 regions=[]이며 명시 --min-count 또는 map.min_count에서만 영역을 생성한다. 다른 제품의 지도는 별도 실행한다.
+`electrode_map.json`은 한 제품의 layer별 count와 product maximum의 작은 summary다. counts와 valid는 압축 NPZ 상대 경로로 연결하고 shape/pitch/origin, count histogram, status/provenance와 파일 hash를 기록한다. 기본 셀별 CSV·JSON 배열·HTML 배열은 없다. `--per-cell-text`는 4096 cells 이하에서만 명시 셀별 텍스트를 추가한다. PNG는 정수 count마다 다른 색과 legend를 쓰고 sidecar는 원 frame, um extent, integer display scale을 기록한다. hotspot frame(2×2 unit 원본 영상에서 사방 500 px를 잘라낸 중앙 영역)을 그대로 표시한다. 기본 regions=[]이며 명시 --min-count 또는 map.min_count에서만 영역을 생성한다. 다른 제품의 지도는 별도 실행한다.
 
 `review_rois.json`의 기본 출처는 review_rois.manual이다. product/design/source/step/exposure/case/frame/version과 원 shape 문맥을 모두 지정해야 ready다. 문맥이 부족하면 blocked 이유를 보존한다. 지도 영역을 쓰려면 threshold와 review_rois.map_region_ids를 명시한다. crop 크기는 정하지 않으며 DL2가 선택한 위치와 유사 구조를 찾는 별도 역할을 담당한다. [ROI 교환 계약](review_roi_contract.md)을 따른다.
 

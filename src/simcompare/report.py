@@ -12,9 +12,9 @@ import numpy as np
 from .numeric_schema import NumericContractError, current_gate_decisions
 from .linepixel import FAILURE_PIECES, FAILURE_PIECE_POLICY, FRACTION_NAMES, compare_fractions
 
-FRACTION_NOTE = ('frame 면적 비율은 각 제품의 측정 2×2 frame 면적으로 나눈 단위 없는 값입니다. '
+FRACTION_NOTE = ('frame 면적 비율은 각 제품의 hotspot frame(2×2 unit 원본 영상에서 사방 500 px 를 잘라낸 중앙 영역) 면적으로 나눈 단위 없는 값입니다. '
                  '유닛 크기가 달라도 비교할 수 있으며 G2의 한 unit 환산이 필요 없습니다. '
-                 '밀도·unit·panel 가중값이나 확률·수율이 아니며 유한 2×2 경계 효과는 남아 있습니다.')
+                 '밀도·unit·panel 가중값이나 확률·수율이 아니며 유한 frame 경계 효과는 남아 있습니다.')
 
 
 def json_value(value):

@@ -97,7 +97,21 @@ def _write_dl1(dl1, side, product=None):
             world = shifted(world, dx, dy)
             if name == 'CNT1':
                 world[500 + 305 + dy:500 + 315 + dy, 500 + 305 + dx:500 + 315 + dx] = True
-        save_black(dl1 / (product or PRODUCTS[side]) / 'cno' / f'{number}_{name}.png', world)
+        save_black(dl1 / (product or PRODUCTS[side]) / 'CNO' / f'{number}-{name}.png', world)
+
+
+def _write_new_structure(dl1, side, product=None):
+    """The new input structure (layer-align): ``Merged_Layer/<electrode>/`` (names only matter), ``Layer/<n>-<layer>.png`` (two layers,
+    the full 2x2 unit image size, black = shape). The stage stage-3 import sees only ``CNO`` (written first), so this runs after it."""
+    dx, dy = OFFSET
+    model = dl1 / (product or PRODUCTS[side])
+    for electrode in ROLES:
+        save_black(model / 'Merged_Layer' / electrode / '1-L1.png', rect(0, 0, 4, 4))
+    for number, (name, seed) in enumerate((('L1', 31), ('L2', 32)), start=1):
+        world = cnt_world(seed)
+        if side == 'target':
+            world = shifted(world, dx, dy)
+        save_black(model / 'Layer' / f'{number}-{name}.png', world)
 
 
 MODEL_FOLDER = MODEL_PRODUCT = 'QA4_C00'     # the runners use the model key as folder name and as --model; models.yaml key = product id
@@ -224,8 +238,7 @@ def _build_chain(python, tmp, with_models=False):
         (data / 'assets').mkdir(exist_ok=True)
         for path in (out / 'assets').iterdir():
             shutil.copyfile(path, data / 'assets' / path.name)
-        for electrode in ROLES:                              # DL1 electrode folders: only the names matter to stage 4
-            save_black(base / 'data/input/dl1' / PRODUCTS[side] / electrode / '1-L1.png', rect(0, 0, 4, 4))
+        _write_new_structure(base / 'data/input/dl1', side)    # Merged_Layer electrode folders (names) + Layer PNGs for stage 4
     if with_models:
         stage('3m_import_model_assets', _jobs('3m_import_model_assets'))
         out, data = base / f'data/assets/models/{MODEL_FOLDER}', base / f'data/models/{MODEL_FOLDER}'
@@ -234,8 +247,7 @@ def _build_chain(python, tmp, with_models=False):
         (data / 'assets').mkdir(exist_ok=True)
         for path in (out / 'assets').iterdir():
             shutil.copyfile(path, data / 'assets' / path.name)
-        for electrode in ROLES:
-            save_black(base / 'data/input/dl1' / MODEL_PRODUCT / electrode / '1-L1.png', rect(0, 0, 4, 4))
+        _write_new_structure(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
         _write_models_yaml(base, with_assets=True)
     _config(base, with_assets=True)
     stage('4_candidates', _jobs('4_candidates', STAGE_ARGS))
@@ -326,6 +338,7 @@ def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(
     assert payload['roi_source'] == 'cnt_change' and payload['alignment']['status'] == 'aligned'
     alignment = json.loads((changes / 'alignment.json').read_text(encoding='utf-8'))
     assert alignment['status'] == 'aligned' and alignment['offset_xy_px'] == list(OFFSET)
+    assert payload['change_args']['apply_align'] == 'local' and len(alignment['unit_offsets']) == 4     # the example applies the alignment
     corr = json.loads((changes / 'direct/roi_correspondence.json').read_text(encoding='utf-8'))
     assert corr['schema_version'] == 'roi_correspondence_v1' and corr['pairs']
     assert 'candidates-change exit 0' in chain.logs['4_candidates'] or 'candidates-change exit 3' in chain.logs['4_candidates']
