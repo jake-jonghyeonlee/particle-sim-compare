@@ -264,6 +264,8 @@ class ImageSource:
         self.hot = []             # ROI 순서: {'box', 'obs', 'layers': {층: {'ref', 'tgt'}}}
         self.base = {}            # (ROI 번호, 층, 'ref' | 'tgt') → 상자 크기 전극 형상 bool 또는 None (collect_bases)
         self.base_reason = {}     # (층, 'ref' | 'tgt') → 바탕이 없는 사유 문구(호출자가 채운다). 없으면 '파일 없음'
+        self.base_errors = {}     # (층, 'ref' | 'tgt') → 전극 PNG 읽기 오류 코드 목록(호출자가 채운다; 국소 정렬 진단 전용)
+        self.diag_wide = {}       # (ROI 번호, 층) → 상자를 사방 diag_margin 넓힌 target 전극 bool 또는 None (국소 정렬 진단 전용)
 
     def collect(self, maps, windows):
         """``change_maps`` 결과(maps)에서 열지도용 블록 값과 선정 창의 hotspot 합집합 crop 을 뽑는다. 호출 뒤 maps 를 놓아도 된다."""
@@ -303,8 +305,11 @@ class ImageSource:
                 total += int(crops['ref'].nbytes) + int(crops['tgt'].nbytes)
         return total
 
-    def collect_bases(self, wanted, load_reference, load_target):
+    def collect_bases(self, wanted, load_reference, load_target, diag_margin=0):
         """층 묶음 바탕(전극 형상) crop. wanted: ``{층: [ROI 번호(0 부터)]}``, load_*(층) → frame 크기 bool 또는 None(전극 PNG 없음).
+
+        diag_margin > 0 이면(국소 정렬 진단) 같은 frame 을 읽는 김에 target 쪽 상자를 사방 diag_margin px 넓힌 crop 도
+        ``self.diag_wide[(ROI, 층)]`` 에 남긴다(추가 파일 읽기 없음). 바탕 그림에는 영향이 없다.
 
         (모델, 층) 하나씩 frame bool 을 읽어 필요한 모든 ROI 상자를 잘라 두고 바로 놓는다. target 은 hotspot 과 같은
         ``change_map._shift_crop`` 으로 reference 좌표에 옮긴다. 결과는 ``self.base[(ROI, 층, 'ref'|'tgt')]`` (없으면 None)."""
@@ -324,6 +329,11 @@ class ImageSource:
                             crop = full
                     else:
                         crop = change_map._shift_crop(frame, dy, dx, y0, y1, x0, x1)
+                        if diag_margin:
+                            m = int(diag_margin)
+                            self.diag_wide[(i, layer)] = change_map._shift_crop(frame, dy, dx, y0 - m, y1 + m, x0 - m, x1 + m)
+                    if side == 'tgt' and frame is None and diag_margin:
+                        self.diag_wide[(i, layer)] = None
                     self.base[(i, layer, side)] = crop
                 del frame
 

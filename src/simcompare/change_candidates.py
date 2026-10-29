@@ -16,10 +16,11 @@ import json
 import math
 import numbers
 from pathlib import Path
+import sys
 
 import numpy as np
 
-from . import alignment_report, candidates, change_map, template_export
+from . import alignment_report, candidates, change_map, local_align, template_export
 from .numeric_schema import NumericContractError
 
 DIAMETER_UM = 5
@@ -58,7 +59,7 @@ ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_ch
 
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
-                   mask_derivation_rule, merge_scope=None, suppress_overlap=None, electrode_png_root=None):
+                   mask_derivation_rule, merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
     if not Path(cnt_root).is_dir():
@@ -86,6 +87,9 @@ def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance
         raise _bad('invalid_candidates_change_argument', f'--merge-scope는 {"|".join(MERGE_SCOPES)} 중 하나여야 합니다')
     if suppress_overlap is not None:
         _finite('--suppress-overlap', suppress_overlap, unit_interval=True)
+    if local_align_um is not None and (isinstance(local_align_um, bool) or not isinstance(local_align_um, (int, float))
+                                       or not math.isfinite(local_align_um) or local_align_um <= 0):
+        raise _bad('local_align_um_invalid', f'--local-align-um {local_align_um!r}: 유한한 양수여야 합니다')
 
 
 class _Product:
@@ -434,13 +438,16 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None
 
 def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um,
                           change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule,
-                          merge_scope=None, suppress_overlap=None, electrode_png_root=None):
+                          merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
     reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
     direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
 
     ``electrode_png_root`` (선택): alignment.html 층 묶음의 전극 형상 바탕을 읽는 PNG root. 생략하면 ``cnt_from_dl1_root`` 다.
     전극 목록 비교(``electrode_set_differs``, 조합 짝짓기)는 이 값과 무관하게 ``cnt_from_dl1_root`` 를 쓴다.
+
+    ``local_align_um`` (선택, roi-detail/T2): ROI 국소 정렬 진단의 탐색 반경(µm). 주면 ``roi_local_alignment.json`` 을 더 쓴다.
+    진단 전용이다: 경고·종료 코드·다른 산출 파일은 바꾸지 않는다. round(R / pitch) 가 1..30 px 가 아니면 쓰기 전에 종료 2(``local_align_um_invalid``).
 
     폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값(없는 DL1 root, 폴더가 아닌 전극 PNG root, 규칙 값 포함),
     이미 있는 출력 경로, config 종류·지름,
@@ -450,7 +457,8 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     """
     from . import pipeline
     _validate_args(cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um, change_tolerance_um,
-                   window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap, electrode_png_root)
+                   window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap, electrode_png_root,
+                   local_align_um)
     out = Path(out)
     if out.exists() or out.is_symlink():
         raise _bad('output_dir_exists', str(out))
@@ -483,6 +491,11 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     if window_px > height or window_px > width:
         raise _bad('invalid_candidates_change_argument',
                    f'--window-um {window_um} ({window_px} px) does not fit the reference frame ({height} x {width} px)')
+    if local_align_um is not None:
+        try:
+            local_align.search_radius_px(local_align_um, pitch)
+        except local_align.RadiusError as exc:
+            raise _bad('local_align_um_invalid', str(exc))
     limit = _operation_limit(sides)
     args = {'cnt_from_dl1_root': str(cnt_from_dl1_root), 'align_search_um': align_search_um,
             'align_min_dice': align_min_dice, 'align_layer_tolerance_um': align_layer_tolerance_um,
@@ -494,6 +507,8 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         args['suppress_overlap'] = suppress_overlap
     if electrode_png_root is not None:
         args['electrode_png_root'] = str(electrode_png_root)
+    if local_align_um is not None:
+        args['local_align_um'] = local_align_um
     track, cleanup = candidates.output_tracker()
     out.mkdir()
     track(out, is_dir=True)
@@ -504,12 +519,15 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         raise
 
 
-def _collect_layer_bases(source, queries, windows, root, files, products, limit, reserved, warnings):
+def _collect_layer_bases(source, queries, windows, root, files, products, limit, reserved, warnings, diag=None):
     """alignment.html 5절 층 묶음의 전극 형상 바탕(DDDDDD)을 읽어 ROI 상자 crop 으로 남긴다.
 
     그리는 층(``alignment_report.layer_bundles``)만, (모델, 층) 하나씩 frame bool 로 읽고 바로 놓는다. 메모리 추정(``electrode_fits``)이
     한도를 넘으면 바탕만 빼고 경고 ``alignment_report_layer_base_skipped`` 를 남긴다(계산·JSON 은 그대로, 종료 코드 3).
-    읽은 파일의 sha256 은 기록하지 않는다: 이 PNG 는 보고서 그림에만 쓰이고 계산·export·JSON 에 들어가지 않으므로 입력 지문이 아니다."""
+    읽은 파일의 sha256 은 기록하지 않는다: 이 PNG 는 보고서 그림에만 쓰이고 계산·export·JSON 에 들어가지 않으므로 입력 지문이 아니다.
+
+    ``diag`` (국소 정렬 진단, 선택): ``{'r_px': r}`` 를 주면, 바탕 admission 이 통과한 경우에 한해 별도 admission(``local_align.estimate_bytes``)을 해서
+    통과하면 같은 읽기에서 넓은 target crop 도 남긴다. 못 하면 ``diag['skip']`` 에 사유를 적는다. 바탕 admission·경고는 diag 와 무관하다."""
     from .adapters.electrode_png import load_electrode_layer
     wanted = {}
     for i, (query, window) in enumerate(zip(queries, windows)):
@@ -528,7 +546,29 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
         for layer in wanted:
             for side in ('ref', 'tgt'):
                 source.base_reason[(layer, side)] = '읽기 생략: 메모리 한도'
+        if diag is not None:
+            diag['skip'] = 'electrode_bases_skipped'
         return
+    margin = 0
+    if diag is not None:
+        r = diag['r_px']
+        boxes = []
+        base_bytes = 0
+        for layer, rois in wanted.items():
+            for i in rois:
+                y0, y1, x0, x1 = source.hot[i]['box']
+                base_bytes += 2 * (y1 - y0) * (x1 - x0)
+        for i in sorted({i for rois in wanted.values() for i in rois}):
+            y0, y1, x0, x1 = source.hot[i]['box']
+            boxes.append((y1 - y0, x1 - x0))
+        n_cnt = len(set(source.ref_layers) & set(source.tgt_layers))
+        need = local_align.estimate_bytes(boxes, len(wanted), n_cnt, r)
+        room = limit - reserved - held - base_bytes - alignment_report.electrode_read_bytes(ref_shape, tgt_shape)
+        if need > room:
+            diag['skip'] = 'diagnostic_memory_limit'
+            diag['estimated_bytes'] = need
+        else:
+            margin = r
 
     def loader(name, side):
         item = products[name]
@@ -541,11 +581,118 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
                 return None
             errors = []
             union = load_electrode_layer(root, item.product_id, item.frame, names, errors)
+            if diag is not None:
+                source.base_errors[(layer, side)] = sorted(set(errors))
             if union is None:
                 source.base_reason[(layer, side)] = '읽기 실패: ' + (errors[0] if errors else 'unreadable')
             return union
         return load
-    source.collect_bases(wanted, loader('reference', 'ref'), loader('target', 'tgt'))
+    source.collect_bases(wanted, loader('reference', 'ref'), loader('target', 'tgt'), diag_margin=margin)
+
+
+def _pad_crop(array, y0, y1, x0, x1):
+    """frame 배열의 상자 crop. 배열이 상자보다 작으면 모자란 쪽은 False."""
+    crop = np.array(array[y0:y1, x0:x1], dtype=bool)
+    if crop.shape != (y1 - y0, x1 - x0):
+        full = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        full[:crop.shape[0], :crop.shape[1]] = crop
+        crop = full
+    return crop
+
+
+def _local_alignment_document(source, state, queries, windows, pitch, args, offset_px, frame_shape):
+    """``roi_local_alignment.json`` 내용(roi-detail/T2, 진단 전용). source 가 None 이면(그림 생략) 전 ROI 를 skipped 로 쓴다.
+
+    ROI 하나씩 crop 을 만들어 ``local_align.diagnose_roi`` 에 넘기고 바로 놓는다. 층 키는 출처 접두(``electrode:<층>``, ``cnt:<층>``)에 자연 정렬이다.
+    전극 PNG 오류가 있거나 한쪽 모델에만 있는 층은 진단에서 빼고 ``excluded_layers`` 에 적는다. 바탕 그림·바탕 admission 은 바꾸지 않는다."""
+    r = state['r_px']
+    tolerance, min_dice = float(args['align_layer_tolerance_um']), float(args['align_min_dice'])
+    dx, dy = offset_px
+    doc = {'schema': local_align.SCHEMA, 'search_um': args['local_align_um'], 'search_px': r, 'tolerance_um': tolerance,
+           'min_dice': min_dice, 'global_offset_xy_px': [dx, dy], 'layers_basis': local_align.LAYERS_BASIS,
+           'min_support_px': local_align.MIN_SUPPORT_PX, 'min_ring_support_px': local_align.MIN_RING_SUPPORT_PX,
+           'ambiguity_delta': float(local_align.AMBIGUITY_DELTA), 'excluded_layers': [], 'rois': []}
+    global_skip = 'images_skipped' if source is None else state.get('skip')
+    bundle_layers = []
+    for i, (query, window) in enumerate(zip(queries, windows)):
+        bundle_layers.append([b['layer'] for b in alignment_report.layer_bundles(query, window)[0]])
+    excluded, cnt_names = {}, []
+    if source is not None and global_skip is None:
+        for layer in sorted({layer for layers in bundle_layers for layer in layers}, key=alignment_report.natural_key):
+            sides = {side: any(source.base.get((i, layer, side)) is not None for i, layers in enumerate(bundle_layers) if layer in layers)
+                     for side in ('ref', 'tgt')}
+            errors = sorted(set(source.base_errors.get((layer, 'ref'), [])) | set(source.base_errors.get((layer, 'tgt'), [])))
+            if errors:
+                excluded['electrode:' + layer] = 'png_errors:' + ','.join(errors)
+            elif not (sides['ref'] and sides['tgt']):
+                excluded['electrode:' + layer] = 'one_sided' if (sides['ref'] or sides['tgt']) else 'missing_both'
+        for layer in sorted(set(source.ref_layers) | set(source.tgt_layers), key=alignment_report.natural_key):
+            if layer in source.ref_layers and layer in source.tgt_layers:
+                cnt_names.append(layer)
+            else:
+                excluded['cnt:' + layer] = 'one_sided'
+        doc['excluded_layers'] = [{'key': k, 'reason': excluded[k]} for k in sorted(excluded, key=alignment_report.natural_key)]
+    ok_points = []
+    for i, window in enumerate(windows):
+        y, x, w = window['window_origin_px'][0], window['window_origin_px'][1], window['window_px']
+        item = {'rank': i + 1, 'query_id': queries[i]['query_id'] if i < len(queries) else None,
+                'box_px': None, 'window_origin_px': [int(y), int(x)], 'window_px': int(w), 'layers_used': [],
+                'status': 'skipped', 'reason': global_skip, 'flags': [], 'local_offset_xy_px': None, 'local_offset_xy_um': None,
+                'delta_from_global_xy_um': None, 'delta_from_global_um': None, 'dice_global': None, 'dice_local': None,
+                'ring_delta_xy_px': None, 'ring_dice': None, 'ring_reason': None, 'per_layer': {}}
+        doc['rois'].append(item)
+        if global_skip is not None:
+            continue
+        y0, y1, x0, x1 = source.hot[i]['box']
+        item['box_px'] = [int(y0), int(y1), int(x0), int(x1)]
+        el_layers = [layer for layer in bundle_layers[i] if 'electrode:' + layer not in excluded
+                     and source.diag_wide.get((i, layer)) is not None and source.base.get((i, layer, 'ref')) is not None]
+        if not bundle_layers[i]:
+            item['reason'] = 'no_bundle_layers'
+            continue
+        keys = sorted(['electrode:' + layer for layer in el_layers] + ['cnt:' + layer for layer in cnt_names],
+                      key=alignment_report.natural_key)
+        if not keys:
+            item['reason'] = 'no_layers'
+            continue
+        ref_layers, wide_layers = {}, {}
+        for key in keys:
+            kind, layer = key.split(':', 1)
+            if kind == 'electrode':
+                ref_layers[key], wide_layers[key] = source.base[(i, layer, 'ref')], source.diag_wide[(i, layer)]
+            else:
+                ref_layers[key] = _pad_crop(source.ref_layers[layer], y0, y1, x0, x1)
+                wide_layers[key] = change_map._shift_crop(source.tgt_layers[layer], dy, dx, y0 - r, y1 + r, x0 - r, x1 + r)
+        ref_valid = _pad_crop(source.ref_valid, y0, y1, x0, x1)
+        tgt_valid = change_map._shift_crop(source.tgt_valid, dy, dx, y0 - r, y1 + r, x0 - r, x1 + r)
+        item['layers_used'] = [{'layer': key.split(':', 1)[1], 'source': key.split(':', 1)[0]} for key in keys]
+        got = local_align.diagnose_roi(ref_layers, wide_layers, ref_valid, tgt_valid, (y - y0, y + w - y0, x - x0, x + w - x0), r,
+                                       pitch_um=pitch, tolerance_um=tolerance, min_dice=min_dice)
+        item.update({'status': got['status'], 'reason': got['reason'], 'flags': got['flags'], 'dice_global': got['dice_global'],
+                     'dice_local': got['dice_local'], 'ring_dice': got['ring_dice'], 'ring_reason': got['ring_reason'],
+                     'per_layer': got['per_layer']})
+        if got['d_yx'] is not None:
+            ddy, ddx = got['d_yx']
+            item['local_offset_xy_px'] = [dx + ddx, dy + ddy]
+            item['local_offset_xy_um'] = [local_align._r6((dx + ddx) * pitch), local_align._r6((dy + ddy) * pitch)]
+            item['delta_from_global_xy_um'] = [local_align._r6(ddx * pitch), local_align._r6(ddy * pitch)]
+            item['delta_from_global_um'] = local_align._r6(math.hypot(ddx * pitch, ddy * pitch))
+        if got['ring_d_yx'] is not None:
+            item['ring_delta_xy_px'] = [got['ring_d_yx'][1], got['ring_d_yx'][0]]
+        if got['status'] == 'ok':
+            ok_points.append((x + w / 2.0, y + w / 2.0, item['local_offset_xy_um'][0], item['local_offset_xy_um'][1]))
+    fit, fit_reason = local_align.linear_fit(ok_points, frame_shape, pitch)
+    if global_skip is not None or not doc['rois']:
+        fit, fit_reason = None, 'no_diagnosed_rois'
+    doc['linear_fit'], doc['linear_fit_reason'] = fit, fit_reason
+    counts = {status: 0 for status in local_align.STATUSES}
+    for item in doc['rois']:
+        counts[item['status']] += 1
+    doc['summary'] = {'n_rois': len(doc['rois']), **counts}
+    differs = [item['rank'] for item in doc['rois'] if 'local_offset_differs' in item['flags']]
+    doc['notes'] = ([{'code': 'roi_local_offset_differs', 'severity': 'info', 'tolerance_um': tolerance, 'ranks': differs}]
+                    if differs else [])
+    return doc
 
 
 def _frame_record(ref_shape, tgt_shape, stats, bbox):
@@ -893,9 +1040,13 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
 
     # --- alignment.html: 정렬이 실패·불확실해도 항상 쓴다. 그림 생성을 허용하지 않았으면 표만 쓰고 경고(exit 3)
     skipped = None
+    local_um = args.get('local_align_um')
+    local_state = {'r_px': local_align.search_radius_px(local_um, pitch)} if local_um is not None else None
     if report_source is not None:
         _collect_layer_bases(report_source, directions[0]['queries'], windows, electrode_root, electrode_files, products,
-                             limit, reserved, warnings)
+                             limit, reserved, warnings, diag=local_state)
+    local_doc = (_local_alignment_document(report_source, local_state, directions[0]['queries'], windows, pitch, args, offset_px,
+                                           ref_shape) if local_um is not None else None)
     if report_source is None:
         need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k,
                                                       n_hot_layers, window_px)
@@ -907,6 +1058,11 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         pairing_stats=pairing['stats'])
     report_source = None
     emit_bytes('alignment.html', report_html)
+    if local_doc is not None:
+        emit('roi_local_alignment.json', json.dumps(local_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+        summary = local_doc['summary']
+        print('roi_local_alignment: n_rois=%d ok=%d skipped=%d' % (summary['n_rois'], summary['ok'], summary['skipped']),
+              file=sys.stderr)
     alignment_report_doc = {k: report_info[k] for k in ('path', 'bytes', 'downscaled', 'crops_omitted')}
 
     # --- 9~12. 문서
@@ -956,7 +1112,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     alignment_summary = {k: alignment[k] for k in ('status', 'reasons', 'offset_xy_um', 'dice_best', 'peak_ratio')}
     change_args = {k: args[k] for k in ('align_search_um', 'align_min_dice', 'align_layer_tolerance_um',
                                         'change_tolerance_um', 'window_um', 'merge_overlap', 'top_k')}
-    change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap', 'electrode_png_root') if k in args})
+    change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap', 'electrode_png_root', 'local_align_um') if k in args})
     payload = {'schema_version': candidates.SCHEMA_VERSION, 'roi_source': ROI_SOURCE, 'producer_commit': commit,
                'args': {'min_count': None, 'window_um': window_um, 'merge_overlap': args['merge_overlap'],
                         'max_candidates': top_k, 'representative_diameter_um': DIAMETER_UM},
