@@ -162,34 +162,118 @@ def _load_stack_order(path):
     return {'order': order, 'sha256': _sha(data)}
 
 
+def _png_record(model, parts, item_name, number, layer, prefix):
+    rel = '/'.join([model] + list(parts) + [item_name])
+    return {'relative_path': prefix + rel, 'fs_rel': rel, 'original_filename': item_name,
+            'filename_number': number, 'layer': layer}
+
+
+def _scan_png_folder(model, parts, path, pattern, bad_name_code, prefix, warnings):
+    """Records of one folder (names only). Malformed PNG names raise ``bad_name_code``; other files only warn."""
+    records = []
+    for item in sorted(os.scandir(path), key=lambda e: e.name):
+        rel = '/'.join([model] + list(parts) + [item.name])
+        if not item.name.lower().endswith('.png'):
+            warnings.append({'status': 'unrelated_file', 'path': prefix + rel})
+            continue
+        match = pattern.fullmatch(item.name)
+        if not match or int(match.group(1)) <= 0:
+            raise _error(bad_name_code, prefix + rel)
+        records.append(_png_record(model, parts, item.name, int(match.group(1)), match.group(2), prefix))
+    return records
+
+
+def _has_png(path):
+    return any(item.is_file() and item.name.lower().endswith('.png') for item in os.scandir(path))
+
+
 def _scan_dl1_model(root: Path, model: str, prefix: str = ''):
-    """Names only (no decoding). Malformed names and duplicate electrode x layer are errors."""
+    """Names only (no decoding). Malformed names and duplicate electrode x layer are errors.
+
+    ``structure`` is ``merged_layer_v2`` when a ``Merged_Layer`` folder (casefold) exists: electrodes are its subfolders,
+    ``Layer`` holds one PNG per layer and ``CNO``/``cno`` holds CNT. Otherwise it is ``legacy``: every folder except
+    ``cno``/``CNO`` is an electrode (a folder named ``Layer`` too) and ``layers`` is empty."""
     model_dir = root / model
-    electrodes, cno, warnings = {}, [], []
-    for entry in sorted(os.scandir(model_dir), key=lambda e: e.name):
+    entries = sorted(os.scandir(model_dir), key=lambda e: e.name)
+    by_fold = {}
+    for entry in entries:
+        if entry.is_dir():
+            by_fold.setdefault(entry.name.casefold(), []).append(entry)
+    for key, code in (('cno', 'cnt_folder_duplicate'),):
+        if len(by_fold.get(key, [])) > 1:
+            raise _error(code, ' and '.join(prefix + f'{model}/{e.name}' for e in by_fold[key]))
+    v2 = 'merged_layer' in by_fold
+    electrodes, cno, layers, warnings = {}, [], {}, []
+    if v2:
+        if len(by_fold['merged_layer']) > 1:
+            raise _error('layout_structure_mixed', ' and '.join(prefix + f'{model}/{e.name}' for e in by_fold['merged_layer']))
+        if len(by_fold.get('layer', [])) > 1:
+            raise _error('layer_folder_duplicate', ' and '.join(prefix + f'{model}/{e.name}' for e in by_fold['layer']))
+        warnings.append({'status': 'layout_structure', 'structure': 'merged_layer_v2', 'model': model})
+    for entry in entries:
         if not entry.is_dir():
             warnings.append({'status': 'unrelated_file', 'path': f'{prefix}{model}/{entry.name}'})
             continue
-        is_cno = entry.name == 'cno'
-        pattern = CNO_NAME if is_cno else ELECTRODE_NAME
-        for item in sorted(os.scandir(entry.path), key=lambda e: e.name):
-            rel = f'{model}/{entry.name}/{item.name}'
-            if not item.name.lower().endswith('.png'):
-                warnings.append({'status': 'unrelated_file', 'path': prefix + rel})
-                continue
-            match = pattern.fullmatch(item.name)
-            if not match or int(match.group(1)) <= 0:
-                raise _error('invalid_electrode_png_name', prefix + rel)
-            record = {'relative_path': prefix + rel, 'fs_rel': rel, 'original_filename': item.name,
-                      'filename_number': int(match.group(1)), 'layer': match.group(2)}
-            if is_cno:
-                cno.append(record)
-            else:
+        fold = entry.name.casefold()
+        if fold == 'cno':
+            cno.extend(_scan_png_folder(model, [entry.name], entry.path, CNO_NAME, 'invalid_electrode_png_name', prefix, warnings))
+        elif not v2:
+            for record in _scan_png_folder(model, [entry.name], entry.path, ELECTRODE_NAME, 'invalid_electrode_png_name', prefix, warnings):
                 slot = electrodes.setdefault(entry.name, {})
                 if record['layer'] in slot:
-                    raise _error('duplicate_electrode_layer', f"{slot[record['layer']]['relative_path']} and {prefix + rel}")
+                    raise _error('duplicate_electrode_layer', f"{slot[record['layer']]['relative_path']} and {record['relative_path']}")
                 slot[record['layer']] = record
-    return {'electrodes': electrodes, 'cno': cno, 'warnings': warnings}
+        elif fold == 'merged_layer':
+            for sub in sorted(os.scandir(entry.path), key=lambda e: e.name):
+                if not sub.is_dir():
+                    warnings.append({'status': 'unrelated_file', 'path': f'{prefix}{model}/{entry.name}/{sub.name}'})
+                    continue
+                for record in _scan_png_folder(model, [entry.name, sub.name], sub.path, ELECTRODE_NAME,
+                                               'invalid_electrode_png_name', prefix, warnings):
+                    slot = electrodes.setdefault(sub.name, {})
+                    if record['layer'] in slot:
+                        raise _error('duplicate_electrode_layer', f"{slot[record['layer']]['relative_path']} and {record['relative_path']}")
+                    slot[record['layer']] = record
+        elif fold == 'layer':
+            for record in _scan_png_folder(model, [entry.name], entry.path, ELECTRODE_NAME, 'invalid_layer_png_name', prefix, warnings):
+                if record['layer'] in layers:
+                    raise _error('duplicate_layer_png', f"{layers[record['layer']]['relative_path']} and {record['relative_path']}")
+                layers[record['layer']] = record
+        elif _has_png(entry.path):
+            raise _error('layout_structure_mixed', f'{prefix}{model}/{entry.name} next to Merged_Layer')
+        else:
+            warnings.append({'status': 'unrelated_folder', 'path': f'{prefix}{model}/{entry.name}'})
+    return {'electrodes': electrodes, 'cno': cno, 'layers': layers, 'structure': 'merged_layer_v2' if v2 else 'legacy',
+            'warnings': warnings}
+
+
+def layout_structure(root, model):
+    """``'legacy'`` | ``'merged_layer_v2'`` | ``None`` (모델 폴더 없음). 폴더 이름만 본다(casefold)."""
+    model_dir = Path(root) / model
+    if not model_dir.is_dir():
+        return None
+    for entry in os.scandir(model_dir):
+        if entry.is_dir() and entry.name.casefold() == 'merged_layer':
+            return 'merged_layer_v2'
+    return 'legacy'
+
+
+def scan_layer_pngs(root, model):
+    """``{layer: fs_rel}`` (층 이름 정렬) — 새 구조의 ``Layer/`` PNG. legacy·모델 폴더 없음은 ``{}`` 다(이름만, 읽지 않는다)."""
+    root = Path(root)
+    if layout_structure(root, model) != 'merged_layer_v2':
+        return {}
+    layers = _scan_dl1_model(root, model)['layers']
+    return {layer: layers[layer]['fs_rel'] for layer in sorted(layers)}
+
+
+def load_layer_png(root, model, frame, layer_fs_rel):
+    """한 층의 Layer PNG 를 frame 크기 bool(검정 = 형상)로 읽는다. 디코드·크기 오류는 건너뛰지 않고 그대로 올린다
+    (크기 ≠ frame + 사방 500 px 는 ``electrode_frame_mismatch``). ``model`` 은 호출 모양을 ``scan_layer_pngs`` 와 맞추는 인수다."""
+    root = Path(root)
+    _check_frame(frame)
+    marked, _ = _decode(resolve_path(root, layer_fs_rel).read_bytes(), layer_fs_rel)
+    return _crop(marked, frame.shape_yx, layer_fs_rel).copy()
 
 
 def list_dl1_electrodes(root, model):
