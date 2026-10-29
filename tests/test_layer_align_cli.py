@@ -255,7 +255,7 @@ def test_e_unit_align_um_too_small_and_too_large(small, tmp_path, capsys):
 
 def test_e_apply_align_argument_errors(small, tmp_path, capsys):
     expect_error(small, tmp_path, capsys, 'apply_align_requires_unit_align', '--apply-align', 'unit')
-    expect_error(small, tmp_path, capsys, 'apply_align_local_not_available', '--apply-align', 'local', '--unit-align-um', '1')
+    expect_error(small, tmp_path, capsys, 'apply_align_requires_local_align', '--apply-align', 'local', '--unit-align-um', '1')
     expect_error(small, tmp_path, capsys, 'invalid_candidates_change_argument', '--unit-fold-tolerance-um', '3')
 
 

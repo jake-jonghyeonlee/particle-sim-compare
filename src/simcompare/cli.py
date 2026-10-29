@@ -106,13 +106,17 @@ def _parser() -> argparse.ArgumentParser:
                         help="선택. Layer 전역 교차 확인과 unit 4개 offset 의 탐색 반경 µm. 두 모델 모두 새 구조(Merged_Layer) + Layer/ PNG 가 있어야 한다. "
                              "unit 크기 차이 |ΔU| 의 2배 + 2 px 이상, 300 px 이하여야 한다. 지정하면 alignment.json 에 layer_global_check·unit_offsets·unit_geometry·layer_inputs 를 더한다(계산 불변). 생략하면 하지 않음")
     change.add_argument("--apply-align", choices=("diagnostic", "unit", "local"),
-                        help="선택. diagnostic(생략 시) = 기존 동작. unit = unit offset 장을 변경 지도·창 재계산·target 방향 중심·직접 쌍에 적용(--unit-align-um 필요). local 은 아직 쓸 수 없다(종료 2)")
+                        help="선택. diagnostic(생략 시) = 기존 동작. unit = unit offset 장을 변경 지도·창 재계산·target 방향 중심·직접 쌍에 적용(--unit-align-um 필요). "
+                             "local = 위에 더해 ROI 마다 Layer 층 + CNT 층 Dice 우선 국소 offset 을 구해 재점수화에 적용(--local-align-um 필요, --unit-align-um 은 시작점용으로 선택). "
+                             "local 의 --local-align-um 은 |ΔU| + 2 px 이상, 300 px 이하여야 한다")
+    change.add_argument("--refine-pool", type=int,
+                        help="선택, --apply-align local 전용. 창 후보 점수 상위 N 개만 국소 보정·재점수화한다(생략하면 10 × top-k). 풀 밖 창은 순위에서 빠진다")
     change.add_argument("--unit-fold", action="store_true",
                         help="선택. 억제 뒤·top_k 앞에서 서로 다른 unit 의 같은 위치 ROI 를 대표 하나로 접는다. 접힌 ROI 는 대표의 unit_fold.replicas 에 남는다")
     change.add_argument("--unit-fold-tolerance-um", type=float,
                         help="선택. --unit-fold 와 함께만. 접힌 좌표(unit 안 위치) 거리 허용값 µm. 생략하면 window-um / 4")
     change.add_argument("--local-align-um", type=float,
-                        help="선택. ROI 국소 정렬 진단의 탐색 반경 µm(예시 1). 지정하면 roi_local_alignment.json 을 더 쓴다. 진단 전용이며 다른 산출·종료 코드를 바꾸지 않는다. round(R / pitch) 가 2..30 px 여야 한다(2 px 이상이어야 거리 2 이상 후보가 있어 모호(ambiguous) 판정이 가능하다). 생략하면 진단 없음")
+                        help="선택. ROI 국소 정렬 진단의 탐색 반경 µm(예시 1). 지정하면 roi_local_alignment.json 을 더 쓴다. --apply-align local 이 아니면 진단 전용이며 다른 산출·종료 코드를 바꾸지 않는다(local 이면 적용 경로: |ΔU| + 2 .. 300 px). 진단 경로는 round(R / pitch) 가 2..30 px 여야 한다(2 px 이상이어야 거리 2 이상 후보가 있어 모호(ambiguous) 판정이 가능하다). 생략하면 진단 없음")
     change.add_argument("--top-k", required=True, type=int, help="방향(reference_to_target / target_to_reference)별 질의 수")
     change.add_argument("--mask-derivation-rule", required=True,
                         help="DL2 mask_derivation 규칙: between_stack_order_v1 만 허용(기본값 없음). 질의·index export 폴더마다 mask_derivation.json 을 쓴다")
@@ -310,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
                 merge_scope=args.merge_scope, suppress_overlap=args.suppress_overlap,
                 electrode_png_root=args.electrode_png_root, local_align_um=args.local_align_um,
                 unit_align_um=args.unit_align_um, apply_align=args.apply_align, unit_fold=args.unit_fold,
-                unit_fold_tolerance_um=args.unit_fold_tolerance_um)
+                unit_fold_tolerance_um=args.unit_fold_tolerance_um, refine_pool=args.refine_pool)
             _print(result)
             return result["exit_code"]
         if args.command == "candidates-dv":

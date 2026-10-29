@@ -65,7 +65,7 @@ UNIT_FOLD_POLICY = 'greedy_rank_order_toroidal_unit_distance_le_tolerance_refere
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
                    mask_derivation_rule, merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None,
-                   unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None):
+                   unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None, refine_pool=None):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
     if not Path(cnt_root).is_dir():
@@ -102,21 +102,23 @@ def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance
         _finite('--unit-align-um', unit_align_um, positive=True)
     if apply_align is not None and apply_align not in APPLY_ALIGN_MODES:
         raise _bad('invalid_candidates_change_argument', f'--apply-align는 {"|".join(APPLY_ALIGN_MODES)} 중 하나여야 합니다')
-    if apply_align == 'local':
-        raise _bad('apply_align_local_not_available', '--apply-align local 은 아직 구현되지 않았습니다(diagnostic 또는 unit 을 쓰세요)')
+    if apply_align == 'local' and local_align_um is None:
+        raise _bad('apply_align_requires_local_align', '--apply-align local 은 --local-align-um 이 필요합니다')
     if apply_align == 'unit' and unit_align_um is None:
         raise _bad('apply_align_requires_unit_align', '--apply-align unit 은 --unit-align-um 이 필요합니다')
+    if refine_pool is not None:
+        if apply_align != 'local':
+            raise _bad('refine_pool_requires_local', '--refine-pool 은 --apply-align local 과 함께만 줄 수 있습니다')
+        if type(refine_pool) is not int or refine_pool < 1:
+            raise _bad('invalid_candidates_change_argument', '--refine-pool 은 1 이상의 정수여야 합니다')
     if unit_fold_tolerance_um is not None:
         if not unit_fold:
             raise _bad('invalid_candidates_change_argument', '--unit-fold-tolerance-um 은 --unit-fold 와 함께만 줄 수 있습니다')
         _finite('--unit-fold-tolerance-um', unit_fold_tolerance_um, minimum=0)
 
 
-def _check_unit_align(unit_align_um, pitch, products, layer_root):
-    """``--unit-align-um`` 가 필요한 실행의 쓰기 전 검사. 탐색 반경(px)을 돌려준다.
-
-    두 모델 모두 새 구조(Merged_Layer) + Layer PNG 가 있어야 하고(``layer_folder_required``), 반경이 요구 범위
-    ``[2·|ΔU|max + 2, MAX_UNIT_SEARCH_PX]`` 안이어야 한다."""
+def _require_layer_folder(products, layer_root):
+    """두 모델 모두 새 구조(Merged_Layer) + Layer PNG 가 있어야 한다(``layer_folder_required``)."""
     from .adapters.electrode_png import layout_structure, scan_layer_pngs
     missing = [name for name in ('reference', 'target')
                if layout_structure(layer_root, products[name].product_id) != 'merged_layer_v2'
@@ -124,6 +126,35 @@ def _check_unit_align(unit_align_um, pitch, products, layer_root):
     if missing:
         raise _bad('layer_folder_required',
                    f'{",".join(missing)}: 새 구조(Merged_Layer) + Layer/ PNG 가 있어야 합니다 (root {layer_root})')
+
+
+def _check_local_apply(local_align_um, pitch, products, layer_root):
+    """``--apply-align local`` 의 쓰기 전 검사. 국소 탐색 반경(px)을 돌려준다.
+
+    Layer 새 구조가 필요하고(``layer_folder_required``), 반경이 ``[|ΔU|max + 2, MAX_LOCAL_APPLY_PX]`` 안이어야 한다
+    (진단 전용 경로의 2..30 px 규칙은 이 경로에 적용하지 않는다)."""
+    _require_layer_folder(products, layer_root)
+    ref_geo = layer_align.UnitGeometry(products['reference'].frame.valid.shape)
+    tgt_geo = layer_align.UnitGeometry(products['target'].frame.valid.shape)
+    radius = change_map._round_px(local_align_um, pitch)
+    delta = layer_align.delta_u_max(ref_geo, tgt_geo)
+    required = max(layer_align.required_local_radius_px(delta), local_align.MIN_LOCAL_SEARCH_PX)
+    if radius < required:
+        raise _bad('local_align_um_too_small_for_unit_delta',
+                   f'--local-align-um {local_align_um} ({radius} px) < 필요 {required} px = {round(required * pitch, 6)} µm '
+                   f'(|ΔU|max {delta} px + 2 px)')
+    if radius > layer_align.MAX_LOCAL_APPLY_PX:
+        raise _bad('local_align_um_invalid',
+                   f'--local-align-um {local_align_um} ({radius} px) > 상한 {layer_align.MAX_LOCAL_APPLY_PX} px')
+    return radius
+
+
+def _check_unit_align(unit_align_um, pitch, products, layer_root):
+    """``--unit-align-um`` 가 필요한 실행의 쓰기 전 검사. 탐색 반경(px)을 돌려준다.
+
+    두 모델 모두 새 구조(Merged_Layer) + Layer PNG 가 있어야 하고(``layer_folder_required``), 반경이 요구 범위
+    ``[2·|ΔU|max + 2, MAX_UNIT_SEARCH_PX]`` 안이어야 한다."""
+    _require_layer_folder(products, layer_root)
     ref_geo = layer_align.UnitGeometry(products['reference'].frame.valid.shape)
     tgt_geo = layer_align.UnitGeometry(products['target'].frame.valid.shape)
     radius = change_map._round_px(unit_align_um, pitch)
@@ -456,8 +487,14 @@ def _layer_key(contribution):
     return {'layer': contribution['layer']} if 'layer' in contribution else {}
 
 
-def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None, n_unit_folded=None):
+def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None, n_unit_folded=None, refine=None):
+    """``refine`` (--apply-align local 만): {'pool': 풀 크기, 'survivors': 재점수 뒤 변경이 남은 창 수}. 단계 ``refine_pool`` 이 ``change_candidates`` 바로 뒤에 들어가고
+    ``merged`` 는 survivors 에서 센다(풀 밖 창과 재점수 뒤 0 이 된 창은 병합 전에 이미 빠졌다)."""
     kept = len(queries)
+    if refine is not None:
+        n_before_merge = refine['survivors']
+    else:
+        n_before_merge = n_candidates
     survivors = (n_merged if n_suppressed is None else n_suppressed) if n_unit_folded is None else n_unit_folded
     ready = sum(q['status'] == 'ready' for q in queries)
     blocked_reasons = {}
@@ -468,14 +505,24 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None
     shortfall = max(top_k - kept, 0)
     stages = [
         {'stage': 'change_candidates', 'count': n_candidates, 'dropped': 0, 'reasons': {}},
-        {'stage': 'merged', 'count': n_merged, 'dropped': n_candidates - n_merged,
-         'reasons': {'merged_overlap': n_candidates - n_merged} if n_candidates > n_merged else {}},
+        {'stage': 'merged', 'count': n_merged, 'dropped': n_before_merge - n_merged,
+         'reasons': {'merged_overlap': n_before_merge - n_merged} if n_before_merge > n_merged else {}},
         {'stage': 'top_k', 'count': kept, 'dropped': survivors - kept,
          'reasons': ({'cut_by_top_k': survivors - kept} if survivors > kept else
                      ({'top_k_not_filled': shortfall} if shortfall else {}))},
         {'stage': 'exported_ready', 'count': ready, 'dropped': kept - ready, 'reasons': dict(sorted(blocked_reasons.items()))}]
+    if refine is not None:
+        outside = n_candidates - refine['pool']
+        zero = refine['pool'] - refine['survivors']
+        reasons = {}
+        if outside:
+            reasons['outside_refine_pool'] = outside
+        if zero:
+            reasons['zero_after_refine'] = zero
+        stages.insert(1, {'stage': 'refine_pool', 'count': refine['survivors'], 'dropped': n_candidates - refine['survivors'],
+                          'reasons': reasons})
     if n_suppressed is not None:
-        stages.insert(2, {'stage': 'suppressed', 'count': n_suppressed, 'dropped': n_merged - n_suppressed,
+        stages.insert(3 if refine is not None else 2, {'stage': 'suppressed', 'count': n_suppressed, 'dropped': n_merged - n_suppressed,
                           'reasons': {'suppressed_overlap': n_merged - n_suppressed} if n_merged > n_suppressed else {}})
     if n_unit_folded is not None:
         before = n_merged if n_suppressed is None else n_suppressed
@@ -484,6 +531,8 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None
     doc = {'direction': direction, 'stages': stages, 'change_candidates': n_candidates, 'merged': n_merged,
             'top_k': top_k, 'top_k_not_filled': shortfall, 'exported_ready': ready, 'blocked': kept - ready,
             'note': 'reasons 값은 사유 코드별 질의 수이며 한 질의가 여러 사유를 가질 수 있어 dropped와 합이 다를 수 있다'}
+    if refine is not None:
+        doc['refine_pool'] = refine['requested']
     if n_suppressed is not None:
         doc['suppressed'] = n_suppressed
     if n_unit_folded is not None:
@@ -496,7 +545,8 @@ def _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed=None
 def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um,
                           change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule,
                           merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None,
-                          unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None):
+                          unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None,
+                          refine_pool=None):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
     reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
     direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
@@ -510,10 +560,12 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     ``unit_align_um`` (선택, layer-align/T4a): Layer 전역 교차 확인과 unit 4개 offset 의 탐색 반경(µm). 주면 alignment.json 에
     ``layer_global_check``·``unit_offsets``·``unit_geometry``·``layer_inputs`` 를 더한다(계산·순위·export 는 그대로).
     ``apply_align`` (선택, ``diagnostic`` 기본 | ``unit`` | ``local``): ``unit`` 이면 unit offset 장을 변경 지도·창 재계산·target 방향 중심·직접 쌍·CNT 변경 면적에 쓴다.
-    ``local`` 은 T4b 전까지 종료 2(``apply_align_local_not_available``). ``unit_fold`` (선택): 억제 뒤·top_k 앞에서 서로 다른 unit 의 같은 위치 ROI 를 접는다
+    ``local`` (layer-align/T4b) 이면 ROI 마다 Layer 층 + CNT 층 Dice 우선 국소 보정을 하고(``--local-align-um`` 필요, ``--unit-align-um`` 은 시작점용으로 선택),
+    창 후보 → 점수 상위 ``refine_pool``(기본 10 × top_k) 원시 창 → 창마다 국소 보정 + 재점수화 → 재점수로 병합 → 억제 → 접기 → top_k 순서로 진행한다.
+    ``unit_fold`` (선택): 억제 뒤·top_k 앞에서 서로 다른 unit 의 같은 위치 ROI 를 접는다
     (``unit_fold_tolerance_um`` 생략 시 window_um / 4).
     쓰기 전 종료 2: ``layer_folder_required``(두 모델 중 하나라도 새 구조 + Layer PNG 가 없음), ``unit_align_um_too_small``, ``unit_align_um_too_large``,
-    ``apply_align_requires_unit_align``, ``apply_align_local_not_available``.
+    ``apply_align_requires_unit_align``, ``apply_align_requires_local_align``, ``local_align_um_too_small_for_unit_delta``, ``refine_pool_requires_local``.
 
     폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값(없는 DL1 root, 폴더가 아닌 전극 PNG root, 규칙 값 포함),
     이미 있는 출력 경로, config 종류·지름,
@@ -524,7 +576,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     from . import pipeline
     _validate_args(cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um, change_tolerance_um,
                    window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap, electrode_png_root,
-                   local_align_um, unit_align_um, apply_align, unit_fold, unit_fold_tolerance_um)
+                   local_align_um, unit_align_um, apply_align, unit_fold, unit_fold_tolerance_um, refine_pool)
     out = Path(out)
     if out.exists() or out.is_symlink():
         raise _bad('output_dir_exists', str(out))
@@ -557,7 +609,10 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     if window_px > height or window_px > width:
         raise _bad('invalid_candidates_change_argument',
                    f'--window-um {window_um} ({window_px} px) does not fit the reference frame ({height} x {width} px)')
-    if local_align_um is not None:
+    local_radius_px = None
+    if local_align_um is not None and apply_align == 'local':
+        local_radius_px = _check_local_apply(local_align_um, pitch, products, electrode_png_root or cnt_from_dl1_root)
+    elif local_align_um is not None:
         try:
             local_align.search_radius_px(local_align_um, pitch)
         except local_align.RadiusError as exc:
@@ -583,6 +638,9 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         args['unit_align_px'] = unit_radius_px
     if apply_align is not None:
         args['apply_align'] = apply_align
+    if apply_align == 'local':
+        args['local_align_px'] = local_radius_px
+        args['refine_pool'] = refine_pool if refine_pool is not None else 10 * top_k
     if unit_fold:
         args['unit_fold'] = True
         args['unit_fold_tolerance_um'] = window_um / 4.0 if unit_fold_tolerance_um is None else unit_fold_tolerance_um
@@ -927,6 +985,246 @@ def _recomputed_windows(windows, results, pitch):
     return out
 
 
+LOCAL_LAYERS_BASIS = 'layer_png_per_layer_dice_first'
+LOCAL_APPLY_POLICY = 'top_n_pool_local_dice_first_rescore_then_merge_suppress_fold_top_k'
+CROSSES_BOUNDARY_FLAG = 'crosses_unit_boundary_field_used'
+
+
+def _maps_bytes(maps):
+    """``change_maps`` 결과가 보유한 배열 바이트(국소 보정 동안 admission 한도에서 뺀다)."""
+    total = int(np.asarray(maps['D']).nbytes)
+    for key in ('maps', 'union_change', 'union_ref', 'union_tgt'):
+        total += sum(int(np.asarray(a).nbytes) for a in maps[key].values())
+    return total
+
+
+def _crosses_unit(window, geometry):
+    """창(정사각)이 reference unit 경계를 넘는가: 왼쪽 위 칸과 오른쪽 아래 칸의 unit 번호가 다르다."""
+    y, x = window['window_origin_px']
+    w = window['window_px']
+    return geometry.unit_index((y, x)) != geometry.unit_index((y + w - 1, x + w - 1))
+
+
+def _local_corrections(windows, products, cnt, layer_root, g, unit, radius, args, pitch, limit, reserved):
+    """layer-align/T4b: 원시 창 풀(``windows``)의 창마다 국소 offset 을 구한다. 파일은 읽기만 한다.
+
+    창마다 상자(``alignment_report._crop_box``) 안에서, 시작점 s(창 중심 unit 의 적용 offset, unit 정렬이 없으면 전역 g)에서 반경 ``radius`` 안의 상대 이동 δ 를
+    Layer 층 + CNT 층(키 ``layer:`` / ``cnt:``)의 Dice 우선 규칙(``layer_align.choose_dice_first``)으로 고른다. 점수는 상자 crop FFT 다.
+    Ω = 상자 안 reference valid ∧ 모든 후보 δ 에서 target valid(``local_align.valid_domain``), unit 정렬이 있으면 창 중심 unit 영역으로 한정한다.
+    선택이 ok 이면 링(창 둘레 띠) 검사를 한다: 링 판정 불가면 적용하지 않고, 링과 어긋나면 ``change_biased`` 플래그를 달되 적용한다.
+    적용하지 않는 창은 unit offset(없으면 전역 g)을 그대로 쓴다. unit 경계를 넘는 창은 국소 보정을 하지 않는다(field 사용).
+
+    반환: ``{'records': [...], 'excluded': {...}, 'layer_files': {...}, 'timings_s': {...}}``. 층 파일은 하나씩 읽고 상자 crop 만 남긴다."""
+    import time
+    from .adapters.electrode_png import load_layer_png, scan_layer_pngs
+    from .numeric_images import resolve_path
+    started = time.perf_counter()
+    read_s = 0.0
+    ref, tgt = products['reference'], products['target']
+    height, width = ref.frame.valid.shape
+    r = int(radius)
+    geometry = unit['geometry'] if unit is not None else None
+    regions = geometry.unit_regions() if geometry is not None else None
+    min_dice = float(args['align_min_dice'])
+    tolerance = float(args['align_layer_tolerance_um'])
+    files = {name: scan_layer_pngs(layer_root, products[name].product_id) for name in ('reference', 'target')}
+    layer_names = sorted(set(files['reference']) & set(files['target']), key=alignment_report.natural_key)
+    cnt_names = sorted(set(cnt['reference']['layers']) & set(cnt['target']['layers']), key=alignment_report.natural_key)
+    excluded = {}
+    for name in sorted(set(files['reference']) ^ set(files['target'])):
+        excluded['layer:' + name] = 'one_sided'
+    for name in sorted(set(cnt['reference']['layers']) ^ set(cnt['target']['layers'])):
+        excluded['cnt:' + name] = 'one_sided'
+    keys = ['layer:' + n for n in layer_names] + ['cnt:' + n for n in cnt_names]
+    plan = []
+    for window in windows:
+        y, x = window['window_origin_px']
+        w = window['window_px']
+        box = alignment_report._crop_box(y, x, w, height, width)
+        if geometry is not None:
+            idx = geometry.unit_index((y + w // 2, x + w // 2))
+            start, source = unit['effective'][idx], unit['source'][idx]
+        else:
+            idx, start, source = None, (int(g[0]), int(g[1])), 'global'
+        plan.append({'box': box, 'idx': idx, 'start': (int(start[0]), int(start[1])), 'start_source': source,
+                     'crossing': geometry is not None and _crosses_unit(window, geometry), 'window': (int(y), int(x), int(w))})
+    active = [i for i, p in enumerate(plan) if not p['crossing']]
+    # admission: 보유 crop(창·층마다 상자 + 넓은 상자, bool) + 가장 큰 창 하나의 FFT 작업 공간
+    held = 0
+    biggest = (0, 0)
+    for i in active:
+        y0, y1, x0, x1 = plan[i]['box']
+        held += len(keys) * ((y1 - y0) * (x1 - x0) + (y1 - y0 + 2 * r) * (x1 - x0 + 2 * r))
+        biggest = max(biggest, (y1 - y0, x1 - x0))
+    if active and keys:
+        change_map._check_admission(held + int(layer_align.estimate_layer_bytes(biggest, biggest, r, n_regions=2)), limit, reserved)
+    ref_crops = {i: {} for i in active}
+    wide_crops = {i: {} for i in active}
+    layer_files = {name: {'product_id': products[name].product_id, 'files': []} for name in ('reference', 'target')}
+
+    def put(key, side, array):
+        for i in active:
+            y0, y1, x0, x1 = plan[i]['box']
+            if side == 'reference':
+                ref_crops[i][key] = _pad_crop(array, y0, y1, x0, x1)
+            else:
+                sx, sy = plan[i]['start']
+                wide_crops[i][key] = change_map._shift_crop(array, sy, sx, y0 - r, y1 + r, x0 - r, x1 + r)
+
+    for name in layer_names:
+        for side in ('reference', 'target'):
+            began = time.perf_counter()
+            rel = files[side][name]
+            frame = load_layer_png(layer_root, products[side].product_id, products[side].frame, rel)
+            digest = hashlib.sha256(resolve_path(Path(layer_root), rel).read_bytes()).hexdigest()
+            read_s += time.perf_counter() - began
+            layer_files[side]['files'].append({'layer': name, 'relative_path': rel, 'sha256': digest})
+            put('layer:' + name, side, frame)
+            frame = None
+    for name in cnt_names:
+        put('cnt:' + name, 'reference', cnt['reference']['layers'][name])
+        put('cnt:' + name, 'target', cnt['target']['layers'][name])
+    records = []
+    for i, p in enumerate(plan):
+        y, x, w = p['window']
+        y0, y1, x0, x1 = p['box']
+        sx, sy = p['start']
+        rec = {'box': [int(y0), int(y1), int(x0), int(x1)], 'start': [sx, sy], 'start_source': p['start_source'],
+               'unit_index_xy': None if p['idx'] is None else [p['idx'][1], p['idx'][0]], 'crossing': p['crossing'],
+               'status': 'skipped', 'reason': None, 'flags': [], 'applied': False, 'keys': [], 'choice': None, 'omega_pixels': None,
+               'dice_start': None, 'ring': None}
+        records.append(rec)
+        if p['crossing']:
+            rec['reason'] = CROSSES_BOUNDARY_FLAG
+            rec['flags'] = [CROSSES_BOUNDARY_FLAG]
+            continue
+        if not keys:
+            rec['reason'] = 'no_layers'
+            continue
+        valid_ref = _pad_crop(ref.frame.valid, y0, y1, x0, x1)
+        valid_tgt = change_map._shift_crop(tgt.frame.valid, sy, sx, y0 - r, y1 + r, x0 - r, x1 + r)
+        omega = local_align.valid_domain(valid_ref, valid_tgt, r)
+        if regions is not None:      # 창 중심 unit 영역 밖(옆 unit 의 구조)은 점수에 넣지 않는다
+            ry0, ry1, rx0, rx1 = regions[p['idx']]
+            inside = np.zeros(omega.shape, dtype=bool)
+            inside[max(ry0 - y0, 0):max(ry1 - y0, 0), max(rx0 - x0, 0):max(rx1 - x0, 0)] = True
+            omega &= inside
+        rec['omega_pixels'] = int(np.count_nonzero(omega))
+        rec['keys'] = list(keys)
+        scores = {}
+        for key in keys:
+            a, inter, b = layer_align.unit_window_scores(ref_crops[i][key], wide_crops[i][key], omega, (r, r), r)
+            scores[key] = {'a': a, 'inter': inter, 'b': b}
+        choice = layer_align.choose_dice_first(scores, (sx, sy), r, min_dice=min_dice)
+        rec['choice'] = choice
+        rec['flags'] = list(choice['flags'])
+        status = choice['status']
+        if choice['layer_order']:
+            first = scores[choice['layer_order'][0]]
+            frac = layer_align._dice_frac(first['inter'][r, r], first['a'], first['b'][r, r])
+            rec['dice_start'] = None if frac is None else layer_align._r6(frac)
+        if status == 'ok':
+            ring = omega & local_align.ring_mask(omega.shape, (y - y0, y + w - y0, x - x0, x + w - x0))
+            ring_scores = [layer_align.unit_window_scores(ref_crops[i][key], wide_crops[i][key], ring, (r, r), r) for key in keys]
+            pooled = local_align.pooled(ring_scores)
+            ring_pick = local_align.choose(*pooled, r, min_support=local_align.MIN_RING_SUPPORT_PX, min_dice=min_dice)
+            rec['ring'] = {'status': ring_pick['status'], 'dice': ring_pick['dice'],
+                           'delta_xy_px': None if ring_pick['d'] is None else [ring_pick['d'][1], ring_pick['d'][0]]}
+            if ring_pick['status'] != 'ok':
+                status = 'ring_inconclusive'
+            else:
+                chosen = choice['delta_xy_px']
+                gap_um = math.hypot((chosen[0] - ring_pick['d'][1]) * pitch, (chosen[1] - ring_pick['d'][0]) * pitch)
+                if gap_um > tolerance:
+                    status = 'change_biased'
+                    rec['flags'].append('change_biased')
+            if math.hypot(choice['delta_xy_px'][0] * pitch, choice['delta_xy_px'][1] * pitch) > tolerance:
+                rec['flags'].append('local_offset_differs')
+        rec['status'], rec['reason'] = status, (None if status in ('ok', 'change_biased') else status)
+        rec['applied'] = status in ('ok', 'change_biased')
+        ref_crops[i] = wide_crops[i] = None      # 이 창의 crop 은 더 쓰지 않는다
+    return {'records': records, 'excluded': excluded, 'layer_files': layer_files,
+            'timings_s': {'local_refine': round(time.perf_counter() - started, 3), 'local_layer_read': round(read_s, 3)}}
+
+
+def _local_decisions(records, unit, g):
+    """창마다 (재점수용 offset 사양, 적용 offset, 출처)를 정한다. 사양: 국소 적용이면 스칼라 (dx, dy), 아니면 unit field(없으면 전역 스칼라).
+
+    출처: ``local`` | ``unit``(unit 정렬이 적용된 unit, 또는 field 를 쓴 경계 창) | ``global``."""
+    out = []
+    for rec in records:
+        start = (rec['start'][0], rec['start'][1])
+        if rec['applied']:
+            offset = (rec['choice']['offset_xy_px'][0], rec['choice']['offset_xy_px'][1])
+            out.append({'spec': offset, 'offset': offset, 'source': 'local'})
+        elif unit is not None:
+            out.append({'spec': unit['field'], 'offset': start, 'source': 'unit' if rec['crossing'] else rec['start_source']})
+        else:
+            out.append({'spec': (int(g[0]), int(g[1])), 'offset': start, 'source': 'global'})
+    return out
+
+
+def _local_apply_document(records, decisions, queries, windows, pitch, args, offset_px, frame_shape, excluded):
+    """``roi_local_alignment.json`` (``--apply-align local``): 최종 ROI(순위 순)마다 국소 보정 기록과 적용한 offset."""
+    r = int(args['local_align_px'])
+    tolerance, min_dice = float(args['align_layer_tolerance_um']), float(args['align_min_dice'])
+    dx, dy = offset_px
+    doc = {'schema': local_align.SCHEMA, 'search_um': args['local_align_um'], 'search_px': r, 'tolerance_um': tolerance,
+           'min_dice': min_dice, 'global_offset_xy_px': [dx, dy], 'layers_basis': LOCAL_LAYERS_BASIS,
+           'min_support_px': local_align.MIN_SUPPORT_PX, 'min_ring_support_px': local_align.MIN_RING_SUPPORT_PX,
+           'ambiguity_delta': float(local_align.AMBIGUITY_DELTA), 'refine_pool': args['refine_pool'],
+           'excluded_layers': [{'key': k, 'reason': excluded[k]} for k in sorted(excluded, key=alignment_report.natural_key)],
+           'rois': []}
+    ok_points = []
+    for i, (rec, decision, window) in enumerate(zip(records, decisions, windows)):
+        y, x = window['window_origin_px']
+        w = window['window_px']
+        choice = rec['choice']
+        item = {'rank': i + 1, 'query_id': queries[i]['query_id'] if i < len(queries) else None, 'box_px': rec['box'],
+                'window_origin_px': [int(y), int(x)], 'window_px': int(w),
+                'layers_used': [{'layer': key.split(':', 1)[1], 'source': key.split(':', 1)[0]} for key in rec['keys']],
+                'status': rec['status'], 'reason': rec['reason'], 'flags': list(rec['flags']),
+                'start_offset_xy_px': rec['start'], 'start_source': rec['start_source'], 'unit_index_xy': rec['unit_index_xy'],
+                'applied_offset_xy_px': [int(decision['offset'][0]), int(decision['offset'][1])], 'applied_source': decision['source'],
+                'local_offset_xy_px': None, 'local_offset_xy_um': None, 'delta_from_global_xy_um': None, 'delta_from_global_um': None,
+                'delta_from_start_xy_px': None, 'dice_global': rec['dice_start'], 'dice_local': None, 'ring_delta_xy_px': None,
+                'ring_dice': None, 'ring_reason': None, 'omega_pixels': rec['omega_pixels'], 'per_layer': {}}
+        if choice is not None:
+            item.update({'per_layer': choice['per_layer'], 'decided_by_layer': choice['decided_by_layer'],
+                         'layer_order': choice['layer_order'], 'layers_disagreeing': choice['layers_disagreeing'],
+                         'best_dice': choice['best_dice'], 'dice_local': choice['dice'],
+                         'ambiguity_set_size_initial': choice['ambiguity_set_size_initial'],
+                         'ambiguity_set_size': choice['ambiguity_set_size']})
+            if choice['offset_xy_px'] is not None:
+                lx, ly = choice['offset_xy_px']
+                item['local_offset_xy_px'] = [lx, ly]
+                item['local_offset_xy_um'] = [local_align._r6(lx * pitch), local_align._r6(ly * pitch)]
+                item['delta_from_global_xy_um'] = [local_align._r6((lx - dx) * pitch), local_align._r6((ly - dy) * pitch)]
+                item['delta_from_global_um'] = local_align._r6(math.hypot((lx - dx) * pitch, (ly - dy) * pitch))
+                item['delta_from_start_xy_px'] = choice['delta_xy_px']
+        if rec['ring'] is not None:
+            item['ring_delta_xy_px'], item['ring_dice'] = rec['ring']['delta_xy_px'], rec['ring']['dice']
+            if rec['ring']['status'] != 'ok':
+                item['ring_reason'] = rec['ring']['status']
+        doc['rois'].append(item)
+        if rec['status'] == 'ok':
+            ok_points.append((x + w / 2.0, y + w / 2.0, item['local_offset_xy_um'][0], item['local_offset_xy_um'][1]))
+    fit, fit_reason = local_align.linear_fit(ok_points, frame_shape, pitch)
+    if not doc['rois']:
+        fit, fit_reason = None, 'no_diagnosed_rois'
+    doc['linear_fit'], doc['linear_fit_reason'] = fit, fit_reason
+    counts = {status: 0 for status in local_align.STATUSES}
+    sources = {'local': 0, 'unit': 0, 'global': 0}
+    for item in doc['rois']:
+        counts[item['status']] += 1
+        sources[item['applied_source']] += 1
+    doc['summary'] = {'n_rois': len(doc['rois']), **counts, 'applied_source_counts': sources}
+    differs = [item['rank'] for item in doc['rois'] if 'local_offset_differs' in item['flags']]
+    doc['notes'] = ([{'code': 'roi_local_offset_differs', 'severity': 'info', 'tolerance_um': tolerance, 'ranks': differs}]
+                    if differs else [])
+    return doc
+
+
 def _frame_record(ref_shape, tgt_shape, stats, bbox):
     """alignment.json 에 더하는 frame 크기와 비교 영역. 수치는 change_maps 가 이미 센 값을 쓴다(새 frame 크기 할당 없음)."""
     ref_pixels, tgt_pixels = int(ref_shape[0]) * int(ref_shape[1]), int(tgt_shape[0]) * int(tgt_shape[1])
@@ -1002,6 +1300,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # --- 2b. Layer 전역 교차 확인 + unit offset (--unit-align-um 을 줄 때만; 읽기 전용, apply=unit 일 때만 아래에서 쓴다)
     unit = None
     apply_unit = args.get('apply_align') == 'unit'
+    apply_local = args.get('apply_align') == 'local'
     if args.get('unit_align_px') is not None:
         unit = _unit_alignment(products, cnt, offset_px, args['unit_align_px'], args, electrode_root, limit, reserved, pitch)
         alignment_doc.update(unit['doc'])
@@ -1024,7 +1323,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         notes.append({'code': 'electrode_set_differs', 'severity': 'info', 'electrode_set_basis': ELECTRODE_SET_BASIS,
                       'reference_only': sorted(names['reference'] - names['target']),
                       'target_only': sorted(names['target'] - names['reference'])})
-    map_offset = {'offset_field': unit['field']} if apply_unit else {'offset_px': offset_px}
+    use_field = unit is not None and (apply_unit or apply_local)       # local 에서 --unit-align-um 이 없으면 시작점은 전역 g
+    map_offset = {'offset_field': unit['field']} if use_field else {'offset_px': offset_px}
     maps = change_map.change_maps(pairs, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, **map_offset,
                                   pitch_um=pitch, tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit,
                                   window_um=window_um, reserved_bytes=reserved)
@@ -1040,12 +1340,34 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                       'target_yx': list(tgt_shape), 'delta_px': alignment_doc['frame_shape_delta_px']})
     candidates.write_text(out / 'alignment.json', json.dumps(alignment_doc, ensure_ascii=False, indent=2, sort_keys=True,
                                                              allow_nan=False) + '\n', track)
+    # --- 3b. (--apply-align local) 풀 = 창 후보 점수 상위 N → 창마다 국소 보정 + 재점수화 → 이후 병합·억제·접기는 재점수로 한다(X3)
+    candidate_list = found['candidates']
+    refine, local_run, local_by_window = None, None, {}
+    if apply_local:
+        pool = found['candidates'][:args['refine_pool']]
+        local_run = _local_corrections(pool, products, cnt, electrode_root, offset_px, unit, args['local_align_px'], args, pitch, limit,
+                                       reserved + _maps_bytes(maps))
+        decisions = _local_decisions(local_run['records'], unit, offset_px)
+        candidate_list = []
+        if pool:
+            scored = change_map.case_contributions(
+                pairs, pool, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
+                tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved + _maps_bytes(maps),
+                window_offsets=[d['spec'] for d in decisions])['windows']
+            for window, result, rec, decision in zip(_recomputed_windows(pool, scored, pitch), scored, local_run['records'], decisions):
+                if window['score_um2'] == 0 and window['sum_residual_cells'] == 0:      # 재점수 뒤 변경이 없다: 거짓 변경이었다
+                    continue
+                candidate_list.append(window)
+                local_by_window[id(window)] = {'contrib': result, 'record': rec, 'decision': decision}
+            candidate_list.sort(key=lambda c: (-c['score_um2'], -c['sum_residual_cells'], c['layer'], c['center_xy_um'][0],
+                                               c['center_xy_um'][1]))
+        refine = {'pool': len(pool), 'requested': args['refine_pool'], 'survivors': len(candidate_list)}
     by_id, merged, all_infos = {}, [], []
     ref_bbox = tuple(float(v) for v in ref.frame.bbox_um)
     merge_all = args.get('merge_scope') == 'all'
     suppress = args.get('suppress_overlap')
-    for layer in sorted({c['layer'] for c in found['candidates']}):
-        layer_candidates = [c for c in found['candidates'] if c['layer'] == layer]
+    for layer in sorted({c['layer'] for c in candidate_list}):
+        layer_candidates = [c for c in candidate_list if c['layer'] == layer]
         infos = change_map.to_region_infos(layer_candidates, ref.product_id, ref.design_version, ref.frame_id, ref_bbox)
         for candidate, info in zip(layer_candidates, infos):
             by_id[info.region_id] = candidate
@@ -1075,7 +1397,14 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
 
     # --- 5. 기여 case (두 번째 패스) + CNT 변경 면적
     window_offsets, window_sources = [offset_px] * len(windows), [None] * len(windows)
-    if apply_unit:
+    kept_local = []
+    if apply_local:
+        # 재점수 패스(3b) 값 그대로: 대표 창 1개 + 모든 층 기여(merge_scope=all 구성원 층 확장 없음)
+        contrib = [local_by_window[id(w)]['contrib'] for w in windows]
+        kept_local = [local_by_window[id(w)] for w in windows]
+        window_offsets = [item['decision']['offset'] for item in kept_local]
+        window_sources = [item['decision']['source'] for item in kept_local]
+    elif apply_unit:
         # 모든 층의 기여 case 를 창마다 한 번씩(대표 창만): 창의 점수·합집합·관측 비율도 이 패스 값으로 낸다(merge_scope=all 구성원 층 확장 없음)
         contrib = change_map.case_contributions(
             pairs, windows, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
@@ -1112,7 +1441,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # --- 4·6. 방향별 중심과 manual 요청 (ROI × 기여 case 하나당 요청 하나, 같은 키는 1회)
     shift = _shift_um(offset_px, pitch, ref.frame, tgt.frame)
     window_shifts = [_shift_um(o, pitch, ref.frame, tgt.frame) for o in window_offsets]
-    applied = [({'offset_xy_px_applied': [int(o[0]), int(o[1])], 'offset_source': s} if apply_unit else {})
+    applied = [({'offset_xy_px_applied': [int(o[0]), int(o[1])], 'offset_source': s} if (apply_unit or apply_local) else {})
                for o, s in zip(window_offsets, window_sources)]
     plan = {}
     for direction, query_name, index_name in candidates.DIRECTIONS:
@@ -1253,11 +1582,13 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                      'layer_changed': pair_by_key[c['case_key']].layer_changed, **_layer_key(c)}
                     for c in contrib[i]['contributing_cases'] if pair_by_key[c['case_key']].present_in != 'both'],
                 'cnt_change_um2_by_layer': cnt_change[i]})
-        funnel = _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed, n_unit_folded)
+        funnel = _funnel(direction, n_candidates, n_merged, queries, top_k, n_suppressed, n_unit_folded, refine)
         funnels.append(funnel)
         if funnel['top_k_not_filled']:
-            warnings.append({'code': 'top_k_not_filled', 'direction': direction, 'requested': top_k,
-                             'found': len(queries)})
+            warning = {'code': 'top_k_not_filled', 'direction': direction, 'requested': top_k, 'found': len(queries)}
+            if apply_local:
+                warning['detail'] = '풀 안 창만 순위에 들어간다: --refine-pool 을 키우세요'
+            warnings.append(warning)
         directions.append({'direction': direction, 'query_product': query_name, 'index_product': index_name,
                            'query_export': f'{query_name}_export/review_rois.json' if side.export_path else None,
                            'index_export': (f'{index_name}_index_export/review_rois.json'
@@ -1304,12 +1635,17 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # --- alignment.html: 정렬이 실패·불확실해도 항상 쓴다. 그림 생성을 허용하지 않았으면 표만 쓰고 경고(exit 3)
     skipped = None
     local_um = args.get('local_align_um')
-    local_state = {'r_px': local_align.search_radius_px(local_um, pitch)} if local_um is not None else None
+    diagnose = local_um is not None and not apply_local
+    local_state = {'r_px': local_align.search_radius_px(local_um, pitch)} if diagnose else None
     if report_source is not None:
         _collect_layer_bases(report_source, directions[0]['queries'], windows, electrode_root, electrode_files, products,
                              limit, reserved, warnings, diag=local_state)
-    local_doc = (_local_alignment_document(report_source, local_state, directions[0]['queries'], windows, pitch, args, offset_px,
-                                           ref_shape) if local_um is not None else None)
+    if apply_local:
+        local_doc = _local_apply_document([item['record'] for item in kept_local], [item['decision'] for item in kept_local],
+                                          directions[0]['queries'], windows, pitch, args, offset_px, ref_shape, local_run['excluded'])
+    else:
+        local_doc = (_local_alignment_document(report_source, local_state, directions[0]['queries'], windows, pitch, args, offset_px,
+                                               ref_shape) if diagnose else None)
     if report_source is not None:      # 진단용 넓은 crop 은 문서를 만든 직후 놓는다(HTML 렌더 전에 메모리 반환)
         report_source.diag_wide.clear()
     if report_source is None:
@@ -1378,10 +1714,13 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     change_args = {k: args[k] for k in ('align_search_um', 'align_min_dice', 'align_layer_tolerance_um',
                                         'change_tolerance_um', 'window_um', 'merge_overlap', 'top_k')}
     change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap', 'electrode_png_root', 'local_align_um',
-                                             'unit_align_um', 'apply_align', 'unit_fold', 'unit_fold_tolerance_um') if k in args})
-    if unit is not None:      # Layer 를 정렬에 쓴 실행만: 입력 지문(alignment.json.layer_inputs 와 같은 파일 목록)
+                                             'unit_align_um', 'apply_align', 'unit_fold', 'unit_fold_tolerance_um',
+                                             'refine_pool') if k in args})
+    layer_files = (unit['doc']['layer_inputs'] if unit is not None
+                   else (local_run['layer_files'] if local_run is not None else None))
+    if layer_files is not None:      # Layer 를 정렬에 쓴 실행만: 입력 지문(alignment.json.layer_inputs 와 같은 파일 목록)
         inputs['layers'] = {name: {'product_id': item['product_id'], 'files_sha256': _sha_json(item['files']),
-                                   'n_files': len(item['files'])} for name, item in unit['doc']['layer_inputs'].items()}
+                                   'n_files': len(item['files'])} for name, item in layer_files.items()}
     payload = {'schema_version': candidates.SCHEMA_VERSION, 'roi_source': ROI_SOURCE, 'producer_commit': commit,
                'args': {'min_count': None, 'window_um': window_um, 'merge_overlap': args['merge_overlap'],
                         'max_candidates': top_k, 'representative_diameter_um': DIAMETER_UM},
@@ -1409,6 +1748,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                           'index_export': 'one_manual_roi_per_dataset_case_index_only_not_queries_no_region_provenance'}}
     if suppress is not None:
         payload['policy']['suppress'] = SUPPRESS_POLICY_ANY if suppress <= candidates.OVERLAP_EPS else SUPPRESS_POLICY
+    if apply_local:
+        payload['policy']['apply_align'] = LOCAL_APPLY_POLICY
     if args.get('unit_fold'):
         payload['policy']['unit_fold'] = UNIT_FOLD_POLICY
     if merge_all:
@@ -1443,8 +1784,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     execution = {'command': 'candidates-change',
                  'args': {**change_args, 'max_operation_bytes': limit, 'mask_derivation_rule': args['mask_derivation_rule']},
                  'inputs': exec_inputs, 'warnings': warnings, 'notes': notes, **result}
-    if unit is not None:      # 새 기능을 켰을 때만(고정 해시 테스트 밖): 단계 소요 시간
-        execution['timings_s'] = unit['timings_s']
+    if unit is not None or local_run is not None:      # 새 기능을 켰을 때만(고정 해시 테스트 밖): 단계 소요 시간
+        execution['timings_s'] = {**(unit['timings_s'] if unit is not None else {}),
+                                  **(local_run['timings_s'] if local_run is not None else {})}
     candidates.write_text(out / 'execution.json', json.dumps(execution, ensure_ascii=False, indent=2) + '\n', track)
     result['outputs'] = sorted(result['outputs'] + ['execution.json'])
     return result
