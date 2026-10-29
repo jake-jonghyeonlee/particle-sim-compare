@@ -33,8 +33,18 @@ BIG = dict(change_tol=0.0, window=5, top_k=12, layer_tol=0.5)
 LOCAL_ARGS = ('--unit-align-um', '1.5', '--local-align-um', '1', '--apply-align', 'local')
 
 
+NB_REF = (600, 600, 20, 15)                      # T4c adv:2 world only: a change 40 px left of the unit boundary x = 650 (window does not cross it)
+NB = {'on': False}
+
+
 def add_features(masks, side, extra):
     mask = masks[tcc.CASE_AB]
+    if NB['on']:
+        ny, nx, nh, nw = NB_REF
+        if side == 'reference':
+            mask[ny:ny + nh, nx:nx + nw] = True
+        else:
+            mask[ny + C[1]:ny + C[1] + nh, nx + C[0]:nx + C[0] + nw + 4] = True
     y, x, h, w = LP_REF
     by, bx, bh, bw = XB_REF
     if side == 'reference':
@@ -440,6 +450,118 @@ def test_f_layer_folder_is_required_for_local(world, tmp_path, capsys):
 
 def test_f_diagnostic_radius_rule_is_unchanged(world, tmp_path, capsys):
     expect_error(world, tmp_path, capsys, 'local_align_um_invalid', '--local-align-um', '3.5')      # 35 px > 30, 진단 경로
+
+
+# --- (h) T4c: R2 권고 --------------------------------------------------------------------------------------------------
+
+def test_h_adv1_radius_floor_depends_on_unit_alignment(world, tmp_path, capsys):
+    """ΔU = 2: unit 정렬이 있으면 시작점이 unit offset 이라 |ΔU| + 2 = 4 px, 없으면 시작점이 전역 g 라 2·|ΔU| + 2 = 6 px."""
+    expect_error(world, tmp_path, capsys, 'local_align_um_too_small_for_unit_delta', '--apply-align', 'local', '--local-align-um', '0.5')
+    out = tmp_path / 'msg'
+    args = tcc.cli_args(world.config, out, world.dl1, **BIG)
+    assert main(args[:-2] + ['--apply-align', 'local', '--local-align-um', '0.5'] + args[-2:]) == 2
+    err = capsys.readouterr().err
+    assert '필요 6 px = 0.6 µm' in err and 'unit 정렬 없음' in err
+    with_unit = make(world, '--unit-align-um', '1.5', '--local-align-um', '0.4', '--apply-align', 'local')       # 4 px: 경계값
+    assert with_unit.code in (0, 3) and local_doc(with_unit)['search_px'] == 4
+    expect_error(world, tmp_path, capsys, 'local_align_um_too_small_for_unit_delta',
+                 '--unit-align-um', '1.5', '--apply-align', 'local', '--local-align-um', '0.3')
+    without_unit = make(world, '--local-align-um', '0.6', '--apply-align', 'local')                               # 6 px: 경계값
+    assert without_unit.code in (0, 3) and local_doc(without_unit)['search_px'] == 6
+
+
+@pytest.fixture(scope='module')
+def nb_world(tmp_path_factory):
+    NB['on'] = True
+    try:
+        base = tmp_path_factory.mktemp('nb_world')
+        datas, assignments = {}, {}
+        for side in ('reference', 'target'):
+            datas[side], assignments[side] = build_side(base, side, 2)
+        config = tcc.write_config(base, datas, assignments, map_spec={'diameter_um': 5})
+    finally:
+        NB['on'] = False
+    return SimpleNamespace(base=base, config=config, dl1=base / 'dl1', tmp_path_factory=tmp_path_factory)
+
+
+def test_h_adv2_unit_interior_boundary_is_eroded_by_r(nb_world, monkeypatch):
+    """국소 Ω 는 unit 내부 경계 쪽만 r px 침식한다(이웃 unit 형상이 x+s+δ 로 섞이지 않게). 침식을 끄면 이 테스트는 실패한다.
+    경계 x = 650 의 왼쪽 40 px 에 변경이 있는 월드: 그 창의 상자는 경계에 닿고, 침식 띠는 정확히 r 열이다."""
+    raw, seen, boxes = [], [], []
+    real_domain, real_scores, real_box = local_align.valid_domain, layer_align.unit_window_scores, change_candidates.alignment_report._crop_box
+    geometry = layer_align.UnitGeometry((1300, 1300))
+
+    def crop_box(y, x, w, height, width):
+        out = real_box(y, x, w, height, width)
+        if geometry.unit_index((y, x)) == geometry.unit_index((y + w - 1, x + w - 1)):     # 경계를 넘는 창은 국소 보정을 하지 않는다
+            boxes.append((out, geometry.unit_index((y + w // 2, x + w // 2))))
+        return out
+
+    def domain(*args, **kw):
+        out = real_domain(*args, **kw)
+        raw.append(out.copy())
+        return out
+
+    def scores(a, b, omega, *args, **kw):
+        if len(raw) > len(seen):                    # 창마다 첫 호출(상자 전체 Ω)만 본다
+            seen.append((raw[len(seen)], omega.copy()))
+        return real_scores(a, b, omega, *args, **kw)
+    monkeypatch.setattr(local_align, 'valid_domain', domain)
+    monkeypatch.setattr(layer_align, 'unit_window_scores', scores)
+    monkeypatch.setattr(change_candidates.alignment_report, '_crop_box', crop_box)
+    got = make(nb_world, *LOCAL_ARGS)
+    r = local_doc(got)['search_px']
+    regions = geometry.unit_regions()
+    assert seen and len(seen) <= len(boxes)
+    eroded = 0
+    for (before, after), ((y0, y1, x0, x1), idx) in zip(seen, boxes):
+        ry0, ry1, rx0, rx1 = regions[idx]
+        want = np.zeros(before.shape, dtype=bool)         # 기대: unit 내부 경계(frame 가장자리가 아닌 쪽)만 r 침식한 영역
+        want[max(ry0 + (r if ry0 > 0 else 0) - y0, 0):max(ry1 - (r if ry1 < 1300 else 0) - y0, 0),
+             max(rx0 + (r if rx0 > 0 else 0) - x0, 0):max(rx1 - (r if rx1 < 1300 else 0) - x0, 0)] = True
+        assert (after == (before & want)).all()
+        eroded += bool((before & ~after).any())
+    assert eroded > 0                                      # 경계 근처 창이 실제로 있었다
+
+
+def test_h_adv3_boundary_flag_is_in_queries_sidecar_and_local_document(local_run, unit_run):
+    flag = change_candidates.CROSSES_BOUNDARY_FLAG
+    doc = {i['query_id']: i for i in local_doc(local_run)['rois']}
+    crossing = [q for q in queries(local_run) if flag in doc[q['query_id']]['flags']]
+    assert crossing
+    assert all(flag in q['flags'] for q in crossing)
+    assert not any(flag in q['flags'] for q in queries(local_run) if flag not in doc[q['query_id']]['flags'])
+    sidecar = tcc.load(local_run.out, 'direct/direct_pairs_sidecar.json')
+    by_region = {q['region_id']: q for q in queries(local_run)}
+    n_pairs = 0
+    for record in sidecar['pairs'].values():
+        q = by_region[record['region_id']]
+        assert (flag in record['flags']) == (flag in q['flags'])
+        n_pairs += flag in record['flags']
+    assert n_pairs
+    assert not any(flag in q['flags'] for q in queries(unit_run))                          # unit 모드에는 없다
+    for name in ('reference_export', 'target_export'):
+        keys = {tuple(sorted(r)) for r in json.loads((local_run.out / name / 'review_rois.json').read_text(encoding='utf-8'))['rois']}
+        base = {tuple(sorted(r)) for r in json.loads((unit_run.out / name / 'review_rois.json').read_text(encoding='utf-8'))['rois']}
+        assert keys == base
+
+
+def test_h_adv4_attributes_policy_follows_the_applied_offsets(world):
+    old = change_candidates.ATTRIBUTES_POLICY_ALL
+    plain = make(world, '--merge-scope', 'all')
+    unit = make(world, '--merge-scope', 'all', '--unit-align-um', '1.5', '--apply-align', 'unit')
+    local = make(world, '--merge-scope', 'all', *LOCAL_ARGS)
+    assert plain.payload['policy']['attributes'] == old
+    for run in (unit, local):
+        assert run.payload['policy']['attributes'] == 'contributing_cases_all_layers_window_offset' != old
+    assert 'attributes' not in make(world, *LOCAL_ARGS).payload['policy']
+
+
+def test_h_adv7_apply_and_diagnostic_radius_use_the_same_rounding(world):
+    """0.45 µm / 0.1 µm = 4.5 px: 진단 경로(Python round)는 4 px. apply 경로도 같다(예전에는 .5 올림으로 5 px)."""
+    assert local_align.search_radius_px(0.45, PITCH) == 4
+    got = make(world, '--unit-align-um', '1.5', '--local-align-um', '0.45', '--apply-align', 'local')
+    assert got.code in (0, 3) and local_doc(got)['search_px'] == local_align.search_radius_px(0.45, PITCH) == 4
 
 
 # --- (g) 행 키 불변 ----------------------------------------------------------------------------------------------------

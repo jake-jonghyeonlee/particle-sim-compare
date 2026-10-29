@@ -56,7 +56,8 @@ MERGE_POLICY = {'layer': 'per_layer_window_overlap_intersection_over_min_area_un
                 'all': 'all_layers_window_overlap_intersection_over_min_area_union_find_region_id_order'}
 SUPPRESS_POLICY = 'greedy_score_order_window_overlap_ge_x_all_layers'
 SUPPRESS_POLICY_ANY = 'greedy_score_order_any_window_overlap_all_layers'
-ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
+ATTRIBUTES_POLICY_ALL_WINDOW_OFFSET = 'contributing_cases_all_layers_window_offset'
+ATTRIBUTES_POLICY_ALL ='score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
 
 
 APPLY_ALIGN_MODES = ('diagnostic', 'unit', 'local')
@@ -128,21 +129,26 @@ def _require_layer_folder(products, layer_root):
                    f'{",".join(missing)}: 새 구조(Merged_Layer) + Layer/ PNG 가 있어야 합니다 (root {layer_root})')
 
 
-def _check_local_apply(local_align_um, pitch, products, layer_root):
+def _check_local_apply(local_align_um, pitch, products, layer_root, unit_aligned=True):
     """``--apply-align local`` 의 쓰기 전 검사. 국소 탐색 반경(px)을 돌려준다.
 
-    Layer 새 구조가 필요하고(``layer_folder_required``), 반경이 ``[|ΔU|max + 2, MAX_LOCAL_APPLY_PX]`` 안이어야 한다
-    (진단 전용 경로의 2..30 px 규칙은 이 경로에 적용하지 않는다)."""
+    Layer 새 구조가 필요하고(``layer_folder_required``), 반경이 ``[필요 px, MAX_LOCAL_APPLY_PX]`` 안이어야 한다
+    (진단 전용 경로의 2..30 px 규칙은 이 경로에 적용하지 않는다). 필요 px 는 시작점이 unit offset 이면 |ΔU|max + 2,
+    ``--unit-align-um`` 이 없어 시작점이 전역 g 이면 unit 탐색과 같은 2·|ΔU|max + 2 다.
+    µm → px 반올림은 진단 경로(``local_align.search_radius_px``)와 같은 규칙이다."""
     _require_layer_folder(products, layer_root)
     ref_geo = layer_align.UnitGeometry(products['reference'].frame.valid.shape)
     tgt_geo = layer_align.UnitGeometry(products['target'].frame.valid.shape)
-    radius = change_map._round_px(local_align_um, pitch)
+    radius = int(round(float(local_align_um) / float(pitch)))
     delta = layer_align.delta_u_max(ref_geo, tgt_geo)
-    required = max(layer_align.required_local_radius_px(delta), local_align.MIN_LOCAL_SEARCH_PX)
+    if unit_aligned:
+        required, why = layer_align.required_local_radius_px(delta), f'|ΔU|max {delta} px + 2 px'
+    else:
+        required, why = layer_align.required_unit_radius_px(delta), f'unit 정렬 없음: 시작점이 전역 offset 이므로 |ΔU|max {delta} px 의 2배 + 2 px'
+    required = max(required, local_align.MIN_LOCAL_SEARCH_PX)
     if radius < required:
         raise _bad('local_align_um_too_small_for_unit_delta',
-                   f'--local-align-um {local_align_um} ({radius} px) < 필요 {required} px = {round(required * pitch, 6)} µm '
-                   f'(|ΔU|max {delta} px + 2 px)')
+                   f'--local-align-um {local_align_um} ({radius} px) < 필요 {required} px = {round(required * pitch, 6)} µm ({why})')
     if radius > layer_align.MAX_LOCAL_APPLY_PX:
         raise _bad('local_align_um_invalid',
                    f'--local-align-um {local_align_um} ({radius} px) > 상한 {layer_align.MAX_LOCAL_APPLY_PX} px')
@@ -611,7 +617,8 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
                    f'--window-um {window_um} ({window_px} px) does not fit the reference frame ({height} x {width} px)')
     local_radius_px = None
     if local_align_um is not None and apply_align == 'local':
-        local_radius_px = _check_local_apply(local_align_um, pitch, products, electrode_png_root or cnt_from_dl1_root)
+        local_radius_px = _check_local_apply(local_align_um, pitch, products, electrode_png_root or cnt_from_dl1_root,
+                                             unit_aligned=unit_align_um is not None)
     elif local_align_um is not None:
         try:
             local_align.search_radius_px(local_align_um, pitch)
@@ -1106,7 +1113,16 @@ def _local_corrections(windows, products, cnt, layer_root, g, unit, radius, args
         omega = local_align.valid_domain(valid_ref, valid_tgt, r)
         if regions is not None:      # 창 중심 unit 영역 밖(옆 unit 의 구조)은 점수에 넣지 않는다
             ry0, ry1, rx0, rx1 = regions[p['idx']]
-            inside = np.zeros(omega.shape, dtype=bool)
+            # unit 내부 경계 쪽만 r px 침식한다: 거기서는 target 표본 x+s+δ 가 이웃 unit 의 형상(다른 offset)을 읽는다. frame 가장자리는 그대로.
+            if ry0 > 0:
+                ry0 += r
+            if ry1 < height:
+                ry1 -= r
+            if rx0 > 0:
+                rx0 += r
+            if rx1 < width:
+                rx1 -= r
+            inside =np.zeros(omega.shape, dtype=bool)
             inside[max(ry0 - y0, 0):max(ry1 - y0, 0), max(rx0 - x0, 0):max(rx1 - x0, 0)] = True
             omega &= inside
         rec['omega_pixels'] = int(np.count_nonzero(omega))
@@ -1357,6 +1373,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             for window, result, rec, decision in zip(_recomputed_windows(pool, scored, pitch), scored, local_run['records'], decisions):
                 if window['score_um2'] == 0 and window['sum_residual_cells'] == 0:      # 재점수 뒤 변경이 없다: 거짓 변경이었다
                     continue
+                if rec['crossing']:
+                    window['flags'] = list(window['flags']) + [CROSSES_BOUNDARY_FLAG]
                 candidate_list.append(window)
                 local_by_window[id(window)] = {'contrib': result, 'record': rec, 'decision': decision}
             candidate_list.sort(key=lambda c: (-c['score_um2'], -c['sum_residual_cells'], c['layer'], c['center_xy_um'][0],
@@ -1753,7 +1771,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     if args.get('unit_fold'):
         payload['policy']['unit_fold'] = UNIT_FOLD_POLICY
     if merge_all:
-        payload['policy']['attributes'] = ATTRIBUTES_POLICY_ALL
+        payload['policy']['attributes'] = ATTRIBUTES_POLICY_ALL_WINDOW_OFFSET if (apply_unit or apply_local) else ATTRIBUTES_POLICY_ALL
     emit('candidate_queries_v1.json', json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     emit('funnel.json', json.dumps(funnel_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     candidates.write_funnel_csv(out / 'funnel.csv', funnels, coverage, track)
