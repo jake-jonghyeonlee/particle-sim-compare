@@ -259,7 +259,7 @@ def test_explicit_scope_layer_only_adds_the_args_key(layer_run, two_layer_world,
     assert tcc.load(explicit.out, 'direct/direct_pairs_sidecar.json') == tcc.load(layer_run.out, 'direct/direct_pairs_sidecar.json')
 
 
-@pytest.mark.parametrize('flag, value', [('--suppress-overlap', '0'), ('--suppress-overlap', '1.5'),
+@pytest.mark.parametrize('flag, value', [('--suppress-overlap', '1.5'),   # layer-align/T3: 0 은 이제 허용(조금이라도 겹치면 억제)
                                           ('--suppress-overlap', 'nan'), ('--suppress-overlap', '-0.2')])
 def test_invalid_suppress_overlap_exits_2(two_layer_world, tmp_path, capsys, flag, value):
     code, out = run(two_layer_world, tmp_path/'out', flag, value)

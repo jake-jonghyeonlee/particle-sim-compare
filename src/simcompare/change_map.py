@@ -436,6 +436,94 @@ def _comparison_domain(ref_valid, tgt_valid, dy, dx):
     return ref_valid & shifted
 
 
+# --------------------------------------------------------------------------- offset 장 (layer-align/T3)
+
+INVALID_OFFSET_FIELD = 'invalid_offset_field'
+
+
+class _FieldGeometry:
+    """``layer_align.seam_band`` 가 쓰는 두 속성(frame_shape, unit_regions)만 가진 기하."""
+
+    def __init__(self, frame_shape, regions):
+        self.frame_shape = frame_shape
+        self._regions = regions
+
+    def unit_regions(self):
+        return self._regions
+
+
+def _bad_field(detail):
+    return NumericContractError(INVALID_OFFSET_FIELD, detail)
+
+
+def _parse_field(field, shape):
+    """영역 목록 ``[(y0, y1, x0, x1, dx, dy), ...]`` 이 frame ``shape`` 를 정확히 분할하는지 검사하고 정수 튜플 tuple 로 돌려준다."""
+    try:
+        items = [tuple(item) for item in field]
+    except TypeError:
+        raise _bad_field(f'offset_field must be a list of regions, got {field!r}') from None
+    if not items:
+        raise _bad_field('offset_field must not be empty')
+    height, width = shape
+    cover = np.zeros(shape, dtype=np.uint8)
+    out = []
+    for item in items:
+        if len(item) != 6 or any(isinstance(v, bool) or not isinstance(v, numbers.Integral) for v in item):
+            raise _bad_field(f'offset_field region must be 6 integers (y0, y1, x0, x1, dx, dy), got {item!r}')
+        y0, y1, x0, x1, dx, dy = (int(v) for v in item)
+        if not (0 <= y0 < y1 <= height and 0 <= x0 < x1 <= width):
+            raise _bad_field(f'offset_field region {item!r} is empty or outside the frame {shape}')
+        cover[y0:y1, x0:x1] += 1
+        out.append((y0, y1, x0, x1, dx, dy))
+    if int(cover.min()) != 1 or int(cover.max()) != 1:
+        raise _bad_field('offset_field regions must partition the frame exactly (found a gap or an overlap)')
+    return tuple(sorted(out))
+
+
+def _shift_crop_field(src, field, y0, y1, x0, x1):
+    """``_shift_crop`` 의 영역별 offset 판: reference 박스 [y0:y1, x0:x1] 안 픽셀마다 그 픽셀이 속한 영역의 offset 으로 옮긴다."""
+    out = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+    for ry0, ry1, rx0, rx1, dx, dy in field:
+        iy0, iy1, ix0, ix1 = max(ry0, y0), min(ry1, y1), max(rx0, x0), min(rx1, x1)
+        if iy0 < iy1 and ix0 < ix1:
+            out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = _shift_crop(src, dy, dx, iy0, iy1, ix0, ix1)
+    return out
+
+
+def _field_seam(field, shape):
+    """field 의 이음새 띠(True = 제외). 1×1·1×2·2×1·2×2 격자만 받는다. 모두 같은 offset 이면 빈 마스크."""
+    from .layer_align import seam_band
+    rows = sorted({(f[0], f[1]) for f in field})
+    cols = sorted({(f[2], f[3]) for f in field})
+    if len(rows) > 2 or len(cols) > 2 or len(field) != len(rows) * len(cols):
+        raise _bad_field('offset_field must be a 1x1, 1x2, 2x1 or 2x2 grid of regions to compute the seam band')
+    height, width = shape
+    pad_rows, pad_cols = len(rows) == 1, len(cols) == 1
+    if pad_rows:
+        rows.append((height, height))   # 인위로 덧붙인 빈 행·열: 이웃 offset 을 복사해 이음새 폭 0
+    if pad_cols:
+        cols.append((width, width))
+    offsets = {}
+    for ry0, ry1, rx0, rx1, dx, dy in field:
+        offsets[(rows.index((ry0, ry1)), cols.index((rx0, rx1)))] = (dx, dy)
+    for iy in (0, 1):
+        for ix in (0, 1):
+            if (iy, ix) not in offsets:
+                offsets[(iy, ix)] = offsets[(0 if pad_rows else iy, 0 if pad_cols else ix)]
+    regions = {(iy, ix): (rows[iy][0], rows[iy][1], cols[ix][0], cols[ix][1]) for iy in (0, 1) for ix in (0, 1)}
+    return seam_band(_FieldGeometry((height, width), regions), offsets)
+
+
+def _full_domain_field(ref_valid, tgt_valid, field):
+    """영역별 shifted target valid ∧ reference valid, 이음새 띠를 뺀 비교 영역과 뺀 픽셀 수."""
+    height, width = ref_valid.shape
+    domain = ref_valid & _shift_crop_field(tgt_valid, field, 0, height, 0, width)
+    seam = _field_seam(field, ref_valid.shape)
+    removed = int(np.count_nonzero(domain & seam))
+    domain &= ~seam
+    return domain, removed
+
+
 def _extent(mask, shift):
     """mask(행 또는 열 any 결과)가 True 인 칸을 덮는 [시작, 끝) 구간에 ``shift`` 를 더한 값. 없으면 None."""
     index = np.flatnonzero(mask)
@@ -471,8 +559,8 @@ def _load_checked(pair, ref_shape, tgt_shape):
     return a, b
 
 
-def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolerance_um, max_operation_bytes,
-                window_um=None, reserved_bytes=0):
+def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px=None, pitch_um, tolerance_um, max_operation_bytes,
+                window_um=None, reserved_bytes=0, offset_field=None):
     """analysis_layer 별 ``uint32`` 변경 지도(R 누적), 비교 영역 D, 통계를 돌려준다.
 
     pairs_iter: ``layer``·``case_key``·``load()`` 를 가진 쌍(``CasePair``/``MaskPair``)의 iterable. 쌍마다 한 번만 읽는다.
@@ -480,11 +568,23 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     window_um 을 주면 admission 이 창 후보 단계(적분 영상)까지 포함해 검사한다. 한도를 넘으면 할당 전에
     ``oversized_real_operation``. 층의 쌍 수가 2^32 이상이면 ``change_map_counter_overflow``.
     reserved_bytes: 호출자가 이미 보유한 바이트. 한도에서 뺀 값과 비교한다(기본 0 = 이전 동작).
+    offset_px 와 offset_field 중 정확히 하나를 준다. offset_field = ``[(y0, y1, x0, x1, dx, dy), ...]`` (reference 픽셀, 끝 미포함)
+    이 reference frame 을 정확히 분할해야 하며(아니면 ``invalid_offset_field``), 영역마다 그 offset 으로 target 을 옮긴다.
+    비교 영역은 영역별 shifted target valid 에서 이음새 띠(``layer_align.seam_band``)를 뺀 뒤 침식한다. field 를 줄 때만
+    stats 에 ``offset_field``·``seam_excluded_pixels`` 가 있다.
     반환: ``{'maps': {layer: uint32 지도}, 'D': bool, 'stats': {...}}``.
     """
     _check_scalar(pitch_um, tolerance_um, window_um)
     ref_valid, tgt_valid = _valid_array(ref_valid, 'ref_valid'), _valid_array(tgt_valid, 'tgt_valid')
-    dx, dy = _offset(offset_px)
+    if (offset_px is None) == (offset_field is None):
+        raise _bad('exactly one of offset_px and offset_field must be given')
+    field = None if offset_field is None else _parse_field(offset_field, ref_valid.shape)
+    if field is None:
+        dx, dy = _offset(offset_px)
+        stats_offset = [dx, dy]
+    else:
+        dx = dy = 0
+        stats_offset = [field[0][4], field[0][5]] if len({f[4:] for f in field}) == 1 else None
     pairs = list(pairs_iter)
     layers = sorted({pair.layer for pair in pairs})
     r = _round_px(tolerance_um, pitch_um)
@@ -497,7 +597,11 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     for layer, count in per_layer.items():
         if count >= COUNTER_LIMIT:
             raise NumericContractError('change_map_counter_overflow', f'layer {layer}: {count} cases >= 2^32')
-    full_domain = _comparison_domain(ref_valid, tgt_valid, dy, dx)
+    seam_removed = 0
+    if field is None:
+        full_domain = _comparison_domain(ref_valid, tgt_valid, dy, dx)
+    else:
+        full_domain, seam_removed = _full_domain_field(ref_valid, tgt_valid, field)
     domain_before = int(np.count_nonzero(full_domain))
     # 침식 전 영역의 bbox [y0, y1, x0, x1] (reference 픽셀, 끝은 포함하지 않는다). 빈 영역이면 None.
     rows, cols = _extent(full_domain.any(axis=1), 0), _extent(full_domain.any(axis=0), 0)
@@ -514,10 +618,14 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
         a, b = _load_checked(pair, ref_valid.shape, tgt_valid.shape)
         # R 는 A ∪ B' 위에서만 0 이 아니다: 그 bbox 를 r(+1) 넓힌 영역에서 계산하면 frame 전체 계산과 비트 단위로 같다.
         # 합집합 U_ref |= A, U_tgt' |= B' 도 같은 bbox 안에서만 바뀐다(bbox 밖은 A, B' 모두 비었다).
-        box = _pair_bbox(a, b, dy, dx, height, width, r + 1)
+        if field is None:
+            box = _pair_bbox(a, b, dy, dx, height, width, r + 1)
+        else:   # 영역마다 offset 이 달라 B' 의 bbox 를 한 번에 못 구한다: A 또는 b 가 있으면 frame 전체
+            box = (0, height, 0, width) if a.any() or b.any() else None
         if box is not None:
             y0, y1, x0, x1 = box
-            b_c = _shift_crop(b, dy, dx, y0, y1, x0, x1)
+            b_c = (_shift_crop(b, dy, dx, y0, y1, x0, x1) if field is None
+                   else _shift_crop_field(b, field, y0, y1, x0, x1))
             union_ref[pair.layer][y0:y1, x0:x1] |= a[y0:y1, x0:x1]
             union_tgt[pair.layer][y0:y1, x0:x1] |= b_c
             res = _residual(a[y0:y1, x0:x1], b_c, domain[y0:y1, x0:x1], r)
@@ -533,15 +641,18 @@ def change_maps(pairs_iter, *, ref_valid, tgt_valid, offset_px, pitch_um, tolera
     # 층별 합집합 잔차: 조합별 잔차와 같은 허용 폭·팽창·침식(domain = erode(D, r))
     union_change = {layer: _residual(union_ref[layer], union_tgt[layer], domain, r) for layer in layers}
     union_pixels = {layer: int(np.count_nonzero(union_change[layer])) for layer in layers}
+    stats = {'pairs': len(pairs), 'pairs_by_layer': per_layer, 'pairs_with_change_by_layer': changed,
+             'union_change_pixels_by_layer': union_pixels,
+             'residual_pixels': residual_pixels, 'tolerance_px': r, 'offset_px': stats_offset,
+             'domain_pixels': int(np.count_nonzero(domain)),
+             'domain_pixels_before_erosion': domain_before,
+             'frame_pixels': int(domain.size),
+             'estimated_bytes': need, 'pitch_um': float(pitch_um), 'tolerance_um': float(tolerance_um)}
+    if field is not None:
+        stats['offset_field'] = [list(f) for f in field]
+        stats['seam_excluded_pixels'] = seam_removed
     return {'maps': maps, 'D': domain, 'union_change': union_change, 'union_ref': union_ref, 'union_tgt': union_tgt,
-            'domain_bbox_px': domain_bbox,
-            'stats': {'pairs': len(pairs), 'pairs_by_layer': per_layer, 'pairs_with_change_by_layer': changed,
-                      'union_change_pixels_by_layer': union_pixels,
-                      'residual_pixels': residual_pixels, 'tolerance_px': r, 'offset_px': [dx, dy],
-                      'domain_pixels': int(np.count_nonzero(domain)),
-                      'domain_pixels_before_erosion': domain_before,
-                      'frame_pixels': int(domain.size),
-                      'estimated_bytes': need, 'pitch_um': float(pitch_um), 'tolerance_um': float(tolerance_um)}}
+            'domain_bbox_px': domain_bbox, 'stats': stats}
 
 
 # --------------------------------------------------------------------------- A3. 창 점수와 후보
@@ -674,7 +785,10 @@ def suppress_overlap(merged, window_um, threshold):
         if kept:
             ox = np.maximum(0.0, window_um - np.abs(np.array(kx) - cx))
             oy = np.maximum(0.0, window_um - np.abs(np.array(ky) - cy))
-            if bool(np.any(ox * oy / (window_um * window_um) >= threshold - OVERLAP_EPS)):
+            if threshold <= OVERLAP_EPS:   # 0: 조금이라도 겹치면 억제
+                if bool(np.any(ox * oy > 0)):
+                    continue
+            elif bool(np.any(ox * oy / (window_um * window_um) >= threshold - OVERLAP_EPS)):
                 continue
         kept.append(item)
         kx.append(cx)
@@ -724,8 +838,93 @@ def _classify(a_w, b_w, w_px, pitch_um):
             'local_shift_um': [round(bx * pitch_um, 6), round(by * pitch_um, 6)]}
 
 
+def _window_spec(spec, base, shape):
+    """창별 offset 사양 → ('s', dx, dy) 또는 ('f', field). None 이면 base(스칼라 (dx, dy))."""
+    if spec is None:
+        return ('s', base[0], base[1])
+    if (isinstance(spec, (tuple, list)) and len(spec) == 2
+            and all(isinstance(v, numbers.Integral) and not isinstance(v, bool) for v in spec)):
+        dx, dy = _offset(spec)
+        return ('s', dx, dy)
+    return ('f', _parse_field(spec, shape))
+
+
+def _contributions_recomputed(pairs, windows, window_offsets, *, ref_valid, tgt_valid, base_offset, pitch_um, r, need):
+    """``window_offsets`` 를 준 ``case_contributions``: 창마다 자기 offset(스칼라 또는 field + 이음새 domain)으로 다시 계산한다.
+
+    기여 case 는 모든 층의 쌍에서 모은다(항목에 ``layer`` 를 단다). 창의 합집합 셀 수·sum_residual 은 창의 층 쌍으로만 센다
+    (``window_candidates`` 점수와 같은 정의). domain 은 창 둘레 2r 를 포함한 잘라낸 영역에서 만들어 침식하므로 frame 전체와 같다."""
+    height, width = ref_valid.shape
+    if len(window_offsets) != len(windows):
+        raise _bad(f'window_offsets has {len(window_offsets)} entries for {len(windows)} windows')
+    specs = [_window_spec(spec, base_offset, ref_valid.shape) for spec in window_offsets]
+    seams = {}
+    states = []
+    for window, spec in zip(windows, specs):
+        y0, x0 = window['window_origin_px']
+        w = window['window_px']
+        cy0, cy1, cx0, cx1 = max(y0 - r, 0), min(y0 + w + r, height), max(x0 - r, 0), min(x0 + w + r, width)
+        ey0, ey1, ex0, ex1 = max(y0 - 2 * r, 0), min(y0 + w + 2 * r, height), max(x0 - 2 * r, 0), min(x0 + w + 2 * r, width)
+        if spec[0] == 's':
+            valid = ref_valid[ey0:ey1, ex0:ex1] & _shift_crop(tgt_valid, spec[2], spec[1], ey0, ey1, ex0, ex1)
+        else:
+            if spec[1] not in seams:
+                seams[spec[1]] = _field_seam(spec[1], ref_valid.shape)
+            valid = (ref_valid[ey0:ey1, ex0:ex1] & _shift_crop_field(tgt_valid, spec[1], ey0, ey1, ex0, ex1)
+                     & ~seams[spec[1]][ey0:ey1, ex0:ex1])
+        d_c = _erode(valid, r)[cy0 - ey0:cy1 - ey0, cx0 - ex0:cx1 - ex0]
+        inner = (slice(y0 - cy0, y0 - cy0 + w), slice(x0 - cx0, x0 - cx0 + w))
+        states.append({'crop': (cy0, cy1, cx0, cx1), 'inner': inner, 'd_c': d_c,
+                       'observed': int(np.count_nonzero(d_c[inner])),
+                       'u_ref': np.zeros(d_c.shape, dtype=bool), 'u_tgt': np.zeros(d_c.shape, dtype=bool),
+                       'sum_residual': 0})
+    found = [[] for _ in windows]
+    for pair in pairs:
+        a, b = _load_checked(pair, ref_valid.shape, tgt_valid.shape)
+        for index, window in enumerate(windows):
+            st, spec = states[index], specs[index]
+            cy0, cy1, cx0, cx1 = st['crop']
+            inner = st['inner']
+            a_c = a[cy0:cy1, cx0:cx1]
+            b_c = (_shift_crop(b, spec[2], spec[1], cy0, cy1, cx0, cx1) if spec[0] == 's'
+                   else _shift_crop_field(b, spec[1], cy0, cy1, cx0, cx1))
+            d_c = st['d_c']
+            same_layer = pair.layer == window['layer']
+            if same_layer:   # 잔차 0 인 case 도 합집합에 들어간다
+                st['u_ref'] |= a_c
+                st['u_tgt'] |= b_c
+            count = int(np.count_nonzero(_residual(a_c, b_c, d_c, r)[inner]))
+            if not count:
+                continue
+            if same_layer:
+                st['sum_residual'] += count
+            entry = {'case_key': pair.case_key, 'layer': pair.layer, 'residual_um2': count * pitch_um * pitch_um}
+            a_in, b_in = a_c[inner] & d_c[inner], b_c[inner] & d_c[inner]
+            entry['area_reference_um2'] = int(np.count_nonzero(a_in)) * pitch_um * pitch_um
+            entry['area_target_um2'] = int(np.count_nonzero(b_in)) * pitch_um * pitch_um
+            entry.update(_classify(a_in, b_in, window['window_px'], pitch_um))
+            entry['flags'] = list(getattr(pair, 'flags', ()))
+            found[index].append(entry)
+        a = b = a_c = b_c = None
+    out = []
+    for index, window in enumerate(windows):
+        st = states[index]
+        inner, d_c = st['inner'], st['d_c']
+        w = window['window_px']
+        found[index].sort(key=lambda e: (-e['residual_um2'], e['case_key'], e['layer']))
+        out.append({'window_index': index, 'layer': window['layer'], 'center_xy_um': list(window['center_xy_um']),
+                    'contributing_cases': found[index],
+                    'union_change_cells': int(np.count_nonzero(_residual(st['u_ref'], st['u_tgt'], d_c, r)[inner])),
+                    'union_ref_cells': int(np.count_nonzero((st['u_ref'] & d_c)[inner])),
+                    'union_tgt_cells': int(np.count_nonzero((st['u_tgt'] & d_c)[inner])),
+                    'sum_residual_cells': st['sum_residual'],
+                    'observed_fraction': st['observed'] / float(w * w),
+                    'flags': [] if st['observed'] == w * w else [FLAG_PARTIAL]})
+    return out
+
+
 def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, pitch_um, tolerance_um,
-                       max_operation_bytes, reserved_bytes=0):
+                       max_operation_bytes, reserved_bytes=0, window_offsets=None):
     """선정된 창(``window_candidates`` 후보 dict 목록)마다, 창 안 R > 0 인 case 를 기여 case 로 모으고 변경 종류를 분류한다.
 
     case 를 한 장씩 다시 읽는다(두 번째 패스). 창 둘레 r 픽셀을 포함한 잘라낸 영역에서 잔차를 계산하므로 frame 전체
@@ -752,6 +951,13 @@ def case_contributions(pairs_iter, windows, *, ref_valid, tgt_valid, offset_px, 
     # 이 패스는 층별 uint32 지도와 적분 영상을 만들지 않는다: 1단계 추정(window_px=0)만 검사한다.
     need = estimate_change_map_bytes(ref_valid.shape, tgt_valid.shape, len(layers), 0, r)
     _check_admission(need, max_operation_bytes, reserved_bytes)
+    if window_offsets is not None:
+        out = _contributions_recomputed(pairs, windows, list(window_offsets), ref_valid=ref_valid, tgt_valid=tgt_valid,
+                                        base_offset=(dx, dy), pitch_um=pitch_um, r=r, need=need)
+        return {'windows': out,
+                'constants': {'CLASS_IOU_DELTA': CLASS_IOU_DELTA, 'CLASS_IOU_MIN': CLASS_IOU_MIN,
+                              'local_search': 'integer shifts with |s| <= W // 4 (Euclidean), ties: smallest |s| then (dy, dx)'},
+                'stats': {'pairs': len(pairs), 'windows': len(windows), 'tolerance_px': r, 'estimated_bytes': need}}
     domain = _erode(_comparison_domain(ref_valid, tgt_valid, dy, dx), r)
     by_layer = {}
     for index, window in enumerate(windows):

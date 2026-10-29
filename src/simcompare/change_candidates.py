@@ -55,6 +55,7 @@ MERGE_SCOPES = ('layer', 'all')
 MERGE_POLICY = {'layer': 'per_layer_window_overlap_intersection_over_min_area_union_find_region_id_order',
                 'all': 'all_layers_window_overlap_intersection_over_min_area_union_find_region_id_order'}
 SUPPRESS_POLICY = 'greedy_score_order_window_overlap_ge_x_all_layers'
+SUPPRESS_POLICY_ANY = 'greedy_score_order_any_window_overlap_all_layers'
 ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
 
 
@@ -86,7 +87,9 @@ def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance
     if merge_scope is not None and merge_scope not in MERGE_SCOPES:
         raise _bad('invalid_candidates_change_argument', f'--merge-scope는 {"|".join(MERGE_SCOPES)} 중 하나여야 합니다')
     if suppress_overlap is not None:
-        _finite('--suppress-overlap', suppress_overlap, unit_interval=True)
+        _finite('--suppress-overlap', suppress_overlap)
+        if not 0 <= suppress_overlap <= 1:
+            raise _bad('invalid_candidates_change_argument', '--suppress-overlap는 [0, 1] 범위여야 합니다')
     if local_align_um is not None and (isinstance(local_align_um, bool) or not isinstance(local_align_um, (int, float))
                                        or not math.isfinite(local_align_um) or local_align_um <= 0):
         raise _bad('local_align_um_invalid', f'--local-align-um {local_align_um!r}: 유한한 양수여야 합니다')
