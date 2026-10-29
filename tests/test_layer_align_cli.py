@@ -118,13 +118,31 @@ def small_apply(small):
     return make(small.world, small.tmp_path_factory, '--unit-align-um', '1', '--apply-align', 'unit', dl1=small.v2)
 
 
-def test_a_layer_folder_without_new_arguments_changes_nothing(small_base, small_nolayer):
-    """(a) 인수 생략 + Layer 있음 → 16개 출력 파일이 Layer 없는 같은 입력과 바이트까지 같다(허용 차이 목록 = 비어 있음)."""
+def without_figure_only_keys(doc):
+    """layer-align/T5 허용 차이(그림에만 쓰는 Layer): layer_inputs, inputs.layers, alignment_report.bytes, note layer_not_in_stack_order."""
+    for path in (('layer_inputs',), ('inputs', 'layers'), ('alignment_report', 'bytes')):
+        if all(k in doc for k in path[:1]) and (len(path) == 1 or isinstance(doc.get(path[0]), dict)):
+            doc = strip(doc, path)
+    if 'notes' in doc:
+        doc['notes'] = [n for n in doc['notes'] if n['code'] != 'layer_not_in_stack_order']
+    return doc
+
+
+def test_a_layer_folder_without_new_arguments_changes_only_the_figure_and_its_records(small_base, small_nolayer):
+    """(a) 인수 생략 + Layer 있음 → 계산 파일은 Layer 없는 같은 입력과 바이트까지 같다. 허용 차이는 alignment.html(그림)과
+    그림에 쓴 Layer 의 기록(alignment.json.layer_inputs, candidate_queries inputs.layers·alignment_report.bytes, note layer_not_in_stack_order)뿐이다."""
     a, b = files(small_base.out), files(small_nolayer.out)
     assert sorted(a) == sorted(b) and len(a) >= 16
     differing = [name for name in sorted(a) if a[name].read_bytes() != b[name].read_bytes()]
-    assert differing == []
+    assert set(differing) <= {'alignment.html', 'alignment.json', 'candidate_queries_v1.json', 'execution.json'}
+    assert 'alignment.html' in differing
+    for name in differing:
+        if name != 'alignment.html':
+            assert without_figure_only_keys(json.loads(a[name].read_text(encoding='utf-8'))) == \
+                without_figure_only_keys(json.loads(b[name].read_text(encoding='utf-8'))), name
     assert small_base.code == small_nolayer.code
+    assert 'layer_inputs' in small_base.alignment and 'layer_inputs' not in small_nolayer.alignment
+    assert set(small_base.payload['inputs']['layers']) == {'reference', 'target'}
 
 
 def test_b_unit_align_only_adds_alignment_keys_and_changes_nothing_else(small_base, small_unit_align):
@@ -134,12 +152,14 @@ def test_b_unit_align_only_adds_alignment_keys_and_changes_nothing_else(small_ba
     assert [n for n in sorted(a) if n not in allowed and a[n].read_bytes() != b[n].read_bytes()] == []   # alignment.html 포함
     assert small_unit_align.code == small_base.code
     alignment = small_unit_align.alignment
-    assert all(k in alignment for k in NEW_ALIGNMENT_KEYS) and not any(k in small_base.alignment for k in NEW_ALIGNMENT_KEYS)
-    assert strip(alignment, *[(k,) for k in NEW_ALIGNMENT_KEYS]) == small_base.alignment
-    # 전체 queries·export 는 같고, 바뀌는 곳은 change_args / inputs.layers / notes 뿐이다
+    new_keys = [k for k in NEW_ALIGNMENT_KEYS if k != 'layer_inputs']      # layer-align/T5: layer_inputs 는 그림에 쓴 Layer 로 이미 기본 실행에도 있다
+    assert all(k in alignment for k in NEW_ALIGNMENT_KEYS) and not any(k in small_base.alignment for k in new_keys)
+    assert alignment['layer_inputs'] == small_base.alignment['layer_inputs']
+    assert strip(alignment, *[(k,) for k in new_keys]) == small_base.alignment
+    # 전체 queries·export 는 같고, 바뀌는 곳은 change_args / notes 뿐이다(inputs.layers 는 그림에 쓴 Layer 의 같은 지문)
     payload, base = small_unit_align.payload, small_base.payload
     assert payload['change_args'].pop('unit_align_um') == 1.0
-    layers = payload['inputs'].pop('layers')
+    layers = payload['inputs']['layers']
     assert sorted(layers) == ['reference', 'target'] and all(v['n_files'] == 3 for v in layers.values())
     payload['notes'] = [n for n in payload['notes'] if n['code'] != 'layer_global_check_differs']
     assert payload == base

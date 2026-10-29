@@ -661,7 +661,93 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
         raise
 
 
-def _collect_layer_bases(source, queries, windows, root, files, products, limit, reserved, warnings, diag=None):
+def _layer_figure_files(root, products):
+    """layer-align/T5: 두 모델 모두 새 구조(Merged_Layer) + Layer PNG 가 있으면 ``{'reference'|'target': {층: fs_rel}}``, 아니면 None(예전 그림)."""
+    from .adapters.electrode_png import layout_structure, scan_layer_pngs
+    files = {}
+    for name in ('reference', 'target'):
+        product = products[name].product_id
+        if layout_structure(root, product) != 'merged_layer_v2':
+            return None
+        files[name] = scan_layer_pngs(root, product)
+        if not files[name]:
+            return None
+    return files
+
+
+def _layer_fingerprints(root, products, files):
+    """그림에만 쓰는 Layer 의 입력 지문. ``alignment.json.layer_inputs`` 와 같은 모양 ``{모델: {'product_id', 'files': [{layer, relative_path, sha256}]}}``."""
+    from .numeric_images import resolve_path
+    out = {}
+    for name in ('reference', 'target'):
+        records = [{'layer': layer, 'relative_path': rel,
+                    'sha256': hashlib.sha256(resolve_path(Path(root), rel).read_bytes()).hexdigest()}
+                   for layer, rel in sorted(files[name].items(), key=lambda item: alignment_report.natural_key(item[0]))]
+        out[name] = {'product_id': products[name].product_id, 'files': records}
+    return out
+
+
+def _figure_stack_order(sides):
+    """그림용 층 쌓는 순서: 설정의 ``condition_assignment.layer_stack`` ({층: stack order}). 없으면 None(Layer 파일 번호 순)."""
+    for name in ('reference', 'target'):
+        try:
+            return _stack_order(sides[name])
+        except (NumericContractError, KeyError, TypeError):
+            continue
+    return None
+
+
+def _collect_layer_figures(source, queries, windows, root, files, products, stack, offset_px, limit, reserved, warnings, notes):
+    """layer-align/T5: 5절 위치 그림 바탕(reference Layer 블록 분율)과 ROI 주변 Layer stack crop 두 장을 모은다. 성공하면 True.
+
+    층은 stack order 순으로 (모델, 층) 하나씩 읽어 분율·crop 에 섞고 바로 놓는다. 읽기 admission(``electrode_fits``)과 보유할 crop 바이트가
+    한도를 넘거나 Layer PNG 를 읽을 수 없으면 Layer 그림만 빼고(예전 그림) 경고 ``alignment_report_layer_figures_skipped`` 를 남긴다(계산·JSON 은 그대로).
+    target crop 은 그 ROI 의 적용 offset(``offset_xy_px_applied``, 없으면 전역 offset)으로 reference 좌표에 옮긴다."""
+    import re
+    from .adapters.electrode_png import load_layer_png
+    if not source.crop_boxes or source.observed is None:
+        return False
+    ref_shape, tgt_shape = products['reference'].frame.valid.shape, products['target'].frame.valid.shape
+    crop_bytes = sum(6 * (y1 - y0) * (x1 - x0) for y0, y1, x0, x1 in source.crop_boxes)
+    need = alignment_report.electrode_read_bytes(ref_shape, tgt_shape) + crop_bytes
+    if need > limit - reserved - source.held_bytes():
+        warnings.append({'code': 'alignment_report_layer_figures_skipped', 'estimated_bytes': need, 'reserved_bytes': reserved,
+                         'max_operation_bytes': limit})
+        return False
+    numbers = {}
+    for name in ('target', 'reference'):      # 두 모델의 파일 번호가 다르면 reference 를 따른다
+        for layer, rel in files[name].items():
+            match = re.match(r'(\d+)-', Path(rel).name)
+            numbers[layer] = int(match.group(1)) if match else 0
+    style = alignment_report.stack_style(numbers, stack)
+    if style['not_in_stack']:
+        notes.append({'code': alignment_report.LAYER_NOT_IN_STACK, 'severity': 'info', 'layers': list(style['not_in_stack']),
+                      'detail': 'figure only: these Layer files are stacked on top by file number'})
+    offsets = []
+    for i in range(len(source.crop_boxes)):
+        query = queries[i] if i < len(queries) else {}
+        applied = query.get('offset_xy_px_applied')
+        offsets.append(((int(applied[0]), int(applied[1])), query.get('offset_source', 'global')) if applied is not None
+                       else ((int(offset_px[0]), int(offset_px[1])), 'global'))
+
+    def load(side, layer):
+        name = 'reference' if side == 'ref' else 'target'
+        rel = files[name].get(layer)
+        if rel is None:
+            return None
+        return load_layer_png(root, products[name].product_id, products[name].frame, rel)
+    try:
+        source.collect_layers(style, load, offsets)
+    except NumericContractError as exc:
+        source.layer_fraction.clear()
+        source.layer_crop.clear()
+        source.layer_style = None
+        warnings.append({'code': 'alignment_report_layer_figures_skipped', 'reason': getattr(exc, 'code', str(exc))})
+        return False
+    return True
+
+
+def _collect_layer_bases(source, queries, windows, root, files, products, limit, reserved, warnings, diag=None, layer_files=None):
     """alignment.html 5절 층 묶음의 전극 형상 바탕(DDDDDD)을 읽어 ROI 상자 crop 으로 남긴다.
 
     그리는 층(``alignment_report.layer_bundles``)만, (모델, 층) 하나씩 frame bool 로 읽고 바로 놓는다. 메모리 추정(``electrode_fits``)이
@@ -670,7 +756,7 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
 
     ``diag`` (국소 정렬 진단, 선택): ``{'r_px': r}`` 를 주면, 바탕 admission 이 통과한 경우에 한해 별도 admission(``local_align.estimate_bytes``)을 해서
     통과하면 같은 읽기에서 넓은 target crop 도 남긴다. 못 하면 ``diag['skip']`` 에 사유를 적는다. 바탕 admission·경고는 diag 와 무관하다."""
-    from .adapters.electrode_png import load_electrode_layer
+    from .adapters.electrode_png import load_electrode_layer, load_layer_png
     wanted = {}
     for i, (query, window) in enumerate(zip(queries, windows)):
         if i >= len(source.hot):
@@ -717,7 +803,18 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
         item = products[name]
 
         def load(layer):
+            layer_rel = layer_files[name].get(layer) if layer_files is not None and diag is None else None
+            if layer_rel is not None:      # layer-align/T5: 그 층의 Layer PNG 가 있으면 Merged 합집합 대신 Layer 를 바탕으로 쓴다(진단 실행은 예전 바탕 그대로)
+                try:
+                    union = load_layer_png(root, item.product_id, item.frame, layer_rel)
+                except NumericContractError as exc:
+                    source.base_reason[(layer, side)] = '읽기 실패: ' + exc.code
+                    return None
+                source.base_kind[(layer, side)] = 'Layer'
+                return union
             names = files[name].get(layer)
+            if layer_files is not None and diag is None:
+                source.base_kind[(layer, side)] = 'Merged'
             if not names:
                 folder = (Path(root) / item.product_id).is_dir()
                 source.base_reason[(layer, side)] = '파일 없음' if folder else '제품 폴더 없음'
@@ -1298,11 +1395,18 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # hotspot 층 수: 두 dataset case 의 analysis_layer 합집합(변경 지도 층의 상한). 알 수 없으면 보수적 상수.
     hot_layers = len({case.analysis_layer for side in sides.values() for case in getattr(side.dataset, 'cases', ())})
     n_hot_layers = hot_layers or alignment_report.HEAT_LAYERS_ASSUMED
+    electrode_root = args.get('electrode_png_root', args['cnt_from_dl1_root'])
+    # layer-align/T5: 두 모델 모두 새 구조 + Layer PNG 가 있으면 5절 그림이 Layer stack 이다(인수와 무관; 이름만 스캔).
+    layer_figure_files = None
+    if alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k, n_hot_layers, window_px):
+        layer_figure_files = _layer_figure_files(electrode_root, products)
+    n_layer_png = len(set(layer_figure_files['reference']) | set(layer_figure_files['target'])) if layer_figure_files else 0
     images_ok = alignment_report.fits(ref.frame.valid.shape, tgt.frame.valid.shape, limit, reserved, top_k,
-                                      n_hot_layers, window_px)
+                                      n_hot_layers, window_px, n_layer_png)
+    if not images_ok:
+        layer_figure_files = None
     report_source = (alignment_report.ImageSource(cnt['reference']['layers'], cnt['target']['layers'], ref.frame.valid,
                                                   tgt.frame.valid, offset_px) if images_ok else None)
-    electrode_root = args.get('electrode_png_root', args['cnt_from_dl1_root'])
     # 층 묶음 바탕용 전극 PNG 이름 목록(읽지 않는다). 이름 규칙 위반은 기존 loader 와 같은 오류다.
     electrode_files = ({name: scan_electrode_layers(electrode_root, products[name].product_id) for name in products}
                        if report_source is not None else {})
@@ -1321,6 +1425,10 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         unit = _unit_alignment(products, cnt, offset_px, args['unit_align_px'], args, electrode_root, limit, reserved, pitch)
         alignment_doc.update(unit['doc'])
         notes.extend(unit['notes'])
+    figure_layer_inputs = None
+    if layer_figure_files is not None and unit is None:      # 그림에만 쓰는 Layer 의 입력 지문(정렬에 쓰면 위 unit['doc']['layer_inputs'] 를 그대로 쓴다)
+        figure_layer_inputs = _layer_fingerprints(electrode_root, products, layer_figure_files)
+        alignment_doc['layer_inputs'] = figure_layer_inputs
 
     # --- 3. 변경 지도 → 창 후보 → 층마다 병합
     # 같은 역할의 전극은 두 모델에서 같은 이름이다. 전극이 한쪽 모델에만 있어도 비교 대상이다: 그 전극을 쓰는 한쪽 조합은
@@ -1655,9 +1763,14 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     local_um = args.get('local_align_um')
     diagnose = local_um is not None and not apply_local
     local_state = {'r_px': local_align.search_radius_px(local_um, pitch)} if diagnose else None
+    layer_bases = None
+    if report_source is not None and layer_figure_files is not None:
+        if _collect_layer_figures(report_source, directions[0]['queries'], windows, electrode_root, layer_figure_files, products,
+                                  _figure_stack_order(sides), offset_px, limit, reserved, warnings, notes):
+            layer_bases = layer_figure_files
     if report_source is not None:
         _collect_layer_bases(report_source, directions[0]['queries'], windows, electrode_root, electrode_files, products,
-                             limit, reserved, warnings, diag=local_state)
+                             limit, reserved, warnings, diag=local_state, layer_files=layer_bases)
     if apply_local:
         local_doc = _local_apply_document([item['record'] for item in kept_local], [item['decision'] for item in kept_local],
                                           directions[0]['queries'], windows, pitch, args, offset_px, ref_shape, local_run['excluded'])
@@ -1674,7 +1787,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                          'max_operation_bytes': limit})
     report_html, report_info = alignment_report.build_alignment_html(
         alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped,
-        pairing_stats=pairing['stats'], local_alignment=local_doc)
+        pairing_stats=pairing['stats'], local_alignment=local_doc,
+        apply_mode='unit' if apply_unit else 'local' if apply_local else None)
     report_source = None
     emit_bytes('alignment.html', report_html)
     if local_doc is not None:
@@ -1735,8 +1849,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                              'unit_align_um', 'apply_align', 'unit_fold', 'unit_fold_tolerance_um',
                                              'refine_pool') if k in args})
     layer_files = (unit['doc']['layer_inputs'] if unit is not None
-                   else (local_run['layer_files'] if local_run is not None else None))
-    if layer_files is not None:      # Layer 를 정렬에 쓴 실행만: 입력 지문(alignment.json.layer_inputs 와 같은 파일 목록)
+                   else (local_run['layer_files'] if local_run is not None else figure_layer_inputs))
+    if layer_files is not None:      # Layer 를 정렬이나 그림에 쓴 실행만: 입력 지문(alignment.json.layer_inputs 와 같은 파일 목록)
         inputs['layers'] = {name: {'product_id': item['product_id'], 'files_sha256': _sha_json(item['files']),
                                    'n_files': len(item['files'])} for name, item in layer_files.items()}
     payload = {'schema_version': candidates.SCHEMA_VERSION, 'roi_source': ROI_SOURCE, 'producer_commit': commit,
