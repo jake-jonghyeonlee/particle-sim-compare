@@ -926,6 +926,7 @@ def _roi_text(rank, query, window, shape):
 LOCAL_STATUS_TEXT = {
     'ok': '일치 확인', 'change_biased': '변경이 정렬을 끌어당김(링과 다름)', 'ring_inconclusive': '링 판정 불가', 'ambiguous': '모호',
     'low_score': '점수 낮음', 'insufficient_support': '지지 부족', 'search_bound_hit': '탐색 경계', 'skipped': '진단 안 함'}
+LOCAL_OPEN, LOCAL_CLOSE = '<!--local-->', '<!--/local-->'      # 국소 정렬 진단을 더한 HTML 조각의 경계(진단을 빼면 이 조각이 없다)
 LOCAL_SUMMARY_ORDER = (('ok', 'ok'), ('change_biased', '변경 편향'), ('ring_inconclusive', '링 판정 불가'), ('ambiguous', '모호'),
                        ('low_score', '점수 낮음'), ('insufficient_support', '지지 부족'), ('search_bound_hit', '탐색 경계'),
                        ('skipped', '진단 안 함'))
@@ -940,11 +941,15 @@ def _local_summary_line(local):
         scale = '배율 추정 %s ppm, %s ppm (%d개 ROI)' % (fit['scale_ppm_xy'][0], fit['scale_ppm_xy'][1], fit['n'])
     else:
         scale = '배율 추정 없음: ' + str(local.get('linear_fit_reason') or '—')
-    return '<p class="note">ROI 국소 정렬 진단: ' + escape(counts) + ' · ' + escape(scale) + '</p>'
+    excluded = ', '.join('%s (%s)' % (e['key'], e['reason']) for e in local.get('excluded_layers') or [])
+    return (LOCAL_OPEN + '<p class="note">ROI 국소 정렬 진단: ' + escape(counts) + ' · ' + escape(scale) +
+            (' · 제외 층 ' + escape(excluded) if excluded else '') + '</p>' + LOCAL_CLOSE)
 
 
-def _local_table(item, excluded):
-    """5절 ROI 마다 국소 정렬 진단 표(작은 한글 표). item = roi_local_alignment.json 의 rois 항목, excluded = 문서의 excluded_layers."""
+def _local_table(item, excluded, bundle_layers):
+    """5절 ROI 마다 국소 정렬 진단 표(작은 한글 표). item = roi_local_alignment.json 의 rois 항목, excluded = 문서의 excluded_layers,
+    bundle_layers = 이 ROI 묶음 층. 제외 층은 이 ROI 의 후보(묶음 전극 층 + CNT 층)에 해당하는 것만 보인다."""
+    excluded = [e for e in excluded if e['key'].startswith('cnt:') or e['key'] in ['electrode:' + layer for layer in bundle_layers]]
     status = item.get('status', 'skipped')
     rows = [('상태', escape(LOCAL_STATUS_TEXT.get(status, status)) + ' <code>' + escape(status) + '</code>', '')]
     if item.get('reason') and item.get('reason') != status:
@@ -964,9 +969,9 @@ def _local_table(item, excluded):
     rows.append(('제외 층', escape(', '.join('%s (%s)' % (e['key'], e['reason']) for e in excluded) or '—'), ''))
     flags = item.get('flags') or []
     rows.append(('플래그', ('<code>' + '</code> <code>'.join(escape(f) for f in flags) + '</code>') if flags else '—', 'hi' if flags else ''))
-    return ('<h4>국소 정렬 진단</h4><table>' +
+    return (LOCAL_OPEN + '<h4>국소 정렬 진단</h4><table>' +
             ''.join('<tr><th>' + escape(k) + '</th><td' + (' class="%s"' % c if c else '') + '>' + v + '</td></tr>' for k, v, c in rows) +
-            '</table>')
+            '</table>' + LOCAL_CLOSE)
 
 
 def _fmt3(value):
@@ -1018,12 +1023,14 @@ def _footnotes(local=None):
             '<li><code>--suppress-overlap</code> 을 쓰면 순위가 앞선 대표 창과 겹침 비율이 기준 이상인 창은 층 구분 없이 목록에서 빠진다. '
             '빠진 창의 변경은 앞선 ROI 의 창에서 이미 보인다.</li>')
     if local is not None:
-        notes += ('<li>ROI 국소 정렬 진단(<code>--local-align-um</code>) 상태: 일치 확인(ok) = 전체와 링(창 둘레 띠)의 국소 offset 이 같다 · '
-                  '변경 편향(change_biased) = 링의 offset 이 전체와 다르다(변경이 정렬을 끌어당김) · 링 판정 불가(ring_inconclusive) = 링만으로는 정할 수 없다 · '
+        notes += (LOCAL_OPEN + '<li>ROI 국소 정렬 진단(<code>--local-align-um</code>) 상태: 일치 확인(ok) = 링(창 둘레 띠)의 국소 offset 과 전체의 국소 offset 의 차이가 '
+                  '허용값(<code>--align-layer-tolerance-um</code>) 이하다 · '
+                  '변경 편향(change_biased) = 그 차이가 허용값보다 크다(변경이 정렬을 끌어당김) · 링 판정 불가(ring_inconclusive) = 링만으로는 정할 수 없다 · '
                   '모호(ambiguous) = 최적과 비슷한 점수의 다른 후보가 멀리 있다 · 점수 낮음(low_score) = 최적 Dice 가 --align-min-dice 보다 낮다 · '
                   '지지 부족(insufficient_support) = 비교할 전경 픽셀이 너무 적다 · 탐색 경계(search_bound_hit) = 최적이 탐색 반경 가장자리다 · '
-                  '진단 안 함(skipped) = 입력이 없거나 메모리 때문에 건너뛰었다.</li>'
-                  '<li>국소 정렬 진단은 계산(순위·기여 case·export)에 쓰이지 않는다. 참고 표시다.</li>')
+                  '진단 안 함(skipped) = 사유 <code>images_skipped</code> · <code>electrode_bases_skipped</code> · <code>diagnostic_memory_limit</code> · '
+                  '<code>no_bundle_layers</code> · <code>no_layers</code> · <code>no_valid_region</code> 중 하나로 건너뛰었다.</li>'
+                  '<li>국소 정렬 진단은 계산(순위·기여 case·export)에 쓰이지 않는다. 참고 표시다.</li>' + LOCAL_CLOSE)
     return notes + '</ul>'
 
 
@@ -1129,7 +1136,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
             if level == 2:
                 figs += '<p class="missing">그림 생략: 파일 크기 상한(%d MiB) 때문에 이 ROI 의 crop 그림을 뺐습니다.</p>' % (limit // (1024 * 1024))
         if i + 1 in local_items:
-            figs += _local_table(local_items[i + 1], local_alignment.get('excluded_layers') or [])
+            figs += _local_table(local_items[i + 1], local_alignment.get('excluded_layers') or [],
+                                 [b['layer'] for b in layer_bundles(queries[i], windows[i])[0]])
         sections[(i, level)] = encode('<div class="roi" id="roi%d">' % (i + 1) + title + figs + text + '</div>')
         return sections[(i, level)]
 

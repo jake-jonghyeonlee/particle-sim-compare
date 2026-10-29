@@ -5,6 +5,7 @@ L2, of B on L1; target bars at the reference bars + OFFSET). ``--merge-scope all
 in test_roi_local_alignment_baseline; here on/off runs are compared file by file.
 """
 import json
+import re
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -82,6 +83,10 @@ def test_on_run_differs_only_in_the_allowed_places(off_run, on_run):
     assert on_q == off_q
     on_html, off_html = (files(r.out)['alignment.html'].read_text(encoding='utf-8') for r in (on_run, off_run))
     assert 'ROI 국소 정렬 진단' in on_html and 'ROI 국소 정렬 진단' not in off_html and '국소 정렬 진단' not in off_html
+    # roi-detail/T4 adv:3: the diagnostic table, the section-1 summary line and the section-7 footnotes (the three marked fragments) are
+    # the only difference; the PNG data URIs are the same bytes in both runs
+    assert on_html.count(alignment_report.LOCAL_OPEN) == on_html.count(alignment_report.LOCAL_CLOSE) >= 3
+    assert re.sub(r'<!--local-->.*?<!--/local-->', '', on_html, flags=re.S) == off_html
 
 
 def test_on_run_is_deterministic(two_layer_world, clean_root, on_run, tmp_path):

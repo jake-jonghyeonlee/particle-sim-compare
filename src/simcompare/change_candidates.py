@@ -447,7 +447,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     전극 목록 비교(``electrode_set_differs``, 조합 짝짓기)는 이 값과 무관하게 ``cnt_from_dl1_root`` 를 쓴다.
 
     ``local_align_um`` (선택, roi-detail/T2): ROI 국소 정렬 진단의 탐색 반경(µm). 주면 ``roi_local_alignment.json`` 을 더 쓴다.
-    진단 전용이다: 경고·종료 코드·다른 산출 파일은 바꾸지 않는다. round(R / pitch) 가 2..30 px 가 아니면 쓰기 전에 종료 2(``local_align_um_invalid``).
+    진단 전용이다: 경고·종료 코드·다른 산출 파일은 바꾸지 않는다. round(R / pitch) 가 2..30 px 가 아니면(2 px 이상이어야 거리 2 이상 후보가 있어 모호(ambiguous) 판정이 가능하다) 쓰기 전에 종료 2(``local_align_um_invalid``).
 
     폴더를 만들기 전에 NumericContractError(종료 코드 2)로 알리는 것: 인수 값(없는 DL1 root, 폴더가 아닌 전극 PNG root, 규칙 값 포함),
     이미 있는 출력 경로, config 종류·지름,

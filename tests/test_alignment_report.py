@@ -526,14 +526,15 @@ def test_position_rect_in_a_frame_corner_keeps_its_seven_pixel_size_and_is_clipp
 
 
 def test_quadrant_lines_of_an_odd_sized_frame_sit_on_the_centre_block():
-    source = position_source(shape=(301, 321))
+    source = position_source(shape=(303, 323))
     base, total = alignment_report._position_base(source)
-    assert total == 2 and base.shape[:2] == (151, 161)
+    assert total == 2 and base.shape[:2] == (152, 162)
     line = colour_mask(base, alignment_report.POS_LINE)
-    # independent expectation: the frame centre pixel is (301 // 2, 321 // 2) = (150, 160); with 2 px blocks that is block (75, 80)
+    # independent expectation: the frame centre pixel is (303 // 2, 323 // 2) = (151, 161); with 2 px blocks that is block (75, 80).
+    # Half the blocked observed size would give (152 // 2, 162 // 2) = (76, 81): the two differ, so a line placed that way fails here.
     rows, cols = np.nonzero(line)
-    assert set(rows[line.sum(axis=1)[rows] == 161]) == {75} and set(cols[line.sum(axis=0)[cols] == 151]) == {80}
-    assert line.sum() == 161 + 151 - 1
+    assert set(rows[line.sum(axis=1)[rows] == 162]) == {75} and set(cols[line.sum(axis=0)[cols] == 152]) == {80}
+    assert line.sum() == 162 + 152 - 1
 
 
 def test_position_caption_states_the_real_block_size(tmp_path):
@@ -583,6 +584,12 @@ def test_local_alignment_table_summary_line_and_footnotes_appear_only_when_given
     assert '진단 안 함 <code>skipped</code>' in html and '<code>diagnostic_memory_limit</code>' in html
     assert '[5, 3] px = [0.5, 0.3] µm (x, y)' in html and '0.500 / 0.750' in html and '링 차이 [2, 1] px' in html
     assert 'electrode:L1, cnt:CNT1' in html and 'electrode:L2 (one_sided)' in html
+    assert html.count('electrode:L2 (one_sided)') == 1          # document-wide excluded layers: once, in the summary line (L2 is no bundle layer here)
+    assert '제외 층 electrode:L2 (one_sided)</p>' in html
+    assert '링(창 둘레 띠)의 국소 offset 과 전체의 국소 offset 의 차이가 허용값(<code>--align-layer-tolerance-um</code>) 이하다' in html
+    assert '<code>no_valid_region</code>' in html
+    assert alignment_report.LOCAL_OPEN not in plain and alignment_report.LOCAL_CLOSE not in plain
+    assert re.sub(r'<!--local-->.*?<!--/local-->', '', html, flags=re.S) == plain
     assert html.count('<td class="hi"><code>local_offset_differs</code></td>') == 1
     assert '계산(순위·기여 case·export)에 쓰이지 않는다' in html
     # the table of ROI 2 sits inside ROI 2's block

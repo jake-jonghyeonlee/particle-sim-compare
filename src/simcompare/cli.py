@@ -103,7 +103,7 @@ def _parser() -> argparse.ArgumentParser:
     change.add_argument("--suppress-overlap", type=float,
                         help="선택. (0,1]. 병합 뒤 순위 순서로 앞선 대표 창과 겹침 비율이 이 값 이상이면 버린다(층 구분 없음). 생략하면 억제 없음")
     change.add_argument("--local-align-um", type=float,
-                        help="선택. ROI 국소 정렬 진단의 탐색 반경 µm(예시 1). 지정하면 roi_local_alignment.json 을 더 쓴다. 진단 전용이며 다른 산출·종료 코드를 바꾸지 않는다. round(R / pitch) 가 2..30 px 여야 한다. 생략하면 진단 없음")
+                        help="선택. ROI 국소 정렬 진단의 탐색 반경 µm(예시 1). 지정하면 roi_local_alignment.json 을 더 쓴다. 진단 전용이며 다른 산출·종료 코드를 바꾸지 않는다. round(R / pitch) 가 2..30 px 여야 한다(2 px 이상이어야 거리 2 이상 후보가 있어 모호(ambiguous) 판정이 가능하다). 생략하면 진단 없음")
     change.add_argument("--top-k", required=True, type=int, help="방향(reference_to_target / target_to_reference)별 질의 수")
     change.add_argument("--mask-derivation-rule", required=True,
                         help="DL2 mask_derivation 규칙: between_stack_order_v1 만 허용(기본값 없음). 질의·index export 폴더마다 mask_derivation.json 을 쓴다")
