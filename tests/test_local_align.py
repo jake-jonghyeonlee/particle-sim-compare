@@ -44,12 +44,12 @@ def diagnose(ref, wide, *, r=R, tol=0.2, min_dice=0.3, window=WIN, valid=None, *
 
 # --- 반경 -----------------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize('value,expected', [(1, 10), (0.1, 1), (3.0, 30), (0.26, 3)])
+@pytest.mark.parametrize('value,expected', [(1, 10), (0.2, 2), (3.0, 30), (0.26, 3)])
 def test_radius_is_rounded_to_pixels(value, expected):
     assert la.search_radius_px(value, PITCH) == expected
 
 
-@pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf'), 0.04, 3.2, True, '1'])
+@pytest.mark.parametrize('value', [0, -1, float('nan'), float('inf'), 0.04, 0.1, 0.14, 3.2, True, '1'])
 def test_bad_radius_is_rejected_with_the_value(value):
     with pytest.raises(la.RadiusError) as info:
         la.search_radius_px(value, PITCH)
@@ -109,17 +109,30 @@ def test_omega_is_empty_when_target_valid_is_empty():
     assert got['status'] == 'skipped' and got['reason'] == 'no_valid_region'
 
 
-def test_astra_1d_counterexample_does_not_pick_a_fake_interior_optimum():
-    # reference [1,1,1,1,1,0] 이고 target 은 전부 1. d 마다 Ω 를 따로 잡으면 가장자리 d 가 거짓으로 좋아 보인다.
-    # 고정 Ω 에서는 모든 d 의 Dice 가 같다(10/11) → 평탄 → ambiguous.
-    r = 2
+def _astra_case(r):
+    """reference [1,1,1,1,1,0], target 는 전부 1 이지만 관측(valid)은 frame 안쪽 6 px(넓은 crop 의 열 r..r+5)뿐이다.
+
+    d 마다 Ω 를 따로 잡는 구현은 target 이 frame 밖으로 나가는 d 에서 그 열을 Ω 에서 빼 Dice 가 d 마다 달라지고
+    (가장자리 d 의 거짓 최적, 예: 오른쪽 +1) 가짜 최적을 고른다. 고정 Ω 에서는 모든 d 의 Dice 가 같다."""
     ref = np.zeros((1, 6), bool)
     ref[0, :5] = True
     wide = np.ones((1 + 2 * r, 6 + 2 * r), bool)
-    got = la.diagnose_roi({'cnt:C': ref}, {'cnt:C': wide}, np.ones((1, 6), bool), np.ones_like(wide), (0, 1, 0, 6), r,
-                          pitch_um=PITCH, tolerance_um=0.2, min_dice=0.3, min_support=1, min_ring_support=1)
-    assert got['status'] == 'ambiguous'
-    assert got['dice_local'] == round(10 / 11, 6) == got['dice_global']
+    tv = np.zeros_like(wide)
+    tv[:, r:r + 6] = True
+    return la.diagnose_roi({'cnt:C': ref}, {'cnt:C': wide}, np.ones((1, 6), bool), tv, (0, 1, 0, 6), r,
+                           pitch_um=PITCH, tolerance_um=0.2, min_dice=0.3, min_support=1, min_ring_support=1)
+
+
+def test_astra_1d_counterexample_does_not_pick_a_fake_interior_optimum():
+    got = _astra_case(2)
+    assert got['status'] == 'ambiguous'          # 평탄: 어느 d 도 뚜렷하지 않다
+    assert got['d_yx'] != (0, 1)                  # 가짜 +1 최적을 고르지 않는다(동률이면 d=0)
+    assert got['d_yx'] == (0, 0) and got['dice_local'] == got['dice_global']
+
+
+def test_astra_counterexample_with_a_search_wider_than_the_valid_area_has_no_domain():
+    got = _astra_case(3)                          # 창 폭 2r+1 = 7 > 관측 6 px → Ω 가 비어 있다
+    assert got['status'] == 'skipped' and got['reason'] == 'no_valid_region'
 
 
 def test_frame_edge_does_not_create_a_fake_optimum():
@@ -265,3 +278,13 @@ def test_estimate_bytes_grows_with_rois_layers_and_radius():
     assert la.estimate_bytes([(200, 200)], 4, 3, 5) > small
     assert la.estimate_bytes([(200, 200)], 1, 3, 20) > small
     assert math.isfinite(small)
+
+
+def test_estimate_bytes_matches_the_documented_formula():
+    h = w = 200
+    r, n_el, n_cnt = 10, 2, 3
+    n = 2 * r + 1
+    wide = (h + 2 * r) * (w + 2 * r)
+    held = wide * n_el
+    temp = n_cnt * (h * w + wide) + 9 * wide + 32 * n * n * (n_el + n_cnt + 1) + 200 * n * n
+    assert la.estimate_bytes([(h, w)], n_el, n_cnt, r) == held + temp

@@ -19,6 +19,7 @@ import numpy as np
 
 SCHEMA = 'roi_local_alignment_v1'
 LAYERS_BASIS = 'bundle_electrode_layers_plus_cnt'
+MIN_LOCAL_SEARCH_PX = 2         # 체비쇼프 거리 ≥ 2 인 후보가 있어야 ambiguous 를 판정할 수 있다(r=1 이면 판정 불가).
 MAX_LOCAL_SEARCH_PX = 30        # 3 µm @ 0.1 µm. 점수를 직접 합(후보 (2r+1)^2 개)으로 세므로 상한을 둔다.
 # 시험값. 근거: ROI 상자 한 변은 보통 200 px(10 µm 창 + 50% 여백, 0.1 µm pitch)이고 전극 선폭은 수 px 다.
 # 전경이 이 값 미만이면 Dice 의 분모가 작아 한 픽셀 차이로 최적이 뒤바뀐다(전극 선 하나가 길이 ~100 px 면 ~300 px).
@@ -42,14 +43,17 @@ class RadiusError(ValueError):
 
 
 def search_radius_px(local_align_um, pitch_um):
-    """R(µm) → r_px = round(R / pitch) ∈ [1, MAX_LOCAL_SEARCH_PX]. 범위를 벗어나면 RadiusError."""
+    """R(µm) → r_px = round(R / pitch) ∈ [2, MAX_LOCAL_SEARCH_PX]. 범위를 벗어나면 RadiusError.
+
+    하한 2 px: ambiguous 판정은 최적과 체비쇼프 거리 ≥ 2 인 후보와 비교하므로 r=1 이면 후보가 없어 평탄·주기 구조를 못 가려낸다."""
     if isinstance(local_align_um, bool) or not isinstance(local_align_um, (int, float)) or not math.isfinite(local_align_um) \
             or local_align_um <= 0:
         raise RadiusError(f'--local-align-um {local_align_um!r}: 유한한 양수여야 합니다')
     r = int(round(float(local_align_um) / float(pitch_um)))
-    if r < 1 or r > MAX_LOCAL_SEARCH_PX:
-        raise RadiusError(f'--local-align-um {local_align_um}: round(R / pitch {pitch_um}) = {r} px, 허용 범위는 1..{MAX_LOCAL_SEARCH_PX} px '
-                          f'({_r6(pitch_um)} .. {_r6(MAX_LOCAL_SEARCH_PX * pitch_um)} µm 근처)')
+    if r < MIN_LOCAL_SEARCH_PX or r > MAX_LOCAL_SEARCH_PX:
+        raise RadiusError(f'--local-align-um {local_align_um}: round(R / pitch {pitch_um}) = {r} px, 허용 범위는 {MIN_LOCAL_SEARCH_PX}..{MAX_LOCAL_SEARCH_PX} px '
+                          f'({_r6(MIN_LOCAL_SEARCH_PX * pitch_um)} .. {_r6(MAX_LOCAL_SEARCH_PX * pitch_um)} µm 근처; '
+                          f'체비쇼프 거리 2 이상의 후보가 있어야 ambiguous 를 판정할 수 있다)')
     return r
 
 
@@ -57,7 +61,8 @@ def estimate_bytes(boxes, n_electrode_layers, n_cnt_layers, r):
     """진단이 보유할 바이트 추정(전 ROI 의 넓은 target 전극 crop + 가장 큰 ROI 하나의 점수 임시 배열).
 
     boxes: ROI 상자 (h, w) 목록. 전극 crop 은 (모델 쪽) 넓은 target bool (h+2r)(w+2r) 를 ROI·층마다 보유한다(reference 쪽은 기존 바탕 crop).
-    임시: CNT 층마다 reference 상자 + 넓은 target 사본, Ω·침식 중간·valid 사본·AND 임시 6개 상자 크기 + 후보 (2r+1)^2 정수 배열 2개(int64) x 층 수."""
+    임시: CNT 층마다 reference 상자 + 넓은 target 사본, Ω·침식 중간·valid 사본·ref/tgt 층 사본·AND 임시 약 9개 상자 크기,
+    점수 배열은 층마다 (inter, sum_b) int64 2개에 풀링·링 점수를 동시에 보유하므로 32·n²·(층 수+1), 후보 목록(파이썬 객체) 약 200·n²."""
     held = 0
     biggest = 0
     n = 2 * int(r) + 1
@@ -65,7 +70,7 @@ def estimate_bytes(boxes, n_electrode_layers, n_cnt_layers, r):
     for h, w in boxes:
         wide = (int(h) + 2 * r) * (int(w) + 2 * r)
         held += wide * int(n_electrode_layers)
-        temp = int(n_cnt_layers) * (int(h) * int(w) + wide) + 6 * wide + 16 * n * n * max(layers, 1)
+        temp = (int(n_cnt_layers) * (int(h) * int(w) + wide) + 9 * wide + 32 * n * n * (max(layers, 1) + 1) + 200 * n * n)
         biggest = max(biggest, temp)
     return held + biggest
 

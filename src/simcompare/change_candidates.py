@@ -567,6 +567,7 @@ def _collect_layer_bases(source, queries, windows, root, files, products, limit,
         if need > room:
             diag['skip'] = 'diagnostic_memory_limit'
             diag['estimated_bytes'] = need
+            diag['available_bytes'] = max(int(room), 0)
         else:
             margin = r
 
@@ -613,6 +614,9 @@ def _local_alignment_document(source, state, queries, windows, pitch, args, offs
            'min_support_px': local_align.MIN_SUPPORT_PX, 'min_ring_support_px': local_align.MIN_RING_SUPPORT_PX,
            'ambiguity_delta': float(local_align.AMBIGUITY_DELTA), 'excluded_layers': [], 'rois': []}
     global_skip = 'images_skipped' if source is None else state.get('skip')
+    if global_skip == 'diagnostic_memory_limit':
+        doc['diagnostic_estimated_bytes'] = int(state['estimated_bytes'])
+        doc['diagnostic_available_bytes'] = int(state['available_bytes'])
     bundle_layers = []
     for i, (query, window) in enumerate(zip(queries, windows)):
         bundle_layers.append([b['layer'] for b in alignment_report.layer_bundles(query, window)[0]])
@@ -1047,6 +1051,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                              limit, reserved, warnings, diag=local_state)
     local_doc = (_local_alignment_document(report_source, local_state, directions[0]['queries'], windows, pitch, args, offset_px,
                                            ref_shape) if local_um is not None else None)
+    if report_source is not None:      # 진단용 넓은 crop 은 문서를 만든 직후 놓는다(HTML 렌더 전에 메모리 반환)
+        report_source.diag_wide.clear()
     if report_source is None:
         need = alignment_report.estimate_report_bytes(ref.frame.valid.shape, tgt.frame.valid.shape, top_k,
                                                       n_hot_layers, window_px)

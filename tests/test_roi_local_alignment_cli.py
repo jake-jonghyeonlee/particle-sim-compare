@@ -161,6 +161,8 @@ def test_diagnostic_memory_limit_skips_only_the_diagnostic(two_layer_world, clea
     assert code == off_run.code and _outcome(out) == _outcome(off_run.out)
     assert [(r['status'], r['reason']) for r in d['rois']] == [('skipped', 'diagnostic_memory_limit')] * len(d['rois'])
     assert d['summary']['skipped'] == len(d['rois']) and d['linear_fit'] is None
+    assert d['diagnostic_estimated_bytes'] == 1 << 62 and isinstance(d['diagnostic_available_bytes'], int)
+    assert d['diagnostic_available_bytes'] < d['diagnostic_estimated_bytes']
     assert files(out)['alignment.html'].read_bytes() == files(off_run.out)['alignment.html'].read_bytes()
 
 
@@ -192,7 +194,7 @@ def test_images_omitted_skips_every_roi_in_window_order(two_layer_world, clean_r
 
 # --- R 검증 -----------------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize('value', ['0', '-1', 'nan', 'inf', '0.04', '3.2'])
+@pytest.mark.parametrize('value', ['0', '-1', 'nan', 'inf', '0.04', '0.1', '3.2'])
 def test_bad_radius_exits_two_and_creates_no_folder(two_layer_world, clean_root, tmp_path, capsys, value):
     out = tmp_path / 'out'
     assert run(two_layer_world, out, clean_root, '--local-align-um', value) == 2
@@ -201,7 +203,7 @@ def test_bad_radius_exits_two_and_creates_no_folder(two_layer_world, clean_root,
 
 
 def test_radius_limits_are_inclusive_at_one_and_thirty_pixels(two_layer_world, clean_root, tmp_path):
-    for value, px in (('0.1', 1), ('3.0', 30)):
+    for value, px in (('0.2', 2), ('3.0', 30)):
         out = tmp_path / ('out' + value)
         assert run(two_layer_world, out, clean_root, '--local-align-um', value) in (0, 3)
         assert doc(out)['search_px'] == px
