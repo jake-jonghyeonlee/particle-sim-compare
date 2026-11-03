@@ -1477,6 +1477,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                       'target_only': sorted(names['target'] - names['reference'])})
     use_field = unit is not None and (apply_unit or apply_local)       # local 에서 --unit-align-um 이 없으면 시작점은 전역 g
     map_offset = {'offset_field': unit['field']} if use_field else {'offset_px': offset_px}
+    if report_source is not None and use_field:      # 층 묶음 target 바탕도 hotspot 과 같은 unit offset 장으로 옮긴다
+        report_source.map_field = unit['field']
     maps = change_map.change_maps(pairs, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, **map_offset,
                                   pitch_um=pitch, tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit,
                                   window_um=window_um, reserved_bytes=reserved)
