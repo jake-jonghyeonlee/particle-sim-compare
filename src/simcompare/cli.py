@@ -117,6 +117,9 @@ def _parser() -> argparse.ArgumentParser:
                         help="선택. --unit-fold 와 함께만. 접힌 좌표(unit 안 위치) 거리 허용값 µm. 생략하면 window-um / 4")
     change.add_argument("--local-align-um", type=float,
                         help="선택. ROI 국소 정렬 진단의 탐색 반경 µm(예시 1). 지정하면 roi_local_alignment.json 을 더 쓴다. --apply-align local 이 아니면 진단 전용이며 다른 산출·종료 코드를 바꾸지 않는다(local 이면 적용 경로: |ΔU| + 2 .. 300 px). 진단 경로는 round(R / pitch) 가 2..30 px 여야 한다(2 px 이상이어야 거리 2 이상 후보가 있어 모호(ambiguous) 판정이 가능하다). 생략하면 진단 없음")
+    change.add_argument("--diameter-um", type=float,
+                        help="선택. 비교할 hotspot 지름 µm(1..30, 40, 50 중 하나). 생략하면 5 µm. 주면 config 의 map.diameter_um 보다 우선한다. "
+                             "두 모델 case 에 그 지름 PNG 가 있어야 하며, 5 가 아니면 --out 에 지름을 넣는 것을 권장")
     change.add_argument("--top-k", required=True, type=int, help="방향(reference_to_target / target_to_reference)별 질의 수")
     change.add_argument("--mask-derivation-rule", required=True,
                         help="DL2 mask_derivation 규칙: between_stack_order_v1 만 허용(기본값 없음). 질의·index export 폴더마다 mask_derivation.json 을 쓴다")
@@ -314,7 +317,8 @@ def main(argv: list[str] | None = None) -> int:
                 merge_scope=args.merge_scope, suppress_overlap=args.suppress_overlap,
                 electrode_png_root=args.electrode_png_root, local_align_um=args.local_align_um,
                 unit_align_um=args.unit_align_um, apply_align=args.apply_align, unit_fold=args.unit_fold,
-                unit_fold_tolerance_um=args.unit_fold_tolerance_um, refine_pool=args.refine_pool)
+                unit_fold_tolerance_um=args.unit_fold_tolerance_um, refine_pool=args.refine_pool,
+                diameter_um=args.diameter_um)
             _print(result)
             return result["exit_code"]
         if args.command == "candidates-dv":

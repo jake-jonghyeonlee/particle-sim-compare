@@ -1073,13 +1073,15 @@ def _window_position(window, shape):
     return position_text(y + w / 2.0, x + w / 2.0, shape)
 
 
-def _badge_title(alignment):
+def _badge_title(alignment, diameter_um=None):
     css, text = BADGE.get(alignment['status'], ('uncertain', alignment['status']))
     inputs = alignment.get('cnt_inputs') or {}
     ids = {side: (inputs.get(side) or {}).get('product_id', '—') for side in ('reference', 'target')}
+    diameter_note = '' if diameter_um is None else ' · hotspot 지름 %s µm (기본 5 µm 아님)' % escape(str(diameter_um))
     return ('<h1>CNT 정렬 · 변경점 ROI 보고서 <span class="badge %s">%s</span></h1>'
-            '<p class="note">기준 모델(reference) <code>%s</code> · 비교 모델(target) <code>%s</code> · pitch %s µm</p>'
-            % (css, escape(text), escape(str(ids['reference'])), escape(str(ids['target'])), escape(str(alignment.get('pitch_um')))))
+            '<p class="note">기준 모델(reference) <code>%s</code> · 비교 모델(target) <code>%s</code> · pitch %s µm%s</p>'
+            % (css, escape(text), escape(str(ids['reference'])), escape(str(ids['target'])), escape(str(alignment.get('pitch_um'))),
+               diameter_note))
 
 
 APPLY_TEXT = {'unit': 'unit offset 를 변경 지도·export 에 적용', 'local': 'unit offset 위에 ROI 국소 offset 을 적용'}
@@ -1100,7 +1102,7 @@ def _apply_rows(alignment, apply_mode, n_folded):
     return rows
 
 
-def _summary(alignment, n_rois=0, local=None, apply_mode=None, n_folded=0):
+def _summary(alignment, n_rois=0, local=None, apply_mode=None, n_folded=0, diameter_um=None):
     status = alignment['status']
     rows = [
         ('status', _Raw(escape(STATUS_TEXT.get(status, status)) + ' <code>' + escape(status) + '</code>')),
@@ -1125,6 +1127,8 @@ def _summary(alignment, n_rois=0, local=None, apply_mode=None, n_folded=0):
     if quadrant:
         rows.append(('사분면 offset (전역 대비 차이)', _Raw(quadrant)))
     rows.extend(_apply_rows(alignment, apply_mode, n_folded))
+    if diameter_um is not None:
+        rows.append(('hotspot 지름 (µm)', diameter_um))
     rows.append(('ROI 수', _Raw('%d (<a href="#list">ROI 목록</a>)' % n_rois)))
     parts.append(_table(['항목', '값'], rows))
     if local is not None:
@@ -1482,12 +1486,13 @@ def _footnotes(local=None, apply_mode=None, layered=False, n_folded=0, diagnosti
 
 
 def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=None, skipped_reason=None,
-                         pairing_stats=None, local_alignment=None, apply_mode=None):
+                         pairing_stats=None, local_alignment=None, apply_mode=None, diameter_um=None):
     """alignment: ``alignment.json`` 문서(dict). queries: reference_to_target 질의 목록(순위 순), windows: 같은 순서의 창 후보.
 
     source: ``ImageSource`` (``collect`` 를 마친 것) 또는 None(그림 없음). skipped_reason: 그림을 만들지 않은 이유(문장).
     local_alignment: ``roi_local_alignment.json`` 문서 또는 None(None 이면 국소 정렬 표·요약 줄·각주를 더하지 않는다).
     apply_mode: ``'unit'`` | ``'local'`` | None(진단 전용 = 예전 문구). 1절 요약·각주의 적용 모드 문구를 정한다.
+    diameter_um: 기본 5 µm 가 아닌 hotspot 지름이면 그 값(배지 note·1절 요약 행에 표시), 기본이면 None(표시 없음).
     source.layered() 이면(layer-align/T5) 5절 위치 그림 바탕과 ROI 주변 crop 이 Layer stack 이다.
     반환 ``(html 바이트, {'path', 'bytes', 'downscaled', 'crops_omitted', 'n_images'})``."""
     limit = MAX_HTML_BYTES if max_bytes is None else max_bytes
@@ -1495,7 +1500,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     shape = _frame_shape(alignment, source)
     layered = source is not None and source.layered()
     n_folded = sum(int((q.get('unit_fold') or {}).get('n_replicas', 0)) for q in queries)
-    prefix = [_badge_title(alignment), _summary(alignment, len(queries), local_alignment, apply_mode, n_folded)]
+    prefix = [_badge_title(alignment, diameter_um),
+              _summary(alignment, len(queries), local_alignment, apply_mode, n_folded, diameter_um)]
     # 2. CNT 정렬과 정렬 진단
     prefix.append('<h2>2. CNT 정렬과 정렬 진단</h2><h3>2a. 전체 CNT 층 겹침 — 정렬 전 / 정렬 후</h3>')
     pattern = None

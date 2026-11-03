@@ -21,7 +21,7 @@ import sys
 import numpy as np
 
 from . import alignment_report, candidates, change_map, layer_align, local_align, template_export
-from .numeric_schema import NumericContractError
+from .numeric_schema import DIAMETERS_UM, NumericContractError, diameter_key
 
 DIAMETER_UM = 5
 ROI_SOURCE = 'cnt_change'
@@ -62,6 +62,35 @@ ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_ch
 
 APPLY_ALIGN_MODES = ('diagnostic', 'unit', 'local')
 UNIT_FOLD_POLICY = 'greedy_rank_order_toroidal_unit_distance_le_tolerance_reference_unit_all_layers'
+
+
+def _resolve_diameter(diameter_um):
+    """None → 기본 5. 값이 있으면 DIAMETERS_UM 중 같은 지름의 int(window_cases.resolve_diameter 방식). 그 밖 값은 쓰기 전 종료 2."""
+    if diameter_um is None:
+        return DIAMETER_UM
+    if isinstance(diameter_um, bool) or not isinstance(diameter_um, numbers.Real) or not math.isfinite(float(diameter_um)) \
+            or float(diameter_um) <= 0:
+        raise _bad('invalid_candidates_change_argument', f'--diameter-um {diameter_um!r} 는 유한한 양수여야 한다')
+    wanted = diameter_key(diameter_um)
+    for value in DIAMETERS_UM:
+        if diameter_key(value) == wanted:
+            return int(value)
+    raise _bad('invalid_candidates_change_argument',
+               f'--diameter-um {diameter_um!r} 는 1..30, 40, 50 µm 중 하나여야 한다')
+
+
+def _check_diameter_observed(sides, diameter):
+    """준비된 record 의 header 상태로 판정한다(마스크는 읽지 않는다). 한쪽 side 라도 그 지름이 관측된 case 가 없으면 종료 2."""
+    wanted = diameter_key(diameter)
+    for name, side in sides.items():
+        observed = False
+        for case in side.dataset.cases:
+            found = next((d for d in case.records if diameter_key(d) == wanted), None)
+            if found is not None and change_map._header(case.records, found).input_status == 'observed':
+                observed = True
+                break
+        if not observed:
+            raise _bad('candidates_change_diameter_not_observed', f'{name}: hotspot 지름 {diameter} µm 가 관측된 case 가 없다')
 
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
@@ -552,10 +581,14 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
                           change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule,
                           merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None,
                           unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None,
-                          refine_pool=None):
+                          refine_pool=None, diameter_um=None):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
     reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
     direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
+
+    ``diameter_um`` (선택, diam-fig/T2): 비교할 hotspot 지름 µm(DIAMETERS_UM 중 하나). 생략하면 5. 주면 config 의 ``map.diameter_um`` 보다 우선한다
+    (다르면 notes 에 info ``diameter_overrides_config``). 5 가 아니면 reference·target 어느 한쪽이라도 그 지름이 관측된 case 가 하나도 없을 때
+    쓰기 전 종료 2(``candidates_change_diameter_not_observed``).
 
     ``electrode_png_root`` (선택): alignment.html 층 묶음의 전극 형상 바탕을 읽는 PNG root. 생략하면 ``cnt_from_dl1_root`` 다.
     전극 목록 비교(``electrode_set_differs``, 조합 짝짓기)는 이 값과 무관하게 ``cnt_from_dl1_root`` 를 쓴다.
@@ -589,14 +622,20 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     for name in ('reference', 'target'):
         if not isinstance(cfg.get(name), dict):
             raise _bad('numeric_input_required', name)
-    if 'map' in cfg and pipeline._map_spec(cfg).get('diameter_um', DIAMETER_UM) != DIAMETER_UM:
-        raise _bad('candidates_change_diameter_fixed_5um', f"map.diameter_um={cfg['map'].get('diameter_um')!r}")
+    diameter = _resolve_diameter(diameter_um)
+    config_diameter = None
+    if 'map' in cfg:
+        config_diameter = pipeline._map_spec(cfg).get('diameter_um', DIAMETER_UM)
+        if diameter_um is None and config_diameter != DIAMETER_UM:
+            raise _bad('candidates_change_diameter_fixed_5um', f"map.diameter_um={cfg['map'].get('diameter_um')!r}")
     if not all(pipeline._real_source(cfg, cfg[name]) is not None for name in ('reference', 'target')):
         raise _bad('candidates_change_requires_real_hotspot', 'reference·target 모두 real_hotspot_v1 이어야 한다')
-    sides = {name: candidates.prepare_side(cfg, name, DIAMETER_UM) for name in ('reference', 'target')}
+    sides = {name: candidates.prepare_side(cfg, name, diameter) for name in ('reference', 'target')}
     for name, side in sides.items():
         if side.status == 'unavailable':
             raise _bad('candidates_change_side_unavailable', f'{name}: {side.reasons}')
+    if diameter != DIAMETER_UM:
+        _check_diameter_observed(sides, diameter)
     products = {name: _Product(name, side) for name, side in sides.items()}
     for item in products.values():
         item.check_single_frame()
@@ -632,6 +671,10 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
             'align_min_dice': align_min_dice, 'align_layer_tolerance_um': align_layer_tolerance_um,
             'change_tolerance_um': change_tolerance_um, 'window_um': window_um, 'merge_overlap': merge_overlap,
             'top_k': top_k, 'max_operation_bytes': limit, 'mask_derivation_rule': mask_derivation_rule}
+    if diameter != DIAMETER_UM:
+        args['diameter_um'] = diameter
+    if diameter_um is not None and config_diameter is not None and config_diameter != diameter:
+        args['config_diameter_um'] = config_diameter
     if merge_scope is not None:
         args['merge_scope'] = merge_scope
     if suppress_overlap is not None:
@@ -1381,6 +1424,10 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     ref, tgt = products['reference'], products['target']
     window_um, top_k = args['window_um'], args['top_k']
     warnings, notes = [], []
+    diameter = args.get('diameter_um', DIAMETER_UM)
+    if 'config_diameter_um' in args:
+        notes.append({'code': 'diameter_overrides_config', 'severity': 'info',
+                      'config_diameter_um': args['config_diameter_um'], 'diameter_um': diameter})
 
     # --- 2. CNT 정렬 (실패해도 진행: offset (0, 0))
     cnt = {name: load_cnt_layers(args['cnt_from_dl1_root'], item.product_id, item.frame) for name, item in products.items()}
@@ -1465,7 +1512,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # 기준은 case endpoints 가 아니라 DL1 root 의 모델별 전극 폴더 이름이다(기대 case 는 두 모델의 합집합이라
     # case 목록으로는 전극 추가·삭제가 가려지거나 거짓 차이가 난다).
     names = {name: set(list_dl1_electrodes(args['cnt_from_dl1_root'], products[name].product_id)) for name in products}
-    pairing = change_map.pair_cases(sides['reference'].dataset, sides['target'].dataset, diameter_um=DIAMETER_UM,
+    pairing = change_map.pair_cases(sides['reference'].dataset, sides['target'].dataset, diameter_um=diameter,
                                     ref_electrodes=sorted(names['reference']), tgt_electrodes=sorted(names['target']))
     pairs = pairing['pairs']
     pair_by_key = {p.case_key: p for p in pairs}
@@ -1635,7 +1682,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         return dataset_held_bytes(other.dataset) + MAP_SLIM_ROW_BYTES * rows
 
     for name, side in sides.items():
-        done = candidates.export_manual_rows(cfg, side, plan[name]['requests'], out / f'{name}_export', DIAMETER_UM,
+        done = candidates.export_manual_rows(cfg, side, plan[name]['requests'], out / f'{name}_export', diameter,
                                              track, memo, reserved_for(name))
         if done is None:
             side.status = 'blocked'
@@ -1649,7 +1696,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             side.reasons = list(payload.get('reasons', []))
     for name, side in sides.items():
         if side.status != 'unavailable':
-            candidates.export_index(cfg, side, out / f'{name}_index_export', DIAMETER_UM, track, memo, reserved_for(name))
+            candidates.export_index(cfg, side, out / f'{name}_index_export', diameter, track, memo, reserved_for(name))
     memo = None
 
     # --- 7b. DL2 질의·index export 폴더마다 mask_derivation.json (export-template-rois 와 같은 writer·규칙, ready 행의 case 만)
@@ -1829,7 +1876,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     report_html, report_info = alignment_report.build_alignment_html(
         alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped,
         pairing_stats=pairing['stats'], local_alignment=local_doc,
-        apply_mode='unit' if apply_unit else 'local' if apply_local else None)
+        apply_mode='unit' if apply_unit else 'local' if apply_local else None,
+        diameter_um=diameter if diameter != DIAMETER_UM else None)
     report_source = None
     emit_bytes('alignment.html', report_html)
     if local_doc is not None:
@@ -1886,7 +1934,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     alignment_summary = {k: alignment[k] for k in ('status', 'reasons', 'offset_xy_um', 'dice_best', 'peak_ratio')}
     change_args = {k: args[k] for k in ('align_search_um', 'align_min_dice', 'align_layer_tolerance_um',
                                         'change_tolerance_um', 'window_um', 'merge_overlap', 'top_k')}
-    change_args.update({k: args[k] for k in ('merge_scope', 'suppress_overlap', 'electrode_png_root', 'local_align_um',
+    change_args.update({k: args[k] for k in ('diameter_um', 'merge_scope', 'suppress_overlap', 'electrode_png_root', 'local_align_um',
                                              'unit_align_um', 'apply_align', 'unit_fold', 'unit_fold_tolerance_um',
                                              'refine_pool') if k in args})
     layer_files = (unit['doc']['layer_inputs'] if unit is not None
@@ -1896,8 +1944,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                    'n_files': len(item['files'])} for name, item in layer_files.items()}
     payload = {'schema_version': candidates.SCHEMA_VERSION, 'roi_source': ROI_SOURCE, 'producer_commit': commit,
                'args': {'min_count': None, 'window_um': window_um, 'merge_overlap': args['merge_overlap'],
-                        'max_candidates': top_k, 'representative_diameter_um': DIAMETER_UM},
-               'diameter_um': float(DIAMETER_UM), 'change_args': change_args, 'alignment': alignment_summary,
+                        'max_candidates': top_k, 'representative_diameter_um': diameter},
+               'diameter_um': float(diameter), 'change_args': change_args, 'alignment': alignment_summary,
                'change_map': {'stats': map_stats, 'pairing': pairing['stats'],
                               'cases_excluded': pairing['cases_excluded'],
                               'cases_only_in_reference': pairing['cases_only_in_reference'],
