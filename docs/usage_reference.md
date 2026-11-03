@@ -234,7 +234,11 @@ config(reference, target: real_hotspot_v1)      PNG root (<제품>/CNO/, Merged_
 | `--mask-derivation-rule` | DL2 `mask_derivation` 규칙. `between_stack_order_v1`만 허용한다(없거나 다른 값이면 종료 코드 2: `mask_derivation_rule_required`·`mask_derivation_rule_unknown`) | `between_stack_order_v1` |
 | `--out` | 새 출력 폴더. 이미 있으면 아무것도 건드리지 않고 종료 코드 2 | `data/changes` |
 
-대표 지름은 5 µm 하나로 고정이다. `map.diameter_um`이 5가 아니면 `candidates_change_diameter_fixed_5um`(코드 2)이다.
+**`--diameter-um UM` (선택, 기본 5).** 비교할 hotspot 지름 µm이다. `1..30, 40, 50` 중 하나여야 하고 그 밖 값은 `invalid_candidates_change_argument`(코드 2, 출력 폴더 미생성)이다. 생략하면 5 µm이고 출력은 이 인수가 없던 때와 같다. 그때 `map.diameter_um`이 5가 아니면 `candidates_change_diameter_fixed_5um`(코드 2)이다.
+- 인수를 주면 config의 `map.diameter_um`보다 우선한다. 값이 다르면 `notes`에 info `diameter_overrides_config`를 남기며 경고도 종료 코드 3도 아니다. config 지름이 스키마 밖이면 `invalid_representative_diameter`(코드 2)다.
+- 지름이 5가 아니면 reference·target 중 한쪽 모델에라도 그 지름이 관측된(`observed`) case가 하나도 없을 때 쓰기 전에 `candidates_change_diameter_not_observed`(코드 2)로 멈춘다. 일부 case만 PNG가 없으면 그 case는 `mask_missing`으로 제외하고 진행한다.
+- 5가 아닌 지름이면 `candidate_queries_v1.json`·`execution.json`의 `change_args`에 `diameter_um`(정수)이 더해지고, `alignment.html` 제목 note에 `hotspot 지름 <d> µm (기본 5 µm 아님)`, 1절 요약에 `hotspot 지름 (µm)` 행이 더해진다. 출력 폴더 이름은 자동으로 바뀌지 않는다: `--out data/changes_d3`처럼 직접 지름을 넣는다.
+- 후속 명령도 맞춘다: `compare-windows --sort-diameter-um`은 정렬뿐 아니라 hotspot 그림의 표시 지름도 고른다. 6m `--case-diameter-um`, 7 `--diameter-um`, 4b config의 `map.diameter_um`도 같은 지름으로 맞추는 것을 권장한다(막지는 않는다).
 
 **입력 폴더 구조(`--cnt-from-dl1-root`, `--electrode-png-root`).** 모델 폴더 안에 `Merged_Layer` 폴더(대소문자 무관)가 있으면 새 구조, 없으면 예전 구조다. 두 구조를 모두 읽는다.
 
