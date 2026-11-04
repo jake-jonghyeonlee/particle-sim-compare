@@ -493,28 +493,21 @@ def _shift_crop_field(src, field, y0, y1, x0, x1):
 
 
 def _field_seam(field, shape):
-    """field 의 이음새 띠(True = 제외). 1×1·1×2·2×1·2×2 격자만 받는다(unit 격자 전용: 그 밖의 분할은 모든 offset 이 같아도 거부한다).
-    모두 같은 offset 이면 빈 마스크."""
+    """field 의 이음새 띠(True = 제외). 행×열 직사각 격자(n×m, 비정방 허용)만 받는다: 영역 수가 행 구간 수 × 열 구간 수와 다른 분할은
+    모든 offset 이 같아도 거부한다. 인접 영역 쌍마다 폭 = offset 체비쇼프 차. 모두 같은 offset 이면 빈 마스크."""
     from .layer_align import seam_band
     rows = sorted({(f[0], f[1]) for f in field})
     cols = sorted({(f[2], f[3]) for f in field})
-    if len(rows) > 2 or len(cols) > 2 or len(field) != len(rows) * len(cols):
-        raise _bad_field('offset_field must be a 1x1, 1x2, 2x1 or 2x2 grid of regions to compute the seam band')
-    height, width = shape
-    pad_rows, pad_cols = len(rows) == 1, len(cols) == 1
-    if pad_rows:
-        rows.append((height, height))   # 인위로 덧붙인 빈 행·열: 이웃 offset 을 복사해 이음새 폭 0
-    if pad_cols:
-        cols.append((width, width))
-    offsets = {}
+    if len(field) != len(rows) * len(cols):
+        raise _bad_field('offset_field must be a rectangular grid of regions (rows x columns) to compute the seam band')
+    offsets, regions = {}, {}
     for ry0, ry1, rx0, rx1, dx, dy in field:
-        offsets[(rows.index((ry0, ry1)), cols.index((rx0, rx1)))] = (dx, dy)
-    for iy in (0, 1):
-        for ix in (0, 1):
-            if (iy, ix) not in offsets:
-                offsets[(iy, ix)] = offsets[(0 if pad_rows else iy, 0 if pad_cols else ix)]
-    regions = {(iy, ix): (rows[iy][0], rows[iy][1], cols[ix][0], cols[ix][1]) for iy in (0, 1) for ix in (0, 1)}
-    return seam_band(_FieldGeometry((height, width), regions), offsets)
+        key = (rows.index((ry0, ry1)), cols.index((rx0, rx1)))
+        offsets[key] = (dx, dy)
+        regions[key] = (ry0, ry1, rx0, rx1)
+    if len(offsets) != len(field):
+        raise _bad_field('offset_field must be a rectangular grid of regions (rows x columns) to compute the seam band')
+    return seam_band(_FieldGeometry(tuple(shape), regions), offsets)
 
 
 def _full_domain_field(ref_valid, tgt_valid, field):

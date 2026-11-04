@@ -23,6 +23,8 @@ from .local_align import AMBIGUITY_DELTA, MIN_SUPPORT_PX
 BORDER_PX = 500
 MAX_UNIT_SEARCH_PX = 300
 MAX_LOCAL_APPLY_PX = 300
+MAX_STRETCH_RADIUS_PX = 60      # stretch/X5: 타일 FFT 크기를 묶는 반경 상한(6 µm). ΔU <= 58 px 까지. 더 크면 unit/local 을 쓴다.
+STRETCH_TILE_RECORD_BYTES = 4096
 STATUSES = ('ok', 'ambiguous', 'low_score', 'search_bound_hit', 'insufficient_support')
 
 
@@ -360,19 +362,20 @@ def fold_rois(items, geometry, tolerance_px):
 # --------------------------------------------------------------------------- 이음새
 
 def seam_band(geometry, unit_offsets):
-    """unit 내부 경계 양쪽에 인접 unit offset 체비쇼프 차이 폭 w 의 제외 마스크(True = 제외). 전부 같으면 빈 마스크.
+    """영역 격자의 내부 경계 양쪽에 인접 영역 offset 체비쇼프 차이 폭 w 의 제외 마스크(True = 제외). 전부 같으면 빈 마스크.
 
-    unit_offsets: {(iy, ix): (ox, oy)}. 경계 b 에서 [b − w, b + w) 를 두 unit 이 맞닿은 구간에서만 뺀다."""
+    unit_offsets: {(i, j): (ox, oy)}, 키는 ``geometry.unit_regions()`` 와 같다(행 i, 열 j; unit 기하는 2×2, stretch 타일 장은 n×m).
+    경계 b 에서 [b − w, b + w) 를 두 영역이 맞닿은 구간에서만 뺀다. 오른쪽 이웃 (i, j+1) 과 아래쪽 이웃 (i+1, j) 쌍마다 한 번씩."""
     h, wd = geometry.frame_shape
     mask = np.zeros((h, wd), dtype=bool)
     regions = geometry.unit_regions()
     for (iy, ix), (y0, y1, x0, x1) in regions.items():
-        if ix == 0:
-            width = _cheb_xy(unit_offsets[(iy, 0)], unit_offsets[(iy, 1)])
+        if (iy, ix + 1) in regions:
+            width = _cheb_xy(unit_offsets[(iy, ix)], unit_offsets[(iy, ix + 1)])
             if width:
                 mask[y0:y1, max(x1 - width, 0):min(x1 + width, wd)] = True
-        if iy == 0:
-            width = _cheb_xy(unit_offsets[(0, ix)], unit_offsets[(1, ix)])
+        if (iy + 1, ix) in regions:
+            width = _cheb_xy(unit_offsets[(iy, ix)], unit_offsets[(iy + 1, ix)])
             if width:
                 mask[max(y1 - width, 0):min(y1 + width, h), x0:x1] = True
     return mask
@@ -380,3 +383,171 @@ def seam_band(geometry, unit_offsets):
 
 def _cheb_xy(p, q):
     return max(abs(int(p[0]) - int(q[0])), abs(int(p[1]) - int(q[1])))
+
+
+# --------------------------------------------------------------------------- stretch 타일 정렬 (stretch-align/T1)
+
+def _split_axis(length, tile):
+    """길이 ``length`` 를 ``tile`` 칸씩 자른 [시작, 끝) 목록. 끝 나머지가 tile/2 미만이면 앞 타일에 합친다. tile 보다 짧으면 하나."""
+    n = length // tile
+    rem = length - n * tile
+    if n == 0:
+        return [(0, length)]
+    edges = [(k * tile, (k + 1) * tile) for k in range(n)]
+    if rem == 0:
+        return edges
+    if 2 * rem < tile:
+        edges[-1] = (edges[-1][0], length)
+    else:
+        edges.append((n * tile, length))
+    return edges
+
+
+def tile_regions(geometry, tile_px):
+    """unit 영역마다 ``tile_px`` 격자 타일. 타일은 unit 경계를 넘지 않는다. 결정적 순서(unit 순, 행, 열).
+
+    반환: dict 목록 ``{'unit_index': (iy, ix), 'tile_index': (ty, tx), 'region': (y0, y1, x0, x1)}`` (reference 픽셀, 끝 미포함).
+    타일 행·열 경계는 unit 영역의 해당 축 구간만으로 정해서, 전체 타일이 frame 위의 n×m 격자를 이룬다."""
+    tile = int(tile_px)
+    if tile < 1:
+        raise ValueError(f'tile_px {tile_px!r}: 1 이상이어야 합니다')
+    out = []
+    regions = geometry.unit_regions()
+    for q in sorted(regions):
+        y0, y1, x0, x1 = regions[q]
+        for ty, (ra, rb) in enumerate(_split_axis(y1 - y0, tile)):
+            for tx, (ca, cb) in enumerate(_split_axis(x1 - x0, tile)):
+                out.append({'unit_index': q, 'tile_index': (ty, tx), 'region': (y0 + ra, y0 + rb, x0 + ca, x0 + cb)})
+    return out
+
+
+def stretch_step_max_px(delta_u_max_px, tile_px, unit_min_px):
+    """G1 이웃 타일 단차 상한 s_max = ceil(|ΔU|max · T / U_min) + 1 (정수 계산). U_min = 두 제품 unit 크기 중 작은 축 값."""
+    d, t, u = abs(int(delta_u_max_px)), int(tile_px), int(unit_min_px)
+    if t < 1 or u < 1:
+        raise ValueError('tile_px 와 unit_min_px 는 1 이상이어야 합니다')
+    return -((-d * t) // u) + 1
+
+
+def stretch_step_within_tolerance(s_max, tolerance_px):
+    """한 이음새가 지울 수 있는 CD 변화 s_max 가 허용 폭 r(px) 이 이미 세지 않는 CD 변화 2r 이하인가."""
+    return int(s_max) <= 2 * int(tolerance_px)
+
+
+def estimate_stretch_bytes(max_tile_yx, radius, n_layers, *, n_tiles=0, frame_shape=None, n_starts=4, concurrent_fft=5):
+    """타일 정렬의 정점 바이트(X5). 타일 점수는 하나씩 계산해 바로 버리므로 가장 큰 타일 하나만 센다.
+
+    = FFT 임시(fast_len(T_y+2R+1)·fast_len(T_x+2R+1) 복소 × 동시 생존 수) + 그 타일의 bool 임시
+      + 층 수 × 3 × (2R+1)² × 8 (층별 점수 창 a/I/b 를 선택 직전까지 들고 있음) + 타일 기록 + (frame_shape 를 주면) Ω 마스크 n_starts 장과 임시.
+    호출자는 이 값과 ``reserved_bytes`` 를 ``max_operation_bytes`` 에 견줘 큰 배열을 할당하기 전에 거부한다."""
+    r = int(radius)
+    ty, tx = int(max_tile_yx[0]), int(max_tile_yx[1])
+    ny, nx = _fast_len(ty + 2 * r + 1), _fast_len(tx + 2 * r + 1)
+    fft = ny * nx * 16 * int(concurrent_fft)
+    boolean = 4 * ty * tx + 2 * (ty + 2 * r) * (tx + 2 * r)
+    windows = int(n_layers) * 3 * (2 * r + 1) ** 2 * 8
+    records = int(n_tiles) * STRETCH_TILE_RECORD_BYTES
+    omega = 0
+    if frame_shape is not None:
+        frame_px = int(frame_shape[0]) * int(frame_shape[1])
+        omega = (int(n_starts) + 3) * frame_px
+    return int(fft + boolean + windows + records + omega)
+
+
+_TILE_KEYS = ('status', 'flags', 'decided_by_layer', 'layer_order', 'layers_disagreeing', 'best_dice', 'dice',
+              'ambiguity_set_size_initial', 'ambiguity_set_size', 'per_layer')
+
+
+def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radius, *, min_dice, s_max, unit_sources=None,
+                        global_offset=None, excluded=None, min_support=MIN_SUPPORT_PX, epsilon=AMBIGUITY_DELTA,
+                        erode=None, max_operation_bytes=None, reserved_bytes=0):
+    """타일마다 층 공통 offset 하나를 Dice 우선으로 고른다(L3). 점수는 타일 하나씩 계산·선택하고 바로 버린다(X5).
+
+    tiles: ``tile_regions`` 결과. unit_offsets: {(iy, ix): (ox, oy)} 타일 시작점(= unit 적용 offset). unit_sources: {(iy, ix): 'unit'|'global'}
+    (기본 'unit'; unit 정렬이 실패해 global 이 적용된 unit 은 'global'). layers: {층 키: (reference bool, target bool)}.
+    ref_valid/tgt_valid: Ω 용 관측 마스크. 상태 ``ok`` 만 적용하고 그 밖은 unit offset 으로 대체(``stretch_tile_fallback``).
+    그 뒤 G1: 같은 unit 안 4-이웃 타일 offset 의 체비쇼프 차 > s_max 이면 두 타일을 unit offset 으로 대체(``stretch_step_exceeded``)하고
+    위반이 없을 때까지 반복한다. 대체된 타일은 unit offset 으로 고정되어 반드시 끝난다.
+    반환 ``{'tiles': [기록], 'field': [(y0, y1, x0, x1, dx, dy)], 'step_replaced_tiles': n, 's_max': s_max, 'radius_px': R}``.
+    기록 키: unit_index_xy, tile_index_xy, region_px, start_offset_xy_px, offset_xy_px, delta_xy_px(unit 대비),
+    delta_from_global_xy_px(global_offset 을 줄 때), candidate_offset_xy_px, offset_source(stretch|unit|global), applied, omega_pixels
+    와 choose_dice_first 요약."""
+    r = int(radius)
+    if not 1 <= r <= MAX_STRETCH_RADIUS_PX:
+        raise ValueError(f'radius {radius!r}: 1..{MAX_STRETCH_RADIUS_PX} 이어야 합니다')
+    s_max = int(s_max)
+    if s_max < 0:
+        raise ValueError(f's_max {s_max!r}: 0 이상이어야 합니다')
+    tiles = list(tiles)
+    sources = dict(unit_sources or {})
+    keys = sorted(layers, key=_natural_key)
+    ref_valid = np.asarray(ref_valid, dtype=bool)
+    tgt_valid = np.asarray(tgt_valid, dtype=bool)
+    max_tile = (max((t['region'][1] - t['region'][0] for t in tiles), default=0),
+                max((t['region'][3] - t['region'][2] for t in tiles), default=0))
+    need = estimate_stretch_bytes(max_tile, r, len(keys), n_tiles=len(tiles), frame_shape=ref_valid.shape,
+                                  n_starts=len({tuple(int(v) for v in o) for o in unit_offsets.values()}))
+    from .change_map import _check_admission
+    _check_admission(need, max_operation_bytes, reserved_bytes)       # 큰 배열을 할당하기 전에 거부
+    omegas = {}
+    records = []
+    for t in tiles:
+        q = tuple(t['unit_index'])
+        s = (int(unit_offsets[q][0]), int(unit_offsets[q][1]))
+        if s not in omegas:
+            omegas[s] = fixed_omega(ref_valid, tgt_valid, s, r, r if erode is None else int(erode))
+        omega = omegas[s]
+        region = tuple(int(v) for v in t['region'])
+        scores = {}
+        for key in keys:
+            ref_array, tgt_array = layers[key]
+            a, inter, b = region_window_scores(ref_array, tgt_array, omega, region, s, r)
+            scores[key] = {'a': a, 'inter': inter, 'b': b}
+        res = choose_dice_first(scores, s, r, min_dice=min_dice, min_support=min_support, epsilon=epsilon, excluded=excluded)
+        scores = None
+        y0, y1, x0, x1 = region
+        applied = bool(res['apply'])
+        rec = {k: res[k] for k in _TILE_KEYS}
+        rec['flags'] = list(res['flags'])
+        rec.update({'unit_index_xy': [q[1], q[0]], 'tile_index_xy': [t['tile_index'][1], t['tile_index'][0]],
+                    'region_px': [y0, y1, x0, x1], 'start_offset_xy_px': [s[0], s[1]],
+                    'candidate_offset_xy_px': res['offset_xy_px'], 'applied': applied,
+                    'omega_pixels': int(np.count_nonzero(omega[y0:y1, x0:x1])), '_unit': q, '_ty': t['tile_index'][0],
+                    '_tx': t['tile_index'][1], '_s': s,
+                    '_offset': (int(res['offset_xy_px'][0]), int(res['offset_xy_px'][1])) if applied else s})
+        if not applied:
+            rec['flags'].append('stretch_tile_fallback')
+        records.append(rec)
+    # G1: 같은 unit 안 4-이웃 타일 단차 제한
+    index = {(rec['_unit'], rec['_ty'], rec['_tx']): i for i, rec in enumerate(records)}
+    pairs = []
+    for (q, ty, tx), i in index.items():
+        for nb in ((q, ty, tx + 1), (q, ty + 1, tx)):
+            if nb in index:
+                pairs.append((i, index[nb]))
+    replaced = 0
+    while True:
+        bad = set()
+        for i, j in pairs:
+            if _cheb_xy(records[i]['_offset'], records[j]['_offset']) > s_max:
+                bad.update(k for k in (i, j) if records[k]['applied'])
+        if not bad:
+            break
+        for k in bad:
+            rec = records[k]
+            rec['applied'] = False
+            rec['_offset'] = rec['_s']
+            rec['flags'].append('stretch_step_exceeded')
+            replaced += 1
+    field = []
+    for rec in records:
+        o, s, q = rec['_offset'], rec['_s'], rec['_unit']
+        rec['offset_xy_px'] = [o[0], o[1]]
+        rec['delta_xy_px'] = [o[0] - s[0], o[1] - s[1]]
+        rec['delta_from_global_xy_px'] = None if global_offset is None else [o[0] - int(global_offset[0]), o[1] - int(global_offset[1])]
+        rec['offset_source'] = 'stretch' if rec['applied'] else sources.get(q, 'unit')
+        y0, y1, x0, x1 = rec['region_px']
+        field.append((y0, y1, x0, x1, o[0], o[1]))
+        for k in ('_unit', '_ty', '_tx', '_s', '_offset'):
+            del rec[k]
+    return {'tiles': records, 'field': field, 'step_replaced_tiles': replaced, 's_max': s_max, 'radius_px': r}
