@@ -1254,8 +1254,22 @@ def _stretch_window_fields(window, field, seam_mask):
             'seam_excluded_pixels': int(np.count_nonzero(seam_mask[y:y + size, x:x + size]))}
 
 
-def _fold_merged(merged, by_id, geometry, tolerance_um, pitch):
-    """억제 뒤 순위 목록을 reference unit 으로 접는다(``layer_align.fold_rois``). (남은 목록, {대표 region_id: unit_fold 기록})."""
+def _target_side(center_xy_um, offset, ctx, pitch):
+    """reference 중심 + 그 ROI 의 적용 offset → target 측 중심(µm)과 target 제품 기하 안 unit 번호·unit 좌표(L9). rescale 없음."""
+    shift = _shift_um(offset, pitch, ctx['ref_frame'], ctx['tgt_frame'])
+    center = [round(center_xy_um[0] + shift[0], 6), round(center_xy_um[1] + shift[1], 6)]
+    cell = _cell(center, ctx['tgt_frame'])
+    idx, coord = ctx['tgt_geometry'].unit_index((cell[1], cell[0])), ctx['tgt_geometry'].unit_coord((cell[1], cell[0]))
+    return {'target_center_xy_um': center, 'target_unit_index_xy': [idx[1], idx[0]],
+            'target_unit_coord_xy_um': [round(coord[1] * pitch, 6), round(coord[0] * pitch, 6)]}
+
+
+def _fold_merged(merged, by_id, geometry, tolerance_um, pitch, stretch=None):
+    """억제 뒤 순위 목록을 reference unit 으로 접는다(``layer_align.fold_rois``). (남은 목록, {대표 region_id: unit_fold 기록}).
+
+    ``stretch`` (stretch 모드에서만, 아니면 None): ``lookup``(타일 offset 조회), ``ref_frame``, ``tgt_frame``, ``tgt_geometry``.
+    주면 대표·replica 마다 적용 offset 과 target 측 좌표를 더하고 대표에 ``consensus``(고유 unit 수 k, n=4)를 단다.
+    합의 라벨은 접은 뒤의 기록일 뿐 순위·접기 판정에 쓰지 않는다(L8)."""
     items = []
     for rank, entry in enumerate(merged, start=1):
         rep = entry['representative']
@@ -1283,9 +1297,19 @@ def _fold_merged(merged, by_id, geometry, tolerance_um, pitch):
                             'distance_um': round(rep['distance_px'] * pitch, 6),
                             'score_um2': other['representative'].score,
                             'layers': sorted({m.layer for m in other['members']})})
+            if stretch is not None:
+                offset, source, _ = stretch['lookup'](*rep['center_yx_px'])
+                records[-1].update({'offset_xy_px_applied': [int(offset[0]), int(offset[1])], 'offset_source': source,
+                                    **_target_side(records[-1]['center_xy_um'], offset, stretch, pitch)})
         idx = geometry.unit_index(center)
         info[item['region_id']] = {'folded_center_xy_um': folded_um(geometry.unit_coord(center)),
                                    'unit_index_xy': [idx[1], idx[0]], 'n_replicas': len(records), 'replicas': records}
+        if stretch is not None:
+            offset, source, _ = stretch['lookup'](*center)
+            info[item['region_id']].update({'offset_xy_px_applied': [int(offset[0]), int(offset[1])], 'offset_source': source,
+                                            **_target_side(entry['representative'].center_xy_um, offset, stretch, pitch)})
+            present = sorted({tuple(info[item['region_id']]['unit_index_xy'])} | {tuple(r['unit_index_xy']) for r in records})
+            info[item['region_id']]['consensus'] = {'k': len(present), 'n': 4, 'units_present_xy': [list(u) for u in present]}
         out.append(entry)
     return out, info
 
@@ -1756,7 +1780,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         n_suppressed = len(merged)
     n_unit_folded, fold_info = None, {}
     if args.get('unit_fold'):      # 억제 뒤·top_k 앞: 서로 다른 unit 의 같은 위치 ROI 를 대표 하나로 접는다
-        merged, fold_info = _fold_merged(merged, by_id, layer_align.UnitGeometry(ref_shape), args['unit_fold_tolerance_um'], pitch)
+        fold_ctx = {'lookup': stretch['lookup'], 'ref_frame': ref.frame, 'tgt_frame': tgt.frame,
+                    'tgt_geometry': layer_align.UnitGeometry(tgt_shape)} if apply_stretch else None
+        merged, fold_info = _fold_merged(merged, by_id, layer_align.UnitGeometry(ref_shape), args['unit_fold_tolerance_um'], pitch, fold_ctx)
         n_unit_folded = len(merged)
     kept = merged[:top_k]
     windows = [by_id[m['representative'].region_id] for m in kept]
