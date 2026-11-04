@@ -477,3 +477,120 @@ def test_estimate_and_rejection_before_any_large_allocation(monkeypatch):
     with pytest.raises(ValueError):
         la.choose_tile_offsets(tiles, {q: (0, 0) for q in g.unit_regions()}, {'layer:M1': (ref, ref)}, ones, ones,
                                la.MAX_STRETCH_RADIUS_PX + 1, min_dice=0.5, s_max=4)
+
+
+@pytest.mark.parametrize('radius', [7, 60])
+def test_admission_estimate_bounds_the_real_peak(radius):
+    import tracemalloc
+    shape = (2000, 2000)
+    g = geometry(*shape)                                   # unit 1000 × 1000, 타일 1000 → unit 당 1 타일
+    ref = blocks(shape, 5, cell=8)
+    tgt = np.roll(ref, 1, axis=1)
+    ones = np.ones(shape, bool)
+    starts = {(0, 0): (0, 0), (0, 1): (1, 0), (1, 0): (0, 1), (1, 1): (1, 1)}      # 서로 다른 시작점 4개 → Ω 캐시 4장
+    tiles = la.tile_regions(g, 1000)
+    need = la.estimate_stretch_bytes((1000, 1000), radius, 1, n_tiles=len(tiles), frame_shape=shape, n_starts=4)
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        base = tracemalloc.get_traced_memory()[0]
+        la.choose_tile_offsets(tiles, starts, {'layer:M1': (ref, tgt)}, ones, ones, radius, min_dice=0.5, s_max=4)
+        peak = tracemalloc.get_traced_memory()[1] - base
+    finally:
+        tracemalloc.stop()
+    assert 0 < peak <= need, (peak, need)
+    assert peak >= 4 * shape[0] * shape[1]                  # 실측이 Ω 캐시 4장 이상을 본다(추정이 터무니없이 크지 않음의 하한)
+
+
+# --------------------------------------------------------------------------- G1 v1.2: unit 경계 쌍·다른 unit offset·모서리
+
+def _boundary_scene(d):
+    shape = (80, 160)                                      # unit 40 × 80, unit 경계 x = 80, 타일 40
+    shifts = {(ty, tx): ((-d, 0) if tx < 2 else (d, 0)) for ty in range(2) for tx in range(4)}
+    ref, tgt = _line_scene((10, 30, 75, 85), (10, 30, 75 - d, 85 + d), shifts, shape=shape, clear=(8, 32, 60, 100))
+    return shape, ref, tgt
+
+
+@pytest.mark.parametrize('d', [1, 3])
+def test_g1_checks_pairs_across_the_unit_boundary(d):
+    shape, ref, tgt = _boundary_scene(d)
+    g = geometry(*shape)
+    s_max = 1
+    got = choose(ref, tgt, g, 40, 6, s_max=s_max)
+    left, right = tile_by_index(got, 0, 0, 1, 0), tile_by_index(got, 1, 0, 0, 0)       # unit 경계 x=80 양쪽 타일
+    resid = int(maps(ref, tgt, got['field'])['maps']['M1'][10:30, 60:100].sum())
+    erased = (2 * d * 20 - resid) / 20                                                # 행마다 지워진 CD 변화
+    assert erased <= s_max, (erased, left['offset_xy_px'], right['offset_xy_px'])
+    # 단차 2d > s_max 이므로 stretch 로 적용된 쪽은 unit offset 으로 대체되고 CD 변화가 그대로 남는다.
+    assert 'stretch_step_exceeded' in left['flags'] or 'stretch_step_exceeded' in right['flags']
+    assert got['step_replaced_tiles'] >= 2 and resid == 2 * d * 20
+    assert left['offset_xy_px'] == [0, 0] and right['offset_xy_px'] == [0, 0]
+
+
+def test_g1_checks_unit_boundary_when_each_unit_has_a_single_tile():
+    shape = (80, 160)
+    g = geometry(*shape)                                   # 타일 80 → unit(40×80) 당 타일 1개
+    d = 3
+    bg = blocks(shape, 3)
+    bg[8:32, 60:100] = False
+    tgt = warp(bg, [(0, 80, 0, 80, -d, 0), (0, 80, 80, 160, d, 0)])
+    ref = bg.copy()
+    ref[10:30, 75:85] = True
+    tgt[10:30, 75 - d:85 + d] = True
+    assert len(la.tile_regions(g, 80)) == 4
+    got = choose(ref, tgt, g, 80, 6, s_max=1)
+    assert got['step_replaced_tiles'] >= 2
+    assert all(rec['offset_xy_px'] == [0, 0] for rec in got['tiles'])
+    assert int(maps(ref, tgt, got['field'])['maps']['M1'][10:30, 60:100].sum()) == 2 * d * 20
+
+
+def test_g1_limit_across_units_adds_the_unit_offset_difference():
+    shape = (80, 160)
+    g = geometry(*shape)
+    k = 4
+    units = {q: ((0, 0) if q[1] == 0 else (k, 0)) for q in g.unit_regions()}
+    shifts = {0: 0, 1: 1, 2: 1 + k, 3: 2 + k}              # 타일 열 → dx. 경계 단차 k, 같은 unit 단차 1
+    bg = blocks(shape, 3)
+    tgt = warp(bg, [(0, 80, 40 * tx, 40 * tx + 40, dx, 0) for tx, dx in shifts.items()])
+    got = choose(bg, tgt, g, 40, 6, s_max=1, unit_offsets=units)
+    assert got['step_replaced_tiles'] == 0
+    assert [tile_by_index(got, ux, 0, tx, 0)['offset_xy_px'][0] for ux, tx in ((0, 0), (0, 1), (1, 0), (1, 1))] == [0, 1, 5, 6]
+    # 한도는 k + s_max = 5: 단차 k = 4 는 통과하고, s_max=0 이면 한도 k 만 남아 같은 unit 단차 1 이 걸린다.
+    strict = choose(bg, tgt, g, 40, 6, s_max=0, unit_offsets=units)
+    assert strict['step_replaced_tiles'] > 0
+
+
+def test_g1_four_tile_corner_diagonal_step_is_within_twice_s_max():
+    shape = (160, 160)
+    g = geometry(*shape)
+    shifts = {(ty, tx): ((-1 if tx % 2 == 0 else 1), (-1 if ty % 2 == 0 else 1)) for ty in range(4) for tx in range(4)}
+    ref, tgt = _line_scene((35, 45, 35, 45), (34, 46, 34, 46), shifts, shape=shape, clear=(30, 50, 30, 50))
+    s_max = 2
+    got = choose(ref, tgt, g, 40, 6, s_max=s_max)
+    a, b = tile_by_index(got, 0, 0, 0, 0)['offset_xy_px'], tile_by_index(got, 0, 0, 1, 1)['offset_xy_px']
+    diagonal = max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+    resid = int(maps(ref, tgt, got['field'])['maps']['M1'][30:50, 30:50].sum())
+    erased = (12 * 12 - 10 * 10) - resid                    # 지워진 칸. 한 축 CD 변화 2 는 대각 단차(= 2) 만큼 지워진다.
+    assert got['step_replaced_tiles'] == 0 and diagonal == 2 <= 2 * s_max
+    assert erased == 44 and resid == 0
+
+
+# --------------------------------------------------------------------------- 질의별 seam_excluded_pixels (adv:2)
+
+def test_window_seam_pixels_sum_to_the_global_count_with_partial_valid():
+    from simcompare import change_candidates
+    shape = (20, 80)
+    field = [(0, 20, 0, 40, 0, 0), (0, 20, 40, 80, 2, 0)]            # 경계 x=40 양쪽 폭 2
+    ref_valid = np.ones(shape, bool)
+    ref_valid[0:5, :] = False                                         # 일부 영역은 비교 domain 이 아니다
+    tgt_valid = np.ones(shape, bool)
+    tgt_valid[:, 38:41] = False
+    ref = np.zeros(shape, bool)
+    out = change_maps([MaskPair('c', 'M1', ref, ref)], ref_valid=ref_valid, tgt_valid=tgt_valid, offset_field=field, pitch_um=0.1,
+                      tolerance_um=0.0, max_operation_bytes=BIG, window_um=5.0)
+    glob = out['stats']['seam_excluded_pixels']
+    mask = change_candidates._stretch_seam_mask(field, ref_valid, tgt_valid)
+    assert int(mask.sum()) == glob < int(_field_seam(tuple(sorted(field)), shape).sum())
+    total = sum(change_candidates._stretch_window_fields({'window_origin_px': (0, x), 'window_px': 20}, field, mask)['seam_excluded_pixels']
+                for x in range(0, 80, 20))
+    assert total == glob

@@ -65,7 +65,7 @@ STRETCH_SCHEMA = 'stretch_map_v1'
 STRETCH_APPLY_POLICY = 'tile_field_dice_first_before_candidates_then_merge_suppress_fold_top_k'
 STRETCH_DEFAULT_TILE_UM = 40.0
 STRETCH_MIN_TILE_PX = 100
-UNIT_FOLD_POLICY ='greedy_rank_order_toroidal_unit_distance_le_tolerance_reference_unit_all_layers'
+UNIT_FOLD_POLICY = 'greedy_rank_order_toroidal_unit_distance_le_tolerance_reference_unit_all_layers'
 
 
 def _resolve_diameter(diameter_um):
@@ -1245,6 +1245,15 @@ def _stretch_alignment(products, cnt, g, unit, args, layer_root, limit, reserved
             'timings_s': {'stretch_align': round(time.perf_counter() - started, 3), 'stretch_layer_read': round(read_s, 3)}}
 
 
+def _stretch_seam_mask(field, ref_valid, tgt_valid):
+    """이음새 ∩ 비교 domain(reference valid ∧ 이동한 target valid). 전체 합이 ``change_maps`` 의 전역 ``seam_excluded_pixels`` 와 같다."""
+    shape = tuple(int(v) for v in ref_valid.shape)
+    parsed = change_map._parse_field(field, shape)
+    seam = change_map._field_seam(parsed, shape)
+    seam &= ref_valid & change_map._shift_crop_field(tgt_valid, parsed, 0, shape[0], 0, shape[1])
+    return seam
+
+
 def _stretch_window_fields(window, field, seam_mask):
     """창 하나의 ``crosses_tile_boundary``(창이 offset 이 다른 타일을 둘 이상 걸침)와 ``seam_excluded_pixels``(창 안 이음새 제외 픽셀 수)."""
     y, x = window['window_origin_px']
@@ -1730,7 +1739,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     if apply_stretch:
         stretch['doc']['seam_excluded_pixels'] = alignment_doc['stretch']['seam_excluded_pixels']
         emit('stretch_map.json', json.dumps(stretch['doc'], ensure_ascii=False, indent=2, allow_nan=False) + '\n')
-        seam_mask = change_map._field_seam(change_map._parse_field(active_field, ref_shape), ref_shape)
+        seam_mask = _stretch_seam_mask(active_field, ref.frame.valid, tgt.frame.valid)
     # --- 3b. (--apply-align local) 풀 = 창 후보 점수 상위 N → 창마다 국소 보정 + 재점수화 → 이후 병합·억제·접기는 재점수로 한다(X3)
     candidate_list = found['candidates']
     refine, local_run, local_by_window = None, None, {}

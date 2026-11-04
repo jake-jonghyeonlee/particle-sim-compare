@@ -450,7 +450,8 @@ def estimate_stretch_bytes(max_tile_yx, radius, n_layers, *, n_tiles=0, frame_sh
     omega = 0
     if frame_shape is not None:
         frame_px = int(frame_shape[0]) * int(frame_shape[1])
-        omega = (int(n_starts) + 3) * frame_px
+        # 동시 생존: 캐시된 Ω (n_starts − 1)장 + fixed_omega 안 최대 7장(wide·rows·every·ref&every·pad·rows·out); 끝나면 모두 해제
+        omega = (int(n_starts) + 6) * frame_px
     return int(fft + boolean + windows + records + omega)
 
 
@@ -466,8 +467,9 @@ def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radiu
     tiles: ``tile_regions`` 결과. unit_offsets: {(iy, ix): (ox, oy)} 타일 시작점(= unit 적용 offset). unit_sources: {(iy, ix): 'unit'|'global'}
     (기본 'unit'; unit 정렬이 실패해 global 이 적용된 unit 은 'global'). layers: {층 키: (reference bool, target bool)}.
     ref_valid/tgt_valid: Ω 용 관측 마스크. 상태 ``ok`` 만 적용하고 그 밖은 unit offset 으로 대체(``stretch_tile_fallback``).
-    그 뒤 G1: 같은 unit 안 4-이웃 타일 offset 의 체비쇼프 차 > s_max 이면 두 타일을 unit offset 으로 대체(``stretch_step_exceeded``)하고
-    위반이 없을 때까지 반복한다. 대체된 타일은 unit offset 으로 고정되어 반드시 끝난다.
+    그 뒤 G1: frame 전체 4-이웃 타일 쌍의 offset 체비쇼프 차가 한도(같은 unit s_max, 다른 unit cheb(u_a − u_b) + s_max; u = 적용 unit offset)를
+    넘으면 stretch 로 적용된 쪽을 unit offset 으로 대체(``stretch_step_exceeded``)하고 위반이 없을 때까지 반복한다.
+    대체된 타일은 unit offset 으로 고정되어 반드시 끝난다.
     반환 ``{'tiles': [기록], 'field': [(y0, y1, x0, x1, dx, dy)], 'step_replaced_tiles': n, 's_max': s_max, 'radius_px': R}``.
     기록 키: unit_index_xy, tile_index_xy, region_px, start_offset_xy_px, offset_xy_px, delta_xy_px(unit 대비),
     delta_from_global_xy_px(global_offset 을 줄 때), candidate_offset_xy_px, offset_source(stretch|unit|global), applied, omega_pixels
@@ -518,18 +520,30 @@ def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radiu
         if not applied:
             rec['flags'].append('stretch_tile_fallback')
         records.append(rec)
-    # G1: 같은 unit 안 4-이웃 타일 단차 제한
-    index = {(rec['_unit'], rec['_ty'], rec['_tx']): i for i, rec in enumerate(records)}
+    # G1: frame 전체 4-이웃 타일 쌍(unit 경계 쌍 포함). 한도 = (다른 unit 이면 cheb(u_a − u_b)) + s_max
+    by_x0, by_y0 = {}, {}
+    for i, rec in enumerate(records):
+        y0, y1, x0, x1 = rec['region_px']
+        by_x0.setdefault(x0, []).append(i)
+        by_y0.setdefault(y0, []).append(i)
     pairs = []
-    for (q, ty, tx), i in index.items():
-        for nb in ((q, ty, tx + 1), (q, ty + 1, tx)):
-            if nb in index:
-                pairs.append((i, index[nb]))
+    for i, rec in enumerate(records):
+        y0, y1, x0, x1 = rec['region_px']
+        for j in by_x0.get(x1, ()):
+            if records[j]['region_px'][0] < y1 and y0 < records[j]['region_px'][1]:
+                pairs.append((i, j))
+        for j in by_y0.get(y1, ()):
+            if records[j]['region_px'][2] < x1 and x0 < records[j]['region_px'][3]:
+                pairs.append((i, j))
+    limits = {}
+    for i, j in pairs:
+        a, b = records[i], records[j]
+        limits[(i, j)] = s_max + (0 if a['_unit'] == b['_unit'] else _cheb_xy(a['_s'], b['_s']))
     replaced = 0
     while True:
         bad = set()
         for i, j in pairs:
-            if _cheb_xy(records[i]['_offset'], records[j]['_offset']) > s_max:
+            if _cheb_xy(records[i]['_offset'], records[j]['_offset']) > limits[(i, j)]:
                 bad.update(k for k in (i, j) if records[k]['applied'])
         if not bad:
             break

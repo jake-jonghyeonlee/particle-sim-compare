@@ -1,10 +1,10 @@
 """stretch-align/T2: ``candidates-change --apply-align stretch`` (타일 field), synthetic end to end.
 
-Drift world: frame 1300 x 1300 px, 4 units of 1150 px, the target unit is ``EXTRA`` = 5 px larger per axis (ΔU = 5). Inside each target unit the
+Drift world: frame 1300 x 1300 px, 4 units of 1150 px, the target unit is ``EXTRA`` = 10 px larger per axis (ΔU = 10; the shift accumulates 0 → ΔU inside a unit, so unit k starts at the shift ``k * ΔU`` where unit k − 1 ended: continuous across the unit boundary). Inside each target unit the
 layout (CNT, three Layer files, hotspot features) is stretched by ``RATE`` (a column or row is repeated every ~1/RATE px), so a feature at unit
 coordinate u sits ``ix * EXTRA + floor(u * RATE)`` px right of its reference position. One offset per unit cannot follow this drift
 (``--apply-align unit`` leaves false changes at the feature positions); one offset per 150 px tile can. Unit (1, 1) also has a real change:
-the feature at unit coordinate (560, 560) is 8 px wider in the target (case AB only).
+the feature at unit coordinate (560, 560) is 10 px wider in the target (case AB only).
 """
 import csv
 import json
@@ -23,15 +23,15 @@ from simcompare.adapters.real_hotspot import import_hotspots
 from simcompare.cli import main
 
 PITCH = 0.1
-U, EXTRA, RATE = 1150, 5, 0.009
+U, EXTRA, RATE = 1150, 10, 0.009
 LAYERS = ('L1', 'L2', 'L3')
 CNTS = ('CNT1', 'CNT2', 'CNT3')
 FEATURES = [(y, x) for y in (150, 560, 1000) for x in (150, 560, 1000)]       # unit 좌표 (y, x); 20 x 30 px
 FEATURE_H, FEATURE_W = 20, 30
-CHANGE_UNIT, CHANGE_AT, CHANGE_COLS = (1, 1), (560, 560), 8
-RUN = dict(change_tol=0.1, window=5, top_k=40, layer_tol=0.5)
-STRETCH = ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-tile-um', '15', '--stretch-radius-um', '0.8')
-UNIT = ('--apply-align', 'unit', '--unit-align-um', '1.5')
+CHANGE_UNIT, CHANGE_AT, CHANGE_COLS = (1, 1), (560, 560), 10
+RUN = dict(change_tol=0.2, window=5, top_k=40, layer_tol=0.5)
+STRETCH = ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-tile-um', '15', '--stretch-radius-um', '1.2')
+UNIT = ('--apply-align', 'unit', '--unit-align-um', '2.5')
 
 
 def tile(seed, n=4000):
@@ -236,7 +236,7 @@ def test_stretch_removes_the_drift_windows_and_ranks_the_real_change_first(unit_
     assert stretch_run.code in (0, 3)
     assert drift_windows_vanish(unit_run, stretch_run)
     top = queries(stretch_run)[0]
-    assert top['score_um2'] == pytest.approx(CHANGE_COLS * FEATURE_H * PITCH * PITCH)      # 8 x 20 px 만큼 넓어진 면적, 밀림 잔차가 섞이지 않는다
+    assert top['score_um2'] == pytest.approx((CHANGE_COLS - 1) * FEATURE_H * PITCH * PITCH)      # (10 − 1) x 20 px: 허용 폭 2 px 에서 측정한 면적(1 열은 허용 폭에 흡수), 밀림 잔차가 섞이지 않는다
     assert top['offset_source'] in ('stretch', 'unit') and queries(unit_run)[0]['score_um2'] > top['score_um2']
 
 
@@ -346,20 +346,20 @@ def expect_error(drift, tmp_path, capsys, code, *extra, dl1=None, **kw):
 
 
 @pytest.mark.parametrize('code,extra,kw', [
-    ('apply_align_requires_unit_align', ('--apply-align', 'stretch', '--stretch-radius-um', '0.8'), {}),
+    ('apply_align_requires_unit_align', ('--apply-align', 'stretch', '--stretch-radius-um', '1.2'), {}),
     ('refine_pool_requires_local', STRETCH + ('--refine-pool', '3'), {}),
     ('stretch_excludes_local_align', STRETCH + ('--local-align-um', '1'), {}),
-    ('stretch_tile_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-radius-um', '0.8', '--stretch-tile-um', '5'), {}),
-    ('stretch_tile_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-radius-um', '0.8', '--stretch-tile-um', '200'), {}),
-    ('stretch_radius_um_too_small_for_unit_delta', ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-radius-um', '0.6',
+    ('stretch_tile_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-radius-um', '1.2', '--stretch-tile-um', '5'), {}),
+    ('stretch_tile_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-radius-um', '1.2', '--stretch-tile-um', '200'), {}),
+    ('stretch_radius_um_too_small_for_unit_delta', ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-radius-um', '1.0',
                                                     '--stretch-tile-um', '15'), {}),
-    ('stretch_radius_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-radius-um', '6.1', '--stretch-tile-um', '15'), {}),
-    ('stretch_radius_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-radius-um', '0', '--stretch-tile-um', '15'), {}),
-    ('stretch_radius_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '1.5'), {}),
+    ('stretch_radius_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-radius-um', '6.1', '--stretch-tile-um', '15'), {}),
+    ('stretch_radius_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-radius-um', '0', '--stretch-tile-um', '15'), {}),
+    ('stretch_radius_um_invalid', ('--apply-align', 'stretch', '--unit-align-um', '2.5'), {}),
     ('stretch_step_exceeds_tolerance', STRETCH, {'change_tol': 0.0}),
-    ('stretch_step_exceeds_tolerance', ('--apply-align', 'stretch', '--unit-align-um', '1.5', '--stretch-radius-um', '0.8'), {}),     # 타일 기본 40 µm
+    ('stretch_step_exceeds_tolerance', ('--apply-align', 'stretch', '--unit-align-um', '2.5', '--stretch-radius-um', '1.2'), {}),     # 타일 기본 40 µm
     ('invalid_candidates_change_argument', ('--stretch-tile-um', '15'), {}),
-    ('invalid_candidates_change_argument', UNIT + ('--stretch-radius-um', '0.8'), {}),
+    ('invalid_candidates_change_argument', UNIT + ('--stretch-radius-um', '1.2'), {}),
 ])
 def test_error_codes_exit_2_without_creating_the_output(drift, tmp_path, capsys, code, extra, kw):
     expect_error(drift, tmp_path, capsys, code, *extra, **kw)
@@ -394,7 +394,7 @@ def test_admission_rejects_before_any_layer_is_read(drift, tmp_path, capsys, mon
 
 def test_other_modes_have_no_stretch_keys_or_files(drift, unit_run):
     plain = make(drift)
-    local = make(drift, '--apply-align', 'local', '--local-align-um', '1', '--unit-align-um', '1.5')
+    local = make(drift, '--apply-align', 'local', '--local-align-um', '1.5', '--unit-align-um', '2.5')
     folded = make(drift, *UNIT, '--unit-fold')
     for got in (plain, unit_run, local, folded):
         names = files(got.out)
@@ -422,8 +422,8 @@ def tile_at(stretch_map, y, x):
 def test_stretch_outputs(stretch_run, drift):
     got = stretch_run
     sm = tcc.load(got.out, 'stretch_map.json')
-    assert sm['schema_version'] == 'stretch_map_v1' and sm['tile_px'] == 150 and sm['radius_px'] == 8 and sm['s_max_px'] == 2
-    assert sm['tolerance_px'] == 1 and sm['tile_um'] == 15 and sm['radius_um'] == 0.8
+    assert sm['schema_version'] == 'stretch_map_v1' and sm['tile_px'] == 150 and sm['radius_px'] == 12 and sm['s_max_px'] == 3
+    assert sm['tolerance_px'] == 2 and sm['tile_um'] == 15 and sm['radius_um'] == 1.2
     assert sm['n_tiles'] == len(sm['tiles']) == 64 and len(sm['units']) == 4
     assert sm['n_applied'] > 32 and set(sm['offset_source_counts']) == {'stretch', 'unit', 'global'}
     for rec in sm['tiles']:
@@ -443,8 +443,8 @@ def test_stretch_outputs(stretch_run, drift):
     assert summary['n_tiles'] == 64 and summary['path'] == 'stretch_map.json' and summary['seam_excluded_pixels'] >= 0
     assert got.payload['policy']['apply_align'] == change_candidates.STRETCH_APPLY_POLICY
     args = got.payload['change_args']
-    assert args['apply_align'] == 'stretch' and args['stretch_tile_um'] == 15 and args['stretch_radius_um'] == 0.8
-    assert args['stretch_tile_px'] == 150 and args['stretch_radius_px'] == 8
+    assert args['apply_align'] == 'stretch' and args['stretch_tile_um'] == 15 and args['stretch_radius_um'] == 1.2
+    assert args['stretch_tile_px'] == 150 and args['stretch_radius_px'] == 12
     assert got.execution['args']['stretch_tile_px'] == 150
     assert set(got.execution['timings_s']) >= {'unit_align', 'layer_read', 'stretch_align', 'stretch_layer_read'}
     assert 'stretch_map.json' in got.execution['outputs']
@@ -452,7 +452,7 @@ def test_stretch_outputs(stretch_run, drift):
         qs = queries(got, direction)
         assert qs
         own = {'reference_to_target': 'reference', 'target_to_reference': 'target'}[direction]
-        geometry = layer_align.UnitGeometry((1300, 1300) if own == 'reference' else (1310, 1310))
+        geometry = layer_align.UnitGeometry((1300, 1300) if own == 'reference' else (1300 + 2 * EXTRA, 1300 + 2 * EXTRA))
         for q in qs:
             assert q['offset_source'] in ('stretch', 'unit', 'global')
             assert isinstance(q['crosses_tile_boundary'], bool) and q['seam_excluded_pixels'] >= 0
