@@ -60,8 +60,12 @@ ATTRIBUTES_POLICY_ALL_WINDOW_OFFSET = 'contributing_cases_all_layers_window_offs
 ATTRIBUTES_POLICY_ALL = 'score_union_sum_residual_representative_layer_window_changed_case_count_all_member_layers'
 
 
-APPLY_ALIGN_MODES = ('diagnostic', 'unit', 'local')
-UNIT_FOLD_POLICY = 'greedy_rank_order_toroidal_unit_distance_le_tolerance_reference_unit_all_layers'
+APPLY_ALIGN_MODES = ('diagnostic', 'unit', 'local', 'stretch')
+STRETCH_SCHEMA = 'stretch_map_v1'
+STRETCH_APPLY_POLICY = 'tile_field_dice_first_before_candidates_then_merge_suppress_fold_top_k'
+STRETCH_DEFAULT_TILE_UM = 40.0
+STRETCH_MIN_TILE_PX = 100
+UNIT_FOLD_POLICY ='greedy_rank_order_toroidal_unit_distance_le_tolerance_reference_unit_all_layers'
 
 
 def _resolve_diameter(diameter_um):
@@ -95,7 +99,8 @@ def _check_diameter_observed(sides, diameter):
 
 def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance, window, overlap, top_k,
                    mask_derivation_rule, merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None,
-                   unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None, refine_pool=None):
+                   unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None, refine_pool=None,
+                   stretch_tile_um=None, stretch_radius_um=None):
     if not isinstance(cnt_root, (str, Path)) or not str(cnt_root):
         raise _bad('invalid_candidates_change_argument', '--cnt-from-dl1-root 경로가 필요합니다')
     if not Path(cnt_root).is_dir():
@@ -134,8 +139,21 @@ def _validate_args(cnt_root, search, min_dice, layer_tolerance, change_tolerance
         raise _bad('invalid_candidates_change_argument', f'--apply-align는 {"|".join(APPLY_ALIGN_MODES)} 중 하나여야 합니다')
     if apply_align == 'local' and local_align_um is None:
         raise _bad('apply_align_requires_local_align', '--apply-align local 은 --local-align-um 이 필요합니다')
-    if apply_align == 'unit' and unit_align_um is None:
-        raise _bad('apply_align_requires_unit_align', '--apply-align unit 은 --unit-align-um 이 필요합니다')
+    if apply_align in ('unit', 'stretch') and unit_align_um is None:
+        raise _bad('apply_align_requires_unit_align', f'--apply-align {apply_align} 은 --unit-align-um 이 필요합니다')
+    if apply_align != 'stretch' and (stretch_tile_um is not None or stretch_radius_um is not None):
+        raise _bad('invalid_candidates_change_argument', '--stretch-tile-um / --stretch-radius-um 은 --apply-align stretch 와 함께만 줄 수 있습니다')
+    if apply_align == 'stretch':
+        if local_align_um is not None:
+            raise _bad('stretch_excludes_local_align', '--apply-align stretch 는 --local-align-um 과 함께 줄 수 없습니다')
+        if stretch_radius_um is None:
+            raise _bad('stretch_radius_um_invalid', '--apply-align stretch 는 --stretch-radius-um 이 필요합니다')
+        if isinstance(stretch_radius_um, bool) or not isinstance(stretch_radius_um, numbers.Real) \
+                or not math.isfinite(stretch_radius_um) or stretch_radius_um <= 0:
+            raise _bad('stretch_radius_um_invalid', f'--stretch-radius-um {stretch_radius_um!r}: 유한한 양수여야 합니다')
+        if stretch_tile_um is not None and (isinstance(stretch_tile_um, bool) or not isinstance(stretch_tile_um, numbers.Real)
+                                            or not math.isfinite(stretch_tile_um) or stretch_tile_um <= 0):
+            raise _bad('stretch_tile_um_invalid', f'--stretch-tile-um {stretch_tile_um!r}: 유한한 양수여야 합니다')
     if refine_pool is not None:
         if apply_align != 'local':
             raise _bad('refine_pool_requires_local', '--refine-pool 은 --apply-align local 과 함께만 줄 수 있습니다')
@@ -204,6 +222,38 @@ def _check_unit_align(unit_align_um, pitch, products, layer_root):
                    f'--unit-align-um {unit_align_um} ({radius} px) > 상한 {layer_align.MAX_UNIT_SEARCH_PX} px = '
                    f'{round(layer_align.MAX_UNIT_SEARCH_PX * pitch, 6)} µm')
     return radius
+
+
+def _check_stretch(tile_um, radius_um, pitch, products, window_px, change_tolerance_um):
+    """``--apply-align stretch`` 의 쓰기 전 검사. (타일 px, 반경 px, 이웃 타일 단차 상한 s_max, 허용 폭 px) 를 돌려준다.
+
+    반경: ``[|ΔU|max + 2, MAX_STRETCH_RADIUS_PX]``. 타일: ``[max(2·창 px, 100), 작은 unit 크기 px]``.
+    s_max = ceil(|ΔU|max · T / U_min) + 1 이 2·허용 폭(px) 를 넘으면 이음새가 지울 수 있는 CD 변화가 허용 폭 보장보다 커서 거부한다.
+    µm → px 반올림은 local 과 같은 Python ``round`` 다."""
+    ref_geo = layer_align.UnitGeometry(products['reference'].frame.valid.shape)
+    tgt_geo = layer_align.UnitGeometry(products['target'].frame.valid.shape)
+    delta = layer_align.delta_u_max(ref_geo, tgt_geo)
+    radius = int(round(float(radius_um) / float(pitch)))
+    if radius <= 0 or radius > layer_align.MAX_STRETCH_RADIUS_PX:
+        raise _bad('stretch_radius_um_invalid',
+                   f'--stretch-radius-um {radius_um} ({radius} px): 1..{layer_align.MAX_STRETCH_RADIUS_PX} px 여야 합니다')
+    required = layer_align.required_local_radius_px(delta)
+    if radius < required:
+        raise _bad('stretch_radius_um_too_small_for_unit_delta',
+                   f'--stretch-radius-um {radius_um} ({radius} px) < 필요 {required} px = {round(required * pitch, 6)} µm (|ΔU|max {delta} px + 2 px)')
+    tile_um = STRETCH_DEFAULT_TILE_UM if tile_um is None else tile_um
+    tile = int(round(float(tile_um) / float(pitch)))
+    unit_min = min(ref_geo.unit_px + tgt_geo.unit_px)
+    floor = max(2 * int(window_px), STRETCH_MIN_TILE_PX)
+    if tile < floor or tile > unit_min:
+        raise _bad('stretch_tile_um_invalid',
+                   f'--stretch-tile-um {tile_um} ({tile} px): {floor}..{unit_min} px 여야 합니다 (max(2 × 창 {window_px} px, {STRETCH_MIN_TILE_PX}) .. 작은 unit 크기)')
+    s_max = layer_align.stretch_step_max_px(delta, tile, unit_min)
+    tolerance_px = change_map._round_px(change_tolerance_um, pitch)
+    if not layer_align.stretch_step_within_tolerance(s_max, tolerance_px):
+        raise _bad('stretch_step_exceeds_tolerance',
+                   f'이웃 타일 단차 상한 s_max {s_max} px > 2 × 허용 폭 {tolerance_px} px: --stretch-tile-um 을 줄이거나 --change-tolerance-um 을 키우세요')
+    return tile, radius, s_max, tolerance_px
 
 
 class _Product:
@@ -581,7 +631,7 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
                           change_tolerance_um, window_um, merge_overlap, top_k, mask_derivation_rule,
                           merge_scope=None, suppress_overlap=None, electrode_png_root=None, local_align_um=None,
                           unit_align_um=None, apply_align=None, unit_fold=False, unit_fold_tolerance_um=None,
-                          refine_pool=None, diameter_um=None):
+                          refine_pool=None, diameter_um=None, stretch_tile_um=None, stretch_radius_um=None):
     """새 출력 폴더에 alignment.json, candidate_queries_v1.json, funnel.json/.csv, reference_export/, target_export/,
     reference_index_export/, target_index_export/(각 폴더에 review_rois.json 과 mask_derivation.json),
     direct/(roi_correspondence.json, direct_pairs_sidecar.json), execution.json 을 쓴다.
@@ -601,6 +651,11 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     ``apply_align`` (선택, ``diagnostic`` 기본 | ``unit`` | ``local``): ``unit`` 이면 unit offset 장을 변경 지도·창 재계산·target 방향 중심·직접 쌍·CNT 변경 면적에 쓴다.
     ``local`` (layer-align/T4b) 이면 ROI 마다 Layer 층 + CNT 층 Dice 우선 국소 보정을 하고(``--local-align-um`` 필요, ``--unit-align-um`` 은 시작점용으로 선택),
     창 후보 → 점수 상위 ``refine_pool``(기본 10 × top_k) 원시 창 → 창마다 국소 보정 + 재점수화 → 재점수로 병합 → 억제 → 접기 → top_k 순서로 진행한다.
+    ``stretch`` (stretch-align/T2) 이면 unit offset 위에 unit 안 타일(``stretch_tile_um``, 기본 40)마다 Layer 층 + CNT 층 Dice 우선 offset 을
+    ``stretch_radius_um``(필수) 안에서 고른 타일 field 를 후보 선정 전에 변경 지도에 적용한다(``--unit-align-um`` 필요, ``local`` 과 배타).
+    ok 가 아닌 타일과 이웃 단차가 s_max 를 넘는 타일은 unit offset 으로 대체한다. 모든 stretch 전용 출력은 이 모드에서만 쓴다.
+    쓰기 전 종료 2 코드: ``stretch_excludes_local_align``, ``stretch_tile_um_invalid``, ``stretch_radius_um_invalid``,
+    ``stretch_radius_um_too_small_for_unit_delta``, ``stretch_step_exceeds_tolerance`` (그 밖은 unit 과 같다).
     ``unit_fold`` (선택): 억제 뒤·top_k 앞에서 서로 다른 unit 의 같은 위치 ROI 를 접는다
     (``unit_fold_tolerance_um`` 생략 시 window_um / 4).
     쓰기 전 종료 2: ``layer_folder_required``(두 모델 중 하나라도 새 구조 + Layer PNG 가 없음), ``unit_align_um_too_small``, ``unit_align_um_too_large``,
@@ -615,7 +670,8 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     from . import pipeline
     _validate_args(cnt_from_dl1_root, align_search_um, align_min_dice, align_layer_tolerance_um, change_tolerance_um,
                    window_um, merge_overlap, top_k, mask_derivation_rule, merge_scope, suppress_overlap, electrode_png_root,
-                   local_align_um, unit_align_um, apply_align, unit_fold, unit_fold_tolerance_um, refine_pool)
+                   local_align_um, unit_align_um, apply_align, unit_fold, unit_fold_tolerance_um, refine_pool,
+                   stretch_tile_um, stretch_radius_um)
     out = Path(out)
     if out.exists() or out.is_symlink():
         raise _bad('output_dir_exists', str(out))
@@ -666,6 +722,9 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     unit_radius_px = None
     if unit_align_um is not None or apply_align == 'unit':
         unit_radius_px = _check_unit_align(unit_align_um, pitch, products, electrode_png_root or cnt_from_dl1_root)
+    stretch_px = None
+    if apply_align == 'stretch':
+        stretch_px = _check_stretch(stretch_tile_um, stretch_radius_um, pitch, products, window_px, change_tolerance_um)
     limit = _operation_limit(sides)
     args = {'cnt_from_dl1_root': str(cnt_from_dl1_root), 'align_search_um': align_search_um,
             'align_min_dice': align_min_dice, 'align_layer_tolerance_um': align_layer_tolerance_um,
@@ -691,6 +750,10 @@ def run_candidates_change(cfg, out, *, cnt_from_dl1_root, align_search_um, align
     if apply_align == 'local':
         args['local_align_px'] = local_radius_px
         args['refine_pool'] = refine_pool if refine_pool is not None else 10 * top_k
+    if apply_align == 'stretch':
+        args.update({'stretch_tile_um': STRETCH_DEFAULT_TILE_UM if stretch_tile_um is None else stretch_tile_um,
+                     'stretch_tile_px': stretch_px[0], 'stretch_radius_um': stretch_radius_um, 'stretch_radius_px': stretch_px[1],
+                     'stretch_s_max': stretch_px[2], 'stretch_tolerance_px': stretch_px[3]})
     if unit_fold:
         args['unit_fold'] = True
         args['unit_fold_tolerance_um'] = window_um / 4.0 if unit_fold_tolerance_um is None else unit_fold_tolerance_um
@@ -1101,6 +1164,96 @@ def _unit_alignment(products, cnt, g, radius, args, layer_root, limit, reserved,
             'timings_s': {'unit_align': round(time.perf_counter() - started, 3), 'layer_read': round(read_s, 3)}}
 
 
+def _stretch_alignment(products, cnt, g, unit, args, layer_root, limit, reserved, pitch):
+    """stretch-align/T2: unit offset 위에 unit 안 타일마다 층 공통 offset 을 Dice 우선으로 고른다(``layer_align.choose_tile_offsets``).
+
+    admission 은 Layer 를 읽기 전에 한다(층 bool 사본 + ``estimate_stretch_bytes`` + 보유 바이트). 층은 이 함수 안에서 한 번 더 읽고
+    끝나면 놓는다. 반환: ``field``(타일 offset 장), ``tiles``(기록), ``doc``(stretch_map.json), ``summary``(alignment.json.stretch),
+    ``lookup(y, x)``(그 픽셀이 속한 타일의 (offset, source, 타일 번호)), ``timings_s``."""
+    import time
+    from .adapters.electrode_png import load_layer_png, scan_layer_pngs
+    started = time.perf_counter()
+    read_s = 0.0
+    ref, tgt = products['reference'], products['target']
+    ref_shape, tgt_shape = tuple(ref.frame.valid.shape), tuple(tgt.frame.valid.shape)
+    geometry = unit['geometry']
+    tile_px, radius, s_max = args['stretch_tile_px'], args['stretch_radius_px'], args['stretch_s_max']
+    tiles = layer_align.tile_regions(geometry, tile_px)
+    files = {name: scan_layer_pngs(layer_root, products[name].product_id) for name in ('reference', 'target')}
+    layer_names = sorted(set(files['reference']) & set(files['target']), key=alignment_report.natural_key)
+    cnt_names = sorted(set(cnt['reference']['layers']) & set(cnt['target']['layers']), key=alignment_report.natural_key)
+    excluded = dict(unit['doc']['layer_global_check']['layers_excluded'])
+    layer_bytes = len(layer_names) * (int(np.prod(ref_shape)) + int(np.prod(tgt_shape)))
+    max_tile = (max(t['region'][1] - t['region'][0] for t in tiles), max(t['region'][3] - t['region'][2] for t in tiles))
+    n_starts = len({tuple(int(v) for v in o) for o in unit['effective'].values()})
+    need = layer_bytes + layer_align.estimate_stretch_bytes(max_tile, radius, len(layer_names) + len(cnt_names), n_tiles=len(tiles),
+                                                            frame_shape=ref_shape, n_starts=n_starts)
+    change_map._check_admission(need, limit, reserved)      # Layer 를 읽기 전에 거부한다
+    layers = {}
+    for name in layer_names:
+        pair = []
+        for side in ('reference', 'target'):
+            began = time.perf_counter()
+            pair.append(load_layer_png(layer_root, products[side].product_id, products[side].frame, files[side][name]))
+            read_s += time.perf_counter() - began
+        layers['layer:' + name] = tuple(pair)
+    for name in cnt_names:
+        layers['cnt:' + name] = (cnt['reference']['layers'][name], cnt['target']['layers'][name])
+    chosen = layer_align.choose_tile_offsets(
+        tiles, unit['effective'], layers, ref.frame.valid, tgt.frame.valid, radius, min_dice=float(args['align_min_dice']),
+        s_max=s_max, unit_sources=unit['source'], global_offset=g, excluded=excluded, max_operation_bytes=limit,
+        reserved_bytes=reserved + layer_bytes)
+    layers = None
+    records, field = chosen['tiles'], chosen['field']      # 기록과 field 는 같은 순서다
+    index ={tuple(rec['unit_index_xy']): [] for rec in records}
+    for i, rec in enumerate(records):
+        index[tuple(rec['unit_index_xy'])].append(i)
+    unit_docs, source_counts, status_counts = [], {'stretch': 0, 'unit': 0, 'global': 0}, {s: 0 for s in layer_align.STATUSES}
+    for key in sorted(index, key=lambda k: (k[1], k[0])):
+        recs = [records[i] for i in index[key]]
+        counts = {s: 0 for s in layer_align.STATUSES}
+        for rec in recs:
+            counts[rec['status']] += 1
+            status_counts[rec['status']] += 1
+            source_counts[rec['offset_source']] += 1
+        points = [((rec['region_px'][2] + rec['region_px'][3]) / 2.0, (rec['region_px'][0] + rec['region_px'][1]) / 2.0,
+                   rec['offset_xy_px'][0] * pitch, rec['offset_xy_px'][1] * pitch) for rec in recs if rec['applied']]
+        fit, fit_reason = local_align.linear_fit(points, ref_shape, pitch)
+        unit_docs.append({'unit_index_xy': list(key), 'n_tiles': len(recs), 'n_applied': sum(1 for r in recs if r['applied']),
+                          'status_counts': counts,
+                          'max_abs_delta_xy_px': [max(abs(r['delta_xy_px'][0]) for r in recs), max(abs(r['delta_xy_px'][1]) for r in recs)],
+                          'linear_fit': fit, 'linear_fit_reason': fit_reason})
+
+    def lookup(y, x):
+        for i, (y0, y1, x0, x1, dx, dy) in enumerate(field):
+            if y0 <= y < y1 and x0 <= x < x1:
+                return (dx, dy), records[i]['offset_source'], i
+        raise ValueError(f'pixel {(y, x)} is outside every stretch tile')
+
+    summary = {'tile_um': args['stretch_tile_um'], 'tile_px': tile_px, 'radius_um': args['stretch_radius_um'], 'radius_px': radius,
+               's_max_px': s_max, 'tolerance_px': args['stretch_tolerance_px'], 'n_tiles': len(records),
+               'n_applied': sum(1 for r in records if r['applied']), 'step_replaced_tiles': chosen['step_replaced_tiles'],
+               'status_counts': status_counts, 'offset_source_counts': source_counts, 'path': 'stretch_map.json'}
+    doc = {'schema_version': STRETCH_SCHEMA, **{k: v for k, v in summary.items() if k != 'path'}, 'pitch_um': pitch,
+           'frame_shape_reference_yx': list(ref_shape), 'global_offset_xy_px': [int(g[0]), int(g[1])],
+           'min_dice': float(args['align_min_dice']), 'min_support_px': local_align.MIN_SUPPORT_PX,
+           'layers_basis': 'layer_and_cnt_common_offset_per_tile',
+           'layers_used': ['layer:' + n for n in layer_names] + ['cnt:' + n for n in cnt_names],
+           'layers_excluded': {k: excluded[k] for k in sorted(excluded, key=alignment_report.natural_key)},
+           'units': unit_docs, 'tiles': records}
+    return {'field': field, 'tiles': records, 'doc': doc, 'summary': summary, 'lookup': lookup,
+            'timings_s': {'stretch_align': round(time.perf_counter() - started, 3), 'stretch_layer_read': round(read_s, 3)}}
+
+
+def _stretch_window_fields(window, field, seam_mask):
+    """창 하나의 ``crosses_tile_boundary``(창이 offset 이 다른 타일을 둘 이상 걸침)와 ``seam_excluded_pixels``(창 안 이음새 제외 픽셀 수)."""
+    y, x = window['window_origin_px']
+    size = window['window_px']
+    offsets = {(f[4], f[5]) for f in field if f[0] < y + size and y < f[1] and f[2] < x + size and x < f[3]}
+    return {'crosses_tile_boundary': len(offsets) > 1,
+            'seam_excluded_pixels': int(np.count_nonzero(seam_mask[y:y + size, x:x + size]))}
+
+
 def _fold_merged(merged, by_id, geometry, tolerance_um, pitch):
     """억제 뒤 순위 목록을 reference unit 으로 접는다(``layer_align.fold_rois``). (남은 목록, {대표 region_id: unit_fold 기록})."""
     items = []
@@ -1496,10 +1649,15 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     unit = None
     apply_unit = args.get('apply_align') == 'unit'
     apply_local = args.get('apply_align') == 'local'
+    apply_stretch = args.get('apply_align') == 'stretch'
+    stretch = None
     if args.get('unit_align_px') is not None:
         unit = _unit_alignment(products, cnt, offset_px, args['unit_align_px'], args, electrode_root, limit, reserved, pitch)
         alignment_doc.update(unit['doc'])
         notes.extend(unit['notes'])
+    if apply_stretch:      # unit offset 이 타일 시작점이다(stretch 는 --unit-align-um 필수)
+        stretch = _stretch_alignment(products, cnt, offset_px, unit, args, electrode_root, limit, reserved, pitch)
+        alignment_doc['stretch'] = stretch['summary']
     figure_layer_inputs = None
     if layer_figure_files is not None and unit is None:      # 그림에만 쓰는 Layer 의 입력 지문(정렬에 쓰면 위 unit['doc']['layer_inputs'] 를 그대로 쓴다)
         figure_layer_inputs = _layer_fingerprints(electrode_root, products, layer_figure_files)
@@ -1522,10 +1680,11 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         notes.append({'code': 'electrode_set_differs', 'severity': 'info', 'electrode_set_basis': ELECTRODE_SET_BASIS,
                       'reference_only': sorted(names['reference'] - names['target']),
                       'target_only': sorted(names['target'] - names['reference'])})
-    use_field = unit is not None and (apply_unit or apply_local)       # local 에서 --unit-align-um 이 없으면 시작점은 전역 g
-    map_offset = {'offset_field': unit['field']} if use_field else {'offset_px': offset_px}
-    if report_source is not None and use_field:      # 층 묶음 target 바탕도 hotspot 과 같은 unit offset 장으로 옮긴다
-        report_source.map_field = unit['field']
+    use_field = unit is not None and (apply_unit or apply_local or apply_stretch)       # local 에서 --unit-align-um 이 없으면 시작점은 전역 g
+    active_field = stretch['field'] if apply_stretch else (unit['field'] if use_field else None)      # stretch 는 타일 field, 그 밖은 unit field
+    map_offset = {'offset_field': active_field} if use_field else {'offset_px': offset_px}
+    if report_source is not None and use_field:      # 층 묶음 target 바탕도 hotspot 과 같은 offset 장으로 옮긴다
+        report_source.map_field = active_field
     maps = change_map.change_maps(pairs, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, **map_offset,
                                   pitch_um=pitch, tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit,
                                   window_um=window_um, reserved_bytes=reserved)
@@ -1536,11 +1695,18 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     map_stats = maps['stats']
     ref_shape, tgt_shape = tuple(int(v) for v in ref.frame.valid.shape), tuple(int(v) for v in tgt.frame.valid.shape)
     alignment_doc.update(_frame_record(ref_shape, tgt_shape, map_stats, maps['domain_bbox_px']))
+    if apply_stretch:
+        alignment_doc['stretch']['seam_excluded_pixels'] = int(map_stats.get('seam_excluded_pixels', 0))
     if ref_shape != tgt_shape:      # 정보다: 경고도 종료 코드 3 도 아니고 정렬 불확실 사유도 아니다
         notes.append({'code': 'frame_shape_differs', 'severity': 'info', 'reference_yx': list(ref_shape),
                       'target_yx': list(tgt_shape), 'delta_px': alignment_doc['frame_shape_delta_px']})
     candidates.write_text(out / 'alignment.json', json.dumps(alignment_doc, ensure_ascii=False, indent=2, sort_keys=True,
                                                              allow_nan=False) + '\n', track)
+    seam_mask = None
+    if apply_stretch:
+        stretch['doc']['seam_excluded_pixels'] = alignment_doc['stretch']['seam_excluded_pixels']
+        emit('stretch_map.json', json.dumps(stretch['doc'], ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+        seam_mask = change_map._field_seam(change_map._parse_field(active_field, ref_shape), ref_shape)
     # --- 3b. (--apply-align local) 풀 = 창 후보 점수 상위 N → 창마다 국소 보정 + 재점수화 → 이후 병합·억제·접기는 재점수로 한다(X3)
     candidate_list = found['candidates']
     refine, local_run, local_by_window = None, None, {}
@@ -1600,6 +1766,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
 
     # --- 5. 기여 case (두 번째 패스) + CNT 변경 면적
     window_offsets, window_sources = [offset_px] * len(windows), [None] * len(windows)
+    stretch_fields = [{}] * len(windows)
     kept_local = []
     if apply_local:
         # 재점수 패스(3b) 값 그대로: 대표 창 1개 + 모든 층 기여(merge_scope=all 구성원 층 확장 없음)
@@ -1607,17 +1774,22 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         kept_local = [local_by_window[id(w)] for w in windows]
         window_offsets = [item['decision']['offset'] for item in kept_local]
         window_sources = [item['decision']['source'] for item in kept_local]
-    elif apply_unit:
+    elif apply_unit or apply_stretch:
         # 모든 층의 기여 case 를 창마다 한 번씩(대표 창만): 창의 점수·합집합·관측 비율도 이 패스 값으로 낸다(merge_scope=all 구성원 층 확장 없음)
         contrib = change_map.case_contributions(
             pairs, windows, ref_valid=ref.frame.valid, tgt_valid=tgt.frame.valid, offset_px=offset_px, pitch_um=pitch,
             tolerance_um=args['change_tolerance_um'], max_operation_bytes=limit, reserved_bytes=reserved,
-            window_offsets=[unit['field']] * len(windows))['windows']
+            window_offsets=[active_field] * len(windows))['windows']
         windows = _recomputed_windows(windows, contrib, pitch)
         for i, window in enumerate(windows):
             half = window['window_px'] // 2
-            idx = unit['geometry'].unit_index((window['window_origin_px'][0] + half, window['window_origin_px'][1] + half))
-            window_offsets[i], window_sources[i] = unit['effective'][idx], unit['source'][idx]
+            center = (window['window_origin_px'][0] + half, window['window_origin_px'][1] + half)
+            if apply_stretch:      # 창 중심이 속한 타일의 offset
+                window_offsets[i], window_sources[i], _ = stretch['lookup'](*center)
+                stretch_fields[i] = _stretch_window_fields(window, active_field, seam_mask)
+            else:
+                idx = unit['geometry'].unit_index(center)
+                window_offsets[i], window_sources[i] = unit['effective'][idx], unit['source'][idx]
     elif merge_all:
         # 병합 구성원 층마다 대표 창과 같은 위치·크기의 창을 만들어 그 층의 case 도 센다(전체 층 합친 뒤 창별로 다시 모은다).
         expanded, owner = [], []
@@ -1644,8 +1816,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     # --- 4·6. 방향별 중심과 manual 요청 (ROI × 기여 case 하나당 요청 하나, 같은 키는 1회)
     shift = _shift_um(offset_px, pitch, ref.frame, tgt.frame)
     window_shifts = [_shift_um(o, pitch, ref.frame, tgt.frame) for o in window_offsets]
-    applied = [({'offset_xy_px_applied': [int(o[0]), int(o[1])], 'offset_source': s} if (apply_unit or apply_local) else {})
+    applied = [({'offset_xy_px_applied': [int(o[0]), int(o[1])], 'offset_source': s} if (apply_unit or apply_local or apply_stretch) else {})
                for o, s in zip(window_offsets, window_sources)]
+    own_geometry = {name: layer_align.UnitGeometry(item.frame.valid.shape) for name, item in products.items()} if apply_stretch else {}
     plan = {}
     for direction, query_name, index_name in candidates.DIRECTIONS:
         item = products[query_name]
@@ -1667,9 +1840,15 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                           'failure_type': case.failure_type})
                 if key not in keys:
                     keys.append(key)
+            extra = {}
+            if apply_stretch:      # stretch 모드에서만: 창이 걸친 타일·이음새 제외 픽셀과 자기 제품 기하 안의 위치(L9)
+                cell = _cell(center, item.frame)
+                idx, coord = own_geometry[query_name].unit_index((cell[1], cell[0])), own_geometry[query_name].unit_coord((cell[1], cell[0]))
+                extra = {**stretch_fields[i], 'unit_index_xy': [idx[1], idx[0]],
+                         'unit_coord_xy_um': [round(coord[1] * pitch, 6), round(coord[0] * pitch, 6)]}
             entries.append({'merge': merge, 'window': window, 'center': center, 'keys': keys, 'index': i,
                             'ref_center': [float(rep.center_xy_um[0]), float(rep.center_xy_um[1])],
-                            'shift': window_shifts[i], 'shift_here': shift_here, 'applied': applied[i]})
+                            'shift': window_shifts[i], 'shift_here': shift_here, 'applied': applied[i], 'extra': extra})
         plan[query_name] = {'direction': direction, 'index_name': index_name, 'entries': entries,
                             'requests': [requests[k] for k in sorted(requests)]}
 
@@ -1770,7 +1949,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 'score_um2': window['score_um2'], 'score_basis': window['score_basis'], 'score_layer': rep.layer,
                 **_window_attributes(window, len(contrib[i]['contributing_cases'])),
                 'observed_fraction': window['observed_fraction'],
-                **entry['applied'],
+                **entry['applied'], **entry['extra'],
                 **({'unit_fold': fold_info[rep.region_id]} if fold_info else {}),
                 'contributing_cases': [
                     {'case_key': c['case_key'], 'residual_um2': c['residual_um2'], 'change_kind': c['classification'],
@@ -1847,7 +2026,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             return None
         if _collect_layer_figures(report_source, directions[0]['queries'], windows, electrode_root, layer_figure_files, products,
                                   _figure_stack_order(sides), offset_px, limit, reserved, warnings, notes,
-                                  field=unit['field'] if use_field else None):
+                                  field=active_field):
             return layer_figure_files
         report_source.drop_layer_figures()
         return None
@@ -1876,7 +2055,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     report_html, report_info = alignment_report.build_alignment_html(
         alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped,
         pairing_stats=pairing['stats'], local_alignment=local_doc,
-        apply_mode='unit' if apply_unit else 'local' if apply_local else None,
+        apply_mode='unit' if (apply_unit or apply_stretch) else 'local' if apply_local else None,      # stretch 문구·표시는 T5
         diameter_um=diameter if diameter != DIAMETER_UM else None)
     report_source = None
     emit_bytes('alignment.html', report_html)
@@ -1936,7 +2115,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                                         'change_tolerance_um', 'window_um', 'merge_overlap', 'top_k')}
     change_args.update({k: args[k] for k in ('diameter_um', 'merge_scope', 'suppress_overlap', 'electrode_png_root', 'local_align_um',
                                              'unit_align_um', 'apply_align', 'unit_fold', 'unit_fold_tolerance_um',
-                                             'refine_pool') if k in args})
+                                             'refine_pool', 'stretch_tile_um', 'stretch_tile_px', 'stretch_radius_um',
+                                             'stretch_radius_px') if k in args})
     layer_files = (unit['doc']['layer_inputs'] if unit is not None
                    else (local_run['layer_files'] if local_run is not None else figure_layer_inputs))
     if layer_files is not None:      # Layer 를 정렬이나 그림에 쓴 실행만: 입력 지문(alignment.json.layer_inputs 와 같은 파일 목록)
@@ -1971,10 +2151,13 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         payload['policy']['suppress'] = SUPPRESS_POLICY_ANY if suppress <= candidates.OVERLAP_EPS else SUPPRESS_POLICY
     if apply_local:
         payload['policy']['apply_align'] = LOCAL_APPLY_POLICY
+    if apply_stretch:
+        payload['policy']['apply_align'] = STRETCH_APPLY_POLICY
     if args.get('unit_fold'):
         payload['policy']['unit_fold'] = UNIT_FOLD_POLICY
     if merge_all:
-        payload['policy']['attributes'] = ATTRIBUTES_POLICY_ALL_WINDOW_OFFSET if (apply_unit or apply_local) else ATTRIBUTES_POLICY_ALL
+        payload['policy']['attributes'] = (ATTRIBUTES_POLICY_ALL_WINDOW_OFFSET if (apply_unit or apply_local or apply_stretch)
+                                           else ATTRIBUTES_POLICY_ALL)
     emit('candidate_queries_v1.json', json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     emit('funnel.json', json.dumps(funnel_doc, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
     candidates.write_funnel_csv(out / 'funnel.csv', funnels, coverage, track)
@@ -2007,6 +2190,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                  'inputs': exec_inputs, 'warnings': warnings, 'notes': notes, **result}
     if unit is not None or local_run is not None:      # 새 기능을 켰을 때만(고정 해시 테스트 밖): 단계 소요 시간
         execution['timings_s'] = {**(unit['timings_s'] if unit is not None else {}),
+                                  **(stretch['timings_s'] if stretch is not None else {}),
                                   **(local_run['timings_s'] if local_run is not None else {})}
     candidates.write_text(out / 'execution.json', json.dumps(execution, ensure_ascii=False, indent=2) + '\n', track)
     result['outputs'] = sorted(result['outputs'] + ['execution.json'])

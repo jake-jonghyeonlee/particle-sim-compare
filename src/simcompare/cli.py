@@ -105,10 +105,17 @@ def _parser() -> argparse.ArgumentParser:
     change.add_argument("--unit-align-um", type=float,
                         help="선택. Layer 전역 교차 확인과 unit 4개 offset 의 탐색 반경 µm. 두 모델 모두 새 구조(Merged_Layer) + Layer/ PNG 가 있어야 한다. "
                              "unit 크기 차이 |ΔU| 의 2배 + 2 px 이상, 300 px 이하여야 한다. 지정하면 alignment.json 에 layer_global_check·unit_offsets·unit_geometry·layer_inputs 를 더한다(계산 불변). 생략하면 하지 않음")
-    change.add_argument("--apply-align", choices=("diagnostic", "unit", "local"),
+    change.add_argument("--apply-align", choices=("diagnostic", "unit", "local", "stretch"),
                         help="선택. diagnostic(생략 시) = 기존 동작. unit = unit offset 장을 변경 지도·창 재계산·target 방향 중심·직접 쌍에 적용(--unit-align-um 필요). "
                              "local = 위에 더해 ROI 마다 Layer 층 + CNT 층 Dice 우선 국소 offset 을 구해 재점수화에 적용(--local-align-um 필요, --unit-align-um 은 시작점용으로 선택). "
-                             "local 의 --local-align-um 은 |ΔU| + 2 px 이상, 300 px 이하여야 한다")
+                             "local 의 --local-align-um 은 |ΔU| + 2 px 이상, 300 px 이하여야 한다. "
+                             "stretch = unit offset 위에 unit 안 타일(--stretch-tile-um)마다 Layer 층 + CNT 층 Dice 우선 offset 을 구한 타일 field 를 후보 선정 전에 변경 지도에 적용"
+                             "(--unit-align-um 과 --stretch-radius-um 필요, --local-align-um·--refine-pool 과 함께 줄 수 없음)")
+    change.add_argument("--stretch-tile-um", type=float,
+                        help="선택, --apply-align stretch 전용. 타일 한 변 µm(생략하면 40). max(2 × 창, 10 µm) 이상, unit 크기 이하여야 한다. "
+                             "이웃 타일 단차 상한 s_max = ceil(|ΔU| · 타일 / unit) + 1 px 가 2 × --change-tolerance-um(px) 이하여야 한다")
+    change.add_argument("--stretch-radius-um", type=float,
+                        help="--apply-align stretch 에서 필수. 타일 offset 탐색 반경 µm. |ΔU| + 2 px 이상, 60 px(6 µm) 이하여야 한다")
     change.add_argument("--refine-pool", type=int,
                         help="선택, --apply-align local 전용. 창 후보 점수 상위 N 개만 국소 보정·재점수화한다(생략하면 10 × top-k). 풀 밖 창은 순위에서 빠진다")
     change.add_argument("--unit-fold", action="store_true",
@@ -318,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
                 electrode_png_root=args.electrode_png_root, local_align_um=args.local_align_um,
                 unit_align_um=args.unit_align_um, apply_align=args.apply_align, unit_fold=args.unit_fold,
                 unit_fold_tolerance_um=args.unit_fold_tolerance_um, refine_pool=args.refine_pool,
-                diameter_um=args.diameter_um)
+                diameter_um=args.diameter_um, stretch_tile_um=args.stretch_tile_um, stretch_radius_um=args.stretch_radius_um)
             _print(result)
             return result["exit_code"]
         if args.command == "candidates-dv":
