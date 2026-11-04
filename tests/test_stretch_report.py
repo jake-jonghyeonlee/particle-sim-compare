@@ -1,5 +1,10 @@
 """stretch-align/T5: alignment.html 의 stretch 표시와, stretch 가 아닌 실행의 HTML 이 바이트 불변임을 확인한다."""
+import base64
 import hashlib
+import io
+import re
+
+from PIL import Image
 
 from simcompare import alignment_report as ar
 
@@ -8,12 +13,33 @@ from test_stretch_cli import drift, make, queries, STRETCH, UNIT  # noqa: F401  
 LOCAL = ('--apply-align', 'local', '--local-align-um', '1.5', '--unit-align-um', '2.5')
 # 기준 커밋 acf2c58(T5 적용 전)에서 같은 drift fixture 로 각 실행을 돌려 얻은 alignment.html 의 sha256 과 바이트 수.
 # Python 3.11 과 3.9 에서 같은 값이다. HTML 을 일부러 바꿀 때만 갱신한다.
+# stretch-align/T8: PNG 의 zlib 바이트(Pillow·zlib 버전에 따라 달라짐)에 묶이지 않게, HTML 을 두 부분으로 나눠 고정한다.
+# (1) 인라인 PNG 를 자리표시로 바꾼 텍스트의 sha256 과 바이트 수, (2) 디코드한 모든 PNG 의 (모드, 크기, 픽셀 바이트) 를 순서대로 해시한 값과 PNG 개수.
+# 텍스트 전부와 픽셀 전부를 고정하므로 이전의 전체 바이트 해시보다 약하지 않다. 압축 방식만 달라진 경우는 통과한다.
 BASELINE_HTML = {
-    'plain': ((), 'c7ed06eff1823f0e9eba6c6231c5bc57a8460646f4d7076f5d410239630c3ddd', 2501962),
-    'unit': (UNIT, '0b5830f92f90a1067a18678b5a4dd554c1fb0bd3fc3449709093fcbd8a58a6c2', 1677920),
-    'local': (LOCAL, '0e7302f805ec2a42d5ced0f77f9f622f0e5e839268f1a46f271c9c2b19996ada', 953281),
-    'fold': (UNIT + ('--unit-fold',), 'c67a32649f8a1612bd4ef59b9759507570d0fd647cedd1abc3250cf374fa7075', 1557806),
+    'plain': ((), '50dde277ff05aa1dd7a96071ddbb785cdc460ddf5b6c7432d39821bc1a613ae1', 125589,
+              '0302656d009221f8f93c2b22d9f1d20fb67360a58b5eb1143c4372d5885c87af', 221),
+    'unit': (UNIT, 'd22f42b875cb7b0003c90734c47fda0a30a267095e25d2362ffc46bb42f70024', 71460,
+             '8c17567fc023139bd98f992b288c2fb291d212151926cbe5a71998c3508d6a19', 116),
+    'local': (LOCAL, '9d18c30f4974bc4ce19ab9a18841bb51c348f55d301e5af98c6279689eaf870b', 25159,
+              '7957a0b917b3c3bb654bbfcadb06629a0b546e4c7161eeadf1cc10a43e2e4575', 26),
+    'fold': (UNIT + ('--unit-fold',), '2cfb4cd5fda54141a1cb1029340e69eb1353133f67b613147b7c0eb8dcac750e', 63605,
+             '25f221d2712cc1e906f1247a69bd9293d58b866910d4432993313e9e68205c16', 101),
 }
+PNG_URI = re.compile(r'data:image/png;base64,([A-Za-z0-9+/=]+)')
+PNG_SLOT = 'data:image/png;base64,@@PNG@@'
+
+
+def html_fingerprint(text):
+    """(자리표시 텍스트 sha256, 텍스트 바이트 수, 디코드 픽셀 sha256, PNG 개수)."""
+    pixels, count = hashlib.sha256(), 0
+    for m in PNG_URI.finditer(text):
+        with Image.open(io.BytesIO(base64.b64decode(m.group(1)))) as im:
+            im.load()
+            pixels.update(repr((im.mode, im.size)).encode() + im.tobytes())
+        count += 1
+    slotted = PNG_URI.sub(PNG_SLOT, text).encode('utf-8')
+    return hashlib.sha256(slotted).hexdigest(), len(slotted), pixels.hexdigest(), count
 
 
 def html_of(run_):
@@ -21,9 +47,8 @@ def html_of(run_):
 
 
 def test_non_stretch_html_is_byte_identical_to_the_baseline_commit(drift):
-    for name, (extra, digest, size) in BASELINE_HTML.items():
-        data = (make(drift, *extra).out / 'alignment.html').read_bytes()
-        assert (hashlib.sha256(data).hexdigest(), len(data)) == (digest, size), name
+    got = {name: html_fingerprint(html_of(make(drift, *spec[0]))) for name, spec in BASELINE_HTML.items()}
+    assert got == {name: spec[1:] for name, spec in BASELINE_HTML.items()}
 
 
 # --------------------------------------------------------------------------- stretch 모드의 HTML

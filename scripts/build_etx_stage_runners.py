@@ -141,7 +141,7 @@ STAGES = {
          "  반경을 실자료 ΔU 로 맞춘다: alignment.json 의 unit_geometry.delta_u_yx_px 의 큰 쪽 |ΔU|max(px) 에 대해",
          "  --stretch-radius-um ≥ (|ΔU|max+2)·0.1 µm(60 px = 6 µm 이하), --unit-align-um ≥ (2|ΔU|max+2)·0.1 µm. 예: ΔU = (5, 5) 이면 0.7 µm 와 1.2 µm 이상.",
          "  이웃 타일 단차 상한 s_max = ceil(|ΔU|max·T/U_min)+1 px 가 2×(--change-tolerance-um px) 이하여야 한다(아니면 stretch_step_exceeds_tolerance).",
-         "  아래 기본 JOBS 예시는 local 이다. stretch 로 바꾸려면 --apply-align local --local-align-um 1 을 위 인수로 바꾼다.",
+         "  아래 기본 JOBS 예시는 local 이다. stretch 로 바꾸려면 기존 --unit-align-um 3 --apply-align local --local-align-um 1 을 위 인수로 통째로 바꾼다(--unit-align-um 이 두 번 남지 않게 한다).",
          "  결과: stretch_map.json, alignment.html 2c-2절 '늘어남 지도'. 한계는 docs/usage_reference.md 'stretch 한계'.",
          "결과: alignment.html(정렬 요약·변경 지도), direct/roi_correspondence.json(6회차 입력), *_export/·*_index_export/ 의 review_rois.json + mask_derivation.json(DL2 입력).",
          "종료 코드 3(부분 결과)이어도 실행기는 계속한다. 결과는 로그의 'candidates-change exit N' 줄로 판정한다.",

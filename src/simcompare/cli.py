@@ -112,7 +112,7 @@ def _parser() -> argparse.ArgumentParser:
                              "stretch = unit offset 위에 unit 안 타일(--stretch-tile-um)마다 Layer 층 + CNT 층 Dice 우선 offset 을 구한 타일 field 를 후보 선정 전에 변경 지도에 적용"
                              "(--unit-align-um 과 --stretch-radius-um 필요, --local-align-um·--refine-pool 과 함께 줄 수 없음)")
     change.add_argument("--stretch-tile-um", type=float,
-                        help="선택, --apply-align stretch 전용. 타일 한 변 µm(생략하면 40). max(2 × 창, 10 µm) 이상, unit 크기 이하여야 한다. "
+                        help="선택, --apply-align stretch 전용. 타일 한 변 µm(생략하면 40). 타일 px 가 max(2 × 창 px, 100 px) 이상, unit px 이하여야 한다. "
                              "이웃 타일 단차 상한 s_max = ceil(|ΔU| · 타일 / unit) + 1 px 가 2 × --change-tolerance-um(px) 이하여야 한다")
     change.add_argument("--stretch-radius-um", type=float,
                         help="--apply-align stretch 에서 필수. 타일 offset 탐색 반경 µm. |ΔU| + 2 px 이상, 60 px(6 µm) 이하여야 한다")
