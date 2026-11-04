@@ -2090,8 +2090,10 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     report_html, report_info = alignment_report.build_alignment_html(
         alignment_doc, queries=directions[0]['queries'], windows=windows, source=report_source, skipped_reason=skipped,
         pairing_stats=pairing['stats'], local_alignment=local_doc,
-        apply_mode='unit' if (apply_unit or apply_stretch) else 'local' if apply_local else None,      # stretch 문구·표시는 T5
-        diameter_um=diameter if diameter != DIAMETER_UM else None)
+        apply_mode='stretch' if apply_stretch else 'unit' if apply_unit else 'local' if apply_local else None,
+        diameter_um=diameter if diameter != DIAMETER_UM else None,
+        stretch_map=stretch['doc'] if apply_stretch else None,
+        target_queries=directions[1]['queries'] if apply_stretch else None)
     report_source = None
     emit_bytes('alignment.html', report_html)
     if local_doc is not None:

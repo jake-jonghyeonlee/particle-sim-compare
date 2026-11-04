@@ -1084,11 +1084,36 @@ def _badge_title(alignment, diameter_um=None):
                diameter_note))
 
 
-APPLY_TEXT = {'unit': 'unit offset 를 변경 지도·export 에 적용', 'local': 'unit offset 위에 ROI 국소 offset 을 적용'}
+APPLY_TEXT = {'unit': 'unit offset 를 변경 지도·export 에 적용', 'local': 'unit offset 위에 ROI 국소 offset 을 적용',
+              'stretch': 'unit offset 위에 unit 안 타일마다 offset 을 골라 변경 지도·export 에 적용(배선이 늘어난 만큼 보정)'}
 
 
-def _apply_rows(alignment, apply_mode, n_folded):
-    """1절 요약의 적용 모드 행들(``--apply-align unit | local`` 일 때만)."""
+def _ppm_text(fit, reason):
+    """unit 하나의 ``linear_fit`` → 'x ppm, y ppm' 문구. 적합을 못 했으면 사유."""
+    if not fit:
+        return '— (%s)' % reason
+    return '<code>%s</code> ppm (x, y)' % escape(_json(fit['scale_ppm_xy']))
+
+
+def _stretch_rows(alignment, stretch_map):
+    """stretch 모드 1절 요약 행들: 타일 크기·반경·s_max·적용 타일 수·상태 수·unit 별 배율(ppm)."""
+    s = alignment.get('stretch')
+    if not s:
+        return []
+    rows = [('타일 크기', '%s µm (%s px)' % (s['tile_um'], s['tile_px'])), ('탐색 반경', '%s µm (%s px)' % (s['radius_um'], s['radius_px'])),
+            ('이웃 타일 단차 상한 s_max', '%s px (허용 폭 %s px)' % (s['s_max_px'], s['tolerance_px'])),
+            ('적용 타일 k / n', '%d / %d' % (s['n_applied'], s['n_tiles'])), ('단차 초과로 unit offset 으로 대체한 타일', s['step_replaced_tiles']),
+            ('타일 상태 수', _Raw('<code>' + escape(_json(s['status_counts'])) + '</code> (ok 가 아니면 unit offset 사용, 사유는 stretch_map.json)')),
+            ('offset 출처 타일 수', _Raw('<code>' + escape(_json(s['offset_source_counts'])) + '</code>'))]
+    if stretch_map:
+        rows.append(('unit 별 늘어남 배율 (ppm)', _Raw('<br>'.join(
+            'unit %s: %s' % (escape(_json(u['unit_index_xy'])), _ppm_text(u.get('linear_fit'), u.get('linear_fit_reason')))
+            for u in stretch_map.get('units') or []) or '—')))
+    return rows
+
+
+def _apply_rows(alignment, apply_mode, n_folded, stretch_map=None):
+    """1절 요약의 적용 모드 행들(``--apply-align unit | local | stretch`` 일 때만)."""
     if apply_mode not in APPLY_TEXT:
         return []
     rows = [('적용 모드', _Raw('<code>--apply-align ' + apply_mode + '</code> ' + escape(APPLY_TEXT[apply_mode])))]
@@ -1097,12 +1122,14 @@ def _apply_rows(alignment, apply_mode, n_folded):
         rows.append(('unit offset 4개 (x, y px)', _Raw('<br>'.join(
             'unit %s: <code>%s</code> %s' % (escape(_json(u['unit_index_xy'])), escape(_json(u['offset_xy_px'])),
                                              '적용(unit)' if u.get('applied') else '전역 offset 사용') for u in units))))
+    if apply_mode == 'stretch':
+        rows.extend(_stretch_rows(alignment, stretch_map))
     if n_folded:
         rows.append(('접힌 ROI 수', n_folded))
     return rows
 
 
-def _summary(alignment, n_rois=0, local=None, apply_mode=None, n_folded=0, diameter_um=None):
+def _summary(alignment, n_rois=0, local=None, apply_mode=None, n_folded=0, diameter_um=None, stretch_map=None):
     status = alignment['status']
     rows = [
         ('status', _Raw(escape(STATUS_TEXT.get(status, status)) + ' <code>' + escape(status) + '</code>')),
@@ -1126,7 +1153,7 @@ def _summary(alignment, n_rois=0, local=None, apply_mode=None, n_folded=0, diame
     quadrant = _quadrant_table(alignment)
     if quadrant:
         rows.append(('사분면 offset (전역 대비 차이)', _Raw(quadrant)))
-    rows.extend(_apply_rows(alignment, apply_mode, n_folded))
+    rows.extend(_apply_rows(alignment, apply_mode, n_folded, stretch_map))
     if diameter_um is not None:
         rows.append(('hotspot 지름 (µm)', diameter_um))
     rows.append(('ROI 수', _Raw('%d (<a href="#list">ROI 목록</a>)' % n_rois)))
@@ -1184,6 +1211,58 @@ def _alternatives(alignment):
     else:
         parts.append(_table(['offset_xy_um', 'offset_xy_px', 'dice', 'at_search_edge'],
                             [(a['offset_xy_um'], a.get('offset_xy_px'), a['dice'], a['at_search_edge']) for a in alts]))
+    return ''.join(parts)
+
+
+STRETCH_MAP_MAX_CELL_PX = 24
+
+
+def _stretch_image(stretch_map):
+    """타일 δ 크기(µm) 지도: 타일 하나 = 셀 하나. 반환 (rgb, 최대 δ µm). unit 대비 δ 의 유클리드 길이를 흰색→노랑→빨강으로 칠하고,
+    적용하지 않은 타일(unit offset 사용)은 회색이다. 셀 격자는 타일 영역의 y0·x0 값을 frame 전체에서 모아 정한다."""
+    tiles = stretch_map['tiles']
+    pitch = float(stretch_map.get('pitch_um') or 1.0)
+    ys = sorted({t['region_px'][0] for t in tiles})
+    xs = sorted({t['region_px'][2] for t in tiles})
+    cell = max(2, min(STRETCH_MAP_MAX_CELL_PX, 360 // max(len(ys), len(xs), 1)))
+    mag = np.zeros((len(ys), len(xs)), dtype=np.float64)
+    applied = np.zeros((len(ys), len(xs)), dtype=bool)
+    present = np.zeros((len(ys), len(xs)), dtype=bool)
+    for t in tiles:
+        r, c = ys.index(t['region_px'][0]), xs.index(t['region_px'][2])
+        applied[r, c], present[r, c] = bool(t.get('applied')), True
+        if applied[r, c]:
+            mag[r, c] = math.hypot(t['delta_xy_px'][0], t['delta_xy_px'][1]) * pitch
+    vmax = float(mag.max()) if mag.size else 0.0
+    index = np.zeros(mag.shape, dtype=np.int64)
+    if vmax > 0:
+        index = np.where(mag > 0, 1 + np.minimum(254, (mag / vmax * 254).astype(np.int64)), 0)
+    rgb = _LUT[index]
+    rgb[~applied | ~present] = GRAY
+    return np.repeat(np.repeat(rgb, cell, axis=0), cell, axis=1), vmax
+
+
+def _stretch_section(stretch_map):
+    """2c 절 "늘어남 지도"(stretch 모드만): unit 별 표 + 타일 δ 크기 PNG. 변경 점수·순위에는 쓰지 않는다."""
+    parts = ['<h3 id="stretch-map">2c-2. 늘어남 지도</h3>'
+             '<p class="note">unit 안 타일마다 고른 offset 이 unit offset 에서 얼마나 벗어났는지(δ)를 보여 주는 참고 자료다. '
+             '변경 점수·순위·ROI 선정에 쓰지 않는다.</p>']
+    if not stretch_map:
+        return ''.join(parts) + '<p class="note">stretch_map 문서가 없어 표와 그림을 만들지 않았습니다.</p>'
+    pitch = float(stretch_map.get('pitch_um') or 0.0)
+    rows = []
+    for u in stretch_map.get('units') or []:
+        dx, dy = u['max_abs_delta_xy_px']
+        rows.append((_Raw(escape(_json(u['unit_index_xy']))), '%d / %d' % (u['n_applied'], u['n_tiles']),
+                     _Raw('<code>%s</code> px · %s µm' % (escape(_json([dx, dy])), escape(_json([round(dx * pitch, 4), round(dy * pitch, 4)])))),
+                     _Raw(_ppm_text(u.get('linear_fit'), u.get('linear_fit_reason'))),
+                     _Raw('<code>' + escape(_json(u['status_counts'])) + '</code>')))
+    parts.append(_table(['unit (x, y)', '적용 타일 k / n', 'max |δ| (x, y)', '배율 (ppm)', '타일 상태 수'], rows))
+    rgb, vmax = _stretch_image(stretch_map)
+    parts.append('<div class="figs">' + _figure(_uri(_png(rgb)), '타일 δ 크기 지도: 타일 하나 = 셀 하나, 셀 색 = unit offset 대비 offset 차이의 길이(µm)') + '</div>')
+    parts.append('<p class="note">범례: %s 0 µm · %s %.3f µm · %s 최대 %.3f µm · %s 적용 안 함(unit offset 사용).</p>'
+                 % (_swatch([int(v) for v in _LUT[0]]), _swatch([int(v) for v in _LUT[128]]), vmax / 2.0,
+                    _swatch([int(v) for v in _LUT[255]]), vmax, _swatch([int(v) for v in GRAY])))
     return ''.join(parts)
 
 
@@ -1255,10 +1334,20 @@ def _contribution_table(cases):
     return out
 
 
-def _roi_list(queries, windows, shape):
-    """4절 ROI 목록 표. 순위 칸은 5절 상세(``roi<순위>``)로 가는 링크."""
+def _consensus_text(query):
+    consensus = (query.get('unit_fold') or {}).get('consensus')
+    return '—' if not consensus else '%d/%d' % (consensus['k'], consensus['n'])
+
+
+def _roi_list(queries, windows, shape, stretch=False):
+    """4절 ROI 목록 표. 순위 칸은 5절 상세(``roi<순위>``)로 가는 링크.
+
+    stretch (stretch 모드만): 접기 합의 열 ``k/4``(접힌 ROI 가 하나라도 있을 때)와 "경계"(창이 offset 이 다른 타일을 걸침) 열을 더한다."""
     header = ('순위', '대표 층', '불량 조합이 있는 층', '중심 (µm)', 'frame 안 위치', '점수 µm²', CHANGE_KIND_TEXT['appeared'],
               CHANGE_KIND_TEXT['disappeared'], '형상 변화', '상태')
+    folded = stretch and any(q.get('unit_fold') for q in queries)
+    if stretch:
+        header += (('합의 k/4',) if folded else ()) + ('경계',)
     out = ['<h2 id="list">4. ROI 목록</h2>']
     if not queries:
         out.append('<p class="note">선정된 ROI 가 없습니다.</p>')
@@ -1267,16 +1356,53 @@ def _roi_list(queries, windows, shape):
     for rank, (query, window) in enumerate(zip(queries, windows), start=1):
         new, gone, shape_change = kind_counts(query)
         centre = '[%.2f, %.2f]' % (query['center_xy_um'][0], query['center_xy_um'][1])
+        extra = ''
+        if stretch:
+            extra = ('<td>%s</td>' % _consensus_text(query) if folded else '') + \
+                    '<td>%s</td>' % ('<b>경계</b>' if query.get('crosses_tile_boundary') else '—')
         out.append('<tr><td><a href="#roi%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="num">%s</td>'
-                   '<td>%d</td><td>%d</td><td>%d</td><td>%s</td></tr>'
+                   '<td>%d</td><td>%d</td><td>%d</td><td>%s</td>%s</tr>'
                    % (rank, rank, escape(str(window['layer'])), escape(', '.join(contribution_layers(query, window))),
                       escape(centre), escape(_window_position(window, shape)), _fmt2(query['score_um2']), new, gone, shape_change,
-                      escape(str(query.get('status', '—')))))
+                      escape(str(query.get('status', '—'))), extra))
     out.append('</table>')
     return ''.join(out)
 
 
-def _roi_text(rank, query, window, shape):
+def _stretch_roi_rows(query, target):
+    """5절 ROI 상세 표에 더하는 stretch 행: offset 출처·적용 offset·이음새 제외 픽셀·두 제품의 좌표와 접기 합의.
+
+    target: target_to_reference 방향의 같은 순위 질의(없으면 None). 그 center_xy_um 이 reference 중심 + 적용 offset 이다."""
+    rows = [('offset_source', _Raw('<code>' + escape(str(query.get('offset_source'))) + '</code> ' +
+                                    escape(OFFSET_SOURCE_TEXT.get(query.get('offset_source'), '')))),
+            ('적용 offset (x, y px)', query.get('offset_xy_px_applied')),
+            ('crosses_tile_boundary', '예 (창이 offset 이 다른 타일을 걸침)' if query.get('crosses_tile_boundary') else '아니오'),
+            ('seam_excluded_pixels', query.get('seam_excluded_pixels')),
+            ('reference 측 unit 번호·unit 좌표 (µm)', _Raw(escape(_json(query.get('unit_index_xy'))) + ' · ' +
+                                                         escape(_json(query.get('unit_coord_xy_um')))))]
+    if target is not None:
+        rows.append(('target 측 중심 (µm)', _Raw(escape(_json(target.get('center_xy_um'))))))
+        rows.append(('target 측 unit 번호·unit 좌표 (µm)', _Raw(escape(_json(target.get('unit_index_xy'))) + ' · ' +
+                                                              escape(_json(target.get('unit_coord_xy_um'))))))
+    fold = query.get('unit_fold')
+    if fold and fold.get('consensus'):
+        consensus = fold['consensus']
+        rows.append(('접기 합의', _Raw('%d/%d · unit <code>%s</code>' % (consensus['k'], consensus['n'],
+                                                                       escape(_json(consensus['units_present_xy']))))))
+        rows.append(('target 측 중심 (µm) · unit 번호 · unit 좌표 (대표)', _Raw(escape(_json(
+            [fold.get('target_center_xy_um'), fold.get('target_unit_index_xy'), fold.get('target_unit_coord_xy_um')])))))
+        for rep in fold.get('replicas') or []:
+            rows.append(('replica ' + str(rep['region_id']), _Raw(escape(_json({
+                'unit_index_xy': rep['unit_index_xy'], 'center_xy_um': rep['center_xy_um'], 'offset_source': rep.get('offset_source'),
+                'offset_xy_px_applied': rep.get('offset_xy_px_applied'), 'target_center_xy_um': rep.get('target_center_xy_um'),
+                'target_unit_index_xy': rep.get('target_unit_index_xy'), 'target_unit_coord_xy_um': rep.get('target_unit_coord_xy_um')})))))
+    return rows
+
+
+OFFSET_SOURCE_TEXT = {'stretch': '타일 offset', 'unit': 'unit offset (타일을 쓰지 않음)', 'global': '전역 offset (unit 정렬 실패)'}
+
+
+def _roi_text(rank, query, window, shape, stretch=False, target=None):
     flags = query['flags']
     head = [('score_um2 (합집합 변화, 순위 기준)', _fmt2(query['score_um2'])), ('score_layer', query['score_layer']),
             ('sum_residual_um2', _fmt2(query['sum_residual_um2'])), ('changed_case_count', query['changed_case_count']),
@@ -1285,6 +1411,8 @@ def _roi_text(rank, query, window, shape):
             ('union_area_target_um2', _fmt2(query['union_area_target_um2'])), ('observed_fraction', _pct(query['observed_fraction'])),
             ('flags', _Raw('<br>'.join('<code>' + escape(f) + '</code> ' + escape(FLAG_TEXT.get(f, '')) for f in flags) or '—')),
             ('cnt_change_um2_by_layer', query['cnt_change_um2_by_layer'])]
+    if stretch:
+        head.extend(_stretch_roi_rows(query, target))
     title = ('<h3>순위 %d · 대표 층 %s · 불량 조합 층 %s · 중심 %s µm · 창 원점 %s px · frame %s · <code>%s</code></h3>'
              % (rank, escape(str(window['layer'])), escape(', '.join(contribution_layers(query, window))),
                 escape('[%.2f, %.2f]' % (query['center_xy_um'][0], query['center_xy_um'][1])),
@@ -1426,6 +1554,14 @@ LAYER_NOTES = (
 APPLY_NOTES = (
     '<li>적용 모드(<code>--apply-align unit | local</code>): 변경 지도·열지도는 unit offset 기준이고, ROI 점수·기여 case·중심은 ROI 적용 offset 기준이다. '
     '경계 창(unit 경계의 띠에 걸친 창)의 CNT 변경 면적은 창 중심이 속한 unit 의 offset 기준으로 센다.</li>')
+STRETCH_NOTES = (
+    '<li>적용 모드(<code>--apply-align stretch</code>): 변경 지도는 unit 안 타일 offset 장 기준이고, ROI 점수·기여 case·중심은 ROI 적용 offset 기준이다. '
+    '타일 offset 이 다른 두 타일 사이 이음새 띠는 변경 지도에서 제외하며, 창 안 제외 픽셀 수는 ROI 상세의 <code>seam_excluded_pixels</code> 다. '
+    '"경계" 표시는 창이 offset 이 다른 타일을 둘 이상 걸친 ROI 다.</li>'
+    '<li>모서리 한계: 이웃 타일 단차는 s_max 이하지만 타일 네 개가 만나는 모서리 점에서는 같은 unit·단조 unit 배치에서 최악 2·s_max, 일반적으로 ≤ 2r 까지 벌어질 수 있다'
+    '(r = 탐색 반경). 이 한계는 보장이 아니라 문서 한계다.</li>'
+    '<li>늘어남 지도(2c-2절)는 참고 자료이며 변경 점수·순위·ROI 선정에 쓰지 않는다. '
+    'unit 별 배율(ppm)은 적용한 타일 중심의 offset 을 x, y 따로 최소제곱 직선으로 맞춘 기울기다.</li>')
 UNIT_LOCAL_DIAG_NOTE = (
     '<li><code>--apply-align unit</code> 과 <code>--local-align-um</code> 을 함께 주면 국소 정렬 진단 표는 unit offset 이 아니라 전역 offset g 를 시작점으로 계산한다. '
     '진단 표의 전역 대비 차이도 g 기준이다.</li>')
@@ -1462,6 +1598,8 @@ def _footnotes(local=None, apply_mode=None, layered=False, n_folded=0, diagnosti
         notes += LAYER_NOTES
     if apply_mode in ('unit', 'local'):
         notes += APPLY_NOTES
+    elif apply_mode == 'stretch':
+        notes += STRETCH_NOTES
     if n_folded:
         notes += ('<li>접힌 ROI(<code>--unit-fold</code>): 서로 다른 unit 의 같은 위치 ROI %d개를 대표 ROI 하나로 접었다. 대표 ROI 의 <code>unit_fold</code> 에 접힌 ROI 가 있다.</li>'
                   % n_folded)
@@ -1486,12 +1624,15 @@ def _footnotes(local=None, apply_mode=None, layered=False, n_folded=0, diagnosti
 
 
 def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=None, skipped_reason=None,
-                         pairing_stats=None, local_alignment=None, apply_mode=None, diameter_um=None):
+                         pairing_stats=None, local_alignment=None, apply_mode=None, diameter_um=None,
+                         stretch_map=None, target_queries=None):
     """alignment: ``alignment.json`` 문서(dict). queries: reference_to_target 질의 목록(순위 순), windows: 같은 순서의 창 후보.
 
     source: ``ImageSource`` (``collect`` 를 마친 것) 또는 None(그림 없음). skipped_reason: 그림을 만들지 않은 이유(문장).
     local_alignment: ``roi_local_alignment.json`` 문서 또는 None(None 이면 국소 정렬 표·요약 줄·각주를 더하지 않는다).
-    apply_mode: ``'unit'`` | ``'local'`` | None(진단 전용 = 예전 문구). 1절 요약·각주의 적용 모드 문구를 정한다.
+    apply_mode: ``'unit'`` | ``'local'`` | ``'stretch'`` | None(진단 전용 = 예전 문구). 1절 요약·각주의 적용 모드 문구를 정한다.
+    ``'stretch'`` 일 때만(stretch-align/T5) 1절 타일 행, 2c-2절 늘어남 지도, 4절 합의·경계 열, 5절 stretch 행, 각주를 더한다.
+    stretch_map: ``stretch_map.json`` 문서(stretch 모드만). target_queries: target_to_reference 질의 목록(같은 순위 순서, stretch 모드만).
     diameter_um: 기본 5 µm 가 아닌 hotspot 지름이면 그 값(배지 note·1절 요약 행에 표시), 기본이면 None(표시 없음).
     source.layered() 이면(layer-align/T5) 5절 위치 그림 바탕과 ROI 주변 crop 이 Layer stack 이다.
     반환 ``(html 바이트, {'path', 'bytes', 'downscaled', 'crops_omitted', 'n_images'})``."""
@@ -1499,9 +1640,10 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     n_images = 0
     shape = _frame_shape(alignment, source)
     layered = source is not None and source.layered()
+    stretch = apply_mode == 'stretch'
     n_folded = sum(int((q.get('unit_fold') or {}).get('n_replicas', 0)) for q in queries)
     prefix = [_badge_title(alignment, diameter_um),
-              _summary(alignment, len(queries), local_alignment, apply_mode, n_folded, diameter_um)]
+              _summary(alignment, len(queries), local_alignment, apply_mode, n_folded, diameter_um, stretch_map)]
     # 2. CNT 정렬과 정렬 진단
     prefix.append('<h2>2. CNT 정렬과 정렬 진단</h2><h3>2a. 전체 CNT 층 겹침 — 정렬 전 / 정렬 후</h3>')
     pattern = None
@@ -1533,6 +1675,9 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     prefix.append(_alternatives(alignment))
     if pairing_stats is not None:
         prefix.append(_pairing_summary(pairing_stats))
+    if stretch:
+        prefix.append(_stretch_section(stretch_map))
+        n_images += 1 if stretch_map else 0
     # 3. 변경 강조 지도
     prefix.append('<h2>3. 변경 강조 지도</h2>')
     position_base = None
@@ -1547,7 +1692,7 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
         n_images += 1
         position_base = _position_base(source)
     del pattern
-    prefix.append(_roi_list(queries, windows, shape))
+    prefix.append(_roi_list(queries, windows, shape, stretch))
     prefix.append('<h2>5. ROI 상세 (순위 순)</h2>')
     if not queries:
         prefix.append('<p class="note">선정된 ROI 가 없습니다.</p>')
@@ -1571,7 +1716,8 @@ def build_alignment_html(alignment, *, queries, windows, source=None, max_bytes=
     def section(i, level):
         if (i, level) in sections:
             return sections[(i, level)]
-        title, text = _roi_text(i + 1, queries[i], windows[i], shape)
+        target = target_queries[i] if stretch and target_queries is not None and i < len(target_queries) else None
+        title, text = _roi_text(i + 1, queries[i], windows[i], shape, stretch, target)
         figs = ''
         if source is None:
             figs = '<p class="missing">그림을 만들지 않았습니다.</p>'

@@ -471,7 +471,7 @@ def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radiu
     o = 타일 offset) 에 대해 **축마다** ``min(0, du) − s_max ≤ do ≤ max(0, du) + s_max`` 를 요구한다(같은 unit 이면 du = 0 → |do| ≤ s_max).
     어기면 stretch 로 적용된 쪽을 unit offset 으로 대체(``stretch_step_exceeded``)하고 위반이 없을 때까지 반복한다.
     둘 다 대체되면 do = du 로 상자 안이라 반드시 끝난다.
-    보장: 축마다, 어느 이음새든 unit 모드 대비 추가 소거(offset 차가 unit 차에서 벗어난 양) ≤ s_max. 4 타일 모서리 점에서는 최악 2·s_max(≤ 4r)이다.
+    보장: 축마다, 어느 이음새든 unit 모드 대비 추가 소거(offset 차가 unit 차에서 벗어난 양) ≤ s_max. 4 타일 모서리 점에서는 같은 unit·단조 unit 배치에서 최악 2·s_max, 일반적으로 ≤ 2r 이다(문서 한계, 보장 아님).
     반환 ``{'tiles': [기록], 'field': [(y0, y1, x0, x1, dx, dy)], 'step_replaced_tiles': n, 's_max': s_max, 'radius_px': R}``.
     기록 키: unit_index_xy, tile_index_xy, region_px, start_offset_xy_px, offset_xy_px, delta_xy_px(unit 대비),
     delta_from_global_xy_px(global_offset 을 줄 때), candidate_offset_xy_px, offset_source(stretch|unit|global), applied, omega_pixels
@@ -522,7 +522,7 @@ def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radiu
         if not applied:
             rec['flags'].append('stretch_tile_fallback')
         records.append(rec)
-    # G1: frame 전체 4-이웃 타일 쌍(unit 경계 쌍 포함). 한도 = (다른 unit 이면 cheb(u_a − u_b)) + s_max
+    # G1: frame 전체 4-이웃 타일 쌍(unit 경계 쌍 포함). 한도 = 축마다 상자 min(0, du) − s_max ≤ do ≤ max(0, du) + s_max (du = u_b − u_a, do = o_b − o_a)
     by_x0, by_y0 = {}, {}
     for i, rec in enumerate(records):
         y0, y1, x0, x1 = rec['region_px']

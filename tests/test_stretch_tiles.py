@@ -502,7 +502,7 @@ def test_admission_estimate_bounds_the_real_peak(radius):
     assert peak >= 4 * shape[0] * shape[1]                  # 실측이 Ω 캐시 4장 이상을 본다(추정이 터무니없이 크지 않음의 하한)
 
 
-# --------------------------------------------------------------------------- G1 v1.2: unit 경계 쌍·다른 unit offset·모서리
+# --------------------------------------------------------------------------- G1 상자 규칙(v1.3): unit 경계 쌍·다른 unit offset·모서리
 
 def _boundary_scene(d):
     shape = (80, 160)                                      # unit 40 × 80, unit 경계 x = 80, 타일 40
@@ -555,7 +555,7 @@ def test_g1_limit_across_units_adds_the_unit_offset_difference():
     got = choose(bg, tgt, g, 40, 6, s_max=1, unit_offsets=units)
     assert got['step_replaced_tiles'] == 0
     assert [tile_by_index(got, ux, 0, tx, 0)['offset_xy_px'][0] for ux, tx in ((0, 0), (0, 1), (1, 0), (1, 1))] == [0, 1, 5, 6]
-    # 한도는 k + s_max = 5: 단차 k = 4 는 통과하고, s_max=0 이면 한도 k 만 남아 같은 unit 단차 1 이 걸린다.
+    # 상자 상한은 max(0, du) + s_max = k + s_max = 5: 단차 k = 4 는 통과하고, s_max=0 이면 같은 unit 단차 1 이 |do| ≤ 0 에 걸린다.
     strict = choose(bg, tgt, g, 40, 6, s_max=0, unit_offsets=units)
     assert strict['step_replaced_tiles'] > 0
 
@@ -584,7 +584,9 @@ def test_g1_box_rejects_a_step_opposite_to_the_unit_step():
     assert resid > 0 and unit_resid - resid <= 1 * 20 and resid - unit_resid <= 1 * 20
 
 
-def test_g1_box_mutation_old_cheb_size_limit_would_pass_the_opposed_step():
+def test_g1_box_arithmetic_old_cheb_size_limit_passes_the_opposed_step_but_the_box_does_not():
+    """산술 비교다(코드를 실행하지 않는다). v1.2 크기 한도와 v1.3 상자의 부등식을 반례 값에 직접 적용해 둘이 다름을 보인다.
+    실제 코드가 반례를 대체하는지는 ``test_g1_box_rejects_a_step_opposite_to_the_unit_step`` 이 확인한다."""
     g, units, ref, tgt = _opposed_step_scene()
     a, b = (3, 0), (1, 0)                                   # 경계 타일 offset
     ua, ub = (0, 0), (4, 0)
@@ -608,24 +610,61 @@ def _box_scene(axis, do):
     return g, units, bg, warp(bg, pieces)
 
 
+def _boundary_tiles(got, axis):
+    """unit 경계 양쪽의 타일 둘(a = 위·왼쪽 unit 의 마지막 타일, b = 아래·오른쪽 unit 의 첫 타일)."""
+    if axis == 'x':
+        return tile_by_index(got, 0, 0, 1, 0), tile_by_index(got, 1, 0, 0, 0)
+    return tile_by_index(got, 0, 0, 0, 1), tile_by_index(got, 0, 1, 0, 0)
+
+
 @pytest.mark.parametrize('axis', ['x', 'y'])
 @pytest.mark.parametrize('do,replaced', [(4, False), (5, False), (3, False), (-1, False), (6, True), (-2, True)])
-def test_g1_box_same_direction_inside_and_outside(axis, do, replaced):
-    """s_max = 1, du = 4: 상자 min(0, 4) − 1 ≤ do ≤ max(0, 4) + 1 = [−1, 5]. 밖이면 stretch 타일이 unit offset 으로 대체된다."""
+def test_g1_box_inside_and_outside_for_a_positive_unit_step(axis, do, replaced):
+    """s_max = 1, du = +4: 상자 min(0, 4) − 1 ≤ do ≤ max(0, 4) + 1 = [−1, 5]. 밖이면 stretch 타일이 unit offset 으로 대체된다.
+    경계 타일 둘은 어느 경우에도 Dice 판정이 ``ok`` 다(대체는 G1 때문이지 판정 실패가 아니다)."""
     g, units, bg, tgt = _box_scene(axis, do)
-    got = choose(bg, tgt, g, 40, 6, s_max=1, unit_offsets=units)
+    got = choose(bg, tgt, g, 40, 8, s_max=1, unit_offsets=units)      # 반경 8: 시작점에서 5 px 떨어진 최적도 search_bound_hit(경계 1 px 안)가 아니다
+    a, b = _boundary_tiles(got, axis)
+    assert a['status'] == 'ok' and b['status'] == 'ok'
     assert (got['step_replaced_tiles'] > 0) == replaced
     assert replaced == any('stretch_step_exceeded' in rec['flags'] for rec in got['tiles'])
     if not replaced:
-        if axis == 'x':
-            a, b = tile_by_index(got, 0, 0, 1, 0), tile_by_index(got, 1, 0, 0, 0)
-        else:
-            a, b = tile_by_index(got, 0, 0, 0, 1), tile_by_index(got, 0, 1, 0, 0)
-        assert [a['offset_xy_px'][0 if axis == 'x' else 1], b['offset_xy_px'][0 if axis == 'x' else 1]] == [1, 1 + do]
+        k = 0 if axis == 'x' else 1
+        assert [a['offset_xy_px'][k], b['offset_xy_px'][k]] == [1, 1 + do]
+
+
+def _negative_step_scene(axis, steps):
+    """unit 0 offset 4, unit 1 offset 0(axis 방향, du = −4). 타일 이동량 steps = [unit 0 의 두 타일, unit 1 의 두 타일]."""
+    shape = (80, 160) if axis == 'x' else (160, 80)
+    g = geometry(*shape)
+    unit_axis = 1 if axis == 'x' else 0
+    first = (4, 0) if axis == 'x' else (0, 4)
+    units = {q: (first if q[unit_axis] == 0 else (0, 0)) for q in g.unit_regions()}
+    bg = blocks(shape, 3)
+    pieces = [((0, 80, 40 * k, 40 * k + 40, d, 0) if axis == 'x' else (40 * k, 40 * k + 40, 0, 80, 0, d)) for k, d in enumerate(steps)]
+    return g, units, bg, warp(bg, pieces)
+
+
+@pytest.mark.parametrize('axis', ['x', 'y'])
+@pytest.mark.parametrize('steps,replaced', [((1, 1, 3, 3), True), ((2, 2, 3, 3), False), ((1, 1, -4, -4), False), ((1, 1, -5, -5), True)])
+def test_g1_box_inside_and_outside_for_a_negative_unit_step(axis, steps, replaced):
+    """s_max = 1, du = −4(units 4 / 0): 상자 min(0, −4) − 1 ≤ do ≤ max(0, −4) + 1 = [−5, 1].
+    타일 [1,1,3,3] 은 경계 do = +2 로 상자 밖(대체), [2,2,3,3] 은 do = +1 로 통과, [1,1,−4,−4] 는 do = −5 로 통과, [1,1,−5,−5] 는 do = −6 으로 대체."""
+    g, units, bg, tgt = _negative_step_scene(axis, steps)
+    got = choose(bg, tgt, g, 40, 8, s_max=1, unit_offsets=units)
+    a, b = _boundary_tiles(got, axis)
+    assert a['status'] == 'ok' and b['status'] == 'ok'
+    assert (got['step_replaced_tiles'] > 0) == replaced
+    assert replaced == any('stretch_step_exceeded' in rec['flags'] for rec in got['tiles'])
+    if replaced:
+        assert not a['applied'] or not b['applied']
+    else:
+        k = 0 if axis == 'x' else 1
+        assert [a['offset_xy_px'][k], b['offset_xy_px'][k]] == [steps[1], steps[2]]
 
 
 def test_g1_four_tile_corner_reproduced_diagonal_step_equals_s_max():
-    """재현된 모서리 대각 단차는 s_max(= 2)이다. 이론상 최악 2·s_max(≤ 4r)는 이웃 쌍 단차가 s_max 씩 같은 방향으로 이어질 때이며 문서 한계다(재현 사례 없음)."""
+    """재현된 모서리 대각 단차는 s_max(= 2)이다. 같은 unit·단조 unit 배치의 최악 2·s_max(일반적으로 ≤ 2r)는 이웃 쌍 단차가 s_max 씩 같은 방향으로 이어질 때이며 문서 한계다(재현 사례 없음)."""
     shape = (160, 160)
     g = geometry(*shape)
     shifts = {(ty, tx): ((-1 if tx % 2 == 0 else 1), (-1 if ty % 2 == 0 else 1)) for ty in range(4) for tx in range(4)}
