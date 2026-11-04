@@ -236,7 +236,8 @@ def test_stretch_removes_the_drift_windows_and_ranks_the_real_change_first(unit_
     assert stretch_run.code in (0, 3)
     assert drift_windows_vanish(unit_run, stretch_run)
     top = queries(stretch_run)[0]
-    assert top['score_um2'] == pytest.approx((CHANGE_COLS - 1) * FEATURE_H * PITCH * PITCH)      # (10 − 1) x 20 px: 허용 폭 2 px 에서 측정한 면적(1 열은 허용 폭에 흡수), 밀림 잔차가 섞이지 않는다
+    tolerance_px, tile_residual_px = 2, 1       # 허용 폭 r = 2 px 가 변경 열 2 개를 흡수하고, 타일 offset 이 밀림을 다 못 따라가 1 px 잔차가 한 열 남는다
+    assert top['score_um2'] == pytest.approx((CHANGE_COLS - tolerance_px + tile_residual_px) * FEATURE_H * PITCH * PITCH)      # (10 − 2 + 1) x 20 px = 9 x 20 px = 1.8 µm²
     assert top['offset_source'] in ('stretch', 'unit') and queries(unit_run)[0]['score_um2'] > top['score_um2']
 
 

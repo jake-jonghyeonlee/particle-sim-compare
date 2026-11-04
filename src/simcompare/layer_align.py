@@ -467,9 +467,11 @@ def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radiu
     tiles: ``tile_regions`` 결과. unit_offsets: {(iy, ix): (ox, oy)} 타일 시작점(= unit 적용 offset). unit_sources: {(iy, ix): 'unit'|'global'}
     (기본 'unit'; unit 정렬이 실패해 global 이 적용된 unit 은 'global'). layers: {층 키: (reference bool, target bool)}.
     ref_valid/tgt_valid: Ω 용 관측 마스크. 상태 ``ok`` 만 적용하고 그 밖은 unit offset 으로 대체(``stretch_tile_fallback``).
-    그 뒤 G1: frame 전체 4-이웃 타일 쌍의 offset 체비쇼프 차가 한도(같은 unit s_max, 다른 unit cheb(u_a − u_b) + s_max; u = 적용 unit offset)를
-    넘으면 stretch 로 적용된 쪽을 unit offset 으로 대체(``stretch_step_exceeded``)하고 위반이 없을 때까지 반복한다.
-    대체된 타일은 unit offset 으로 고정되어 반드시 끝난다.
+    그 뒤 G1: frame 전체 4-이웃 타일 쌍(b 가 a 의 오른쪽 또는 아래, unit 경계 쌍 포함)마다 du = u_b − u_a, do = o_b − o_a (u = 적용 unit offset,
+    o = 타일 offset) 에 대해 **축마다** ``min(0, du) − s_max ≤ do ≤ max(0, du) + s_max`` 를 요구한다(같은 unit 이면 du = 0 → |do| ≤ s_max).
+    어기면 stretch 로 적용된 쪽을 unit offset 으로 대체(``stretch_step_exceeded``)하고 위반이 없을 때까지 반복한다.
+    둘 다 대체되면 do = du 로 상자 안이라 반드시 끝난다.
+    보장: 축마다, 어느 이음새든 unit 모드 대비 추가 소거(offset 차가 unit 차에서 벗어난 양) ≤ s_max. 4 타일 모서리 점에서는 최악 2·s_max(≤ 4r)이다.
     반환 ``{'tiles': [기록], 'field': [(y0, y1, x0, x1, dx, dy)], 'step_replaced_tiles': n, 's_max': s_max, 'radius_px': R}``.
     기록 키: unit_index_xy, tile_index_xy, region_px, start_offset_xy_px, offset_xy_px, delta_xy_px(unit 대비),
     delta_from_global_xy_px(global_offset 을 줄 때), candidate_offset_xy_px, offset_source(stretch|unit|global), applied, omega_pixels
@@ -535,16 +537,18 @@ def choose_tile_offsets(tiles, unit_offsets, layers, ref_valid, tgt_valid, radiu
         for j in by_y0.get(y1, ()):
             if records[j]['region_px'][2] < x1 and x0 < records[j]['region_px'][3]:
                 pairs.append((i, j))
-    limits = {}
-    for i, j in pairs:
-        a, b = records[i], records[j]
-        limits[(i, j)] = s_max + (0 if a['_unit'] == b['_unit'] else _cheb_xy(a['_s'], b['_s']))
+    # 축마다 상자: du = u_b − u_a, do = o_b − o_a 에 대해 min(0, du) − s_max ≤ do ≤ max(0, du) + s_max (같은 unit 이면 du = 0)
     replaced = 0
     while True:
         bad = set()
         for i, j in pairs:
-            if _cheb_xy(records[i]['_offset'], records[j]['_offset']) > limits[(i, j)]:
-                bad.update(k for k in (i, j) if records[k]['applied'])
+            a, b = records[i], records[j]
+            for ax in (0, 1):
+                du = b['_s'][ax] - a['_s'][ax]
+                do = b['_offset'][ax] - a['_offset'][ax]
+                if not min(0, du) - s_max <= do <= max(0, du) + s_max:
+                    bad.update(k for k in (i, j) if records[k]['applied'])
+                    break
         if not bad:
             break
         for k in bad:

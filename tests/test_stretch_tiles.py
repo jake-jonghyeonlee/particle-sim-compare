@@ -560,7 +560,72 @@ def test_g1_limit_across_units_adds_the_unit_offset_difference():
     assert strict['step_replaced_tiles'] > 0
 
 
-def test_g1_four_tile_corner_diagonal_step_is_within_twice_s_max():
+def _opposed_step_scene():
+    """R1b 반례: unit 0 offset (0,0), unit 1 offset (4,0). 타일 열 dx = [3, 3, 1, 1](unit 0 +3, unit 1 +1): 경계 단차 −2, unit 단차 +4."""
+    shape = (80, 160)
+    g = geometry(*shape)
+    units = {q: ((0, 0) if q[1] == 0 else (4, 0)) for q in g.unit_regions()}
+    shifts = {(ty, tx): ((3, 0) if tx < 2 else (1, 0)) for ty in range(2) for tx in range(4)}
+    ref, tgt = _line_scene((10, 30, 75, 85), (10, 30, 78, 86), shifts, shape=shape, clear=(8, 32, 60, 100))
+    return g, units, ref, tgt
+
+
+def test_g1_box_rejects_a_step_opposite_to_the_unit_step():
+    g, units, ref, tgt = _opposed_step_scene()
+    got = choose(ref, tgt, g, 40, 6, s_max=1, unit_offsets=units)
+    left, right = tile_by_index(got, 0, 0, 1, 0), tile_by_index(got, 1, 0, 0, 0)
+    assert got['step_replaced_tiles'] >= 1
+    assert 'stretch_step_exceeded' in left['flags'] or 'stretch_step_exceeded' in right['flags']
+    resid = int(maps(ref, tgt, got['field'])['maps']['M1'][10:30, 60:100].sum())
+    # unit 모드(타일 전체가 unit offset)의 잔차보다 지워진 양이 s_max 를 넘지 않는다.
+    unit_field = [(y0, y1, x0, x1, dx, dy) for (y0, y1, x0, x1, dx, dy) in
+                  [(0, 80, 0, 80, 0, 0), (0, 80, 80, 160, 4, 0)]]
+    unit_resid = int(maps(ref, tgt, unit_field)['maps']['M1'][10:30, 60:100].sum())
+    assert resid > 0 and unit_resid - resid <= 1 * 20 and resid - unit_resid <= 1 * 20
+
+
+def test_g1_box_mutation_old_cheb_size_limit_would_pass_the_opposed_step():
+    g, units, ref, tgt = _opposed_step_scene()
+    a, b = (3, 0), (1, 0)                                   # 경계 타일 offset
+    ua, ub = (0, 0), (4, 0)
+    old_ok = max(abs(a[i] - b[i]) for i in (0, 1)) <= max(abs(ua[i] - ub[i]) for i in (0, 1)) + 1     # v1.2: 크기 한도
+    du, do = ub[0] - ua[0], b[0] - a[0]
+    box_ok = min(0, du) - 1 <= do <= max(0, du) + 1                                                    # v1.3: 상자
+    assert old_ok and not box_ok
+
+
+def _box_scene(axis, do):
+    """unit 0 offset 0, unit 1 offset 4(axis 방향), 타일 이동량 [0, 1, 1 + do, 2 + do]: 경계 단차 do, unit 단차 4, 같은 unit 단차 1."""
+    shape = (80, 160) if axis == 'x' else (160, 80)
+    g = geometry(*shape)
+    unit_axis = 1 if axis == 'x' else 0
+    units = {q: ((0, 0) if q[unit_axis] == 0 else ((4, 0) if axis == 'x' else (0, 4))) for q in g.unit_regions()}
+    steps = [0, 1, 1 + do, 2 + do]
+    bg = blocks(shape, 3)
+    pieces = []
+    for k, d in enumerate(steps):
+        pieces.append((0, 80, 40 * k, 40 * k + 40, d, 0) if axis == 'x' else (40 * k, 40 * k + 40, 0, 80, 0, d))
+    return g, units, bg, warp(bg, pieces)
+
+
+@pytest.mark.parametrize('axis', ['x', 'y'])
+@pytest.mark.parametrize('do,replaced', [(4, False), (5, False), (3, False), (-1, False), (6, True), (-2, True)])
+def test_g1_box_same_direction_inside_and_outside(axis, do, replaced):
+    """s_max = 1, du = 4: 상자 min(0, 4) − 1 ≤ do ≤ max(0, 4) + 1 = [−1, 5]. 밖이면 stretch 타일이 unit offset 으로 대체된다."""
+    g, units, bg, tgt = _box_scene(axis, do)
+    got = choose(bg, tgt, g, 40, 6, s_max=1, unit_offsets=units)
+    assert (got['step_replaced_tiles'] > 0) == replaced
+    assert replaced == any('stretch_step_exceeded' in rec['flags'] for rec in got['tiles'])
+    if not replaced:
+        if axis == 'x':
+            a, b = tile_by_index(got, 0, 0, 1, 0), tile_by_index(got, 1, 0, 0, 0)
+        else:
+            a, b = tile_by_index(got, 0, 0, 0, 1), tile_by_index(got, 0, 1, 0, 0)
+        assert [a['offset_xy_px'][0 if axis == 'x' else 1], b['offset_xy_px'][0 if axis == 'x' else 1]] == [1, 1 + do]
+
+
+def test_g1_four_tile_corner_reproduced_diagonal_step_equals_s_max():
+    """재현된 모서리 대각 단차는 s_max(= 2)이다. 이론상 최악 2·s_max(≤ 4r)는 이웃 쌍 단차가 s_max 씩 같은 방향으로 이어질 때이며 문서 한계다(재현 사례 없음)."""
     shape = (160, 160)
     g = geometry(*shape)
     shifts = {(ty, tx): ((-1 if tx % 2 == 0 else 1), (-1 if ty % 2 == 0 else 1)) for ty in range(4) for tx in range(4)}
@@ -571,7 +636,7 @@ def test_g1_four_tile_corner_diagonal_step_is_within_twice_s_max():
     diagonal = max(abs(a[0] - b[0]), abs(a[1] - b[1]))
     resid = int(maps(ref, tgt, got['field'])['maps']['M1'][30:50, 30:50].sum())
     erased = (12 * 12 - 10 * 10) - resid                    # 지워진 칸. 한 축 CD 변화 2 는 대각 단차(= 2) 만큼 지워진다.
-    assert got['step_replaced_tiles'] == 0 and diagonal == 2 <= 2 * s_max
+    assert got['step_replaced_tiles'] == 0 and diagonal == s_max
     assert erased == 44 and resid == 0
 
 
