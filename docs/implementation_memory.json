@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-10-18T15:53:29.487904+09:00",
+  "updated_at": "2026-11-05T16:30:00+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -581,5 +581,43 @@
       "C": "Astra high: FAIL (7088080) -> FAIL (4bf030e) -> PASS-WITH-NOTES (724e1b6); documented limitation R2 (swap-and-restore inside export read; single-writer closed network)",
       "DL2": "Astra high: FAIL x3 -> PASS-WITH-NOTES (f41d427), pushed"
     }
+  },
+  "compare2_calculation_2026_11_05": {
+    "authority": "User, 2026-11-05: summary of the team's existing line/pixel calculation that compare2 must follow, plus two rounds of answers in the same session. Not implemented.",
+    "inputs": [
+      "CA and hotspot image per electrode pair x layer x particle size (hotspot black, binary)",
+      "fab defect density per layer and size, separate files for line and pixel (values differ)",
+      "pair-to-defect-type table (line / pixel)",
+      "product info: resolution (unit count across x down), unit area, whole glass area, model group, CRP group"
+    ],
+    "steps": [
+      "divide the 2x2 simulation values (CA and merged areas) by 4 at the start; all later values are one-unit values",
+      "pair weighting: each CA x density(type, layer, size) x k(type); sum over sizes; attach defect type; used for exclusive / shared shares and contribution",
+      "CNO branch: folders named lateralopen-CNO-CNT<name>; CA x pixel density x k_pixel x pi/4; summed as CNO_lambda; not part of the image merge",
+      "image dedup per layer and size: union of line-type short images, union of pixel-type short images, union of both (total); lateralopen excluded",
+      "final areas: line = line union; pixel = total - line (same result as the 2026-10-07 'overlap counts as line' rule)",
+      "Line_lambda = sum over layers and sizes of k_line x line density x line area; Pixel_lambda likewise with pixel density and k_pixel",
+      "caa_line = round(1 - exp(-Line_lambda), 6)",
+      "caa_pixel = round((1 - exp(-(Pixel_lambda + CNO_lambda))) / CRP_coeff, 6); CRP_coeff = 1 for mobile and watch, 2.92 for auto and others",
+      "vi_line = round(caa_line / 1.2159, 6); vi_pixel = round(caa_pixel / 1.5462, 6)"
+    ],
+    "product_k": "k(type) = panel area / whole glass area x model-group weight(type); panel area um2 = resolution_x x resolution_y x one-unit area um2 (example resolution 1500 x 1850 = unit counts)",
+    "interpretation": [
+      "results are ratios; never read as good-product yield",
+      "layer contribution = per-layer share of the pre-conversion lambda; pixel layer contribution excludes CNO",
+      "final lambda is always recomputed from deduplicated areas; pair-level sums are not added to it"
+    ],
+    "vertical_short_boundary": "size < interlayer distance: image exists with no hotspot, CA = 0 (not missing). size == distance: include in both CA weighting and the union. The team's existing code excludes equality from the union only; the user judges that a bug. simcompare already uses strict diameter_um < height_um (src/simcompare/linepixel.py).",
+    "per_condition_impact": "Goal: the impact of one defect condition on line and on pixel must be quantifiable directly. Use pixel labels: line exclusive, line shared, pixel exclusive, pixel shared, transfer (area only this line condition covers where a pixel condition also lies). Removing the condition changes line by -line exclusive and pixel by +transfer (line condition) or -pixel exclusive (pixel condition).",
+    "supersedes": [
+      "current_yield_practice_2026_10_07.answers_2026_10_07.defect_density (same value for line and pixel) -> separate files",
+      "2x2 to one-unit conversion (open since 2026-10-07) -> divide by 4",
+      "yield conversion on hold -> caa / CRP / vi formulas above"
+    ],
+    "code_gaps": [
+      "density contract takes one distribution per layer; needs a line / pixel axis",
+      "no CNO branch, pi/4 factor, k, CRP or vi in linepixel.py",
+      "compute A/B deltas and per-condition impact on unrounded values; round only for display"
+    ]
   }
 }
