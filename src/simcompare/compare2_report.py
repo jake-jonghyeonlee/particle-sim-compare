@@ -29,13 +29,15 @@ REPORT_SCHEMA = 'compare2_report_v1'
 MAX_MAPS = 200
 RATIO_EPS = 1e-15
 FIXED_BYTES = 64 * 1024 ** 2
-FRAME_BYTES_PER_CELL = 2 + 1  # two bool masks (accumulated + the one being read) and one layer PNG
+LABEL_BYTES_PER_CELL = 10  # run-length labelling: 16 B per run (runs <= cells / 2) plus scratch, rounded up
+FRAME_BYTES_PER_CELL = 2 + 1 + LABEL_BYTES_PER_CELL  # two bool masks, one layer PNG, labelling arrays
 WINDOW_BYTES_PER_CELL = 4 * 2 + 3  # two RGBA images and the three cropped bool windows per condition
 DEFAULT_MAX_OPERATION_BYTES = 8 * 1024 ** 3
 REMEDY = 'reduce report.map_window_um, report.top_n or the number of conditions, or raise max_operation_bytes'
 ROLES = ('reference', 'target')
 ROLE_TEXT = {'reference': '기준 A', 'target': '대상 B'}
-UNIT_MARGIN_PX = 1000  # the electrode PNG is the hotspot frame + 500 px on each side and holds 2 x 2 units
+BORDER_PX = 500
+UNIT_MARGIN_PX = 2 * BORDER_PX # the electrode PNG is the hotspot frame + 500 px on each side and holds 2 x 2 units
 OVERLAY_GRAY = 128
 OVERLAY_ALPHA = 0.35
 MASK_ALPHA = 235
@@ -108,8 +110,25 @@ def _size_text(value):
     return f'{value:g}'
 
 
+def _changed(item):
+    return any(item.get(f'delta_vi_{kind}') not in (None, 0, 0.0) for kind in ('line', 'pixel'))
+
+
 def _cond_score(item):
+    """|share_line| + |share_pixel|; |Δvi_line| + |Δvi_pixel| when both shares are null."""
+    if item.get('share_line') is None and item.get('share_pixel') is None:
+        return abs(item.get('delta_vi_line') or 0.0) + abs(item.get('delta_vi_pixel') or 0.0)
     return abs(item.get('share_line') or 0.0) + abs(item.get('share_pixel') or 0.0)
+
+
+def _changed_ranking(conds):
+    """Indexes of the conditions that change vi, most influential first."""
+    return sorted((i for i, c in enumerate(conds) if _changed(c)),
+                  key=lambda i: (-_cond_score(conds[i]), conds[i]['layer'], conds[i]['pair_id']))
+
+
+def _no_map_slot(item):
+    return '' if not _changed(item) else '지도 생략(상한)'
 
 
 def _pair_label(item):
@@ -234,9 +253,6 @@ def _new_state():
 def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states):
     """Open one side, OR the lineage masks of every condition key at diameter and crop the window; then release it."""
     from .pipeline import _configured_real
-    frame = info['frame']
-    guard_stage_compare2_report(f'compare2-report ({info["role"]})', frame.shape_yx[0] * frame.shape_yx[1], len(keys),
-                                size * size, info['limit'])
     configured = _configured_real(cfg, info['section'], info['real'],
                                   {'bucket_detail': 'summary', 'top_buckets': top_buckets})
     if configured is None:
@@ -322,7 +338,9 @@ def _load_overlays(cfg2, info, keys, states, size, warnings):
 
 
 def _proportional(center, source, target):
-    return (center[0] / source['unit_px'][0] * target['unit_px'][0], center[1] / source['unit_px'][1] * target['unit_px'][1])
+    """Same relative position inside the unit; the frame sits BORDER_PX inside the 2 x 2 unit crop on each side."""
+    return tuple((c + BORDER_PX) / su * tu - BORDER_PX
+                 for c, su, tu in zip(center, source['unit_px'], target['unit_px']))
 
 
 def _build_maps(cfg, cfg2, infos, keys, warnings):
@@ -333,6 +351,10 @@ def _build_maps(cfg, cfg2, infos, keys, warnings):
     from .pipeline import _compare_options
     top = _compare_options(cfg)[1]
     target, reference = infos['target'], infos['reference']
+    for role in ROLES:  # both guards run before any dataset is opened or mask is read
+        shape = infos[role]['frame'].shape_yx
+        guard_stage_compare2_report(f'compare2-report ({role})', shape[0] * shape[1], len(keys), size[role] ** 2,
+                                    infos[role]['limit'])
     _scan_side(cfg, target, top, keys, diameter, size['target'],
                lambda key, st: _origin(st['center'], size['target']), states['target'])
 
@@ -502,6 +524,9 @@ def _sentences(cond, fig, side_conds, diameter):
               'both': '양쪽: 기준 A와 대상 B 모두에 있는 조건입니다.'}[presence]
     items.append(f'<b>상태</b>: {status}')
     size = _size_text(diameter)
+    if not _changed(cond):
+        items.append('<b>영향</b>: 변화 없음. 이 조건은 vi 를 바꾸지 않아 지도를 만들지 않았습니다.')
+        return items
     if fig is None:
         items.append(f'<b>불량 영역</b>: 지도 생략(상한 {MAX_MAPS}개). 영역 면적은 표시하지 않습니다.')
     else:
@@ -529,8 +554,9 @@ def _sentences(cond, fig, side_conds, diameter):
         ref_area = (side_conds['reference'].get(cond['condition_id']) or {}).get('area_transfer_um2', 0.0)
         tgt_area = (side_conds['target'].get(cond['condition_id']) or {}).get('area_transfer_um2', 0.0)
         moved = abs(tgt_area - ref_area)
-        move = 'line 으로 넘어갔습니다' if transfer > 0 else 'pixel 로 돌아왔습니다'
-        items.append(f'<b>함께 나타난 영향</b>: line 영역 변화로 pixel 영역 {_num(moved)} µm² 가 {move}.')
+        if moved > 0:  # when only the lambda differs the moved area is unchanged: say nothing about a move
+            move = 'line 으로 넘어갔습니다' if tgt_area > ref_area else 'pixel 로 돌아왔습니다'
+            items.append(f'<b>함께 나타난 영향</b>: line 영역 변화로 pixel 영역 {_num(moved)} µm² 가 {move}.')
     removal = cond.get('removal_b')
     if removal is None:
         items.append('<b>B에서 제거하면</b>: 대상 B에 없는 조건이라 해당 없음.')
@@ -719,7 +745,7 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial):
         ('n', j, abs(c.get('share_pixel') or 0.0)) for j, c in enumerate(cno)]
     entries.sort(key=lambda e: (-e[2], e[0], (conds[e[1]]['layer'], conds[e[1]]['pair_id']) if e[0] == 'c'
                                 else (cno[e[1]]['density_layer'] or '', cno[e[1]]['case_name'])))
-    cond_rank = sorted(range(len(conds)), key=lambda i: (-_cond_score(conds[i]), conds[i]['layer'], conds[i]['pair_id']))
+    cond_rank = _changed_ranking(conds)
     unit_text = []
     for role in ROLES:
         info = infos[role]
@@ -753,18 +779,18 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial):
                '<span><span class="sw" style="background:var(--down)"></span>B 에서 사라진 영역(같은 위치 비교일 때)</span>'
                '<span><span class="sw" style="background:rgba(128,128,128,.35)"></span>레이어 패턴</span></div>'
                '<div id="stories">')
-    for rank, i in enumerate(cond_rank[:min(top_n, len(cond_rank))], start=1):
+    for rank, i in enumerate(cond_rank[:top_n], start=1):
         c = conds[i]
         slot = (f'<div class="maps"><div class="mapslot" data-m="{i}"></div></div>' if i in maps
-                else '<div class="maps muted">지도 생략(상한)</div>')
+                else f'<div class="maps muted">{_no_map_slot(c)}</div>')
         sentences = ''.join(f'<li>{s}</li>' for s in _sentences(c, maps[i][0] if i in maps else None, side_conds,
                                                                   diameter))
         out.append(f'<div class="story" data-k="c{i}">{slot}<div><div class="rank">{rank}위 · '
                    f'<span class="sw" style="background:var(--{_types(c["class"])[0]})"></span> {_e(c["class"])}</div>'
                    f'<div class="title">{_e(c["layer"])} · {_e(_pair_label(c))}{_presence_badge(c["presence"])}</div>'
                    f'<ol>{sentences}</ol></div></div>')
-    if not conds:
-        out.append('<p class="muted">비교할 조건이 없습니다.</p>')
+    if not cond_rank:
+        out.append('<p class="muted">변화가 있는 조건이 없습니다.</p>')
     out.append('</div></section>\n')
     # 3. table
     head = ('<tr><th class="l">전극 쌍</th><th class="l">레이어</th><th class="l">유형</th><th class="l">상태</th>'
@@ -849,7 +875,7 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial):
     for kind, i, _score in entries:
         if kind == 'c':
             c = conds[i]
-            slot = f'<div class="mapslot" data-m="{i}"></div>' if i in maps else '<div class="muted">지도 생략(상한)</div>'
+            slot = f'<div class="mapslot" data-m="{i}"></div>' if i in maps else f'<div class="muted">{_no_map_slot(c)}</div>'
             items = ''.join(f'<li>{s}</li>' for s in _sentences(c, maps[i][0] if i in maps else None, side_conds,
                                                                  diameter))
             out.append(f'<div id="dc{i}"><div class="title" style="font-weight:600;margin-bottom:6px">{_e(c["layer"])} · '
@@ -887,9 +913,16 @@ def build_report(compare2_dir, config_path, out):
     if cfg.get('mode') != 'real':
         raise NumericContractError('compare2_real_mode_required', 'numeric_config mode must be real')
     infos = {role: _side_info(cfg, cfg2, role) for role in ROLES}
+    for role in ROLES:
+        recorded = (((doc.get('inputs') or {}).get('manifests') or {}).get(role) or {}).get('source_payload_hash')
+        loaded = infos[role]['real'][1].get('source_payload_hash')
+        if recorded != loaded:
+            raise NumericContractError(
+                'compare2_input_mismatch',
+                f'{role}: compare2.json used source_payload_hash {recorded}, the data now has {loaded}')
     conds = doc['delta']['conditions']
     warnings = []
-    ranked = sorted(range(len(conds)), key=lambda i: (-_cond_score(conds[i]), conds[i]['layer'], conds[i]['pair_id']))
+    ranked = _changed_ranking(conds)
     mapped = ranked[:MAX_MAPS]
     if len(ranked) > MAX_MAPS:
         warnings.append({'code': 'maps_capped', 'role': None, 'layer': None,

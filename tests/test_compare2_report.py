@@ -12,7 +12,7 @@ from PIL import Image
 from simcompare.cli import main
 from test_compare2 import CNO_CSV, CNO_NAME, PAIRS, base_cases, load, run
 
-TGT_CASES = base_cases(AB={1: {0, 1, 2, 3}, 2: {0, 1}, 3: {0, 1}})
+TGT_CASES = base_cases(AB={1: {0, 1, 2, 3}, 2: {0, 1}, 3: {0, 1}}, GH={1: {0, 1, 2}, 2: {0}})
 
 
 def build(tmp, **kwargs):
@@ -58,6 +58,12 @@ def report(tmp, out, name='rep', **kwargs):
     return code, folder
 
 
+def changed(out):
+    """Number of conditions whose delta_vi_line or delta_vi_pixel is not 0/None (they get cards and maps)."""
+    conds = load(out)['delta']['conditions']
+    return sum(1 for c in conds if any(c[k] not in (None, 0, 0.0) for k in ('delta_vi_line', 'delta_vi_pixel')))
+
+
 def text(folder):
     return (folder / 'report.html').read_text(encoding='utf-8')
 
@@ -79,11 +85,14 @@ def test_full_report_structure(tmp_path):
     for banned in ('http://', 'https://', '<link', '<script src'):
         assert banned not in html
     assert rows(html) == 6 + 0 + 1 + 1
-    assert html.count('class="story"') == 4
-    assert html.count('data:image/png;base64,') == 2 * 6
+    n = changed(out)
+    assert 0 < n < 6  # DE/EF/IJ do not change vi in this scenario
+    assert html.count('class="story"') == min(4, n)
+    assert html.count('data:image/png;base64,') == 2 * n
+    assert '변화 없음' in html  # unchanged conditions keep a row and a text-only detail
     assert '<td>100%</td>' in html
     record = json.loads((folder / 'report.json').read_text(encoding='utf-8'))
-    assert record['exit_code'] == 0 and record['warnings'] == [] and len(record['figures']) == 6
+    assert record['exit_code'] == 0 and record['warnings'] == [] and len(record['figures']) == n
     ab = [f for f in record['figures'] if f['condition_id'] == 'AB@L1'][0]
     assert ab['reference']['cells'] == 1 and ab['target']['cells'] == 2
     assert ab['reference']['overlay'] == 'ok' and ab['target']['overlay'] == 'ok'
@@ -134,7 +143,7 @@ def test_missing_diameter_says_input_missing(tmp_path):
     assert '2.5 µm 입력 없음' in html
     record = json.loads((folder / 'report.json').read_text(encoding='utf-8'))
     assert {w['code'] for w in record['warnings']} == {'map_input_missing'}
-    assert html.count('data:image/png;base64,') == 2 * 6
+    assert html.count('data:image/png;base64,') == 2 * changed(out)
 
 
 def test_without_dl1_the_overlay_is_skipped_with_exit_3(tmp_path):
@@ -143,7 +152,7 @@ def test_without_dl1_the_overlay_is_skipped_with_exit_3(tmp_path):
     record = json.loads((folder / 'report.json').read_text(encoding='utf-8'))
     assert exit_code == 3 and record['exit_code'] == 3
     assert {w['code'] for w in record['warnings']} == {'overlay_dl1_not_configured'}
-    assert text(folder).count('data:image/png;base64,') == 12
+    assert text(folder).count('data:image/png;base64,') == 2 * changed(out)
 
 
 def test_layer_png_size_mismatch_drops_only_that_overlay(tmp_path):
@@ -159,7 +168,7 @@ def test_layer_png_size_mismatch_drops_only_that_overlay(tmp_path):
     ab = [f for f in record['figures'] if f['condition_id'] == 'AB@L1'][0]
     assert gh['target']['overlay'] == 'overlay_layer_unusable' and gh['reference']['overlay'] == 'ok'
     assert ab['target']['overlay'] == 'ok'
-    assert text(folder).count('data:image/png;base64,') == 12
+    assert text(folder).count('data:image/png;base64,') == 2 * changed(out)
 
 
 def test_zero_conditions_gives_summary_and_empty_table(tmp_path):
@@ -172,6 +181,7 @@ def test_zero_conditions_gives_summary_and_empty_table(tmp_path):
     html = text(folder)
     assert exit_code == 0
     assert rows(html) == 2 and html.count('class="story"') == 0 and 'data:image/png' not in html
+    assert '변화가 있는 조건이 없습니다' in html
     assert 'vi_line' in html
 
 
@@ -180,7 +190,7 @@ def test_top_n_limits_the_cards(tmp_path):
     code, out = with_dl1(tmp_path, top_n=2)
     exit_code, folder = report(tmp_path, out)
     assert exit_code == 0
-    assert text(folder).count('class="story"') == 2
+    assert text(folder).count('class="story"') == min(2, changed(out))
 
 
 def test_output_and_config_rules(tmp_path):
@@ -218,6 +228,49 @@ def test_memory_guard_refuses_before_reading_masks(tmp_path):
     assert exit_code == 2
     error = json.loads((folder / 'error.json').read_text(encoding='utf-8'))
     assert error['code'] == 'oversized_real_operation'
+
+
+def test_relative_position_includes_the_500px_border():
+    from simcompare.compare2_report import _proportional
+    big, small = {'unit_px': (5000.0, 5000.0)}, {'unit_px': (4000.0, 4000.0)}
+    assert _proportional((100.0, 100.0), big, small) == (-20.0, -20.0)  # (100+500)/5000*4000-500
+    assert _proportional((-20.0, -20.0), small, big) == (100.0, 100.0)  # reverse mapping
+    assert _proportional((7.0, 9.0), big, big) == (7.0, 9.0)
+
+
+def test_guard_counts_labelling_memory():
+    from simcompare.compare2_report import (FIXED_BYTES, FRAME_BYTES_PER_CELL, LABEL_BYTES_PER_CELL,
+                                            guard_stage_compare2_report)
+    import pytest
+    from simcompare.numeric_schema import NumericContractError
+    assert FRAME_BYTES_PER_CELL >= 3 + LABEL_BYTES_PER_CELL >= 10
+    cells = 1000
+    exact = FIXED_BYTES + cells * FRAME_BYTES_PER_CELL
+    guard_stage_compare2_report('t', cells, 0, 1, exact)  # exactly at the limit passes
+    with pytest.raises(NumericContractError) as info:
+        guard_stage_compare2_report('t', cells, 0, 1, exact - 1)
+    assert info.value.code == 'oversized_real_operation'
+
+
+def test_source_payload_hash_mismatch_is_refused(tmp_path):
+    code, out = build(tmp_path)
+    doc = load(out)
+    doc['inputs']['manifests']['target']['source_payload_hash'] = 'x' * 64
+    (out / 'compare2.json').write_text(json.dumps(doc), encoding='utf-8')
+    exit_code, folder = report(tmp_path, out)
+    assert exit_code == 2
+    assert json.loads((folder / 'error.json').read_text(encoding='utf-8'))['code'] == 'compare2_input_mismatch'
+
+
+def test_transfer_sentence_needs_a_changed_transfer_area(tmp_path):
+    from simcompare.compare2_report import _sentences
+    cond = {'condition_id': 'X@L1', 'class': 'line', 'presence': 'both', 'delta_vi_line': 1e-5, 'delta_vi_pixel': 0.0,
+            'share_line': 0.5, 'share_pixel': None, 'delta_lambda_transfer': 1e-4, 'removal_b': None}
+    fig = {role: {'area_um2': 1.0, 'components': 1, 'status': 'ok'} for role in ('reference', 'target')}
+    same = {'reference': {'X@L1': {'area_transfer_um2': 0.5}}, 'target': {'X@L1': {'area_transfer_um2': 0.5}}}
+    assert not any('함께 나타난 영향' in s for s in _sentences(cond, fig, same, 3))
+    moved = {'reference': {'X@L1': {'area_transfer_um2': 0.5}}, 'target': {'X@L1': {'area_transfer_um2': 0.75}}}
+    assert any('0.25 µm²' in s for s in _sentences(cond, fig, moved, 3))
 
 
 def test_report_html_is_deterministic_in_content(tmp_path):
