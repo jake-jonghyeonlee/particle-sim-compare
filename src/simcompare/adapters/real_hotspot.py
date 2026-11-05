@@ -192,36 +192,52 @@ def _cno_name(name: str):
 
 
 def _cno_dirs(root: Path):
-    """3-part lateralopen folders under root, sorted by root-relative path; duplicate names are an error."""
+    """3-part lateralopen folders under root, sorted by folder name; duplicate names are an error."""
     found = []
     for directory, dirs, files in os.walk(root):
         path = Path(directory)
         if path != root and _cno_name(path.name) is not None:
             found.append(path)
-    found.sort(key=lambda p: p.relative_to(root).as_posix())
+    found.sort(key=lambda p: (p.name, p.relative_to(root).as_posix()))
     names = [p.name for p in found]
-    if len(names) != len(set(names)):
-        raise NumericContractError('duplicate_real_cno_case_name')
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise NumericContractError('duplicate_real_cno_case_name', ', '.join(duplicates))
     return found
 
 
-def discover_cno_cases(root: Path):
-    """CNO (<defect>-<electrode>-<layer>, lateral_open) folders under a hotspot root, with their CSV areas.
-
-    Images are not required: only result/lateral_open.csv is read. Case discovery skips these folders.
-    """
-    root = Path(root)
+def _cno_entries(root: Path):
+    """Structure-checked CNO folders (name order) as case dicts without CSV information; reads no file."""
     cno_dirs = _cno_dirs(root)
     cases = []
     for path in cno_dirs:
         if any(parent != root and parent in cno_dirs for parent in path.parents):
             raise NumericContractError('nested_real_cno_case_directory', str(path))
         electrode_id, actual_layer = _cno_name(path.name)
-        csv_info = _csv_areas(root, path, 'lateral_open')
+        cases.append({'case_name': path.name, 'source_relative_path': path.relative_to(root).as_posix(),
+                      'electrode_id': electrode_id, 'actual_layer': actual_layer})
+    return cases
+
+
+def discover_cno_cases(root: Path):
+    """CNO (<defect>-<electrode>-<layer>, lateral_open) folders under a hotspot root, with their CSV areas.
+
+    Images are not required: only result/lateral_open.csv is read. Case discovery skips these folders.
+    A broken CSV does not raise: that entry gets csv {'status': 'invalid', 'reason': <error code>}.
+    """
+    root = Path(root)
+    cases = _cno_entries(root)
+    for case in cases:
+        path = root / case['source_relative_path']
+        try:
+            csv_info = _csv_areas(root, path, 'lateral_open')
+        except NumericContractError as exc:
+            case['csv'] = {'status': 'invalid', 'path': None, 'sha256': None, 'rows': {}, 'reason': exc.code,
+                           'detail': str(exc)}
+            continue
         if csv_info['path'] is not None:
             csv_info['relative_path'] = (path / 'result' / csv_info['path']).relative_to(root).as_posix()
-        cases.append({'case_name': path.name, 'source_relative_path': path.relative_to(root).as_posix(),
-                      'electrode_id': electrode_id, 'actual_layer': actual_layer, 'csv': csv_info})
+        case['csv'] = csv_info
     return cases
 
 
@@ -326,7 +342,7 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
     else:
         cno_expected = []
     found, images_dirs = _discover_cases(root)
-    cno_cases = discover_cno_cases(root)
+    cno_cases = _cno_entries(root)
     expected_source = None
     if expected_case_roots is not None:
         extra_roots = [Path(extra) for extra in expected_case_roots]

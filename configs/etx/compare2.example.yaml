@@ -1,0 +1,27 @@
+# compare2 설정 예시(schema compare2_config_v1). 상대 경로는 이 파일 위치 기준이다.
+# glass_area.value 가 null 이면 glass 면적 미정(pending)이며 오류가 아니다. 실제 값을 알면 채운다(unit: mm2, um2, m2).
+# CRP 는 설정하지 않는다: 군 이름이 mobile 또는 watch 이면 1.0, 그 밖은 2.92.
+schema_version: compare2_config_v1
+numeric_config: real.yaml            # 기존 numeric_config_v1 (reference/target 데이터, condition_assignment)
+output_dir: data/compare2
+density_dir: data/density            # <군>_line.csv, <군>_pixel.csv
+model_groups:
+  mobile:
+    glass_area: {value: null, unit: mm2}
+    weight_line: 1.0
+    weight_pixel: 1.0
+products:
+  reference:
+    model_group: mobile
+    resolution: [1500, 1850]
+    hotspot_root: data/input/hotspot/R00
+    unit_size_um: [45, 45]           # 선택
+  target:
+    model_group: mobile
+    resolution: [1500, 1850]
+    hotspot_root: data/input/hotspot/T00
+report:                              # 키 전체 선택. 기본 map_window_um 30, diameter_um 3, top_n 4, dl1_root null
+  dl1_root: data/input/dl1
+  map_window_um: 30
+  diameter_um: 3
+  top_n: 4

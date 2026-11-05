@@ -949,3 +949,44 @@ def test_dv_template_and_dv_grade_accept_mixed_root(tmp_path):
     assert main(['dv-grade', '--sheet', str(sheet), '--root', str(root),
                  '--product-id', 'P1', '--out', str(tmp_path / 'grade')]) == 0
     assert (tmp_path / 'grade/dv_grade_manifest.json').is_file()
+
+
+def test_case_inside_cno_folder_is_nested_error(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root)
+    _source(root / CNO_NAME, case='lateral_short-C-L1-D-L1')
+    with pytest.raises(NumericContractError, match='nested_real_case_directory'):
+        import_hotspots(root, tmp_path / 'out')
+
+
+def test_cno_cases_are_sorted_by_folder_name(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root / 'z_dir', name='lateralopen-AAA-gcnt')
+    _cno(root / 'a_dir', name='lateralopen-ZZZ-gcnt')
+    _cno(root, name='lateralopen-MMM-gcnt')
+    names = [c['case_name'] for c in discover_cno_cases(root)]
+    assert names == ['lateralopen-AAA-gcnt', 'lateralopen-MMM-gcnt', 'lateralopen-ZZZ-gcnt']
+
+
+def test_duplicate_cno_error_names_the_folder(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root)
+    _cno(root / 'sub')
+    with pytest.raises(NumericContractError) as info:
+        discover_cno_cases(root)
+    assert info.value.code == 'duplicate_real_cno_case_name' and CNO_NAME in str(info.value)
+
+
+def test_broken_cno_csv_does_not_stop_import_or_discovery(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    folder = _cno(root)
+    (folder / 'result/lateral_open.csv').write_text('wrong,header\n1,2\n', encoding='utf-8')
+    found = discover_cno_cases(root)
+    assert found[0]['csv']['status'] == 'invalid' and found[0]['csv']['reason'] == 'invalid_real_csv_header'
+    import_hotspots(root, tmp_path / 'out')
+    skipped = [d for d in _manifest_of(tmp_path / 'out')['diagnostics'] if d.get('status') == 'cno_case_skipped']
+    assert [d['case'] for d in skipped] == [CNO_NAME]
