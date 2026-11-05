@@ -186,7 +186,14 @@ def deep_diff(a, b, path='$', limit=20):
                 out.append(f'{where}: {type(x).__name__} vs {type(y).__name__}')
                 return
             for f in dataclasses.fields(x):
-                rec(getattr(x, f.name), getattr(y, f.name), f'{where}.{f.name}')
+                xv = getattr(x, f.name)
+                if not hasattr(y, f.name):
+                    # opt-in 필드 — 기본 경로 값 None 은 동결 버전의 '필드 없음'과 같다; compare2/T1 condition_stats 2026-11-05
+                    if xv is None:
+                        continue
+                    out.append(f'{where}.{f.name}: {xv!r} vs <field missing in frozen>')
+                    continue
+                rec(xv, getattr(y, f.name), f'{where}.{f.name}')
         elif isinstance(x, np.ndarray):
             if not (isinstance(y, np.ndarray) and x.dtype == y.dtype and x.shape == y.shape and np.array_equal(x, y)):
                 out.append(f'{where}: array differs')
@@ -729,6 +736,22 @@ def test_perturbation_in_stage6_union_is_caught(stage46, monkeypatch):
         _, reference, target, pairs = _load_inputs(prefix, cfg, correspondence)
         results[prefix] = module(prefix, 'local_delta').compute_local_delta(pairs, reference, target, window_sizes_um=[0.3, 0.8])
     assert deep_diff(results['simcompare'], results[PKG])
+
+
+def test_deep_diff_tolerates_only_none_for_fields_missing_in_frozen():
+    @dataclasses.dataclass
+    class Prod:
+        a: int
+        opt: object = None
+
+    @dataclasses.dataclass
+    class Frozen:
+        a: int
+
+    Frozen.__name__ = Prod.__name__ = 'Group'
+    assert deep_diff(Prod(1), Frozen(1)) == []
+    diff = deep_diff(Prod(1, opt=5), Frozen(1))
+    assert len(diff) == 1 and '.opt' in diff[0]
 
 
 def test_perturbation_in_stage4_measurement_is_caught(stage46, monkeypatch):
