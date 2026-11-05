@@ -259,12 +259,29 @@ def test_candidates_change_output_is_identical_for_legacy_and_v2_inputs(world, t
         outs[name] = out
     old, new = digests(outs['legacy']), digests(outs['v2'])
     assert sorted(old) == sorted(new)
+    # alignment.html 은 계산 출력이 아니라 그림 보고서다. v2 쪽에는 위에서 Layer PNG 를 넣었으므로 5절이
+    # Layer stack 그림이 되어 legacy 와 바이트가 다르다(의도된 동작: layer-align/T5 e0993a2, T8 1c557ad).
+    # 양쪽에 있는지만 확인하고 계산 출력 비교에서는 뺀다.
+    for digest in (old, new):
+        assert 'alignment.html' in digest
+        del digest['alignment.html']
+    assert 'Layer stack' in (outs['v2'] / 'alignment.html').read_text(encoding='utf-8')
+    assert 'Layer stack' not in (outs['legacy'] / 'alignment.html').read_text(encoding='utf-8')
     differing = sorted(k for k in old if old[k] != new[k])
     # 다른 파일은 provenance 경로가 들어간 것뿐이어야 한다(키 목록으로 고정)
     assert differing == [k for k in differing if k in ALLOWED_PATH_FILES], differing
     for key in differing:
         a = json.loads((outs['legacy'] / key).read_text(encoding='utf-8'))
         b = json.loads((outs['v2'] / key).read_text(encoding='utf-8'))
+        if key == 'alignment.json':
+            # layer_inputs fingerprints the Layer PNGs that only the v2 tree has (layer-align/T4a cba2186); the rest must match.
+            assert 'layer_inputs' not in a and sorted(b['layer_inputs']) == ['reference', 'target']
+            del b['layer_inputs']
+        if key == 'candidate_queries_v1.json':
+            # inputs.layers fingerprints the v2-only Layer folders; alignment_report.bytes is the size of the (different) alignment.html.
+            assert 'layers' not in a['inputs'] and sorted(b['inputs']['layers']) == ['reference', 'target']
+            del b['inputs']['layers']
+            a['alignment_report'].pop('bytes'), b['alignment_report'].pop('bytes')
         assert _strip_path_values(a, str(legacy)) == _strip_path_values(b, str(v2)), key
     for key in old:
         if key not in differing:

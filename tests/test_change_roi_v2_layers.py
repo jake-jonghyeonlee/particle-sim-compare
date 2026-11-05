@@ -417,7 +417,9 @@ def test_report_admission_uses_the_real_hotspot_layer_count(two_layer_world, roo
         return real(*args, **kwargs)
     monkeypatch.setattr(alignment_report, 'fits', spy)
     run(two_layer_world, tmp_path / 'out', roots.default, '--merge-scope', 'all')
-    assert seen == [2]                                                         # layers L1 and L2, not HEAT_LAYERS_ASSUMED
+    # layers L1 and L2, not HEAT_LAYERS_ASSUMED. fits() runs twice since layer-align/T5 (e0993a2): once to decide
+    # whether to scan Layer file names, once with the Layer PNG count (change_candidates.py:1655,1658).
+    assert seen == [2, 2]
 
 
 def test_roi_without_contributing_cases_has_no_bundles_and_says_so():
