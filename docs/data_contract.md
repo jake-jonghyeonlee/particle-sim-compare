@@ -67,7 +67,7 @@ Class 내 서로 다른 pair membership 크기 1은 exclusive, 2 이상은 share
 
 G1 일부 answered(2026-10-08): 지름마다 한 값이며 `bin_semantics=per_bin`이다. 연속 per-um density가 아니므로 bin 폭 질문은 닫혔고 40/50에서도 폭을 곱하거나 적분하지 않는다. 실제 단위, 조사면적/count 변환, 적용 공정/기간은 pending이다. **10 count/glass는 단위·실제 조사면적·bin 의미 없이 10 per um^2로 사용할 수 없다.** per-bin 역면적 density가 확인된 때만 `V=Σ area_um2 × density_per_um2`를 쓴다. per-um 연속 density는 이 계약에서 승인되지 않는다. bin_lower_um/bin_upper_um은 지름별 값 계산에 필요하지 않으며 null로 남길 수 있다. 총 density를 확률 1로 정규화하지 않으며 line/pixel에 같은 계약을 적용한다. observed raw zero도 단위 계약 미확정이면 canonical 가중값은 pending이고, missing density는 별도 기록한다.
 
-`unit_domain`은 측정 domain/frame, unit 치수, domain 배열 형태, `unit_area_basis`, `conversion_policy`, `divisor`, 승인 근거/상태를 남긴다. G2 일부 answered(2026-10-08): 제품 간 um/pixel은 같고 pixel 수는 제품마다 다르며 한 제품의 모든 layer 크기는 같다. 실제 이미지 해상도는 hotspot을 포함해 0.1 um/pixel이다(사용자 확인 2026-10-13; 2026-10-08의 "2×2 약 100 um, 2000 px(약 0.05 um/pixel)" 수치를 대체한다). 이 값도 입력 frame의 기본값으로 만들지 않으며 frame에 명시된 pitch를 쓴다. **좌표 사실(사용자 확인 2026-10-29)**: 원본 이미지(전극·CNT·Layer)는 2×2 unit 영역 전체이고, hotspot frame은 그 영역에서 상하좌우 500 px를 잘라낸 중앙 영역이다. hotspot frame은 2×2 영역이 아니다. 따라서 unit 크기(px) = (hotspot frame 크기 + 1000) / 2 이고(축마다), µm는 × 0.1이다. 한 unit을 얻는 환산 방식은 pending이므로 basis/policy/divisor는 `null`과 `unit_area_basis_unconfirmed`다. **2×2 mask를 기본 `/4`하지 않는다.** full-mask union/면적은 가능하나 unit/panel 가중값·delta는 null이다. 현재 `/4` 관행을 사용자가 확인한 경우에만 명시 정책·한계와 함께 적용하고 새로운 경계 보정/수율 환산은 하지 않는다.
+`unit_domain`은 측정 domain/frame, unit 치수, domain 배열 형태, `unit_area_basis`, `conversion_policy`, `divisor`, 승인 근거/상태를 남긴다. G2 일부 answered(2026-10-08): 제품 간 um/pixel은 같고 pixel 수는 제품마다 다르며 한 제품의 모든 layer 크기는 같다. 실제 이미지 해상도는 hotspot을 포함해 0.1 um/pixel이다(사용자 확인 2026-10-13; 2026-10-08의 "2×2 약 100 um, 2000 px(약 0.05 um/pixel)" 수치를 대체한다). 이 값도 입력 frame의 기본값으로 만들지 않으며 frame에 명시된 pitch를 쓴다. **좌표 사실(사용자 확인 2026-10-29)**: 원본 이미지(전극·CNT·Layer)는 2×2 unit 영역 전체이고, hotspot frame은 그 영역에서 상하좌우 500 px를 잘라낸 중앙 영역이다. hotspot frame은 2×2 영역이 아니다. 따라서 unit 크기(px) = (hotspot frame 크기 + 1000) / 2 이고(축마다), µm는 × 0.1이다. 한 unit을 얻는 환산 방식은 pending이므로 basis/policy/divisor는 `null`과 `unit_area_basis_unconfirmed`다. **2×2 mask를 기본 `/4`하지 않는다.** full-mask union/면적은 가능하나 unit/panel 가중값·delta는 null이다. 현재 `/4` 관행을 사용자가 확인한 경우에만 명시 정책·한계와 함께 적용하고 새로운 경계 보정/수율 환산은 하지 않는다. 예외: `compare2`는 사용자 승인(2026-11-05)으로 crop 관측 면적에 `/4`를 적용한다(`area_basis = crop_observed_area_div4_user_approved_2026_11_05`). 테두리 복원은 하지 않는다. `compare`는 이 예외를 따르지 않고 위 규칙 그대로다.
 
 panel은 unit/panel 양의 유한 치수와 단위, `rounding_policy=floor|half_up_round`, 제품별 `unit_count`를 남긴다. 각 축에 함수를 적용해 곱하며 epsilon으로 floor를 올리지 않는다. `V_panel=N×V_unit`, `delta=target−reference`. 두 제품의 N은 별도로 산정한다. 비율은 선언 단위의 원값끼리 Decimal로 구한 뒤 각 축 floor/half-up을 적용한다. N=0이면 panel 값은 unavailable/null과 panel_has_no_units 사유이며 사용 가능한 0이 아니다. pair 표/공정/layer/density/면적 기준 호환성을 검증하고 실제 pixel overlay는 요구하지 않는다. 서로 다른 Fab 기준이면 구조 변화만의 효과라고 부르지 않는다. `delta_transfer`는 panel transfer의 순변화이며 공간 이동 추적이 아니다.
 
@@ -220,6 +220,34 @@ C가 소유하는 형식이다. 수동 라벨, template matching, DL2 검색이 
 - ROI 열(reference→target 변경 속성, candidates-change 질의에서 복사; 일반 `candidates` 폴더면 null): `score_um2`, `changed_case_count`, `union_delta_um2`, `change_kind_counts`(`contributing_cases[].change_kind` 개수), `cnt_change_um2_by_layer`, ROI 의 중심·분석층.
 - 모델 쌍의 변경사항(`window_cases_v1` 복사): `window_cases_status`가 `available`이면 `window_cases_{both,target_only,model_only,unknown}` 개수와 class 별 상위 3개 이름(`window_cases_top`)을 싣는다. 그 모델 폴더에 `window_cases`가 없으면 `not_computed`, reference 쌍은 `not_applicable`, blocked 쌍은 `pair_blocked`다. `status`가 `available`이 아니면(`case_limit_exceeded`) 또는 한쪽 `n_candidates`가 0 이면(`no_candidates_a`/`no_candidates_b`) 개수를 싣지 않고 상태만 적는다. **case 구성 차이는 인과를 뜻하지 않는다**(관측 목록이다).
 - 출력: `model_report.html`(self-contained, CSS 인라인, 외부 URL·`<script>` 없음, 썸네일·PNG 없음), `model_report.csv`(UTF-8-sig, 열 순서 고정), `model_report.json`(`schema_version=model_report_v1`: `columns`, `args`, `sign_rule`, `inputs`(파일별 경로·sha256), `summary`, `rows`), `execution.json`. 새 폴더에 staging 후 rename 하며, 이미 있는 폴더나 입력 폴더 안·같은 폴더면 거부한다(`output_dir_exists`/`output_is_input`).
+
+### compare2 설정 (`compare2_config_v1`) — compare2 T2
+
+`simcompare compare2 --config`와 `compare2-report --config`가 읽는 YAML이다. 알 수 없는 키와 빠진 필수 키는 `invalid_compare2_config`다. 상대 경로는 설정 파일 위치 기준이다. 예시는 `configs/etx/compare2.example.yaml`.
+
+| 키 | 필수 | 규칙 |
+|---|---|---|
+| `schema_version` | 예 | `compare2_config_v1`(아니면 `unsupported_compare2_config`) |
+| `numeric_config` | 예 | 기존 `numeric_config_v1` 경로. 두 제품 모두 `real_hotspot_v1` 자료여야 한다 |
+| `output_dir`, `density_dir` | 예 | 출력 폴더, 밀도 CSV 폴더 |
+| `model_groups.<이름>` | 예(1개 이상) | 이름은 파일 이름으로 쓰이므로 `/`, `\`, `..` 금지. `glass_area: {value, unit}`(`unit` ∈ `mm2`, `um2`, `m2`; `value: null`이면 미정 `glass_area_pending`이며 오류가 아님; 값이 있으면 `unit` 필수, 양의 유한수), `weight_line`, `weight_pixel`(양의 유한수) |
+| `products.reference/target` | 예 | `model_group`(`model_groups`의 키), `resolution: [가로, 세로]`(양의 정수 둘), `hotspot_root`; 선택 `unit_size_um: [가로, 세로]`(양수), `dl1_model` |
+| `report` | 아니오 | `dl1_root`(기본 없음), `map_window_um`(30), `diameter_um`(3), `top_n`(4, 양의 정수) |
+
+CRP는 설정하지 않는다: 군 이름(대소문자 무관)이 `mobile` 또는 `watch`면 1.0, 그 밖은 2.92다. 밀도 CSV는 `<군>_line.csv`, `<군>_pixel.csv`이며 첫 열이 레이어 이름, 첫 줄이 크기(µm) 헤더, 값은 glass 당 개수(0 이상)다. 빈 칸은 `null`(값 없음)이고 0이 아니다. UTF-8(BOM 허용)만 읽는다.
+
+### compare2 출력 (`compare2_v1`) — compare2 T3
+
+`compare2`가 `compare2.json`(UTF-8 JSON)과 CSV 네 개, `execution.json`을 한 번에 공개한다. 값은 반올림하지 않은 float로 계산하고 `*_rounded`(소수 6자리)는 표시용이다. 입력이 비어 계산할 수 없는 값은 추측하지 않고 `null`이다.
+
+- `schema_version: compare2_v1`, `inputs`(설정·numeric_config 경로와 sha256, 밀도 폴더, 제품별 `source_payload_hash`·`input_hash`, `constants`: `vi_line_divisor` 1.2159, `vi_pixel_divisor` 1.5462, `cno_factor` π/4, `crp_default_other` 2.92, `round_digits` 6), `area_basis`.
+- `products.<role>`: `model_group`, `crp`, `resolution`, `glass_um2`(미정이면 `null`, 이유 `glass_area_reason`), `weights`, `F_line`·`F_pixel`·`F_cno`(λ 계수), `hotspot_root`, `density_files`, `pair_table_hash`.
+- `sides.<role>`: `status`(`available` | `partial`), `reasons`, `lambda`, `caa_line`·`caa_pixel`, `vi_line`·`vi_pixel`(각 `*_rounded`), `layers`, `conditions`, `shared`, `cno`, `conservation_check`.
+- `delta`: `attribution`(`secant`), `indicators`(`delta_lambda_*`, `delta_caa_*`, `delta_vi_*`), `slopes`, `conditions`(조건별 `delta_vi_*`, `share_line`·`share_pixel`, `removal_b`), `shared`, `cno`, `crp_difference`, `layers`(레이어·크기별 `delta_vi_*`), `check`(분해 합이 총 변화와 같은지 검산).
+- 공식: `λ = 밀도 × CA(µm²) × 계수`, `caa = 1 − exp(−λ)`, `vi_line = caa ÷ 1.2159`, `vi_pixel = caa ÷ CRP ÷ 1.5462`. line과 pixel 계열은 독립이라 한쪽 입력이 비면 그 계열만 `null`이다. `not_applicable` 군은 0 기여다.
+- CSV(UTF-8-sig, 열 순서 고정): `compare2_summary.csv`, `compare2_layers.csv`, `compare2_conditions.csv`, `compare2_cno.csv`.
+- 종료 코드: 0 = `available`, 3 = `partial`, 2 = 오류(`error.json` 하나, 이전 결과 파일은 지움).
+- `compare2-report`의 `report.json`은 `compare2_report_v1`이며 `compare2.json`을 읽기만 한다. 설정 sha256이나 hotspot `source_payload_hash`가 `compare2.json`에 기록된 값과 다르면 거부한다.
 
 ### frame 면적 비율 (`fraction_of_frame`) — PLAN_v3 T3
 

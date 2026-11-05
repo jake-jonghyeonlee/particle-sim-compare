@@ -89,6 +89,19 @@ def test_new_runner_stages_carry_the_multiproduct_arguments():
     assert [seven[i + 1] for i, a in enumerate(seven) if a == '--windows'] == ['QA4_R00=data/local', 'QA4_C00=data/local/models/QA4_C00']
 
 
+def test_compare2_example_config_loads_and_stages_are_registered():
+    from simcompare.compare2_inputs import load_compare2_config
+    cfg = load_compare2_config(ROOT / 'configs/etx/compare2.example.yaml')  # paths are not required to exist
+    assert cfg.model_groups['mobile'].glass_area_um2 is None
+    assert cfg.model_groups['mobile'].glass_area_reason == 'glass_area_pending'
+    assert cfg.report.dl1_root is not None
+    stages = _stages()
+    assert [c for c, _, _ in stages['2b_compare2'][1]] == ['compare2']
+    assert [c for c, _, _ in stages['8_compare2_report'][1]] == ['compare2-report']
+    for stage in ('2b_compare2', '8_compare2_report'):
+        assert (ROOT / 'bundles/etx' / f'simcompare_job_{stage}.py').is_file()
+
+
 def test_stage_runners_are_current_and_parse(tmp_path):
     sys.path.insert(0, str(ROOT / 'scripts'))
     try:

@@ -460,6 +460,76 @@ python -m simcompare model-report --candidates data/changes --confirm data/confi
 
 부호: 원값 `delta_um2`는 b − a(모델 쌍 = 모델 − target, reference 쌍 = target − reference)이고 `delta_model_minus_target_um2`가 reference 쌍만 뒤집어 모델 − target으로 통일한다. case 구성 차이는 인과를 뜻하지 않는다. 출력: `model_report.html/.csv/.json`, `execution.json`.
 
+## compare2 (line/pixel vi 비교)
+
+reference와 target의 line/pixel 불량 지표를 같은 방식으로 계산해 비교한다. real_hotspot_v1 자료(1회차 import 결과)와 `compare2_config_v1` 설정이 필요하다. 2회차 `compare` 출력은 쓰지 않는다(독립 명령). 설정 예시는 [`configs/etx/compare2.example.yaml`](../configs/etx/compare2.example.yaml), 스키마는 [데이터 계약](data_contract.md)의 `compare2_config_v1`.
+
+```text
+python -m simcompare compare2 --config data/compare2.yaml --out data/compare2
+```
+
+| 인수 | 설명 |
+|---|---|
+| `--config` | `compare2_config_v1` YAML(필수) |
+| `--out` | 출력 폴더. 생략하면 설정의 `output_dir`. 새 폴더이거나 compare2가 전에 만든 폴더만 덮어쓴다 |
+
+설정 키(상대 경로는 설정 파일 위치 기준):
+
+| 키 | 뜻 |
+|---|---|
+| `schema_version` | `compare2_config_v1` |
+| `numeric_config` | 기존 `numeric_config_v1`(real.yaml). reference/target `data_dir`를 읽는다 |
+| `output_dir`, `density_dir` | 출력 폴더, 밀도 CSV 폴더 |
+| `model_groups.<제품군>` | `glass_area: {value, unit}`(unit은 mm2, um2, m2; `value: null`이면 미정), `weight_line`, `weight_pixel`(양수) |
+| `products.reference/target` | `model_group`, `resolution: [가로, 세로]`(픽셀 수), `hotspot_root`; 선택 `unit_size_um`, `dl1_model` |
+| `report` | 선택. `compare2-report` 전용(아래) |
+
+입력 폴더 규칙:
+
+- 밀도 CSV: 제품군마다 `<제품군>_line.csv`, `<제품군>_pixel.csv`. 첫 줄은 빈칸 + 크기 헤더(`3`, `5`, `10` 또는 `3um`처럼 단위 붙임), 이후 한 줄이 한 레이어다. 행 = 레이어 이름, 열 = 크기(µm), 값 = glass 당 개수. 빈 칸은 '값 없음'이며 0이 아니다. Excel에서는 'CSV UTF-8'로 저장한다(다른 인코딩이면 `invalid_density_csv`).
+- 제품군 CRP는 설정하지 않는다. 군 이름이 `mobile` 또는 `watch`면 1.0, 그 밖은 2.92다.
+- CNO 폴더: hotspot root 아래 `lateralopen-CNO-<cnt층>` 폴더. `images/`와 `result/lateral_open.csv`를 둔다. 이미지는 읽지 않고 CSV만 읽는다. 없으면 CNO 항은 0 기여다.
+
+출력(`--out`):
+
+| 파일 | 내용 |
+|---|---|
+| `compare2.json` | 전체 결과(`compare2_v1`): 입력 해시, 제품별 λ·CAA·vi, 레이어·조건 분해, 변화(delta), 검산 |
+| `compare2_summary.csv` | 제품·지표 요약 |
+| `compare2_layers.csv` | 레이어×크기별 값 |
+| `compare2_conditions.csv` | 조건별 변화와 "B에서 제거 시" 차이 |
+| `compare2_cno.csv` | CNO 폴더별 값 |
+| `execution.json` | 상태, 종료 코드, 소요 시간 |
+| `error.json` | 오류일 때만. 이 경우 위 결과 파일은 지워진다 |
+
+종료 코드: 0 = 모든 값 available, 3 = 일부 입력이 비어 부분 결과(출력은 씀), 2 = 입력·설정 오류(`error.json`만 남는다).
+
+지표 해석:
+
+- 값은 **비율이나 수율이 아니다.** 설정한 glass 면적과 밀도로 환산한 불량 지표다.
+- 계산: `λ = 밀도(glass 당 개수) × 관측 CA(µm²) × 계수`. 계수에 `/4`(2×2 crop 면적)와 패널 해상도·가중치가 들어 있다. 테두리 복원은 하지 않는다. `caa = 1 − exp(−λ)`, `vi_line = caa ÷ 1.2159`, `vi_pixel = caa ÷ CRP ÷ 1.5462`. CNO는 `λ × π/4`다.
+- 변화 분해: reference→target `Δvi`를 조건(전극쌍×레이어)별 기여로 나눈다. 조건별 몫과 공유 몫, CNO 몫(두 제품군 CRP가 다르면 CRP 차이 몫)을 합치면 100%다. 몫은 부호가 있다(양수 = 증가 기여).
+- "B에서 제거 시": 대상 B에서 그 조건 하나만 없앴을 때의 `Δvi`다. 변환이 비선형(`1 − exp`)이라 분해 몫 × 총 변화와 같지 않을 수 있다. 두 값은 서로 다른 질문의 답이다.
+- glass 면적이 비어 있으면(`value: null`) 그 제품군의 λ·CAA·vi와 변화는 `null`('대기', 이유 `glass_area_pending`)이고 종료 코드는 3이다. 오류가 아니다. line과 pixel 계열은 서로 독립이라 한쪽 입력만 비면 그 계열만 `null`이 된다. 세로 크기가 층간 거리보다 작은 군(`not_applicable`)은 0 기여다.
+
+## compare2-report
+
+`compare2.json`으로 외부 보고용 HTML 한 장을 만든다. 수치는 다시 계산하지 않고 `compare2.json` 값을 그대로 보여 준다.
+
+```text
+python -m simcompare compare2-report --compare2-dir data/compare2 --config data/compare2.yaml --out data/compare2_report
+```
+
+| 인수 | 설명 |
+|---|---|
+| `--compare2-dir` | `compare2` 출력 폴더(`compare2.json`이 있는 곳) |
+| `--config` | `compare2`를 실행할 때 쓴 같은 설정 파일(해시가 다르면 오류) |
+| `--out` | 아직 없는 새 폴더. 이미 있거나 `--compare2-dir` 안이면 거부한다 |
+
+설정의 `report` 키(모두 선택): `map_window_um`(기본 30), `diameter_um`(기본 3), `top_n`(기본 4), `dl1_root`(기본 없음). 상위 `top_n` 조건마다 reference(A)와 target(B)의 hotspot 지도(3 µm 기본)를 그린다. 지도는 정렬하지 않고 A를 unit 안의 같은 상대 위치에서 자른다. 레이어 overlay는 `report.dl1_root`(DL1 Layer PNG)와 `products.<role>.dl1_model`이 있어야 하며 없으면 overlay 없이 지도만 나온다.
+
+출력: `report.html`(파일 하나), `report.json`(경고·입력 기록). 종료 코드: 0 = 완료, 3 = `compare2.json`이 부분 결과이거나 지도·overlay 경고가 있음(보고서는 씀), 2 = 오류(새 `--out`에 `error.json`).
+
 ## 종료 코드
 
 | 코드 | 의미 | 확인 |
@@ -467,6 +537,8 @@ python -m simcompare model-report --candidates data/changes --confirm data/confi
 | 0 | 요청 범위의 결과 available 또는 생성 완료 | execution.json과 결과 provenance |
 | 3 | partial/unavailable/blocked 항목을 포함한 사용 가능한 부분 출력 | status, reasons, coverage, partial_value |
 | 2 | 입력/설정 불가 또는 지도 incomplete/unavailable | 오류 메시지, error.json; 지도 리포트 없음 |
+
+`compare2`는 모든 값이 available이면 0, glass 면적·밀도·CNO CSV 등 입력이 비어 일부 값이 `null`이면 3, 설정·입력 오류는 2다. `compare2-report`는 완료 0, 지도·overlay 경고 또는 부분 `compare2.json` 3, 오류 2다.
 
 `compare-windows`는 모든 ready 쌍의 창 Δ가 available(또는 근거 있는 not_applicable)이면 0, 창 clipping·valid 구멍·원천 누락·blocked 쌍이 있으면 3, 대응 파일·창 크기·제품 불일치 오류는 2다.
 
@@ -543,6 +615,12 @@ JOBS = [
 
 **4~6회차 실측과 예상 시간·메모리**(`docs/plan/scale_stage46/T5_benchmark.md`, 합성 자료, macOS 12코어·48 GiB, 모델당 1,682 case·한 layer·32 지름, 창 10/20/30 µm·jitter 0.5; 세 실행을 동시에 돌려 시간은 단독보다 최대 1.3~1.4배 길다): 3회차 `import-electrode-assets` 모델당 1.2~2.4분·0.57 GiB. 4회차 `candidates` 5~6.5분·1.2~1.3 GiB(crop 1262²/1500², 중앙 큰 영역 1개 또는 분리된 영역 196개). 5회차 `confirm-pairs` 3.5~4.6분·0.9~1.25 GiB(모든 마스크를 인증하므로 분 단위). 6회차 `compare-windows`: 2회차 artefact가 있으면 쌍 50개 5~5.5분·0.8~1.1 GiB, 쌍 200개 6~9.5분·0.9~1.25 GiB; artefact가 없으면 쌍 200개 14~23분·1.5 GiB(전극 59개를 공유하는 자료)~3.4 GiB(case마다 전극이 따로인 자료)(재계산이 면적 계산 한 번을 더 한다). 출력은 쌍 200개에 약 275 MB(행 수 = 쌍 × 창 크기 × 32). 2회차 `compare`는 `comparison_masks.zip` 약 50~70 MB가 더 늘고 그 비용은 시간·RAM에 거의 안 보인다. 한 번에 디스크는 1262²에서 모델·중간 산출물까지 약 3.5~3.8 GB, 1500²에서 약 4.7 GB가 필요했다. 6회차 admission 추정은 실제 RSS보다 크다(쌍 50·재계산 기준 추정 7.84 GB, 실측 1.6 GB): 기본 `max_operation_bytes`(8 GiB)에 걸리면 추정치 X에 여유를 더한 값(물리 메모리 이하)을 넣는다. 거부는 입력 인증(약 100초) 뒤 계산 전에 일어나고 아무것도 공개하지 않는다.
 
+2b회차(선택, 1회차 뒤) — line/pixel vi 비교(`simcompare_job_2b_compare2.py`). 2회차 출력과 4–6회차는 필요 없다. `configs/etx/compare2.example.yaml`을 `data/compare2.yaml`로 복사해 제품군 glass 면적·가중치·해상도를 채우고, 밀도 CSV를 `data/density/<제품군>_line.csv`·`_pixel.csv`로 둔다. 상세는 아래 "compare2 (line/pixel vi 비교)".
+
+```python
+JOBS = [("compare2", ["--config", "data/compare2.yaml", "--out", "data/compare2"])]
+```
+
 3회차 — 전극 PNG import (`real.yaml`의 `condition_assignment`와 같은 내용의 assignment JSON 필요, `--max-asset-memory-mb`는 기본값 없음). role은 `electrode_role_policy: electrode_id`로 자동이다(pair 표의 모든 전극 = 자기 이름):
 
 ```python
@@ -576,6 +654,12 @@ DL2 — 위치 매칭(**DL2 경로 전용**: 직접 대응을 쓰면 DL2와 5회
 5회차 — 확정 쌍 변환(DL2 경로 전용, `simcompare_job_5_confirm_pairs.py`; `--candidates data/changes`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
 
 6회차 — 국부 ΔCA(`simcompare_job_6_compare_windows.py`): 기본 `--correspondence`는 4회차의 `data/changes/direct/roi_correspondence.json`이다(DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다). 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
+
+8회차(선택, 2b회차 뒤) — compare2 보고서(`simcompare_job_8_compare2_report.py`): `data/compare2/compare2.json`과 같은 `data/compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report".
+
+```python
+JOBS = [("compare2-report", ["--compare2-dir", "data/compare2", "--config", "data/compare2.yaml", "--out", "data/compare2_report"])]
+```
 
 통합 보고서(`report`)는 아직 실자료 경로를 지원하지 않는다: 실자료 `compare`는 `comparison.json`/`comparison.csv`(조건 배정이 있으면 `real_hotspot_comparison_v2`, 없으면 `real_hotspot_comparison_v1`)만 쓰고, `report`는 합성 numeric_v2의 `comparison_fractions.csv` 등을 요구해 `missing_input_file`(종료 코드 2)로 멈춘다. 그래서 ETX 회차에 넣지 않았다. 쌍별 결과는 6회차 `local_delta.html`에서 본다.
 

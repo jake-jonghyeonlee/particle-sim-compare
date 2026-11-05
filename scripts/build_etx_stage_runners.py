@@ -99,6 +99,16 @@ STAGES = {
          "compare는 comparison.json/csv와 함께 comparison_masks.zip을 만든다(6회차가 두 모델의 면적 계산을 건너뛰는 데 쓴다)."],
         [("validate-data", ["--config", CONFIG], None),
          ("compare", ["--config", CONFIG], None)]),
+    "2b_compare2": (
+        ["2b회차(선택, 1회차 뒤): line/pixel 불량 지표 비교(compare2). reference·target 각각의 λ(밀도 × 관측 CA × 계수), CAA, VI(vi = caa ÷ 1.2159 또는 1.5462)와",
+         "reference→target 변화 분해, 조건별 B에서 제거 시 차이를 계산한다. 비율·수율이 아니라 설정된 glass 기준의 불량 지표다.",
+         "2회차와 독립이다. 2회차 출력(comparison.json 등)을 쓰지 않고 4–6회차도 필요 없다. 1회차 import 결과(data/imported/*)와 real.yaml(2회차와 같은 numeric_config),",
+         "밀도 CSV(data/density/<제품군>_line.csv, <제품군>_pixel.csv), 제품군 glass·가중치가 들어 있는 compare2.yaml(configs/etx/compare2.example.yaml → data/compare2.yaml)이 필요하다.",
+         "glass 면적 값이 비어 있으면 vi 는 '대기'로 계산되지 않고 종료 코드 3이다(오류가 아니다). --out 은 새 경로이거나 compare2 가 전에 만든 폴더여야 한다.",
+         "결과: data/compare2/compare2.json, compare2_summary.csv, compare2_layers.csv, compare2_conditions.csv, compare2_cno.csv. 상세는 docs/usage_reference.md 'compare2'."],
+        [("compare2", ["--config", f"{DATA}/compare2.yaml", "--out", f"{DATA}/compare2"],
+          "line/pixel vi 비교. 1회차 import 결과(data/imported/*)와 real.yaml(2회차와 같은 numeric_config), 밀도 CSV, 제품군 glass·가중치가 필요하다. "
+          "glass 값이 비어 있으면 vi 는 '대기'로 exit 3")]),
     "3_import_electrode_assets": (
         ["3회차: 전극 PNG import. assignment_<side>.json(real.yaml의 condition_assignment와 같은 내용)이 필요하다.",
          "끝나면 출력의 review_assets.json, electrode_asset_import_record.json, assets/를 각 data_dir로 복사하고",
@@ -247,6 +257,14 @@ STAGES = {
                            "--windows", f"QA4_R00={DATA}/local", "--windows", f"QA4_C00={DATA}/local/models/QA4_C00",
                            "--diameter-um", "5", "--window-um", "20", "--out", f"{DATA}/model_report"],
           "예시 — 지름 5 µm, 창 20 µm. 결과: model_report.html/.csv/.json, execution.json")]),
+    "8_compare2_report": (
+        ["8회차(선택, 2b회차 뒤): compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(compare2-report)을 만든다. 수치는 다시 계산하지 않고 compare2.json 값을 그대로 보여 준다.",
+         "--compare2-dir(2b회차의 --out)과 --config(2b회차와 같은 compare2.yaml)는 같은 실행의 것이어야 한다. --out 은 아직 없는 새 경로이고 --compare2-dir 밖이어야 한다.",
+         "지도 3 µm 와 층 overlay 를 그리려면 DL1 root(Layer PNG)가 필요하다: compare2.yaml 의 report.dl1_root 와 products.<role>.dl1_model 을 채운다.",
+         "DL1 root 가 없으면 overlay 는 건너뛰고(종료 코드 3) 지도만 나온다. 결과: data/compare2_report/report.html, report.json.",
+         "종료 코드 3(compare2.json 이 부분 결과이거나 지도·overlay 경고)이어도 실행기는 계속한다. 상세는 docs/usage_reference.md 'compare2-report'."],
+        [("compare2-report", ["--compare2-dir", f"{DATA}/compare2", "--config", f"{DATA}/compare2.yaml", "--out", f"{DATA}/compare2_report"],
+          "외부 보고용 HTML. --out 은 아직 없는 새 경로")]),
 }
 
 
