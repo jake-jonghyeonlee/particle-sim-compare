@@ -228,6 +228,12 @@ def _parser() -> argparse.ArgumentParser:
         help="line/pixel λ·CAA·VI 와 변화 분해·제거 영향(compare2_config_v1 YAML, real_hotspot_v1 두 제품)"))
     c2.add_argument("--config", required=True, help="compare2_config_v1 YAML")
     c2.add_argument("--out", help="출력 디렉터리(생략하면 설정의 output_dir). 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어씀")
+    c2r = _korean_help(sub.add_parser(
+        "compare2-report", add_help=False,
+        help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
+    c2r.add_argument("--compare2-dir", required=True, help="compare2 출력 폴더(compare2.json 이 있는 곳)")
+    c2r.add_argument("--config", required=True, help="compare2 를 실행할 때 쓴 compare2_config_v1 YAML(같은 파일이어야 함)")
+    c2r.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있거나 --compare2-dir 안이면 거부)")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -312,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
             # 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어쓴다. 오류는 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2
             return compare2.main_compare2(args.config, args.out, _print)
+        if args.command == "compare2-report":
+            # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
+            from simcompare import compare2_report
+            return compare2_report.main_compare2_report(args.compare2_dir, args.config, args.out, _print)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

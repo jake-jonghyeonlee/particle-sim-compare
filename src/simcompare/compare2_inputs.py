@@ -51,6 +51,7 @@ class ProductConfig:
     resolution: Tuple[int, int]
     hotspot_root: Path
     unit_size_um: Optional[Tuple[float, float]] = None
+    dl1_model: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -157,15 +158,17 @@ def _group(name, raw) -> GroupConfig:
 
 
 def _product(base: Path, role: str, raw, groups: dict) -> ProductConfig:
-    raw = _mapping(raw, f'products.{role}', {'model_group', 'resolution', 'hotspot_root', 'unit_size_um'},
+    raw = _mapping(raw, f'products.{role}', {'model_group', 'resolution', 'hotspot_root', 'unit_size_um', 'dl1_model'},
                    {'model_group', 'resolution', 'hotspot_root'})
     group = _string(raw['model_group'], f'products.{role}.model_group')
     if group not in groups:
         raise _invalid(f'products.{role}.model_group {group!r} is not in model_groups')
     unit = raw.get('unit_size_um')
+    dl1_model = raw.get('dl1_model')
     return ProductConfig(role, group, _pair(raw['resolution'], f'products.{role}.resolution', integer=True),
                          _path(base, raw['hotspot_root'], f'products.{role}.hotspot_root'),
-                         None if unit is None else _pair(unit, f'products.{role}.unit_size_um', integer=False))
+                         None if unit is None else _pair(unit, f'products.{role}.unit_size_um', integer=False),
+                         None if dl1_model is None else _string(dl1_model, f'products.{role}.dl1_model'))
 
 
 def _report(base: Path, raw) -> ReportConfig:

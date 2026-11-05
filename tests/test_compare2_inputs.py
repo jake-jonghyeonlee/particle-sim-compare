@@ -40,6 +40,15 @@ def test_example_config_loads(tmp_path):
     assert cfg.config_sha256 == hashlib.sha256(EXAMPLE.read_bytes()).hexdigest()
 
 
+def test_dl1_model_is_an_optional_product_key(tmp_path):
+    assert load_compare2_config(EXAMPLE).reference.dl1_model is None
+    cfg = load_compare2_config(_config(tmp_path, lambda c: c['products']['target'].update(dl1_model='ModelB')))
+    assert cfg.target.dl1_model == 'ModelB' and cfg.reference.dl1_model is None
+    with pytest.raises(NumericContractError) as info:
+        load_compare2_config(_config(tmp_path, lambda c: c['products']['target'].update(dl1_model='')))
+    assert _code(info) == 'invalid_compare2_config'
+
+
 def test_report_section_is_optional_with_defaults(tmp_path):
     cfg = load_compare2_config(_config(tmp_path, lambda c: c.pop('report')))
     assert cfg.report.dl1_root is None and cfg.report.top_n == 4 and cfg.report.map_window_um == 30.0
