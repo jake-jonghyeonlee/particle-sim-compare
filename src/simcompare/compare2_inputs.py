@@ -214,6 +214,8 @@ def lambda_factor(product: ProductConfig, group: GroupConfig, kind: str) -> Opti
     """resolution_x * resolution_y * weight_kind / (4 * glass_area_um2); None while the glass area is pending.
 
     lambda = sum(density * CA / 4 / A_unit * N * A_unit / A_glass * w): the unit area cancels (PLAN section 7, D3).
+    Use it as: lambda += density(count/glass) * CA(um^2, observed in the 2x2 crop) * factor.
+    The factor already holds the /4; never divide CA by the 2x2 area again.
     """
     _kind(kind)
     if group.glass_area_um2 is None:
@@ -243,7 +245,7 @@ class DensityTable:
         row = self.values.get(layer)
         if row is None:
             return None, 'density_layer_missing'
-        key = diameter_key(diameter)
+        key = size_key(diameter)
         if key not in row:
             return None, 'density_size_missing'
         value = row[key]
@@ -253,6 +255,19 @@ class DensityTable:
         return self.lookup(layer, diameter)[0]
 
 
+def size_key(value) -> Decimal:
+    """Canonical size key: 3, 3.0, '3' and Decimal('3.0') all give Decimal('3'); 1.5 gives Decimal('1.5')."""
+    if isinstance(value, Decimal):
+        if not value.is_finite() or value <= 0:
+            raise NumericContractError('invalid_number', 'diameter')
+        number = value
+    else:
+        number = diameter_key(value)
+    if number == number.to_integral_value():
+        return Decimal(int(number))
+    return number.normalize()
+
+
 def _size_header(cell: str, path: Path) -> Decimal:
     text = cell.replace(' ', '').replace('\t', '')
     for suffix in _SIZE_SUFFIXES:
@@ -260,7 +275,7 @@ def _size_header(cell: str, path: Path) -> Decimal:
             text = text[:-len(suffix)]
             break
     try:
-        return diameter_key(float(text))
+        return size_key(float(text))
     except (ValueError, NumericContractError):
         raise NumericContractError('invalid_density_csv', f'{path.name}: bad size header {cell!r}') from None
 
@@ -272,7 +287,7 @@ def _read_density(path: Path) -> DensityTable:
     try:
         rows = list(csv.reader(raw.decode('utf-8-sig').splitlines()))
     except (UnicodeDecodeError, csv.Error) as exc:
-        raise NumericContractError('invalid_density_csv', f'{path.name}: {exc}') from exc
+        raise NumericContractError('invalid_density_csv', f'{path.name}: {exc} (CSV UTF-8 로 저장하세요)') from exc
     rows = [row for row in rows if any(cell.strip() for cell in row)]
     if not rows or len(rows[0]) < 2:
         raise NumericContractError('invalid_density_csv', f'{path.name}: header needs at least one size column')
@@ -322,6 +337,7 @@ class CnoCase:
     csv_sha256: Optional[str]
     status: str
     reason: Optional[str]
+    detail: Optional[str] = None
 
 
 def collect_cno(hotspot_root) -> List[CnoCase]:
@@ -333,5 +349,5 @@ def collect_cno(hotspot_root) -> List[CnoCase]:
         rows = {float(key): row['value'] for key, row in info['rows'].items()}
         cases.append(CnoCase(item['case_name'], item['source_relative_path'], item['electrode_id'],
                              item['actual_layer'], rows, info.get('relative_path'), info['sha256'],
-                             info['status'], info['reason']))
+                             info['status'], info['reason'], info.get('detail')))
     return cases

@@ -651,13 +651,18 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
             if kind == LINE:
                 p_bits = combined[PIXEL]
                 step = (chunk_cells + 7) // 8 * 8  # byte-aligned so packed slices match cell slices
-                per_label = np.zeros(max(ids.values(), default=0) + 1, dtype=np.int64)
+                singles = [(pid, ids[(pid,)]) for pid in pair_ids if (pid,) in ids]
+                lookup = np.full(max(ids.values(), default=0) + 1, -1, dtype=np.int32)
+                for index, (_, label_id) in enumerate(singles):
+                    lookup[label_id] = index
+                per_pair = np.zeros(len(singles), dtype=np.int64)
                 for start in range(0, size, step):
                     stop = min(start + step, size)
                     in_p = np.unpackbits(p_bits[start // 8:(stop + 7) // 8])[:stop - start].view(np.bool_)
-                    per_label += np.bincount(label[start:stop][in_p], minlength=per_label.size)[:per_label.size]
-                collect['transfer_by_line_pair_cells'] = {
-                    pid: int(per_label[ids[(pid,)]]) if (pid,) in ids else 0 for pid in pair_ids}
+                    idx = lookup[label[start:stop][in_p]]
+                    per_pair += np.bincount(idx[idx >= 0], minlength=len(singles))[:len(singles)]
+                counted = {pid: int(per_pair[index]) for index, (pid, _) in enumerate(singles)}
+                collect['transfer_by_line_pair_cells'] = {pid: counted.get(pid, 0) for pid in pair_ids}
         ordered = sorted(counts.items())
         if top_buckets is not None:
             # largest area first; the stable sort keeps the member-tuple order among ties

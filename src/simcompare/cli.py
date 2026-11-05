@@ -223,6 +223,11 @@ def _parser() -> argparse.ArgumentParser:
     mreport.add_argument("--diameter-um", required=True, type=float, help="표시 지름 µm (기본값 없음)")
     mreport.add_argument("--window-um", required=True, type=float, help="표시 창 한 변 µm (local_delta.json 의 window_sizes_um 안, 기본값 없음)")
     mreport.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있거나 입력 폴더 안이면 거부)")
+    c2 = _korean_help(sub.add_parser(
+        "compare2", add_help=False,
+        help="line/pixel λ·CAA·VI 와 변화 분해·제거 영향(compare2_config_v1 YAML, real_hotspot_v1 두 제품)"))
+    c2.add_argument("--config", required=True, help="compare2_config_v1 YAML")
+    c2.add_argument("--out", help="출력 디렉터리(생략하면 설정의 output_dir). 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어씀")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -303,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
             result = template_export.run_template_export(args.config, Path(args.out))
             _print(result)
             return result["exit_code"]
+        if args.command == "compare2":
+            # 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어쓴다. 오류는 error.json 하나만 남기고 종료 코드 2.
+            from simcompare import compare2
+            return compare2.main_compare2(args.config, args.out, _print)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

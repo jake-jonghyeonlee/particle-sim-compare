@@ -987,6 +987,8 @@ def test_broken_cno_csv_does_not_stop_import_or_discovery(tmp_path):
     (folder / 'result/lateral_open.csv').write_text('wrong,header\n1,2\n', encoding='utf-8')
     found = discover_cno_cases(root)
     assert found[0]['csv']['status'] == 'invalid' and found[0]['csv']['reason'] == 'invalid_real_csv_header'
+    assert found[0]['csv']['relative_path'] == f'{CNO_NAME}/result/lateral_open.csv'
+    assert 'detail' in found[0]['csv']
     import_hotspots(root, tmp_path / 'out')
     skipped = [d for d in _manifest_of(tmp_path / 'out')['diagnostics'] if d.get('status') == 'cno_case_skipped']
     assert [d['case'] for d in skipped] == [CNO_NAME]

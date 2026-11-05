@@ -241,3 +241,40 @@ def test_collect_cno_mixed_root(tmp_path):
 def test_collect_cno_empty_root(tmp_path):
     (tmp_path / 'hot').mkdir()
     assert collect_cno(tmp_path / 'hot') == []
+
+
+# ---- compare2/T3 R2 follow-ups ----------------------------------------------------------------
+
+def test_density_accepts_decimal_sizes_and_keeps_canonical_keys(tmp_path):
+    line = load_density(_density(tmp_path, 'n,1um,2.5 µm,30.0,50\nGAT,1,2,3,4\n'), 'mobile')['line']
+    assert line.sizes == (Decimal('1'), Decimal('2.5'), Decimal('30'), Decimal('50'))
+    assert [str(size) for size in line.sizes] == ['1', '2.5', '30', '50']  # no '1.0' / '3E+1' spellings
+    for size in line.sizes:  # a caller may iterate table.sizes
+        assert line.lookup('GAT', size)[1] is None
+    assert line.get('GAT', Decimal('30.0')) == 3.0 and line.get('GAT', Decimal('2.50')) == 2.0
+    assert line.lookup('GAT', Decimal('4')) == (None, 'density_size_missing')
+
+
+def test_lambda_factor_documents_ca_usage():
+    doc = lambda_factor.__doc__
+    assert 'CA(um^2' in doc and 'never divide CA' in doc
+
+
+def test_density_decode_error_hints_utf8(tmp_path):
+    folder = _density(tmp_path, 'n,1\nA,1\n')
+    (folder / 'mobile_line.csv').write_bytes('n,1\n전극,1\n'.encode('cp949'))
+    with pytest.raises(NumericContractError) as info:
+        load_density(folder, 'mobile')
+    assert _code(info) == 'invalid_density_csv' and 'UTF-8' in str(info.value)
+
+
+def test_collect_cno_invalid_keeps_detail_and_csv_path(tmp_path):
+    root = tmp_path / 'hot'
+    _cno_folder(root, 'lateralopen-CNO3-gcnt', text='wrong,header\n1,2\n')
+    (case,) = collect_cno(root)
+    assert case.status == 'invalid' and case.reason == 'invalid_real_csv_header'
+    assert case.csv_relative_path == 'lateralopen-CNO3-gcnt/result/lateral_open.csv'
+    assert 'lateral_open.csv' in case.detail
+    ok_root = tmp_path / 'ok'
+    _cno_folder(ok_root, 'lateralopen-CNO1-gcnt')
+    assert collect_cno(ok_root)[0].detail is None

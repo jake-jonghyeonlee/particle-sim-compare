@@ -233,7 +233,8 @@ def discover_cno_cases(root: Path):
             csv_info = _csv_areas(root, path, 'lateral_open')
         except NumericContractError as exc:
             case['csv'] = {'status': 'invalid', 'path': None, 'sha256': None, 'rows': {}, 'reason': exc.code,
-                           'detail': str(exc)}
+                           'detail': str(exc),
+                           'relative_path': (path / 'result' / 'lateral_open.csv').relative_to(root).as_posix()}
             continue
         if csv_info['path'] is not None:
             csv_info['relative_path'] = (path / 'result' / csv_info['path']).relative_to(root).as_posix()
