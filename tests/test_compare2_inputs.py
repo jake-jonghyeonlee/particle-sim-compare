@@ -290,3 +290,28 @@ def test_collect_cno_invalid_keeps_detail_and_csv_path(tmp_path):
     ok_root = tmp_path / 'ok'
     _cno_folder(ok_root, 'lateralopen-CNO1-gcnt')
     assert collect_cno(ok_root)[0].detail is None
+
+
+def test_density_file_is_found_ignoring_case_when_unique(tmp_path):
+    folder = tmp_path / 'density'
+    folder.mkdir()
+    (folder / 'Mobile_LINE.csv').write_text('layer,1\nA,1\n', encoding='utf-8')
+    (folder / 'MOBILE_pixel.csv').write_text('layer,1\nA,2\n', encoding='utf-8')
+    tables = load_density(folder, 'mobile')
+    assert tables['line'].path.name == 'Mobile_LINE.csv' and tables['pixel'].path.name == 'MOBILE_pixel.csv'
+    assert tables['line'].get('A', 1) == 1.0
+
+
+def test_density_file_exact_name_wins_over_case_variants(tmp_path):
+    folder = _density(tmp_path, 'layer,1\nA,1\n', pixel='layer,1\nA,2\n')
+    assert load_density(folder, 'mobile')['line'].path.name == 'mobile_line.csv'
+
+
+def test_density_file_with_several_case_variants_is_ambiguous(tmp_path, monkeypatch):
+    # a case-insensitive file system cannot hold two names, so the listing is faked
+    names = [tmp_path / 'MOBILE_line.csv', tmp_path / 'Mobile_Line.csv']
+    monkeypatch.setattr(Path, 'iterdir', lambda self: iter(names))
+    monkeypatch.setattr(Path, 'is_file', lambda self: self in names)
+    with pytest.raises(NumericContractError) as info:
+        load_density(tmp_path, 'mobile')
+    assert _code(info) == 'ambiguous_density_file'

@@ -326,7 +326,24 @@ def _read_density(path: Path) -> DensityTable:
 def load_density(density_dir, group: str) -> Dict[str, DensityTable]:
     """{'line': table, 'pixel': table} from <group>_line.csv and <group>_pixel.csv."""
     base = Path(density_dir)
-    return {kind: _read_density(base / f'{group}_{kind}.csv') for kind in KINDS}
+    return {kind: _read_density(_find_density(base, group, kind)) for kind in KINDS}
+
+
+def _find_density(base: Path, group: str, kind: str) -> Path:
+    """<group>_<kind>.csv exactly; else the single file in the folder that matches it ignoring case."""
+    exact = base / f'{group}_{kind}.csv'
+    wanted = exact.name.lower()
+    try:  # the listing gives the real file name even on a case-insensitive file system
+        found = sorted((path for path in base.iterdir() if path.name.lower() == wanted and path.is_file()),
+                       key=lambda path: path.name)
+    except OSError:
+        return exact  # the reader reports density_file_missing
+    for path in found:
+        if path.name == exact.name:
+            return path
+    if len(found) > 1:
+        raise NumericContractError('ambiguous_density_file', ', '.join(path.name for path in found))
+    return found[0] if found else exact
 
 
 @dataclass(frozen=True)

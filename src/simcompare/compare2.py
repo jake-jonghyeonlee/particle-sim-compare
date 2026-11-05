@@ -52,6 +52,11 @@ def _round(x):
     return None if x is None else round(x, ROUND_DIGITS)
 
 
+def _area(x):
+    """Area (um^2) as written to JSON/CSV; calculations and conservation checks use the unrounded sums."""
+    return round(x, ROUND_DIGITS)
+
+
 def _add(*values):
     return None if any(v is None for v in values) else sum(values)
 
@@ -97,8 +102,8 @@ def _diameter_json(key):
 # ---- extraction from the area result ----------------------------------------------------------------------------
 
 def _new_cell():
-    """Areas in um^2 (cells x pitch^2 per group); 'a' stays 1.0 so count-times-a code reads the area as is."""
-    return {'a': 1.0, 'ok': True, 'reasons': set(), 'line': 0.0, 'peff': 0.0, 'transfer': 0.0,
+    """Areas in um^2 (cells x pitch^2 per group)."""
+    return {'ok': True, 'reasons': set(), 'line': 0.0, 'peff': 0.0, 'transfer': 0.0,
             'shared_l': 0.0, 'shared_p': 0.0, 'excl_l': defaultdict(float), 'excl_p': defaultdict(float),
             'tr': defaultdict(float)}
 
@@ -216,7 +221,7 @@ def _compute_side(role, product, group, tables, extracted, meta):
             return None
         if entry['density'][kind] is None:
             return 0.0 if count == 0 else None
-        return entry['density'][kind] * count * entry['item']['a'] * factor
+        return entry['density'][kind] * count * factor
 
     # layers and sizes
     layer_rows, layer_cells = {}, defaultdict(lambda: {'line': [], 'pixel': []})
@@ -227,11 +232,10 @@ def _compute_side(role, product, group, tables, extracted, meta):
         lam_l, lam_p = lam('line', ck, item['line']), lam('pixel', ck, item['peff'])
         size_lam[ck] = (lam_l, lam_p)
         row = layer_rows.setdefault((layer, dlayer), {'layer': layer, 'density_layer': dlayer, 'by_size': []})
-        a = item['a']
         row['by_size'].append({
             'diameter_um': _diameter_json(diameter), 'density_line': entry['density']['line'],
-            'density_pixel': entry['density']['pixel'], 'line_area_um2': item['line'] * a,
-            'pixel_eff_area_um2': item['peff'] * a, 'transfer_area_um2': item['transfer'] * a,
+            'density_pixel': entry['density']['pixel'], 'line_area_um2': _area(item['line']),
+            'pixel_eff_area_um2': _area(item['peff']), 'transfer_area_um2': _area(item['transfer']),
             'lambda_line': lam_l, 'lambda_pixel': lam_p,
             'status': 'available' if lam_l is not None and lam_p is not None else 'unavailable',
             'reasons': entry['notes']})
@@ -270,15 +274,14 @@ def _compute_side(role, product, group, tables, extracted, meta):
         rows, a_excl, a_tr = [], 0.0, 0.0
         parts = {'excl_l': [], 'excl_p': [], 'tr': []}
         for ck, n_l, n_p, n_t in cond['by_size']:
-            a = entries[ck]['item']['a']
             v_l, v_p, v_t = lam('line', ck, n_l), lam('pixel', ck, n_p), lam('pixel', ck, n_t)
             parts['excl_l'].append(v_l)
             parts['excl_p'].append(v_p)
             parts['tr'].append(v_t)
-            a_excl += (n_l + n_p) * a
-            a_tr += n_t * a
+            a_excl += n_l + n_p
+            a_tr += n_t
             rows.append({'diameter_um': _diameter_json(ck[2]), 'density_layer': ck[1],
-                         'area_excl_um2': (n_l + n_p) * a, 'area_transfer_um2': n_t * a,
+                         'area_excl_um2': _area(n_l + n_p), 'area_transfer_um2': _area(n_t),
                          'lambda_excl': _add(v_l, v_p), 'lambda_transfer': v_t})
         cond['v'] = {name: _sum_opt(values) for name, values in parts.items()}
         cond['area_excl'], cond['area_tr'], cond['rows'] = a_excl, a_tr, rows
@@ -515,7 +518,7 @@ def _side_json(side):
             'condition_id': f'{ident[0]}@{ident[1]}', 'pair_id': ident[0], 'electrodes': cond['electrodes'],
             'layer': ident[1], 'class': cond['class'],
             'lambda_excl': _add(v['excl_l'], v['excl_p']), 'lambda_transfer': v['tr'],
-            'area_excl_um2': cond['area_excl'], 'area_transfer_um2': cond['area_tr'],
+            'area_excl_um2': _area(cond['area_excl']), 'area_transfer_um2': _area(cond['area_tr']),
             'reasons': cond['reasons'], 'by_size': cond['rows']})
     status = 'available' if not side['reasons'] and side['conservation']['status'] == 'passed' else 'partial'
     reasons = sorted(side['reasons'])
@@ -544,7 +547,7 @@ def _product_json(side, density_tables):
             'F_line': side['factors']['line'], 'F_pixel': side['factors']['pixel'], 'F_cno': side['factors']['cno'],
             'hotspot_root': str(product.hotspot_root),
             'unit_size_um': None if product.unit_size_um is None else list(product.unit_size_um),
-            'density_files': {kind: {'path': str(table.path), 'sha256': table.sha256}
+            'density_files': {kind: {'path': str(table.path), 'file_name': table.path.name, 'sha256': table.sha256}
                               for kind, table in density_tables.items()},
             'source_payload_hash': side['meta']['source_payload_hash'],
             'pair_table_version': side['meta']['pair_table_version'],

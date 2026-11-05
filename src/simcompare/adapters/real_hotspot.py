@@ -191,12 +191,23 @@ def _cno_name(name: str):
     return match.group(2), match.group(3)
 
 
-def _cno_dirs(root: Path):
+def _walk_tree(root: Path):
+    """[(directory, subfolder names, file names)] of one os.walk pass; the discovery steps share it."""
+    return [(Path(directory), list(dirs), list(files)) for directory, dirs, files in os.walk(root)]
+
+
+def _is_cno_dir(path: Path, dirs, root: Path):
+    """A 3-part lateralopen name AND an images/ or result/ folder right below it. A same-named folder holding
+    neither is an ordinary folder (e.g. a grouping folder above 5-part case folders)."""
+    return (path != root and _cno_name(path.name) is not None
+            and any(name.lower() in (IMAGES_DIRNAME, 'result') for name in dirs))
+
+
+def _cno_dirs(root: Path, tree=None):
     """3-part lateralopen folders under root, sorted by folder name; duplicate names are an error."""
     found = []
-    for directory, dirs, files in os.walk(root):
-        path = Path(directory)
-        if path != root and _cno_name(path.name) is not None:
+    for path, dirs, _files in (tree if tree is not None else _walk_tree(root)):
+        if _is_cno_dir(path, dirs, root):
             found.append(path)
     found.sort(key=lambda p: (p.name, p.relative_to(root).as_posix()))
     names = [p.name for p in found]
@@ -206,9 +217,9 @@ def _cno_dirs(root: Path):
     return found
 
 
-def _cno_entries(root: Path):
+def _cno_entries(root: Path, tree=None):
     """Structure-checked CNO folders (name order) as case dicts without CSV information; reads no file."""
-    cno_dirs = _cno_dirs(root)
+    cno_dirs = _cno_dirs(root, tree)
     cases = []
     for path in cno_dirs:
         if any(parent != root and parent in cno_dirs for parent in path.parents):
@@ -242,14 +253,15 @@ def discover_cno_cases(root: Path):
     return cases
 
 
-def _discover_cases(root: Path):
+def _discover_cases(root: Path, tree=None):
     """Case folders under a hotspot root and their images/ layout directories."""
     found, images_dirs = [], {}
-    cno_dirs = _cno_dirs(root)
-    for directory, dirs, files in os.walk(root):
+    if tree is None:
+        tree = _walk_tree(root)
+    cno_dirs = _cno_dirs(root, tree)
+    for path, dirs, files in tree:
         if ('1.png' in files or '2.png' in files
                 or any(HOTSPOT_RE.fullmatch(filename) for filename in files)):
-            path = Path(directory)
             if path.name.lower() == IMAGES_DIRNAME and path != root:
                 # <case>/images/ 배치: case 폴더는 그 상위이고 result/는 case 폴더 바로 아래에 있다.
                 if path.parent in cno_dirs:
@@ -342,8 +354,9 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
             _case_name(name)
     else:
         cno_expected = []
-    found, images_dirs = _discover_cases(root)
-    cno_cases = _cno_entries(root)
+    tree = _walk_tree(root)  # one directory walk for case and CNO discovery
+    found, images_dirs = _discover_cases(root, tree)
+    cno_cases = _cno_entries(root, tree)
     expected_source = None
     if expected_case_roots is not None:
         extra_roots = [Path(extra) for extra in expected_case_roots]

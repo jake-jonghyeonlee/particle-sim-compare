@@ -230,6 +230,38 @@ def test_memory_guard_refuses_before_reading_masks(tmp_path):
     assert error['code'] == 'oversized_real_operation'
 
 
+def test_reference_only_over_limit_is_refused_before_any_mask_is_read(tmp_path, monkeypatch):
+    code, _ = build(tmp_path)
+    code, out = set_report(tmp_path, lambda cfg: cfg.update(report={'map_window_um': 2}))
+    numeric = yaml.safe_load((tmp_path / 'numeric.yaml').read_text(encoding='utf-8'))
+    numeric['reference']['condition_assignment']['max_operation_bytes'] = 1024 ** 2  # target keeps the default
+    (tmp_path / 'numeric.yaml').write_text(yaml.safe_dump(numeric), encoding='utf-8')
+    import simcompare.compare2_report as module
+
+    def fail(*args, **kwargs):
+        raise AssertionError('a mask was read before the guards passed')
+    monkeypatch.setattr(module, '_scan_side', fail)
+    exit_code, folder = report(tmp_path, out)
+    assert exit_code == 2
+    error = json.loads((folder / 'error.json').read_text(encoding='utf-8'))
+    assert error['code'] == 'oversized_real_operation' and 'reference' in error['detail']
+
+
+def test_card_score_uses_one_scale_per_kind():
+    from simcompare.compare2_report import _cond_score, _score_scales
+    conds = [{'share_line': 0.5, 'share_pixel': None, 'delta_vi_line': 1.0, 'delta_vi_pixel': 3.0},
+             {'share_line': None, 'share_pixel': None, 'delta_vi_line': 1.0, 'delta_vi_pixel': 1.0},
+             {'share_line': -0.25, 'share_pixel': None, 'delta_vi_line': 0.0, 'delta_vi_pixel': 0.0}]
+    scales = _score_scales(conds)
+    assert scales == ({'line': 2.0, 'pixel': 4.0}, 3.0)
+    assert _cond_score(conds[0], scales) == 0.5 + 3.0 / 4.0      # share, then a ratio: never the raw 3.0
+    assert _cond_score(conds[1], scales) == 1.0 / 2.0 + 1.0 / 4.0
+    assert _cond_score(conds[2], scales) == 0.25
+    zero = {'line': 0.0, 'pixel': 0.0}
+    assert _cond_score({'share_line': None, 'share_pixel': None, 'delta_vi_line': 2.0, 'delta_vi_pixel': 0.0},
+                       (zero, 4.0)) == 0.5                        # no kind total: normalised by the largest |Δvi|
+
+
 def test_relative_position_includes_the_500px_border():
     from simcompare.compare2_report import _proportional
     big, small = {'unit_px': (5000.0, 5000.0)}, {'unit_px': (4000.0, 4000.0)}

@@ -29,7 +29,10 @@ REPORT_SCHEMA = 'compare2_report_v1'
 MAX_MAPS = 200
 RATIO_EPS = 1e-15
 FIXED_BYTES = 64 * 1024 ** 2
-LABEL_BYTES_PER_CELL = 10  # run-length labelling: 16 B per run (runs <= cells / 2) plus scratch, rounded up
+# Run-length labelling peak per cell (runs <= cells / 2, so each per-run array byte counts twice per cell):
+# four int32 arrays (rows, starts, ends, root) = 16 B/run -> 8 B/cell; ends - starts int32 temporary = 2;
+# float64 bincount weights = 4; the intp root cast used for the comparison/bincount = 4; total 18 B/cell.
+LABEL_BYTES_PER_CELL = 18
 FRAME_BYTES_PER_CELL = 2 + 1 + LABEL_BYTES_PER_CELL  # two bool masks, one layer PNG, labelling arrays
 WINDOW_BYTES_PER_CELL = 4 * 2 + 3  # two RGBA images and the three cropped bool windows per condition
 DEFAULT_MAX_OPERATION_BYTES = 8 * 1024 ** 3
@@ -114,17 +117,34 @@ def _changed(item):
     return any(item.get(f'delta_vi_{kind}') not in (None, 0, 0.0) for kind in ('line', 'pixel'))
 
 
-def _cond_score(item):
-    """|share_line| + |share_pixel|; |Δvi_line| + |Δvi_pixel| when both shares are null."""
-    if item.get('share_line') is None and item.get('share_pixel') is None:
-        return abs(item.get('delta_vi_line') or 0.0) + abs(item.get('delta_vi_pixel') or 0.0)
-    return abs(item.get('share_line') or 0.0) + abs(item.get('share_pixel') or 0.0)
+def _score_scales(conds):
+    """({kind: sum of |Δvi_kind| over the conditions}, largest |Δvi| of any condition and kind)."""
+    totals = {kind: sum(abs(c.get(f'delta_vi_{kind}') or 0.0) for c in conds) for kind in ('line', 'pixel')}
+    largest = max([abs(c.get(f'delta_vi_{kind}') or 0.0) for c in conds for kind in ('line', 'pixel')] + [0.0])
+    return totals, largest
+
+
+def _cond_score(item, scales):
+    """Sum over kinds of one dimensionless fraction: |share_kind|; else |Δvi_kind| / sum of |Δvi_kind| over all
+    conditions; else |Δvi_kind| / the largest |Δvi|. A kind never mixes the ratio and the raw scale."""
+    totals, largest = scales
+    score = 0.0
+    for kind in ('line', 'pixel'):
+        share, delta = item.get(f'share_{kind}'), abs(item.get(f'delta_vi_{kind}') or 0.0)
+        if share is not None:
+            score += abs(share)
+        elif totals[kind] > RATIO_EPS:
+            score += delta / totals[kind]
+        elif largest > RATIO_EPS:
+            score += delta / largest
+    return score
 
 
 def _changed_ranking(conds):
     """Indexes of the conditions that change vi, most influential first."""
+    scales = _score_scales(conds)
     return sorted((i for i, c in enumerate(conds) if _changed(c)),
-                  key=lambda i: (-_cond_score(conds[i]), conds[i]['layer'], conds[i]['pair_id']))
+                  key=lambda i: (-_cond_score(conds[i], scales), conds[i]['layer'], conds[i]['pair_id']))
 
 
 def _no_map_slot(item):
@@ -741,7 +761,8 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial):
     conds, cno = delta['conditions'], delta['cno']
     diameter, window_um, top_n = cfg2.report.diameter_um, cfg2.report.map_window_um, cfg2.report.top_n
     side_conds = {role: {c['condition_id']: c for c in doc['sides'][role]['conditions']} for role in ROLES}
-    entries = [('c', i, _cond_score(c)) for i, c in enumerate(conds)] + [
+    scales = _score_scales(conds)
+    entries = [('c', i, _cond_score(c, scales)) for i, c in enumerate(conds)] + [
         ('n', j, abs(c.get('share_pixel') or 0.0)) for j, c in enumerate(cno)]
     entries.sort(key=lambda e: (-e[2], e[0], (conds[e[1]]['layer'], conds[e[1]]['pair_id']) if e[0] == 'c'
                                 else (cno[e[1]]['density_layer'] or '', cno[e[1]]['case_name'])))

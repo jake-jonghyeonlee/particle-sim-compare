@@ -538,7 +538,7 @@ python -m simcompare compare2-report --compare2-dir data/compare2 --config compa
 | 3 | partial/unavailable/blocked 항목을 포함한 사용 가능한 부분 출력 | status, reasons, coverage, partial_value |
 | 2 | 입력/설정 불가 또는 지도 incomplete/unavailable | 오류 메시지, error.json; 지도 리포트 없음 |
 
-`compare2`의 종료 코드 3 원인: (1) 일부 입력이 비어 값이 `null`(밀도 파일의 빈 칸·레이어/크기 없음, CNO CSV 이상 등, 이유는 `reasons`), (2) glass 면적 미정(`glass_area_pending`), (3) 보존 검산 실패(`conservation_check_failed`). 설정·입력 오류는 2다.
+`compare2`의 종료 코드 3 원인: (1) 일부 입력이 비어 값이 `null`(밀도 파일의 빈 칸·레이어/크기 없음, CNO CSV 이상 등, 이유는 `reasons`), (2) glass 면적 미정(`glass_area_pending`), (3) 보존 검산 실패(`conservation_check_failed`), (4) 변화 분해 검산(`delta.check`)이 `passed`가 아님(`delta_check_failed`; `not_evaluated` 포함). 설정·입력 오류는 2다.
 
 `compare2-report`의 종료 코드 3 원인: (1) `compare2.json`의 한쪽 제품이라도 `available`이 아님, (2) 변화 분해 검산(`delta.check`)이 `passed`가 아님, (3) 지도·overlay 경고(`overlay_dl1_not_configured`, `overlay_layer_missing`, `map_input_missing`, `maps_capped` 등). 보고서는 쓴다. 경고 목록은 `report.json`에 있다. 오류는 2다.
 

@@ -1,5 +1,6 @@
 import csv
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -808,7 +809,12 @@ def test_stage1_runner_logs_import_error(tmp_path):
 # ---- compare2/T6: 3-part lateralopen (CNO) folders are not cases -------------------------------
 # Payload hash and manifest bytes of _source(tmp/'src') imported by the T6 baseline commit 3d36b63.
 NO_CNO_PAYLOAD_HASH = '29a8e5689cec3288c398e38da791ad88648cda2fb38945ac3cdf7ec89471cb04'
-NO_CNO_MANIFEST_SHA256 = 'e066add02801e587b4630797092f64254750d50f1742407e8691c50539251573'
+# manifest.json holds the sha256 of every mask .npz (record `mask_sha256`), and those bytes depend on the zlib build.
+# So the manifest is hashed with each mask_sha256 value replaced by a fixed token (bytes of the baseline manifest with
+# the same replacement), and the masks are compared by decoded content (sha256 of the bool array bytes, 16 hex).
+NO_CNO_MANIFEST_SHA256 = 'ac15dbad8d97aaab884f190a46eeab39bd9cfb16d052804ce8a64b1d15d9e83e'
+NO_CNO_MASK_DIGESTS = {'assets/00000_01.npz': ((1270, 1270), '040156c78200cbcb'),
+                       'assets/00000_02.npz': ((1270, 1270), '11c572f73aac642d')}
 CNO_NAME = 'lateralopen-CNO-gcnt'
 
 
@@ -830,10 +836,23 @@ def _manifest_of(out):
 
 def test_cno_free_root_manifest_is_byte_identical_to_baseline(tmp_path):
     import hashlib
+    import re
     _source(tmp_path / 'src')
     result = import_hotspots(tmp_path / 'src', tmp_path / 'out')
     assert result['source_payload_hash'] == NO_CNO_PAYLOAD_HASH
-    assert hashlib.sha256((tmp_path / 'out/manifest.json').read_bytes()).hexdigest() == NO_CNO_MANIFEST_SHA256
+    raw = (tmp_path / 'out/manifest.json').read_bytes()
+    normalized, replaced = re.subn(rb'("mask_sha256":\s*)"[0-9a-f]{64}"', rb'\1"<npz>"', raw)
+    assert replaced == len(NO_CNO_MASK_DIGESTS)
+    assert hashlib.sha256(normalized).hexdigest() == NO_CNO_MANIFEST_SHA256
+    digests = {}
+    for case in json.loads(raw)['cases']:
+        for record in case['records']:
+            if record.get('mask_path'):
+                with np.load(tmp_path / 'out' / record['mask_path']) as stored:
+                    mask = stored['mask']
+                assert mask.dtype == np.bool_
+                digests[record['mask_path']] = (mask.shape, hashlib.sha256(np.ascontiguousarray(mask).tobytes()).hexdigest()[:16])
+    assert digests == NO_CNO_MASK_DIGESTS
     assert discover_cno_cases(tmp_path / 'src') == []
 
 
@@ -992,3 +1011,52 @@ def test_broken_cno_csv_does_not_stop_import_or_discovery(tmp_path):
     import_hotspots(root, tmp_path / 'out')
     skipped = [d for d in _manifest_of(tmp_path / 'out')['diagnostics'] if d.get('status') == 'cno_case_skipped']
     assert [d['case'] for d in skipped] == [CNO_NAME]
+
+
+def _plain_case(parent, case='lateral_short-A-L1-B-L1'):
+    """A case folder directly under parent (no images/ layer): 1.png, hotspot masks and result/ in the case folder."""
+    folder = Path(parent) / case
+    (folder / 'result').mkdir(parents=True)
+    Image.new('L', (2270, 2270), 0).save(folder / '1.png')
+    Image.new('L', (2270, 2270), 0).save(folder / '2.png')
+    corner = np.zeros((1270, 1270), dtype=np.uint8)
+    corner[0, 0] = 255
+    Image.fromarray(corner).save(folder / 'hotspot_lateral_short01.png')
+    Image.fromarray(np.zeros_like(corner)).save(folder / 'hotspot_lateral_short02.png')
+    (folder / 'result/lateral_short.csv').write_text('defect_size(um),Area(um2)\n1,0.01\n2,0\n', encoding='utf-8-sig')
+    return folder
+
+
+def test_cno_named_grouping_folder_without_images_or_result_is_an_ordinary_folder(tmp_path):
+    root = tmp_path / 'src'
+    group = root / 'lateralopen-X-Y'  # holds 5-part cases only: no images/ and no result/ right below it
+    _plain_case(group)
+    assert discover_cno_cases(root) == []
+    result = import_hotspots(root, tmp_path / 'out')
+    manifest = _manifest_of(tmp_path / 'out')
+    assert result['cases'] == 1
+    assert [c['source_relative_path'] for c in manifest['cases']] == ['lateralopen-X-Y/lateral_short-A-L1-B-L1']
+    assert not [d for d in manifest['diagnostics'] if d.get('status') == 'cno_case_skipped']
+
+
+def test_cno_folder_with_images_or_result_is_still_cno(tmp_path):
+    root = tmp_path / 'src'
+    _plain_case(root)
+    (root / 'lateralopen-A-gcnt' / 'images').mkdir(parents=True)
+    (root / 'lateralopen-B-gcnt' / 'result').mkdir(parents=True)
+    (root / 'lateralopen-C-gcnt').mkdir()  # neither: ordinary (empty) folder
+    assert [c['case_name'] for c in discover_cno_cases(root)] == ['lateralopen-A-gcnt', 'lateralopen-B-gcnt']
+
+
+def test_import_walks_the_tree_once(tmp_path, monkeypatch):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root)
+    calls = []
+    real_walk = os.walk
+    monkeypatch.setattr(os, 'walk', lambda top, *a, **k: calls.append(str(top)) or real_walk(top, *a, **k))
+    import_hotspots(root, tmp_path / 'out')
+    assert len(calls) == 1
+    calls.clear()
+    discover_cno_cases(root)
+    assert len(calls) == 1

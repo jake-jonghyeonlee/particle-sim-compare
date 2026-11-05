@@ -536,3 +536,34 @@ def test_error_json_publish_failure_is_reported(tmp_path, monkeypatch, capsys):
     assert main(['compare2', '--config', str(tmp_path / 'bad.yaml'), '--out', str(tmp_path / 'o')]) == 2
     err = capsys.readouterr().err
     assert 'invalid_compare2_config' in err and 'disk full' in err
+
+
+def test_areas_are_rounded_only_when_written(tmp_path):
+    ref =([('lateral_short', 'A', 'L1', 'B', 'L1', {1: {0, 1, 2}})], [('AB', 'A', 'B', 'line')])
+    tgt = ([('lateral_short', 'A', 'L1', 'B', 'L1', {1: {0, 1, 2, 3, 4}})], [('AB', 'A', 'B', 'line')])
+    code, out = run(tmp_path, ref, tgt)
+    assert code == 0
+    doc = load(out)
+    texts = {name: (out / name).read_text(encoding='utf-8-sig') for name in ('compare2_layers.csv', 'compare2.json')}
+    for side in doc['sides'].values():
+        for row in side['layers']:
+            for size in row['by_size']:
+                for key in ('line_area_um2', 'pixel_eff_area_um2', 'transfer_area_um2'):
+                    assert size[key] == round(size[key], 6)
+        for cond in side['conditions']:
+            assert cond['area_excl_um2'] == round(cond['area_excl_um2'], 6)
+            for size in cond['by_size']:
+                assert size['area_excl_um2'] == round(size['area_excl_um2'], 6)
+    assert doc['sides']['target']['layers'][0]['by_size'][0]['line_area_um2'] == 0.05
+    assert '0.05000000000000001' not in texts['compare2_layers.csv'] + texts['compare2.json']
+
+
+def test_round_area_helper_and_unrounded_lambda():
+    from simcompare.compare2 import _area
+    assert _area(12.340000000000002) == 12.34
+    assert _area(0.1234567891) == 0.123457
+
+
+def test_usage_reference_lists_delta_check_failed():
+    text = (Path(__file__).resolve().parents[1] / 'docs' / 'usage_reference.md').read_text(encoding='utf-8')
+    assert 'delta_check_failed' in text[text.index('`compare2`의 종료 코드 3 원인'):][:600]
