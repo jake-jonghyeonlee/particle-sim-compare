@@ -4,6 +4,10 @@ Every value is computed from unrounded floats; `*_rounded` fields (6 digits) are
 Formulas: docs/implementation_memory.json § compare2_calculation_2026_11_05 and the T3 contract.
 lambda = density(count/glass) * CA(um^2, observed in the 2x2 crop) * factor, where the factor holds /4 and the
 panel scale (compare2_inputs.lambda_factor). A side with a missing input reports null instead of a guess.
+Null propagation: the line series and the pixel series are independent. A missing line input (glass area, line
+density, group status unavailable/partial) nulls only the line indicators and their deltas; a missing pixel input
+(pixel density, invalid CNO CSV) nulls only the pixel ones. A not_applicable group (vertical size below the
+interlayer distance) counts as 0 contribution, not as missing.
 """
 from __future__ import annotations
 
@@ -113,7 +117,8 @@ def _extract(areas):
         item = cells.setdefault(ck, _new_cell(group.frame.pixel_pitch_um ** 2))
         for status, reasons in ((group.line.area.status, group.line.area.reasons),
                                 (group.union.status, group.union.reasons)):
-            if status != 'available':
+            # not_applicable (vertical size below the interlayer distance) is a true 0 contribution
+            if status not in ('available', 'not_applicable'):
                 item['ok'] = False
                 item['reasons'].add('group_status_' + status)
                 item['reasons'].update(reasons or ())

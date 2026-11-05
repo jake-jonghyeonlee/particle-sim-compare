@@ -452,3 +452,24 @@ def test_output_folder_rules_and_error_json(tmp_path):
     assert main(['compare2', '--config', str(tmp_path / 'compare2.yaml')]) == 0
     assert not (out / 'error.json').exists()
     assert not [p for p in out.iterdir() if p.name.startswith('.compare2-')]
+
+
+def test_not_applicable_vertical_group_counts_as_zero(tmp_path):
+    from simcompare.compare2 import _compute_side, _extract
+    from simcompare.compare2_inputs import GroupConfig, ProductConfig, load_density
+    from simcompare.linepixel import compute_areas
+    from test_linepixel import make_case
+    case = make_case('v', 'A', 'B', {0, 1}, diameter=3, failure_type='vertical_short')
+    result = compute_areas([case], condition_stats=True)
+    statuses = {k.diameter_um: g.union.status for k, g in result.groups.items()}
+    assert statuses[1] == 'not_applicable' and statuses[3] == 'available'
+    extracted = _extract(result)
+    write_density(tmp_path / 'density', 'mobile', {'density-M2': {3: 2.0}}, {'density-M2': {3: 1.0}})
+    tables = load_density(tmp_path / 'density', 'mobile')
+    product = ProductConfig('reference', 'mobile', (20, 10), tmp_path)
+    group = GroupConfig('mobile', 50.0, 1.0, 1.0)
+    meta = {'expected_case_coverage_status': 'confirmed', 'same_name_cases_unresolved': False}
+    side = _compute_side('reference', product, group, tables, extracted, meta)
+    assert not side['reasons'] and side['vi']['line'] is not None and side['vi']['pixel'] is not None
+    assert side['size_lam'][('M2', 'density-M2', 1)] == (0.0, 0.0)
+    assert close(side['lam']['line'], 2.0 * 2 * 1 * FACTOR)  # 2 cells x pitch^2 1.0 at 3 um
