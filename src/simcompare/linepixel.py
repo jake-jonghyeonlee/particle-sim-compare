@@ -228,6 +228,7 @@ class GroupArea:
     failure_pieces: dict[str, AreaMetric]
     failure_piece_packed: dict[str, PackedMask]
     fractions: dict[str, FractionMetric] = field(default_factory=dict)
+    condition_stats: dict | None = None  # opt-in (compute_areas(condition_stats=True)); integer cell counts
 
     @property
     def line_mask(self) -> np.ndarray:
@@ -259,7 +260,7 @@ class GroupArea:
 
     def to_dict(self) -> dict:
         """JSON-ready provenance and area schema; binary arrays remain original assets."""
-        return {
+        out = {
             'group': asdict(self.key),
             'frame': {'frame_id': self.frame.frame_id, 'pixel_pitch_um': self.frame.pixel_pitch_um,
                       'origin_xy_um': list(self.frame.origin_xy_um), 'shape_yx': list(self.frame.shape_yx),
@@ -277,6 +278,15 @@ class GroupArea:
             'frame_area_um2': self.frame_area_um2,
             'fraction_of_frame': {name:asdict(metric) for name,metric in self.fractions.items()},
         }
+        if self.condition_stats is not None:
+            out['condition_stats'] = copy.deepcopy(_sorted_stats(self.condition_stats))
+        return out
+
+
+def _sorted_stats(value):
+    if isinstance(value, dict):
+        return {k: _sorted_stats(value[k]) for k in sorted(value)}
+    return value
 
 
 def _share_dict(share) -> dict:
@@ -521,7 +531,7 @@ class _UnionMeta(NamedTuple):
 
 def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
            max_bucket_entries=DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES,
-           max_label_entries=DEFAULT_MAX_LABEL_PATTERN_ENTRIES, top_buckets=None):
+           max_label_entries=DEFAULT_MAX_LABEL_PATTERN_ENTRIES, top_buckets=None, condition_stats=False):
     """top_buckets=None keeps every bucket; an int N keeps lineage/contributors only for the N largest buckets per class."""
     entries = sorted(entries, key=lambda item: _json(asdict(item[0].identity)))
     frame = entries[0][1].frame
@@ -629,12 +639,25 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
     union = line | combined[PIXEL]
     budget = [0]
 
-    def shares(kind, keep):
+    def shares(kind, keep, collect=None):
         mask_bits = pair_bits[kind]
         pair_ids = sorted(mask_bits)
         label, counts, ids = _partition_labels(
             pair_ids, lambda pid: np.flatnonzero(_unpack_flat(mask_bits[pid], size) & keep), size,
             live_limit=max_label_entries, on_oversize=lambda n: _oversized_label_patterns(key, n, max_label_entries))
+        if collect is not None:  # opt-in condition_stats: integer cell counts only, label array not kept
+            collect[kind] = {'exclusive_cells': {pid: int(counts.get((pid,), 0)) for pid in pair_ids},
+                             'shared_cells': int(sum(n for members, n in counts.items() if len(members) > 1))}
+            if kind == LINE:
+                p_bits = combined[PIXEL]
+                step = (chunk_cells + 7) // 8 * 8  # byte-aligned so packed slices match cell slices
+                per_label = np.zeros(max(ids.values(), default=0) + 1, dtype=np.int64)
+                for start in range(0, size, step):
+                    stop = min(start + step, size)
+                    in_p = np.unpackbits(p_bits[start // 8:(stop + 7) // 8])[:stop - start].view(np.bool_)
+                    per_label += np.bincount(label[start:stop][in_p], minlength=per_label.size)[:per_label.size]
+                collect['transfer_by_line_pair_cells'] = {
+                    pid: int(per_label[ids[(pid,)]]) if (pid,) in ids else 0 for pid in pair_ids}
         ordered = sorted(counts.items())
         if top_buckets is not None:
             # largest area first; the stable sort keeps the member-tuple order among ties
@@ -686,8 +709,9 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
         for name in ('vertical_only', 'simultaneous'):
             pieces[name] = replace(pieces[name], value=None, partial_value=None, status='not_applicable',
                                    reasons=('all_vertical_sources_not_applicable',))
-    line_share = shares(LINE, valid_flat)
-    pixel_share = shares(PIXEL, valid_flat & ~_unpack_flat(line, size))
+    stats = {} if condition_stats else None
+    line_share = shares(LINE, valid_flat, stats)
+    pixel_share = shares(PIXEL, valid_flat & ~_unpack_flat(line, size), stats)
     group = GroupArea(key, frame, line_share, pixel_share,
                       metric(packed(transfer).count() * pixel_area), metric(packed(union).count() * pixel_area),
                       tuple(sources), electrodes, packed(line), packed(effective), packed(transfer), packed(union),
@@ -697,12 +721,18 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
                        'transfer': fraction_of_frame(group.transfer, frame),
                        'union': fraction_of_frame(group.union, frame),
                        **{name: fraction_of_frame(pieces[name], frame) for name in FAILURE_PIECES}}
+    if stats is not None:
+        by_pair = stats['transfer_by_line_pair_cells']
+        group.condition_stats = {
+            'line': stats[LINE], 'pixel': stats[PIXEL], 'transfer_by_line_pair_cells': by_pair,
+            'transfer_shared_cells': packed(transfer).count() - sum(by_pair.values())}
     return group
 
 
 def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells: int = 65536,
                   max_bucket_output_entries: int | None = None, bucket_detail: str | None = None,
-                  top_buckets: int | None = None, max_label_pattern_entries: int | None = None) -> AreaResult:
+                  top_buckets: int | None = None, max_label_pattern_entries: int | None = None,
+                  condition_stats: bool = False) -> AreaResult:
     """Per-source-condition/layer/diameter full-mask areas with conservative coverage.
 
     Incomplete groups expose observed-source partial areas, not lower bounds:
@@ -797,7 +827,8 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
     return AreaResult({key: _group(key, grouped[key], chunk_cells, table_version, raw_copies=raw_copies,
                                    max_bucket_entries=max_bucket_output_entries,
                                    max_label_entries=max_label_pattern_entries,
-                                   top_buckets=top_buckets if bucket_detail == 'summary' else None)
+                                   top_buckets=top_buckets if bucket_detail == 'summary' else None,
+                                   condition_stats=condition_stats)
                        for key in sorted(grouped)},
                       copy.deepcopy(dataset.gates) if dataset else {}, provenance.get('input_hash'),
                       table_version, provenance.get('pair_table_hash'), bool(provenance.get('is_synthetic',False)))

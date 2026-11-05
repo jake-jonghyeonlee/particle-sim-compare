@@ -1,6 +1,6 @@
 {
   "project": "particle-sim-compare",
-  "updated_at": "2026-11-05T16:30:00+09:00",
+  "updated_at": "2026-11-06T10:00:00+09:00",
   "source": "2026-10-04 user conversation: preserve technically feasible multilayer DL design for implementation; clarify that comparison candidates are product models, not cropped regions",
   "status": "User-requested implementation reference. Architecture is feasible in principle; no real-data performance validation or implementation completion claimed.",
   "terminology": {
@@ -608,7 +608,7 @@
       "final lambda is always recomputed from deduplicated areas; pair-level sums are not added to it"
     ],
     "vertical_short_boundary": "size < interlayer distance: image exists with no hotspot, CA = 0 (not missing). size == distance: include in both CA weighting and the union. The team's existing code excludes equality from the union only; the user judges that a bug. simcompare already uses strict diameter_um < height_um (src/simcompare/linepixel.py).",
-    "per_condition_impact": "Goal: the impact of one defect condition on line and on pixel must be quantifiable directly. Use pixel labels: line exclusive, line shared, pixel exclusive, pixel shared, transfer (area only this line condition covers where a pixel condition also lies). Removing the condition changes line by -line exclusive and pixel by +transfer (line condition) or -pixel exclusive (pixel condition).",
+    "per_condition_impact": "Proposed by the assistant (not a user decision). Goal: the impact of one defect condition on line and on pixel must be quantifiable directly. Use pixel labels: line exclusive, line shared, pixel exclusive, pixel shared, transfer (area only this line condition covers where a pixel condition also lies). Removing the condition changes line by -line exclusive and pixel by +transfer (line condition) or -pixel exclusive (pixel condition). Pixel exclusive/shared are measured on P_eff (= P & ~line, the pixel area the line does not cover), not on raw pixel.",
     "supersedes": [
       "current_yield_practice_2026_10_07.answers_2026_10_07.defect_density (same value for line and pixel) -> separate files",
       "2x2 to one-unit conversion (open since 2026-10-07) -> divide by 4",
@@ -617,7 +617,19 @@
     "code_gaps": [
       "density contract takes one distribution per layer; needs a line / pixel axis",
       "no CNO branch, pi/4 factor, k, CRP or vi in linepixel.py",
-      "compute A/B deltas and per-condition impact on unrounded values; round only for display"
-    ]
+      "compute A/B deltas and per-condition impact on unrounded values; round only for display (assistant advice, not a user decision)"
+    ],
+    "answers_2026_11_05_round3_and_11_06": [
+      "density CSV: rows = layer, columns = size, value = defects per glass, separate for line and pixel, one file pair per product family (<family>_line.csv / <family>_pixel.csv)",
+      "glass area is fixed per product family; the value is pending (null -> pending)",
+      "model-family weights come from config",
+      "CRP family names: mobile and watch use 1, every other family uses 2.92 (fixed)",
+      "CA is the ratio to the unit area; the unit area cancels in lambda: lambda = sum(dens x CA/4 x N_x x N_y x w) / A_glass",
+      "/4 applies to the observed (cropped, outer 500 px excluded) area; approved conversion, no border restoration",
+      "CNO folder lateralopen-CNO-<cnt layer> in 3 pieces; subfolders images/result; CSV result/lateral_open.csv; density = the pixel-table row of that cnt layer (gcnt/ocnt/pcnt)",
+      "CNO uses the CSV only and does not check overlap with pixel short (user, 2026-11-06)",
+      "the report comes straight from compare2, without ETX stages 4-6"
+    ],
+    "condition_breakdown_definition": "Plan section 7. Change breakdown (A to B, totals 100%) uses the existing L / P_eff partition. Removal impact is separate: line = -excl_L, +transfer(l) at the pixel lambda; pixel = -excl_Peff; CNO = -its own lambda. compute_areas(condition_stats=True) supplies the integer cell counts (line/pixel exclusive and shared, transfer by line pair, transfer shared)."
   }
 }
