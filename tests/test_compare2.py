@@ -473,3 +473,56 @@ def test_not_applicable_vertical_group_counts_as_zero(tmp_path):
     assert not side['reasons'] and side['vi']['line'] is not None and side['vi']['pixel'] is not None
     assert side['size_lam'][('M2', 'density-M2', 1)] == (0.0, 0.0)
     assert close(side['lam']['line'], 2.0 * 2 * 1 * FACTOR)  # 2 cells x pitch^2 1.0 at 3 um
+
+
+def test_error_after_success_leaves_only_error_json(tmp_path):
+    code, out = run(tmp_path, (base_cases(), PAIRS), (base_cases(), PAIRS))
+    assert code == 0 and (out / 'compare2.json').is_file()
+    (tmp_path / 'density' / 'mobile_line.csv').write_text('layer,notasize\nP1,1\n', encoding='utf-8')
+    assert main(['compare2', '--config', str(tmp_path / 'compare2.yaml')]) == 2
+    assert sorted(p.name for p in out.iterdir()) == ['error.json']
+    assert json.loads((out / 'error.json').read_text())['code'] == 'invalid_density_csv'
+
+
+def test_config_error_with_explicit_out_still_writes_error_json(tmp_path):
+    (tmp_path / 'bad.yaml').write_text('schema_version: other\n', encoding='utf-8')
+    out = tmp_path / 'o'
+    assert main(['compare2', '--config', str(tmp_path / 'bad.yaml'), '--out', str(out)]) == 2
+    assert json.loads((out / 'error.json').read_text())['code'] == 'invalid_compare2_config'
+    assert main(['compare2', '--config', str(tmp_path / 'bad.yaml')]) == 2  # no --out, no readable config: stderr only
+
+
+def test_equal_crp_has_no_crp_difference_row(tmp_path):
+    code, out = run(tmp_path, (base_cases(), PAIRS), (base_cases(DE={1: {1, 4}}), PAIRS))
+    assert code == 0
+    doc = load(out)
+    assert doc['delta']['crp_difference'] is None and doc['delta']['check']['status'] == 'passed'
+    assert 'crp_difference' not in (out / 'compare2_conditions.csv').read_text(encoding='utf-8-sig')
+
+
+def test_missing_density_for_zero_area_size_is_not_partial(tmp_path):
+    # L2 has no pixel cells at all; its pixel density layer is absent. Line series and exit code are unaffected.
+    cases = [c for c in base_cases() if c[1] != 'I']
+    pairs = [p for p in PAIRS if p[0] != 'IJ']
+    pixel = {'P1': DENS_PIXEL['P1'], 'gcnt': DENS_PIXEL['gcnt']}
+    code, out = run(tmp_path, (cases, pairs), (cases, pairs), pixel=pixel)
+    assert code == 0, load(out)['sides']['reference']['reasons']
+    side = load(out)['sides']['reference']
+    l2 = [r for r in side['layers'] if r['layer'] == 'L2'][0]
+    assert l2['lambda_pixel'] == 0.0
+    assert 'density_missing_zero_area:pixel' in l2['by_size'][0]['reasons']
+    assert side['vi_pixel'] is not None
+
+
+def test_mixed_pixel_pitch_is_rejected():
+    from simcompare.compare2 import _extract
+    from simcompare.linepixel import compute_areas
+    from simcompare.numeric_schema import NumericContractError
+    from test_linepixel import make_case
+    result = compute_areas([make_case('a', 'A', 'B', {0}, product='p', source='s1'),
+                            make_case('b', 'A', 'C', {1}, product='p', source='s2', pitch=0.5)],
+                           condition_stats=True)
+    # different source ids give different groups that merge into one size key
+    with pytest.raises(NumericContractError) as info:
+        _extract(result)
+    assert info.value.code == 'mixed_pixel_pitch'

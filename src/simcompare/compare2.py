@@ -12,6 +12,7 @@ interlayer distance) counts as 0 contribution, not as missing.
 from __future__ import annotations
 
 import csv
+import io
 import json
 import math
 import os
@@ -24,8 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, CRP_ONE_GROUPS, ROUND_DIGITS, VI_LINE_DIVISOR,
-                              VI_PIXEL_DIVISOR, cno_lambda_factor, collect_cno, lambda_factor,
-                              load_compare2_config, load_density, size_key)
+                              VI_PIXEL_DIVISOR, cno_lambda_factor, collect_cno, crp_for_group,
+                              lambda_factor, load_compare2_config, load_density, size_key)
 from .numeric_schema import NumericContractError
 
 SCHEMA_VERSION = 'compare2_v1'
@@ -89,10 +90,6 @@ def _within(error, reference):
     return abs(error) <= CONSERVATION_TOL * max(1.0, abs(reference))
 
 
-def _crp(group_name):
-    return 1.0 if str(group_name).lower() in CRP_ONE_GROUPS else CRP_DEFAULT_OTHER
-
-
 def _diameter_json(key):
     return float(key)
 
@@ -114,7 +111,10 @@ def _extract(areas):
         if stats is None:
             raise NumericContractError('compare2_condition_stats_missing', 'compute_areas(condition_stats=True) is required')
         ck = (key.analysis_layer, key.density_process_layer, size_key(key.diameter_um))
-        item = cells.setdefault(ck, _new_cell(group.frame.pixel_pitch_um ** 2))
+        pitch_area = group.frame.pixel_pitch_um ** 2
+        item = cells.setdefault(ck, _new_cell(pitch_area))
+        if item['a'] != pitch_area:
+            raise NumericContractError('mixed_pixel_pitch', f'{ck}: groups merged into one size differ in pixel pitch')
         for status, reasons in ((group.line.area.status, group.line.area.reasons),
                                 (group.union.status, group.union.reasons)):
             # not_applicable (vertical size below the interlayer distance) is a true 0 contribution
@@ -197,6 +197,10 @@ def _compute_side(role, product, group, tables, extracted, meta):
             value, why = tables[kind].lookup(dlayer, diameter)
             density[kind] = value
             if why is not None:
+                needed = item['line'] if kind == 'line' else item['peff'] + item['transfer']
+                if needed == 0:  # nothing to weight: contribution 0, informational only
+                    notes.append(f'density_missing_zero_area:{kind}')
+                    continue
                 notes.append(why)
                 reasons.add(f'{why}:{kind}:{dlayer}')
                 ok[kind] = False
@@ -209,8 +213,10 @@ def _compute_side(role, product, group, tables, extracted, meta):
     def lam(kind, ck, count):
         entry = entries[ck]
         factor = factors[kind]
-        if not entry['ok'] or entry['density'][kind] is None or factor is None:
+        if not entry['ok'] or factor is None:
             return None
+        if entry['density'][kind] is None:
+            return 0.0 if count == 0 else None
         return entry['density'][kind] * count * entry['item']['a'] * factor
 
     # layers and sizes
@@ -314,7 +320,7 @@ def _compute_side(role, product, group, tables, extracted, meta):
     total_cno = _sum_opt(row['lambda'] for row in cno_rows.values()) if cno_ok else None
     ok['pixel'] = ok['pixel'] and cno_ok
 
-    crp = _crp(product.model_group)
+    crp = crp_for_group(product.model_group)
     x_pixel = _add(total_pixel, total_cno)
     side = {
         'role': role, 'product': product, 'group': group, 'crp': crp, 'factors': factors, 'ok': ok,
@@ -388,10 +394,11 @@ def _delta(a, b):
         slope, method = _slope_g(a['x_pixel'], b['x_pixel'])
         s_pixel = slope / (b['crp'] * VI_PIXEL_DIVISOR)
         out['slopes']['pixel'] = {'value': s_pixel, 'method': method}
-        out['crp_difference'] = {
-            'delta_vi_pixel': _g(a['x_pixel']) * (1 / b['crp'] - 1 / a['crp']) / VI_PIXEL_DIVISOR}
-        out['crp_difference']['share_pixel'] = _ratio(out['crp_difference']['delta_vi_pixel'],
-                                                         ind['delta_vi_pixel'])
+        if a['crp'] != b['crp']:
+            out['crp_difference'] = {
+                'delta_vi_pixel': _g(a['x_pixel']) * (1 / b['crp'] - 1 / a['crp']) / VI_PIXEL_DIVISOR}
+            out['crp_difference']['share_pixel'] = _ratio(out['crp_difference']['delta_vi_pixel'],
+                                                             ind['delta_vi_pixel'])
     dvi_line, dvi_pixel = ind['delta_vi_line'], ind['delta_vi_pixel']
 
     sums = {'line': 0.0, 'pixel': 0.0}
@@ -549,12 +556,6 @@ def _fmt(value):
     return '' if value is None else value
 
 
-def _write_csv(path, fields, rows):
-    with path.open('w', encoding='utf-8-sig', newline='') as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({name: _fmt(row.get(name)) for name in fields})
 
 
 def _csv_documents(doc):
@@ -672,7 +673,7 @@ def _owned_output(out: Path):
         return True
     if not out.is_dir():
         return False
-    for path in out.iterdir():
+    for path in sorted(out.iterdir()):
         if path.name.startswith('.compare2-'):
             continue
         if path.name not in OWNED_NAMES:
@@ -699,16 +700,13 @@ def _publish(out: Path, files):
         shutil.rmtree(str(tmp), ignore_errors=True)
 
 
-def _publish_csv(out: Path, documents):
-    out.mkdir(parents=True, exist_ok=True)
-    tmp = Path(tempfile.mkdtemp(prefix='.compare2-', dir=str(out)))
-    try:
-        for name, fields, rows in documents:
-            _write_csv(tmp / name, fields, rows)
-        for name, _fields, _rows in documents:
-            os.replace(str(tmp / name), str(out / name))
-    finally:
-        shutil.rmtree(str(tmp), ignore_errors=True)
+def _csv_text(fields, rows):
+    buffer = io.StringIO(newline='')
+    writer = csv.DictWriter(buffer, fieldnames=fields)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({name: _fmt(row.get(name)) for name in fields})
+    return '﻿' + buffer.getvalue()  # utf-8-sig
 
 
 def build_compare2(config_path):
@@ -770,8 +768,8 @@ def run_compare2(config_path, out=None):
     if not _owned_output(output):
         raise NumericContractError('compare2_output_not_owned', f'{output}: use a new folder or a previous compare2 folder')
     document, status, reasons = build_compare2(config_path)
-    documents = _csv_documents(document)
-    _publish_csv(output, documents)
+    texts = [(name, _csv_text(fields, rows)) for name, fields, rows in _csv_documents(document)]
+    texts.append(('compare2.json', _json_text(document)))
     exit_code = 0 if status == 'available' else 3
     outputs = [str(output / name) for name in ('compare2.json', 'compare2_summary.csv', 'compare2_layers.csv',
                                                'compare2_conditions.csv', 'compare2_cno.csv')]
@@ -780,7 +778,8 @@ def run_compare2(config_path, out=None):
               'started_at': datetime.fromtimestamp(started, timezone.utc).isoformat(),
               'finished_at': datetime.now(timezone.utc).isoformat(),
               'elapsed_seconds': round(time.time() - started, 3), 'exit_code': exit_code}
-    _publish(output, [('compare2.json', _json_text(document)), ('execution.json', _json_text(record))])
+    texts.append(('execution.json', _json_text(record)))  # every text exists before the first file is written
+    _publish(output, texts)
     (output / 'error.json').unlink(missing_ok=True)
     return record
 
@@ -789,15 +788,20 @@ def main_compare2(config, out, print_result, error_stream=None):
     """CLI body: prints the record, or writes error.json (only) and returns 2."""
     error_stream = error_stream or sys.stderr
     output = None
+    if out is not None:
+        output = Path(out)
     try:
-        cfg2 = load_compare2_config(config)
-        output = Path(out) if out is not None else cfg2.output_dir
+        if output is None:
+            output = load_compare2_config(config).output_dir
         record = run_compare2(config, out)
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
         code = getattr(exc, 'code', 'input_or_config_error')
         print(f'오류: {exc}', file=error_stream)
         if output is not None and getattr(exc, 'code', None) != 'compare2_output_not_owned' and _owned_output(output):
             try:
+                # a failed run leaves no stale results next to error.json
+                for name in OWNED_NAMES - {'error.json'}:
+                    (output / name).unlink(missing_ok=True)
                 _publish(output, [('error.json', _json_text({'command': EXECUTION_COMMAND, 'code': code,
                                                             'detail': str(exc), 'exit_code': 2}))])
             except OSError:
