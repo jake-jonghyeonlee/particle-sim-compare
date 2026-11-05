@@ -96,14 +96,15 @@ def _diameter_json(key):
 
 # ---- extraction from the area result ----------------------------------------------------------------------------
 
-def _new_cell(pitch_area):
-    return {'a': pitch_area, 'ok': True, 'reasons': set(), 'line': 0, 'peff': 0, 'transfer': 0,
-            'shared_l': 0, 'shared_p': 0, 'excl_l': defaultdict(int), 'excl_p': defaultdict(int),
-            'tr': defaultdict(int)}
+def _new_cell():
+    """Areas in um^2 (cells x pitch^2 per group); 'a' stays 1.0 so count-times-a code reads the area as is."""
+    return {'a': 1.0, 'ok': True, 'reasons': set(), 'line': 0.0, 'peff': 0.0, 'transfer': 0.0,
+            'shared_l': 0.0, 'shared_p': 0.0, 'excl_l': defaultdict(float), 'excl_p': defaultdict(float),
+            'tr': defaultdict(float)}
 
 
 def _extract(areas):
-    """Integer cell counts per (analysis_layer, density_layer, diameter) and per condition; masks are dropped."""
+    """Areas (um^2) per (analysis_layer, density_layer, diameter) and per condition; masks are dropped."""
     cells, classes, electrodes = {}, {}, {}
     for key in sorted(areas.groups):
         group = areas.groups[key]
@@ -111,10 +112,8 @@ def _extract(areas):
         if stats is None:
             raise NumericContractError('compare2_condition_stats_missing', 'compute_areas(condition_stats=True) is required')
         ck = (key.analysis_layer, key.density_process_layer, size_key(key.diameter_um))
-        pitch_area = group.frame.pixel_pitch_um ** 2
-        item = cells.setdefault(ck, _new_cell(pitch_area))
-        if item['a'] != pitch_area:
-            raise NumericContractError('mixed_pixel_pitch', f'{ck}: groups merged into one size differ in pixel pitch')
+        pitch_area = group.frame.pixel_pitch_um ** 2  # each group adds cells x its own pitch^2 (area, um^2)
+        item = cells.setdefault(ck, _new_cell())
         for status, reasons in ((group.line.area.status, group.line.area.reasons),
                                 (group.union.status, group.union.reasons)):
             # not_applicable (vertical size below the interlayer distance) is a true 0 contribution
@@ -122,19 +121,19 @@ def _extract(areas):
                 item['ok'] = False
                 item['reasons'].add('group_status_' + status)
                 item['reasons'].update(reasons or ())
-        item['line'] += group.line_packed.count()
-        item['peff'] += group.pixel_effective_packed.count()
-        item['transfer'] += group.transfer_packed.count()
-        item['shared_l'] += stats['line']['shared_cells']
-        item['shared_p'] += stats['pixel']['shared_cells']
+        item['line'] += group.line_packed.count() * pitch_area
+        item['peff'] += group.pixel_effective_packed.count() * pitch_area
+        item['transfer'] += group.transfer_packed.count() * pitch_area
+        item['shared_l'] += stats['line']['shared_cells'] * pitch_area
+        item['shared_p'] += stats['pixel']['shared_cells'] * pitch_area
         for pid, count in stats['line']['exclusive_cells'].items():
-            item['excl_l'][pid] += count
+            item['excl_l'][pid] += count * pitch_area
             classes[(pid, key.analysis_layer)] = 'line'
         for pid, count in stats['pixel']['exclusive_cells'].items():
-            item['excl_p'][pid] += count
+            item['excl_p'][pid] += count * pitch_area
             classes[(pid, key.analysis_layer)] = 'pixel'
         for pid, count in stats['transfer_by_line_pair_cells'].items():
-            item['tr'][pid] += count
+            item['tr'][pid] += count * pitch_area
         for pid, pair in group.pair_membership.items():
             electrodes[(pid, key.analysis_layer)] = list(pair)
     return {'cells': cells, 'classes': classes, 'electrodes': electrodes}
@@ -555,9 +554,6 @@ def _product_json(side, density_tables):
 def _fmt(value):
     return '' if value is None else value
 
-
-
-
 def _csv_documents(doc):
     sides, delta = doc['sides'], doc['delta']
     summary_fields = ['scope', 'model_group', 'status', 'lambda_line', 'lambda_pixel', 'lambda_cno', 'caa_line',
@@ -693,7 +689,8 @@ def _publish(out: Path, files):
     tmp = Path(tempfile.mkdtemp(prefix='.compare2-', dir=str(out)))
     try:
         for name, text in files:
-            (tmp / name).write_text(text, encoding='utf-8', newline='\n')
+            with open(str(tmp / name), 'w', encoding='utf-8', newline='\n') as handle:  # write_text(newline=) is 3.10+
+                handle.write(text)
         for name, _text in files:
             os.replace(str(tmp / name), str(out / name))
     finally:
@@ -804,8 +801,8 @@ def main_compare2(config, out, print_result, error_stream=None):
                     (output / name).unlink(missing_ok=True)
                 _publish(output, [('error.json', _json_text({'command': EXECUTION_COMMAND, 'code': code,
                                                             'detail': str(exc), 'exit_code': 2}))])
-            except OSError:
-                pass
+            except Exception as publish_error:  # still exit 2; say why error.json is missing
+                print(f'오류: error.json 을 쓰지 못했습니다 (원래 오류 {code}): {publish_error}', file=error_stream)
         return 2
     print_result(record)
     return record['exit_code']

@@ -514,15 +514,25 @@ def test_missing_density_for_zero_area_size_is_not_partial(tmp_path):
     assert side['vi_pixel'] is not None
 
 
-def test_mixed_pixel_pitch_is_rejected():
+def test_mixed_pixel_pitch_accumulates_exact_area():
     from simcompare.compare2 import _extract
     from simcompare.linepixel import compute_areas
-    from simcompare.numeric_schema import NumericContractError
     from test_linepixel import make_case
     result = compute_areas([make_case('a', 'A', 'B', {0}, product='p', source='s1'),
                             make_case('b', 'A', 'C', {1}, product='p', source='s2', pitch=0.5)],
                            condition_stats=True)
-    # different source ids give different groups that merge into one size key
-    with pytest.raises(NumericContractError) as info:
-        _extract(result)
-    assert info.value.code == 'mixed_pixel_pitch'
+    # different source ids give two groups that merge into one size key: 1 cell x 1.0 + 1 cell x 0.25 um^2
+    item = _extract(result)['cells'][('M2', 'density-M2', 5)]
+    assert item['line'] == 1.25 and sum(item['excl_l'].values()) == 1.25
+
+
+def test_error_json_publish_failure_is_reported(tmp_path, monkeypatch, capsys):
+    import simcompare.compare2 as compare2
+    (tmp_path / 'bad.yaml').write_text('schema_version: other\n', encoding='utf-8')
+
+    def broken(*args, **kwargs):
+        raise RuntimeError('disk full')
+    monkeypatch.setattr(compare2, '_publish', broken)
+    assert main(['compare2', '--config', str(tmp_path / 'bad.yaml'), '--out', str(tmp_path / 'o')]) == 2
+    err = capsys.readouterr().err
+    assert 'invalid_compare2_config' in err and 'disk full' in err
