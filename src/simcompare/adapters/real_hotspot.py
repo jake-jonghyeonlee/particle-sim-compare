@@ -200,7 +200,7 @@ def _is_cno_dir(path: Path, dirs, root: Path):
     """A 3-part lateralopen name AND an images/ or result/ folder right below it. A same-named folder holding
     neither is an ordinary folder (e.g. a grouping folder above 5-part case folders)."""
     return (path != root and _cno_name(path.name) is not None
-            and any(name.lower() in (IMAGES_DIRNAME, 'result') for name in dirs))
+            and any(name.lower() == IMAGES_DIRNAME or name == 'result' for name in dirs))  # as case discovery / _csv_areas
 
 
 def _cno_dirs(root: Path, tree=None):

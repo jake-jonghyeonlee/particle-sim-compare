@@ -29,10 +29,9 @@ REPORT_SCHEMA = 'compare2_report_v1'
 MAX_MAPS = 200
 RATIO_EPS = 1e-15
 FIXED_BYTES = 64 * 1024 ** 2
-# Run-length labelling peak per cell (runs <= cells / 2, so each per-run array byte counts twice per cell):
-# four int32 arrays (rows, starts, ends, root) = 16 B/run -> 8 B/cell; ends - starts int32 temporary = 2;
-# float64 bincount weights = 4; the intp root cast used for the comparison/bincount = 4; total 18 B/cell.
-LABEL_BYTES_PER_CELL = 18
+# Run-length labelling worst case (runs = cells / 2): 52 B/run = 26 B/cell, made of rows/starts/ends/root int32 = 16,
+# roots intp = 8, ends - starts int32 = 4, float64 bincount weights = 8, intp root cast = 8, float64 bincount = 8.
+LABEL_BYTES_PER_CELL = 26
 FRAME_BYTES_PER_CELL = 2 + 1 + LABEL_BYTES_PER_CELL  # two bool masks, one layer PNG, labelling arrays
 WINDOW_BYTES_PER_CELL = 4 * 2 + 3  # two RGBA images and the three cropped bool windows per condition
 DEFAULT_MAX_OPERATION_BYTES = 8 * 1024 ** 3
@@ -117,10 +116,11 @@ def _changed(item):
     return any(item.get(f'delta_vi_{kind}') not in (None, 0, 0.0) for kind in ('line', 'pixel'))
 
 
-def _score_scales(conds):
-    """({kind: sum of |Δvi_kind| over the conditions}, largest |Δvi| of any condition and kind)."""
-    totals = {kind: sum(abs(c.get(f'delta_vi_{kind}') or 0.0) for c in conds) for kind in ('line', 'pixel')}
-    largest = max([abs(c.get(f'delta_vi_{kind}') or 0.0) for c in conds for kind in ('line', 'pixel')] + [0.0])
+def _score_scales(conds, cno=()):
+    """({kind: sum of |Δvi_kind| over the conditions and CNO rows}, largest |Δvi| of any row and kind)."""
+    rows = list(conds) + list(cno)
+    totals = {kind: sum(abs(c.get(f'delta_vi_{kind}') or 0.0) for c in rows) for kind in ('line', 'pixel')}
+    largest = max([abs(c.get(f'delta_vi_{kind}') or 0.0) for c in rows for kind in ('line', 'pixel')] + [0.0])
     return totals, largest
 
 
@@ -761,9 +761,9 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial):
     conds, cno = delta['conditions'], delta['cno']
     diameter, window_um, top_n = cfg2.report.diameter_um, cfg2.report.map_window_um, cfg2.report.top_n
     side_conds = {role: {c['condition_id']: c for c in doc['sides'][role]['conditions']} for role in ROLES}
-    scales = _score_scales(conds)
+    scales = _score_scales(conds, cno)
     entries = [('c', i, _cond_score(c, scales)) for i, c in enumerate(conds)] + [
-        ('n', j, abs(c.get('share_pixel') or 0.0)) for j, c in enumerate(cno)]
+        ('n', j, _cond_score(c, scales)) for j, c in enumerate(cno)]
     entries.sort(key=lambda e: (-e[2], e[0], (conds[e[1]]['layer'], conds[e[1]]['pair_id']) if e[0] == 'c'
                                 else (cno[e[1]]['density_layer'] or '', cno[e[1]]['case_name'])))
     cond_rank = _changed_ranking(conds)

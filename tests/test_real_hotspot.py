@@ -807,12 +807,17 @@ def test_stage1_runner_logs_import_error(tmp_path):
 
 
 # ---- compare2/T6: 3-part lateralopen (CNO) folders are not cases -------------------------------
-# Payload hash and manifest bytes of _source(tmp/'src') imported by the T6 baseline commit 3d36b63.
-NO_CNO_PAYLOAD_HASH = '29a8e5689cec3288c398e38da791ad88648cda2fb38945ac3cdf7ec89471cb04'
-# manifest.json holds the sha256 of every mask .npz (record `mask_sha256`), and those bytes depend on the zlib build.
-# So the manifest is hashed with each mask_sha256 value replaced by a fixed token (bytes of the baseline manifest with
-# the same replacement), and the masks are compared by decoded content (sha256 of the bool array bytes, 16 hex).
+# Golden values of _source(tmp/'src') imported by the baseline commit 3d36b63 (before the CNO change).
+# The manifest holds the sha256 of every mask .npz (record `mask_sha256`) and source_payload_hash covers the whole
+# manifest, so both depend on the zlib build. The goldens therefore replace every mask_sha256 with "<npz>" first:
+#  - NO_CNO_MANIFEST_SHA256: sha256 of the manifest.json bytes with that replacement;
+#  - NO_CNO_CANONICAL_SHA256: sha256 of the canonical JSON (sort_keys, compact separators, UTF-8) of the manifest
+#    without source_payload_hash/manifest_hash_recipe and with that replacement. Computed by importing the fixture
+#    with `git archive 3d36b63` unpacked in /tmp (same _source fixture) and by the current tree: both give this value.
+# The masks themselves are compared by decoded content (sha256 of the bool array bytes, first 16 hex).
+NO_CNO_PAYLOAD_HASH = '29a8e5689cec3288c398e38da791ad88648cda2fb38945ac3cdf7ec89471cb04'  # only used as "differs"
 NO_CNO_MANIFEST_SHA256 = 'ac15dbad8d97aaab884f190a46eeab39bd9cfb16d052804ce8a64b1d15d9e83e'
+NO_CNO_CANONICAL_SHA256 = 'a79a8ba5fdc6066c5397c92ba52795db2a4fc966d68364b903fc56b8970ab16a'
 NO_CNO_MASK_DIGESTS = {'assets/00000_01.npz': ((1270, 1270), '040156c78200cbcb'),
                        'assets/00000_02.npz': ((1270, 1270), '11c572f73aac642d')}
 CNO_NAME = 'lateralopen-CNO-gcnt'
@@ -839,13 +844,22 @@ def test_cno_free_root_manifest_is_byte_identical_to_baseline(tmp_path):
     import re
     _source(tmp_path / 'src')
     result = import_hotspots(tmp_path / 'src', tmp_path / 'out')
-    assert result['source_payload_hash'] == NO_CNO_PAYLOAD_HASH
     raw = (tmp_path / 'out/manifest.json').read_bytes()
+    stored = json.loads(raw)
+    payload = {k: v for k, v in stored.items() if k not in ('source_payload_hash', 'manifest_hash_recipe')}
+    recipe = lambda value: hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode('utf-8')).hexdigest()
+    assert result['source_payload_hash'] == stored['source_payload_hash'] == recipe(payload)
+    for case in payload['cases']:
+        for record in case['records']:
+            if record.get('mask_sha256'):
+                record['mask_sha256'] = '<npz>'
+    assert recipe(payload) == NO_CNO_CANONICAL_SHA256
     normalized, replaced = re.subn(rb'("mask_sha256":\s*)"[0-9a-f]{64}"', rb'\1"<npz>"', raw)
     assert replaced == len(NO_CNO_MASK_DIGESTS)
     assert hashlib.sha256(normalized).hexdigest() == NO_CNO_MANIFEST_SHA256
     digests = {}
-    for case in json.loads(raw)['cases']:
+    for case in stored['cases']:
         for record in case['records']:
             if record.get('mask_path'):
                 with np.load(tmp_path / 'out' / record['mask_path']) as stored:
@@ -1045,6 +1059,7 @@ def test_cno_folder_with_images_or_result_is_still_cno(tmp_path):
     (root / 'lateralopen-A-gcnt' / 'images').mkdir(parents=True)
     (root / 'lateralopen-B-gcnt' / 'result').mkdir(parents=True)
     (root / 'lateralopen-C-gcnt').mkdir()  # neither: ordinary (empty) folder
+    (root / 'lateralopen-D-gcnt' / 'Result').mkdir(parents=True)  # _csv_areas opens exactly result/: not a CNO marker
     assert [c['case_name'] for c in discover_cno_cases(root)] == ['lateralopen-A-gcnt', 'lateralopen-B-gcnt']
 
 

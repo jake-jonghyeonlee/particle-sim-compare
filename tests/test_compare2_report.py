@@ -262,6 +262,16 @@ def test_card_score_uses_one_scale_per_kind():
                        (zero, 4.0)) == 0.5                        # no kind total: normalised by the largest |Δvi|
 
 
+def test_cno_card_score_falls_back_like_conditions():
+    from simcompare.compare2_report import _cond_score, _score_scales
+    conds = [{'share_line': None, 'share_pixel': None, 'delta_vi_line': 0.0, 'delta_vi_pixel': 1.0}]
+    cno = [{'share_pixel': None, 'delta_vi_pixel': 3.0}, {'share_pixel': 0.5, 'delta_vi_pixel': 2.0}]
+    scales = _score_scales(conds, cno)
+    assert scales[0]['pixel'] == 6.0
+    assert _cond_score(cno[0], scales) == 0.5   # |Δvi| / total, not the raw 3.0
+    assert _cond_score(cno[1], scales) == 0.5   # share wins
+
+
 def test_relative_position_includes_the_500px_border():
     from simcompare.compare2_report import _proportional
     big, small = {'unit_px': (5000.0, 5000.0)}, {'unit_px': (4000.0, 4000.0)}
