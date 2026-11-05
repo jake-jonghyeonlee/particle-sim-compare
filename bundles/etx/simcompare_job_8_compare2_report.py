@@ -2,7 +2,7 @@
 """simcompare 단일 파일 실행기 (자동 생성: scripts/build_single_file.py). 소스 해시 75608eeb323ded2978b2ba410166f55866e9a965e8f95a91e7d834a23ecd53bd.
 서버 wrapper가 명령줄 인자를 넘기지 못할 때 쓴다. 아래 EDIT 블록만 고치고 이 파일을 그대로 실행한다."""
 # 8회차(선택, 2b회차 뒤): compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(compare2-report)을 만든다. 수치는 다시 계산하지 않고 compare2.json 값을 그대로 보여 준다.
-# --compare2-dir(2b회차의 --out)과 --config(2b회차와 같은 compare2.yaml)는 같은 실행의 것이어야 한다. --out 은 아직 없는 새 경로이고 --compare2-dir 밖이어야 한다.
+# --compare2-dir(2b회차의 --out)과 --config(2b회차와 같은 BASE_DIR 의 compare2.yaml)는 같은 실행의 것이어야 한다. --out 은 아직 없는 새 경로이고 --compare2-dir 밖이어야 한다.
 # 지도 3 µm 와 층 overlay 를 그리려면 DL1 root(Layer PNG)가 필요하다: compare2.yaml 의 report.dl1_root 와 products.<role>.dl1_model 을 채운다.
 # DL1 root 가 없으면 overlay 는 건너뛰고(종료 코드 3) 지도만 나온다. 결과: data/compare2_report/report.html, report.json.
 # 종료 코드 3(compare2.json 이 부분 결과이거나 지도·overlay 경고)이어도 실행기는 계속한다. 상세는 docs/usage_reference.md 'compare2-report'.
@@ -16,7 +16,7 @@ JOBS = [
     # 외부 보고용 HTML. --out 은 아직 없는 새 경로
     ('compare2-report', [
         '--compare2-dir', 'data/compare2',
-        '--config', 'data/compare2.yaml',
+        '--config', 'compare2.yaml',
         '--out', 'data/compare2_report',
     ]),
 ]

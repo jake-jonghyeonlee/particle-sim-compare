@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """simcompare 단일 파일 실행기 (자동 생성: scripts/build_single_file.py). 소스 해시 75608eeb323ded2978b2ba410166f55866e9a965e8f95a91e7d834a23ecd53bd.
 서버 wrapper가 명령줄 인자를 넘기지 못할 때 쓴다. 아래 EDIT 블록만 고치고 이 파일을 그대로 실행한다."""
-# 2b회차(선택, 1회차 뒤): line/pixel 불량 지표 비교(compare2). reference·target 각각의 λ(밀도 × 관측 CA × 계수), CAA, VI(vi = caa ÷ 1.2159 또는 1.5462)와
-# reference→target 변화 분해, 조건별 B에서 제거 시 차이를 계산한다. 비율·수율이 아니라 설정된 glass 기준의 불량 지표다.
+# 2b회차(선택, 1회차 뒤): line/pixel 불량 지표 비교(compare2). reference·target 각각의 λ(밀도 × 관측 CA × 계수), CAA, VI(vi_line = caa_line ÷ 1.2159, vi_pixel = caa_pixel ÷ 1.5462)와
+# reference→target 변화 분해, 조건별 B에서 제거 시 차이를 계산한다. 값은 비율이며 양품 수율로 읽지 않는다.
 # 2회차와 독립이다. 2회차 출력(comparison.json 등)을 쓰지 않고 4–6회차도 필요 없다. 1회차 import 결과(data/imported/*)와 real.yaml(2회차와 같은 numeric_config),
-# 밀도 CSV(data/density/<제품군>_line.csv, <제품군>_pixel.csv), 제품군 glass·가중치가 들어 있는 compare2.yaml(configs/etx/compare2.example.yaml → data/compare2.yaml)이 필요하다.
+# 밀도 CSV(data/density/<제품군>_line.csv, <제품군>_pixel.csv), 제품군 glass·가중치가 들어 있는 compare2.yaml(configs/etx/compare2.example.yaml → compare2.yaml, BASE_DIR 의 real.yaml 옆)이 필요하다. config 안의 상대 경로는 이 파일 위치(BASE_DIR) 기준이다.
 # glass 면적 값이 비어 있으면 vi 는 '대기'로 계산되지 않고 종료 코드 3이다(오류가 아니다). --out 은 새 경로이거나 compare2 가 전에 만든 폴더여야 한다.
 # 결과: data/compare2/compare2.json, compare2_summary.csv, compare2_layers.csv, compare2_conditions.csv, compare2_cno.csv. 상세는 docs/usage_reference.md 'compare2'.
 # ============================== EDIT BELOW: 이 블록만 고치세요 ==============================
@@ -16,7 +16,7 @@
 JOBS = [
     # line/pixel vi 비교. 1회차 import 결과(data/imported/*)와 real.yaml(2회차와 같은 numeric_config), 밀도 CSV, 제품군 glass·가중치가 필요하다. glass 값이 비어 있으면 vi 는 '대기'로 exit 3
     ('compare2', [
-        '--config', 'data/compare2.yaml',
+        '--config', 'compare2.yaml',
         '--out', 'data/compare2',
     ]),
 ]

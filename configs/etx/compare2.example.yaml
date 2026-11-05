@@ -1,5 +1,5 @@
-# compare2 설정 예시(schema compare2_config_v1). ETX 2b·8회차용: data/compare2.yaml 로 복사해 고친다.
-# 경로는 모두 이 파일이 있는 폴더(실행기 BASE_DIR) 기준 상대 경로다. /로 시작하면 루트 아래 절대 경로가 된다.
+# compare2 설정 예시(schema compare2_config_v1). ETX 2b·8회차용: 실행기 BASE_DIR 에 real.yaml 옆 compare2.yaml 로 복사해 고친다.
+# 경로는 모두 이 파일이 있는 폴더(= BASE_DIR) 기준 상대 경로다. /로 시작하면 루트 아래 절대 경로가 된다.
 schema_version: compare2_config_v1
 
 # 기존 numeric_config_v1(real.yaml). 2회차와 같은 파일이며 reference/target 의 data_dir(1회차 import 결과)를 읽는다.
@@ -27,14 +27,14 @@ products:
   reference:
     model_group: mobile              # model_groups 의 키
     resolution: [1500, 1850]         # 패널 해상도(가로, 세로 픽셀 수, 양의 정수 둘)
-    hotspot_root: data/input/hotspot/R00       # 1회차와 같은 hotspot 입력 폴더(CNO 폴더 lateralopen-CNO-<cnt층> 도 여기서 읽는다). 제품 폴더 이름으로 바꾼다
+    hotspot_root: data/input/hotspot/QA4_R00   # 1회차와 같은 hotspot 입력 폴더(CNO 폴더 lateralopen-CNO-<cnt층> 도 여기서 읽는다). 제품 폴더 이름으로 바꾼다
     unit_size_um: [45, 45]           # 선택. unit 한 변 µm(가로, 세로). 8회차 지도 위치 계산에 쓴다. 생략하면 hotspot frame 크기에서 (frame + 1000 px) / 2 로 계산한다
-    # dl1_model: R00                 # 선택. 8회차 overlay 용 DL1 모델 폴더 이름(report.dl1_root 아래). overlay 를 그리려면 주석을 풀고 두 제품 모두 적는다
+    dl1_model: QA4_R00               # 선택. 8회차 overlay 용 DL1 모델 폴더 이름(report.dl1_root 아래). 없으면 그 제품은 overlay 를 건너뛴다
   target:
     model_group: mobile
     resolution: [1500, 1850]
-    hotspot_root: data/input/hotspot/T00
-    # dl1_model: T00
+    hotspot_root: data/input/hotspot/QA4_T00
+    dl1_model: QA4_T00
 
 # 8회차(compare2-report) 전용. 키 전체 선택. 기본값: map_window_um 30, diameter_um 3, top_n 4, dl1_root 없음.
 report:
