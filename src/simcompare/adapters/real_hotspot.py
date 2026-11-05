@@ -38,6 +38,7 @@ IMAGES_DIRNAME = 'images'
 CSV_HEADERS = (['defect_size(um)', 'Area(um2)'], ['DefectSize (um)', 'Area(um^2)'],
                ['DefectSize(um)', 'Area(um^2)'])
 CASE_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$')
+CNO_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)$')
 HOTSPOT_RE = re.compile(r'^hotspot_([a-z_]+?)(\d+)\.png$', re.IGNORECASE)
 
 
@@ -182,17 +183,64 @@ def _read_gray(path: Path, relative_path: str):
     return read_gray_hotspot(path, relative_path, return_sha256=True)
 
 
+def _cno_name(name: str):
+    """(electrode_id, actual_layer) when name is a 3-part lateralopen (CNO) folder name, else None."""
+    match = CNO_RE.fullmatch(name)
+    if not match or DEFECT_ALIASES.get(match.group(1), match.group(1)) != 'lateral_open':
+        return None
+    return match.group(2), match.group(3)
+
+
+def _cno_dirs(root: Path):
+    """3-part lateralopen folders under root, sorted by root-relative path; duplicate names are an error."""
+    found = []
+    for directory, dirs, files in os.walk(root):
+        path = Path(directory)
+        if path != root and _cno_name(path.name) is not None:
+            found.append(path)
+    found.sort(key=lambda p: p.relative_to(root).as_posix())
+    names = [p.name for p in found]
+    if len(names) != len(set(names)):
+        raise NumericContractError('duplicate_real_cno_case_name')
+    return found
+
+
+def discover_cno_cases(root: Path):
+    """CNO (<defect>-<electrode>-<layer>, lateral_open) folders under a hotspot root, with their CSV areas.
+
+    Images are not required: only result/lateral_open.csv is read. Case discovery skips these folders.
+    """
+    root = Path(root)
+    cno_dirs = _cno_dirs(root)
+    cases = []
+    for path in cno_dirs:
+        if any(parent != root and parent in cno_dirs for parent in path.parents):
+            raise NumericContractError('nested_real_cno_case_directory', str(path))
+        electrode_id, actual_layer = _cno_name(path.name)
+        csv_info = _csv_areas(root, path, 'lateral_open')
+        if csv_info['path'] is not None:
+            csv_info['relative_path'] = (path / 'result' / csv_info['path']).relative_to(root).as_posix()
+        cases.append({'case_name': path.name, 'source_relative_path': path.relative_to(root).as_posix(),
+                      'electrode_id': electrode_id, 'actual_layer': actual_layer, 'csv': csv_info})
+    return cases
+
+
 def _discover_cases(root: Path):
     """Case folders under a hotspot root and their images/ layout directories."""
     found, images_dirs = [], {}
+    cno_dirs = _cno_dirs(root)
     for directory, dirs, files in os.walk(root):
         if ('1.png' in files or '2.png' in files
                 or any(HOTSPOT_RE.fullmatch(filename) for filename in files)):
             path = Path(directory)
             if path.name.lower() == IMAGES_DIRNAME and path != root:
                 # <case>/images/ 배치: case 폴더는 그 상위이고 result/는 case 폴더 바로 아래에 있다.
+                if path.parent in cno_dirs:
+                    continue
                 images_dirs[path.parent] = path
                 path = path.parent
+            elif path in cno_dirs:
+                continue
             found.append(path)
     for case_path in images_dirs:
         if any(child.is_file() and (child.name in ('1.png', '2.png') or HOTSPOT_RE.fullmatch(child.name))
@@ -208,6 +256,11 @@ def _discover_cases(root: Path):
     for case_dir in found:
         if any(parent != root and parent in found for parent in case_dir.parents):
             raise NumericContractError('nested_real_case_directory', str(case_dir))
+        if any(parent in cno_dirs for parent in case_dir.parents):
+            raise NumericContractError('nested_real_case_directory', str(case_dir))
+    for cno_dir in cno_dirs:
+        if any(parent != root and parent in found for parent in cno_dir.parents):
+            raise NumericContractError('nested_real_cno_case_directory', str(cno_dir))
     return found, images_dirs
 
 
@@ -266,9 +319,14 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                     if line.strip() and not line.lstrip().startswith('#')]
         if len(expected) != len(set(expected)):
             raise NumericContractError('duplicate_expected_case')
+        cno_expected = [name for name in expected if _cno_name(name) is not None]
+        expected = [name for name in expected if _cno_name(name) is None]
         for name in expected:
             _case_name(name)
+    else:
+        cno_expected = []
     found, images_dirs = _discover_cases(root)
+    cno_cases = discover_cno_cases(root)
     expected_source = None
     if expected_case_roots is not None:
         extra_roots = [Path(extra) for extra in expected_case_roots]
@@ -416,6 +474,12 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
             entry['classification_status'] = 'unassigned_pair_table'
             entry['map_status'] = 'unconfigured'
             cases.append(entry)
+        for cno in cno_cases:
+            diagnostics.append({'case': cno['case_name'], 'status': 'cno_case_skipped',
+                                'source_relative_path': cno['source_relative_path'],
+                                'electrode_id': cno['electrode_id'], 'actual_layer': cno['actual_layer']})
+        for name in cno_expected:
+            diagnostics.append({'case': name, 'status': 'cno_expected_entry_ignored'})
         discovered_names = {case['case_name'] for case in cases}
         for missing in sorted(expected_set-discovered_names):
             diagnostics.append({'case': missing, 'status': 'expected_case_folder_missing'})

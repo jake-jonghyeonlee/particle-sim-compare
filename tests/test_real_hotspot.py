@@ -9,7 +9,7 @@ from PIL import Image
 import pytest
 import yaml
 
-from simcompare.adapters.real_hotspot import import_hotspots, load_real_manifest
+from simcompare.adapters.real_hotspot import discover_cno_cases, import_hotspots, load_real_manifest
 from simcompare.numeric_schema import NumericContractError
 from simcompare.png_strict import read_gray_hotspot
 
@@ -803,3 +803,149 @@ def test_stage1_runner_logs_import_error(tmp_path):
     assert 'No space left on device' in log and 'No space left on device' in result.stderr
     assert not (work/'imp'/'manifest.json').exists() and not (work/'imp'/'assets').exists()
     assert not [p for p in work.iterdir() if p.name.startswith('imp.tmp-')]
+
+
+# ---- compare2/T6: 3-part lateralopen (CNO) folders are not cases -------------------------------
+# Payload hash and manifest bytes of _source(tmp/'src') imported by the T6 baseline commit 3d36b63.
+NO_CNO_PAYLOAD_HASH = '29a8e5689cec3288c398e38da791ad88648cda2fb38945ac3cdf7ec89471cb04'
+NO_CNO_MANIFEST_SHA256 = 'e066add02801e587b4630797092f64254750d50f1742407e8691c50539251573'
+CNO_NAME = 'lateralopen-CNO-gcnt'
+
+
+def _cno(root, name=CNO_NAME, *, images=True, csv_file=True):
+    folder = Path(root) / name
+    (folder / 'result').mkdir(parents=True)
+    if csv_file:
+        (folder / 'result/lateral_open.csv').write_text('defect_size(um),Area(um2)\n1,0.5\n2,1.5\n', encoding='utf-8')
+    if images:
+        (folder / 'images').mkdir()
+        Image.new('L', (2270, 2270), 0).save(folder / 'images/1.png')
+        Image.new('L', (1270, 1270), 0).save(folder / 'images/hotspot_lateral_open01.png')
+    return folder
+
+
+def _manifest_of(out):
+    return json.loads((Path(out) / 'manifest.json').read_text(encoding='utf-8'))
+
+
+def test_cno_free_root_manifest_is_byte_identical_to_baseline(tmp_path):
+    import hashlib
+    _source(tmp_path / 'src')
+    result = import_hotspots(tmp_path / 'src', tmp_path / 'out')
+    assert result['source_payload_hash'] == NO_CNO_PAYLOAD_HASH
+    assert hashlib.sha256((tmp_path / 'out/manifest.json').read_bytes()).hexdigest() == NO_CNO_MANIFEST_SHA256
+    assert discover_cno_cases(tmp_path / 'src') == []
+
+
+def test_mixed_root_skips_cno_folder_with_one_diagnostic(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root)
+    result = import_hotspots(root, tmp_path / 'out')
+    manifest = _manifest_of(tmp_path / 'out')
+    assert result['cases'] == 1 and [c['case_name'] for c in manifest['cases']] == ['lateral_short-A-L1-B-L1']
+    skipped = [d for d in manifest['diagnostics'] if d.get('status') == 'cno_case_skipped']
+    assert skipped == [{'case': CNO_NAME, 'status': 'cno_case_skipped', 'source_relative_path': CNO_NAME,
+                        'electrode_id': 'CNO', 'actual_layer': 'gcnt'}]
+    assert not [k for k in manifest['source_files'] if CNO_NAME in k]
+    assert manifest['source_payload_hash'] != NO_CNO_PAYLOAD_HASH
+    assert load_real_manifest(tmp_path / 'out') is not None
+
+
+def test_cno_without_images_is_found_and_skipped(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root, images=False)
+    found = discover_cno_cases(root)
+    assert [c['case_name'] for c in found] == [CNO_NAME]
+    assert found[0]['csv']['status'] == 'observed'
+    assert found[0]['csv']['relative_path'] == f'{CNO_NAME}/result/lateral_open.csv'
+    assert found[0]['csv']['rows'][1]['value'] == 0.5
+    import_hotspots(root, tmp_path / 'out')
+    diagnostics = _manifest_of(tmp_path / 'out')['diagnostics']
+    assert len([d for d in diagnostics if d.get('status') == 'cno_case_skipped']) == 1
+
+
+def test_cno_without_csv_reports_missing(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root, csv_file=False)
+    found = discover_cno_cases(root)
+    assert found[0]['csv']['status'] == 'missing' and 'relative_path' not in found[0]['csv']
+    import_hotspots(root, tmp_path / 'out')
+
+
+def test_cno_only_root_has_no_cases_but_is_discovered(tmp_path):
+    root = tmp_path / 'src'
+    _cno(root)
+    assert len(discover_cno_cases(root)) == 1
+    with pytest.raises(NumericContractError, match='no_real_hotspot_cases_found'):
+        import_hotspots(root, tmp_path / 'out')
+
+
+def test_three_part_non_open_name_is_still_invalid(tmp_path):
+    root = tmp_path / 'src'
+    folder = root / 'lateralshort-A-L1'
+    folder.mkdir(parents=True)
+    (folder / '1.png').write_bytes(b'')
+    with pytest.raises(NumericContractError, match='invalid_real_case_name'):
+        import_hotspots(root, tmp_path / 'out')
+    assert discover_cno_cases(root) == []
+
+
+def test_cno_expected_entry_is_ignored_with_diagnostic(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root)
+    expected = tmp_path / 'expected.txt'
+    expected.write_text(f'lateral_short-A-L1-B-L1\n{CNO_NAME}\n', encoding='utf-8')
+    import_hotspots(root, tmp_path / 'out', expected_cases=expected)
+    manifest = _manifest_of(tmp_path / 'out')
+    assert manifest['expected_cases'] == ['lateral_short-A-L1-B-L1']
+    assert {'case': CNO_NAME, 'status': 'cno_expected_entry_ignored'} in manifest['diagnostics']
+    assert not [d for d in manifest['diagnostics'] if d.get('status') == 'expected_case_folder_missing']
+    bad = tmp_path / 'bad.txt'
+    bad.write_text('lateralshort-A-L1\n', encoding='utf-8')
+    with pytest.raises(NumericContractError, match='invalid_real_case_name'):
+        import_hotspots(root, tmp_path / 'out2', expected_cases=bad)
+
+
+def test_cno_in_additional_root_is_not_a_union_case(tmp_path):
+    root, other = tmp_path / 'src', tmp_path / 'other'
+    _source(root)
+    _source(other)
+    _cno(other)
+    import_hotspots(root, tmp_path / 'out', expected_case_roots=[other])
+    assert _manifest_of(tmp_path / 'out')['expected_cases'] == ['lateral_short-A-L1-B-L1']
+
+
+def test_duplicate_and_nested_cno_folders_are_errors(tmp_path):
+    root = tmp_path / 'dup'
+    _source(root)
+    _cno(root)
+    _cno(root / 'sub')
+    with pytest.raises(NumericContractError, match='duplicate_real_cno_case_name'):
+        import_hotspots(root, tmp_path / 'out')
+    nested = tmp_path / 'nested'
+    folder = _source(nested)
+    _cno(folder)
+    with pytest.raises(NumericContractError, match='nested_real_cno_case_directory'):
+        import_hotspots(nested, tmp_path / 'out2')
+
+
+def test_dv_template_and_dv_grade_accept_mixed_root(tmp_path):
+    from simcompare.cli import main
+    root = tmp_path / 'product'
+    for name in ('lateral_short-A-M1-B-M1', CNO_NAME):
+        folder = root / name / 'images'
+        folder.mkdir(parents=True)
+        (folder / '1.png').write_bytes(b'')
+    assert main(['dv-template', '--root', str(root), '--timings', '2', '--out', str(tmp_path / 'tpl')]) == 0
+    sheet = (tmp_path / 'tpl/dv_sheet.csv').read_text(encoding='utf-8-sig')
+    assert 'CNO' not in sheet and 'A' in sheet
+    sheet = tmp_path / 'filled.csv'
+    sheet.write_text('electrode_id,impedance,layers,T1_min,T1_max,T2_min,T2_max\n'
+                     'A,low,M1,0,0,0,0\nB,low,M1,0,1,0,1\n', encoding='utf-8')
+    assert main(['dv-grade', '--sheet', str(sheet), '--root', str(root),
+                 '--product-id', 'P1', '--out', str(tmp_path / 'grade')]) == 0
+    assert (tmp_path / 'grade/dv_grade_manifest.json').is_file()
