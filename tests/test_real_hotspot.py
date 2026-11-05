@@ -810,13 +810,14 @@ def test_stage1_runner_logs_import_error(tmp_path):
 # Golden values of _source(tmp/'src') imported by the baseline commit 3d36b63 (before the CNO change).
 # The manifest holds the sha256 of every mask .npz (record `mask_sha256`) and source_payload_hash covers the whole
 # manifest, so both depend on the zlib build. The goldens therefore replace every mask_sha256 with "<npz>" first:
-#  - NO_CNO_MANIFEST_SHA256: sha256 of the manifest.json bytes with that replacement;
+#  - NO_CNO_MANIFEST_SHA256: sha256 of the manifest.json bytes with every mask_sha256 value replaced by "<npz>" and
+#    the source_payload_hash value (it covers the mask hashes) replaced by "<hash>";
 #  - NO_CNO_CANONICAL_SHA256: sha256 of the canonical JSON (sort_keys, compact separators, UTF-8) of the manifest
-#    without source_payload_hash/manifest_hash_recipe and with that replacement. Computed by importing the fixture
-#    with `git archive 3d36b63` unpacked in /tmp (same _source fixture) and by the current tree: both give this value.
+#    without source_payload_hash/manifest_hash_recipe and with mask_sha256 replaced by "<npz>".
+# Both were computed by importing the _source fixture with `git archive 3d36b63` unpacked in /tmp and again with the
+# current tree (same script, /tmp/t8_norm.py): the two trees give the same values.
 # The masks themselves are compared by decoded content (sha256 of the bool array bytes, first 16 hex).
-NO_CNO_PAYLOAD_HASH = '29a8e5689cec3288c398e38da791ad88648cda2fb38945ac3cdf7ec89471cb04'  # only used as "differs"
-NO_CNO_MANIFEST_SHA256 = 'ac15dbad8d97aaab884f190a46eeab39bd9cfb16d052804ce8a64b1d15d9e83e'
+NO_CNO_MANIFEST_SHA256 = '56cddfd5e3ee7363f400d8930d0f3d56ddaf20af1234d2e9b2b9c584c773e09b'
 NO_CNO_CANONICAL_SHA256 = 'a79a8ba5fdc6066c5397c92ba52795db2a4fc966d68364b903fc56b8970ab16a'
 NO_CNO_MASK_DIGESTS = {'assets/00000_01.npz': ((1270, 1270), '040156c78200cbcb'),
                        'assets/00000_02.npz': ((1270, 1270), '11c572f73aac642d')}
@@ -839,6 +840,23 @@ def _manifest_of(out):
     return json.loads((Path(out) / 'manifest.json').read_text(encoding='utf-8'))
 
 
+def _recipe(value):
+    import hashlib
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode('utf-8')).hexdigest()
+
+
+def _normalized_canonical_hash(manifest):
+    """Canonical hash of a manifest without its own hash fields and with every mask_sha256 (zlib dependent) masked."""
+    import copy
+    payload = copy.deepcopy({k: v for k, v in manifest.items() if k not in ('source_payload_hash', 'manifest_hash_recipe')})
+    for case in payload['cases']:
+        for record in case['records']:
+            if record.get('mask_sha256'):
+                record['mask_sha256'] = '<npz>'
+    return _recipe(payload)
+
+
 def test_cno_free_root_manifest_is_byte_identical_to_baseline(tmp_path):
     import hashlib
     import re
@@ -846,24 +864,19 @@ def test_cno_free_root_manifest_is_byte_identical_to_baseline(tmp_path):
     result = import_hotspots(tmp_path / 'src', tmp_path / 'out')
     raw = (tmp_path / 'out/manifest.json').read_bytes()
     stored = json.loads(raw)
-    payload = {k: v for k, v in stored.items() if k not in ('source_payload_hash', 'manifest_hash_recipe')}
-    recipe = lambda value: hashlib.sha256(json.dumps(
-        value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode('utf-8')).hexdigest()
-    assert result['source_payload_hash'] == stored['source_payload_hash'] == recipe(payload)
-    for case in payload['cases']:
-        for record in case['records']:
-            if record.get('mask_sha256'):
-                record['mask_sha256'] = '<npz>'
-    assert recipe(payload) == NO_CNO_CANONICAL_SHA256
-    normalized, replaced = re.subn(rb'("mask_sha256":\s*)"[0-9a-f]{64}"', rb'\1"<npz>"', raw)
-    assert replaced == len(NO_CNO_MASK_DIGESTS)
+    unhashed = {k: v for k, v in stored.items() if k not in ('source_payload_hash', 'manifest_hash_recipe')}
+    assert result['source_payload_hash'] == stored['source_payload_hash'] == _recipe(unhashed)
+    assert _normalized_canonical_hash(stored) == NO_CNO_CANONICAL_SHA256
+    normalized, masks = re.subn(rb'("mask_sha256":\s*)"[0-9a-f]{64}"', rb'\1"<npz>"', raw)
+    normalized, payload_hashes = re.subn(rb'("source_payload_hash":\s*)"[0-9a-f]{64}"', rb'\1"<hash>"', normalized)
+    assert masks == len(NO_CNO_MASK_DIGESTS) and payload_hashes == 1
     assert hashlib.sha256(normalized).hexdigest() == NO_CNO_MANIFEST_SHA256
     digests = {}
     for case in stored['cases']:
         for record in case['records']:
             if record.get('mask_path'):
-                with np.load(tmp_path / 'out' / record['mask_path']) as stored:
-                    mask = stored['mask']
+                with np.load(tmp_path / 'out' / record['mask_path']) as npz:
+                    mask = npz['mask']
                 assert mask.dtype == np.bool_
                 digests[record['mask_path']] = (mask.shape, hashlib.sha256(np.ascontiguousarray(mask).tobytes()).hexdigest()[:16])
     assert digests == NO_CNO_MASK_DIGESTS
@@ -881,7 +894,7 @@ def test_mixed_root_skips_cno_folder_with_one_diagnostic(tmp_path):
     assert skipped == [{'case': CNO_NAME, 'status': 'cno_case_skipped', 'source_relative_path': CNO_NAME,
                         'electrode_id': 'CNO', 'actual_layer': 'gcnt'}]
     assert not [k for k in manifest['source_files'] if CNO_NAME in k]
-    assert manifest['source_payload_hash'] != NO_CNO_PAYLOAD_HASH
+    assert _normalized_canonical_hash(manifest) != NO_CNO_CANONICAL_SHA256  # the cno_case_skipped diagnostic differs
     assert load_real_manifest(tmp_path / 'out') is not None
 
 

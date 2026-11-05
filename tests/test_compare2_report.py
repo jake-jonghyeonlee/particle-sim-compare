@@ -272,6 +272,18 @@ def test_cno_card_score_falls_back_like_conditions():
     assert _cond_score(cno[1], scales) == 0.5   # share wins
 
 
+def test_ranking_and_card_order_use_the_same_scale():
+    from simcompare.compare2_report import _changed_ranking, _cond_score, _score_scales
+    mk = lambda pid, line, pixel: {'pair_id': pid, 'layer': 'L1', 'share_line': None, 'share_pixel': None,
+                                   'delta_vi_line': line, 'delta_vi_pixel': pixel}
+    conds = [mk('A', 1.0, 0.0), mk('B', 0.0, 3.0), mk('C', 0.5, 0.5)]
+    cno = [{'share_pixel': None, 'delta_vi_pixel': 10.0}]  # the CNO row changes the pixel total used by both orders
+    scales = _score_scales(conds, cno)
+    card_order = sorted((i for i in range(len(conds))), key=lambda i: (-_cond_score(conds[i], scales), conds[i]['pair_id']))
+    assert _changed_ranking(conds, cno) == card_order == [0, 2, 1]
+    assert _changed_ranking(conds) == [1, 0, 2]  # without the CNO row the pixel total is smaller and B leads
+
+
 def test_relative_position_includes_the_500px_border():
     from simcompare.compare2_report import _proportional
     big, small = {'unit_px': (5000.0, 5000.0)}, {'unit_px': (4000.0, 4000.0)}

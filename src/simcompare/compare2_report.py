@@ -140,9 +140,9 @@ def _cond_score(item, scales):
     return score
 
 
-def _changed_ranking(conds):
-    """Indexes of the conditions that change vi, most influential first."""
-    scales = _score_scales(conds)
+def _changed_ranking(conds, cno=()):
+    """Indexes of the conditions that change vi, most influential first (same scale as the card order)."""
+    scales = _score_scales(conds, cno)
     return sorted((i for i, c in enumerate(conds) if _changed(c)),
                   key=lambda i: (-_cond_score(conds[i], scales), conds[i]['layer'], conds[i]['pair_id']))
 
@@ -766,7 +766,7 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial):
         ('n', j, _cond_score(c, scales)) for j, c in enumerate(cno)]
     entries.sort(key=lambda e: (-e[2], e[0], (conds[e[1]]['layer'], conds[e[1]]['pair_id']) if e[0] == 'c'
                                 else (cno[e[1]]['density_layer'] or '', cno[e[1]]['case_name'])))
-    cond_rank = _changed_ranking(conds)
+    cond_rank = _changed_ranking(conds, cno)
     unit_text = []
     for role in ROLES:
         info = infos[role]
@@ -943,7 +943,7 @@ def build_report(compare2_dir, config_path, out):
                 f'{role}: compare2.json used source_payload_hash {recorded}, the data now has {loaded}')
     conds = doc['delta']['conditions']
     warnings = []
-    ranked = _changed_ranking(conds)
+    ranked = _changed_ranking(conds, doc['delta']['cno'])
     mapped = ranked[:MAX_MAPS]
     if len(ranked) > MAX_MAPS:
         warnings.append({'code': 'maps_capped', 'role': None, 'layer': None,
