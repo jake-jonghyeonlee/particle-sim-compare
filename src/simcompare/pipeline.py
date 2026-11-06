@@ -628,13 +628,15 @@ def _run_numeric_compare(cfg, out=None):
         if (cfg['reference'].get('condition_assignment') is not None and
                 cfg['target'].get('condition_assignment') is not None):
             from simcompare.linepixel import compute_areas
+            from simcompare.numeric_schema import has_short_cases
             output = Path(out) if out is not None else _numeric_path(cfg, cfg['output_dir'])
             full_detail, top = _compare_options(cfg)
             detail = {} if full_detail else {'bucket_detail': 'summary', 'top_buckets': top}
             stream = _ComparisonStream(output, None if full_detail else top, masks=True)
             try:
                 reference_configured = _configured_real(cfg, cfg['reference'], reference_real, detail)
-                left = compute_areas(reference_configured[1], **detail) if reference_configured[1].cases else None
+                left = (compute_areas(reference_configured[1], **detail)
+                        if has_short_cases(reference_configured[1].cases) else None)
                 left_rows = _real_area_rows('reference', left.groups.values()) if left is not None else []
                 left_unresolved = reference_configured[1].provenance.get('unresolved_same_name_cases', [])
                 left_present = left is not None
@@ -642,7 +644,8 @@ def _run_numeric_compare(cfg, out=None):
                 stream.side('reference', left)
                 del reference_configured, left
                 target_configured = _configured_real(cfg, cfg['target'], target_real, detail)
-                right = compute_areas(target_configured[1], **detail) if target_configured[1].cases else None
+                right = (compute_areas(target_configured[1], **detail)
+                         if has_short_cases(target_configured[1].cases) else None)
                 right_rows = _real_area_rows('target', right.groups.values()) if right is not None else []
                 right_unresolved = target_configured[1].provenance.get('unresolved_same_name_cases', [])
                 has_cases = left_present or right is not None
@@ -740,7 +743,8 @@ def run_numeric_map(cfg, out=None):
                 from simcompare.electrode_map import compute_electrode_maps
                 from simcompare.report import map_report, write_map_arrays, write_numeric_report
                 dataset = configured[1]
-                if not dataset.cases:
+                from simcompare.numeric_schema import has_short_cases
+                if not has_short_cases(dataset.cases):
                     rows = [{'case_id': name, 'status': 'unresolved_same_name_endpoints'}
                             for name in dataset.provenance.get('unresolved_same_name_cases', [])]
                     payload = {'schema_version': 'real_hotspot_electrode_map_v1', 'is_synthetic': False,
@@ -1011,7 +1015,8 @@ def _real_roi_export(cfg, out, real, spec, prepared=None):
         root, dataset, prepared_maps = prepared
     if evidence[1].get('source_manifest_hash') != dataset.provenance['input_hash']:
         raise NumericContractError('source_asset_manifest_identity_mismatch')
-    if not dataset.cases:
+    from simcompare.numeric_schema import has_short_cases
+    if not has_short_cases(dataset.cases):
         payload = {'schema_version': 'review_roi_v1', 'producer_commit': None,
                    'source_manifest_hash': dataset.provenance.get('source_payload_hash'), 'assets_root': str(root),
                    'rois': [], 'excluded_records': [], 'status': 'unavailable',

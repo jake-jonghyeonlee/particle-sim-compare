@@ -1508,7 +1508,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     if physical is not None and max_operation_bytes > physical:
         raise NumericContractError('invalid_resource_limit',
                                    f'max_operation_bytes {max_operation_bytes} exceeds physical memory {physical}')
-    raw_cno_cases = manifest.get('cno_cases') or []
+    raw_cno_cases = manifest.get('cno_cases', [])   # a present key must be a list ({} '' 0 are broken, not absent)
     if (not isinstance(raw_cno_cases, list)
             or any(not isinstance(raw, dict) or not isinstance(raw.get('case_name'), str)
                    or not isinstance(raw.get('endpoints'), list) or len(raw['endpoints']) != 1

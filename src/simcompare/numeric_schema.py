@@ -270,6 +270,11 @@ def is_cno_case(case) -> bool:
     return case.metadata.get('case_kind') == 'cno'
 
 
+def has_short_cases(cases) -> bool:
+    """True when at least one case is not CNO; the empty-dataset guards of short-only consumers look at this."""
+    return any(not is_cno_case(case) for case in cases)
+
+
 @dataclass(frozen=True)
 class DensityRow:
     distribution_id: str

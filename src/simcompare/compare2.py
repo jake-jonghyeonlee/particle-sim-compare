@@ -27,7 +27,7 @@ from pathlib import Path
 from .compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, CRP_ONE_GROUPS, ROUND_DIGITS, VI_LINE_DIVISOR,
                               VI_PIXEL_DIVISOR, cno_lambda_factor, collect_cno, crp_for_group,
                               lambda_factor, load_compare2_config, load_density, size_key)
-from .numeric_schema import NumericContractError
+from .numeric_schema import NumericContractError, has_short_cases
 
 SCHEMA_VERSION = 'compare2_v1'
 AREA_BASIS = 'crop_observed_area_div4_user_approved_2026_11_05'
@@ -160,7 +160,7 @@ def _load_side(cfg, role, top_buckets):
     if configured is None:
         raise NumericContractError('compare2_condition_assignment_required', f'{role}: condition_assignment needed')
     dataset = configured[1]
-    if not dataset.cases:
+    if not has_short_cases(dataset.cases):
         raise NumericContractError('compare2_side_without_cases', role)
     manifest = real[1]
     meta = {'source_payload_hash': manifest['source_payload_hash'],

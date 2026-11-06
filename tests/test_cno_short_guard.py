@@ -102,7 +102,39 @@ def test_index_coverage_universe_ignores_cno(both):
     for key in ('electrodes_total', 'by_role_layer', 'missing_by_role_layer'):
         assert got['on'][key] == got['off'][key]
     assert not any('CNO' in str(key) for key in got['on']['by_role_layer'])
-    assert got['on']['dataset_cases'] == got['off']['dataset_cases'] + 1
+    assert got['on']['dataset_cases'] == got['off']['dataset_cases']   # CNO is not counted
+
+
+def test_export_index_makes_no_request_for_cno(both, monkeypatch):
+    (_, on_imp), (_, off_imp) = both
+    seen = {}
+
+    def fake(cfg, side, requests, *args, **kwargs):
+        seen[side.tag] = requests
+        return None
+
+    monkeypatch.setattr(candidates, 'export_manual_rows', fake)
+    states = {}
+    for tag, imp in (('on', on_imp), ('off', off_imp)):
+        side = SimpleNamespace(dataset=dataset_of(imp), index=None, tag=tag)
+        candidates.export_index(None, side, None, 1.0, None, None, 0)
+        states[tag] = side.index
+    assert states['on']['requested'] == states['off']['requested'] == len(seen['off']) > 0
+    assert states['on']['own_blocked'] == states['off']['own_blocked'] == {}
+    assert [r['case_id'] for r in seen['on']] == [r['case_id'] for r in seen['off']]
+    assert CNO_NAME not in [r['case_id'] for r in seen['on']]
+
+
+def test_cno_only_dataset_is_treated_as_empty(both):
+    from simcompare.numeric_schema import has_short_cases
+    (_, on_imp), _ = both
+    dataset = dataset_of(on_imp)
+    cno = [c for c in dataset.cases if is_cno_case(c)]
+    assert cno and has_short_cases(dataset.cases) and not has_short_cases(cno)
+    dataset.cases = cno
+    with pytest.raises(NumericContractError) as info:
+        compute_areas(dataset)
+    assert info.value.code == 'missing_expected_cases'   # the same error as an empty dataset
 
 
 def test_diameter_check_is_not_satisfied_by_a_cno_case(tmp_path):
@@ -149,6 +181,7 @@ def test_compare2_with_cno_dataset_equals_the_one_without(both, tmp_path):
     for key in docs['on']:
         assert docs['on'][key] == docs['off'][key], key
     assert docs['on']['delta']['cno']   # the CNO CSV rows still reach the lambda, from the CSV
+    # validate-data: the CNO import diagnostics (e.g. cno_case_included) may add reasons; only the exit code is compared
     codes = [main(['validate-data', '--config', str(base / 'numeric.yaml')]) for base in (on_base, off_base)]
     assert codes[0] == codes[1]
 
@@ -250,7 +283,7 @@ def test_adv3_cno_hotspot_outside_the_diameter_list_is_reported_and_may_leave_no
     assert load_real_manifest(tmp_path / 'none') is not None
 
 
-@pytest.mark.parametrize('broken', ['text', [1], [None], {'a': 1}, [{'case_name': 'x'}]])
+@pytest.mark.parametrize('broken', ['text', [1], [None], {'a': 1}, [{'case_name': 'x'}], {}, '', 0])
 def test_adv4_broken_cno_cases_structure_is_a_contract_error(tmp_path, broken):
     root = mixed(tmp_path)
     import_hotspots(root, tmp_path / 'on', include_cno=True)

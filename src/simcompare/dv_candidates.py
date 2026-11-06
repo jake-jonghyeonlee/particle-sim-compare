@@ -23,7 +23,7 @@ from . import candidates
 from .electrode_map import (ROI_GRADES, ElectrodeMaps, _components, _run_counts, compute_graded_electrode_maps,
                             graded_extra_bytes, stable_region_id)
 from .heatmap import write_heatmap
-from .numeric_schema import NumericContractError, is_cno_case
+from .numeric_schema import NumericContractError, has_short_cases, is_cno_case
 
 VULNERABILITY_SCHEMA = 'vulnerability_v1'
 SCORE_RULE_VERSION = 'dv_roi_rank_v1'
@@ -496,7 +496,7 @@ def _run(cfg, out, track, sides, dv, links, notes, args, diameter_um):
                              'query_rows_blocked': side.role_blocked, 'index_rows_blocked': side.role_blocked_index})
         if side.status in ('blocked', 'unavailable'):
             warnings.append({'code': 'side_' + side.status, 'product': name, 'reasons': side.reasons})
-        if not side.dataset.cases:
+        if not has_short_cases(side.dataset.cases):
             warnings.append({'code': 'dv_candidates_side_has_no_cases', 'product': name,
                              'detail': '이 제품의 데이터셋에 case 가 없어 dv-grade 와 연결하지 않았습니다(side_unavailable 과 같은 처리).'})
         ungraded = links[name][1]
@@ -661,8 +661,9 @@ def _vulnerability(sides, plans, dv, links, args, notes):
             'product_id': dv[name]['manifest']['product_id'], 'dv_provenance': _dv_record(dv[name]),
             'regions': regions, 'unweighted_regions': unweighted, 'grade_maps': plan['grade_maps'],
             'pairs': [dict(row) for row in dv[name]['pairs']],
-            'cases': [{**dict(row), 'in_dataset': bool(side.dataset.cases)} for row in dv[name]['by_case']],
-            'ungraded_cases': ungraded, 'n_dataset_cases': len(side.dataset.cases),
+            'cases': [{**dict(row), 'in_dataset': has_short_cases(side.dataset.cases)} for row in dv[name]['by_case']],
+            'ungraded_cases': ungraded,
+            'n_dataset_cases': sum(1 for c in side.dataset.cases if not is_cno_case(c)),
             'n_graded_cases': len(grade_of), 'case_count_by_grade': {g: sum(1 for r in by_case.values() if r['grade'] == g) for g in GRADE_CODE}}
     return {'schema_version': VULNERABILITY_SCHEMA, 'score_rule_version': SCORE_RULE_VERSION, 'args': args, 'products': products,
             'notes': notes}

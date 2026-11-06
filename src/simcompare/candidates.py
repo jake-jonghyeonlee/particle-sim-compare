@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .numeric_schema import is_cno_case
+from .numeric_schema import has_short_cases, is_cno_case
 
 SCHEMA_VERSION = 'candidate_queries_v1'
 OVERLAP_EPS = 1e-12
@@ -210,7 +210,7 @@ def prepare_side(cfg, name, diameter_um, reserved_bytes=0):
         for key in ('asset_manifest', 'electrode_import_record'):
             ref = side.section.get(key)
             side.input_record[key] = dict(ref) if isinstance(ref, dict) else None
-        if not side.dataset.cases:
+        if not has_short_cases(side.dataset.cases):
             side.status = 'unavailable'
             side.reasons = ['same_name_endpoints_unresolved']
         if side.dataset.provenance.get('unresolved_same_name_cases'):
@@ -339,6 +339,8 @@ def export_index(cfg, side, folder, diameter_um, track, memo, reserved_bytes, mi
     """데이터셋 case마다 명시 manual ROI 하나를 내보내 role/layer union이 제품 전체 전극을 덮게 한다(index 전용)."""
     requests, own_blocked = [], {}
     for case in sorted(side.dataset.cases, key=lambda c: tuple(str(v) for v in asdict(c.identity).values())):
+        if is_cno_case(case):   # CNO has no electrode-pair index ROI (same exclusion as index_coverage)
+            continue
         identity = asdict(case.identity)
         point = _index_point(side.dataset.frames[identity['frame_id']])
         if point is None:
@@ -370,7 +372,8 @@ def index_coverage(side):
     """index export가 데이터셋 전극 전체를 (role, layer)별로 덮는지 센다."""
     state = side.index
     # CNO (one electrode, lateral_open) cases have no electrode-pair index ROI: left out of the universe
-    universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases if not is_cno_case(case) for e in case.endpoints}
+    short_cases = [case for case in side.dataset.cases if not is_cno_case(case)]
+    universe = {_endpoint_key(asdict(e)) for case in short_cases for e in case.endpoints}
     ready = [r for r in state['rows'] if r['status'] == 'ready']
     covered = {_endpoint_key(item['endpoint']) for row in ready
                for item in (row.get('source_assets') or {}).get('layouts', [])} & universe
@@ -390,7 +393,7 @@ def index_coverage(side):
                      for key, total in totals.items()}
     n_blocked = len(state['rows'])-len(ready)+len(state['own_blocked'])
     complete = (state['status'] == 'available' and n_blocked == 0 and covered == universe)
-    return {'stage': 'index_coverage', 'product': side.name, 'dataset_cases': len(side.dataset.cases),
+    return {'stage': 'index_coverage', 'product': side.name, 'dataset_cases': len(short_cases),
             'index_rois_ready': len(ready), 'index_rois_blocked': n_blocked,
             'blocked_reasons': dict(sorted(reasons.items())),
             'electrodes_covered': len(covered), 'electrodes_total': len(universe),
