@@ -545,6 +545,30 @@ def test_adv1_missing_centre_gives_an_empty_window_with_center_missing(monkeypat
     assert states['target']['f']['status'] == 'center_missing' and not states['target']['f']['crop'].any()
 
 
+def test_t17_a_side_without_centre_gets_no_layer_overlay(monkeypatch):
+    import simcompare.compare2_report as cr
+    import simcompare.pipeline as pipeline
+    monkeypatch.setattr(pipeline, '_compare_options', lambda cfg: (None, None))
+
+    def scan(cfg, info, top, fids, diameter, size, origin_for, states, key_of=None):
+        for fid in fids:
+            state = cr._new_state()
+            state.update(status='ok', crop=np.ones((size, size), dtype=bool))
+            state['origin'] = origin_for(fid, state)
+            states[fid] = state
+    seen = {}
+    monkeypatch.setattr(cr, '_scan_side', scan)
+    monkeypatch.setattr(cr, '_load_overlays',
+                        lambda cfg2, info, keys, states, size, warnings, layer_of=None: seen.setdefault(info['role'], layer_of))
+    frame = SimpleNamespace(shape_yx=(100, 100), origin_xy_um=(0.0, 0.0))
+    infos = {role: {'pitch': 1.0, 'frame': frame, 'limit': 1 << 40, 'role': role} for role in ('reference', 'target')}
+    cfg2 = SimpleNamespace(report=SimpleNamespace(diameter_um=5.0, map_window_um=10))
+    spec = {'reference': {'key': None, 'layer': 'L1', 'center_um': (50.0, 50.0)},
+            'target': {'key': None, 'layer': 'L1', 'center_um': None}}
+    cr._build_figures(None, cfg2, infos, {'f': spec}, [])
+    assert seen == {'reference': {'f': 'L1'}, 'target': {'f': None}}
+
+
 def test_adv2_added_and_removed_pairs_show_one_sided_enlarged_maps(linked, tmp_path):
     _html, record = linked_report(linked, tmp_path)
     assert len(record['roi_figures']) == 2

@@ -108,7 +108,7 @@ class _Tee:
 
 PATH_FLAGS = {"--root", "--out", "--config", "--expected-cases", "--expected-cases-from-roots", "--numeric-data-dir",
               "--condition-assignment", "--cnt-from-dl1-root", "--candidates", "--decisions", "--match",
-              "--correspondence"}
+              "--correspondence", "--windows", "--confirm", "--dl1-search", "--compare2-dir"}
 
 
 def _resolved_args(args):
@@ -118,7 +118,7 @@ def _resolved_args(args):
         if arg.startswith("--"):
             flag = arg if arg in PATH_FLAGS else None
         elif flag is not None:
-            value = arg.split("=", 1)[1] if flag == "--match" and "=" in arg else arg
+            value = arg.split("=", 1)[1] if flag in ("--match", "--windows") and "=" in arg else arg
             lines.append(f"{flag} {arg!r} -> {os.path.abspath(os.path.expanduser(value))}")
     return lines
 

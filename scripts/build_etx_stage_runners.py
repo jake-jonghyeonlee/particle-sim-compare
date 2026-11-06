@@ -244,7 +244,12 @@ STAGES = {
 
 # ΔV·위험도 흐름(bundles/etx/dv/). 기본 흐름과 따로 진행하며, 공통 단계(import·asset)는 같은 JOBS 를 복사해 둔다.
 DV_STAGES = {
-    "01_import_hotspots": ([DV_NOTE.format(base="01")] + _import_header("dv_01", "dv_02", "dv_05"), IMPORT_JOBS),
+    "01_import_hotspots": ([DV_NOTE.format(base="01")] + [
+        line.replace("예전 실행기로 이미 import했다면(기대 목록 없음 → dv_05회차 ROI 전부 blocked) dv_01회차부터 다시 한다. 먼저",
+                     "이미 import했고 다시 한다면 먼저")
+        .replace("data/imported/reference·target, data/assets/reference·target, data/changes, data/confirmed, data/local.",
+                 "data/imported/reference·target, data/assets/reference·target, data/dv_template, data/dv_grade, data/changes_dv, data/vulnerability_report.")
+        for line in _import_header("dv_01", "dv_02", "dv_05")], IMPORT_JOBS),
     "02_import_assets": ([DV_NOTE.format(base="03")] + [h.replace("{own}", "dv_02") for h in ASSETS_HEADER], ASSETS_JOBS),
     "03_dv_template": (
         ["dv_03회차(dv 흐름, 기본 01~07회차와 독립): 제품 case 폴더 이름에서 전극×타이밍 전압 시트의 빈 양식(dv_sheet.csv)을 만든다.",

@@ -463,7 +463,8 @@ def _build_figures(cfg, cfg2, infos, specs, warnings):
             if specs[fid][role]['center_um'] is None:       # no centre recorded: an empty window, never the frame middle
                 state['status'] = 'center_missing'
         _load_overlays(cfg2, info, fids, states[role], side_size, warnings,
-                       layer_of={fid: specs[fid][role]['layer'] for fid in fids})
+                       layer_of={fid: (None if specs[fid][role]['center_um'] is None else specs[fid][role]['layer'])
+                                 for fid in fids})
     return states
 
 

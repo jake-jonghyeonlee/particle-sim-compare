@@ -50,6 +50,22 @@ def test_relative_paths_resolve_from_runner_folder_not_launch_cwd(tmp_path):
     assert f'relative paths resolve from {work.resolve()}' in log
 
 
+def test_t17_runner_log_resolves_link_option_paths(tmp_path):
+    work = tmp_path / 'runner'
+    work.mkdir()
+    args = ['--config', 'compare2.yaml', '--windows', 'QA4_R00=data/local', '--candidates', 'data/changes',
+            '--confirm', 'data/confirmed', '--compare2-dir', 'data/compare2',
+            '--dl1-search', 'dl1a', '--dl1-search', 'dl1b', '--out', 'data/report']
+    script = _build(work, [('compare2-report', args)])
+    subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+    log = (work / 'job.log').read_text(encoding='utf-8')
+    base = work.resolve()
+    for flag, value, path in (('--windows', 'QA4_R00=data/local', 'data/local'), ('--candidates', 'data/changes', 'data/changes'),
+                              ('--confirm', 'data/confirmed', 'data/confirmed'), ('--compare2-dir', 'data/compare2', 'data/compare2'),
+                              ('--dl1-search', 'dl1a', 'dl1a'), ('--dl1-search', 'dl1b', 'dl1b')):
+        assert f'{flag} {value!r} -> {base / path}' in log, (flag, value)
+
+
 def test_base_dir_overrides_runner_folder(tmp_path):
     work, base = tmp_path / 'runner', tmp_path / 'base'
     work.mkdir(); base.mkdir()

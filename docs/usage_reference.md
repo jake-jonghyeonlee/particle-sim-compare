@@ -177,7 +177,7 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 
 ## ROI 선정
 
-ROI 선정 방식은 셋이다. **변경점 ROI(`candidates-change`)와 ΔV 취약점 ROI(`candidates-dv`)가 현행이다.** 비가중 취약점 ROI(`candidates`, `max_count` 기준)는 참고용으로 코드와 문서를 남겨 둔다. ETX 4회차 실행기(`simcompare_job_4_candidates.py`)는 `candidates-change`를, 4b·4c 실행기는 `candidates-dv`·`vulnerability-report`를 돈다.
+ROI 선정 방식은 셋이다. **변경점 ROI(`candidates-change`)와 ΔV 취약점 ROI(`candidates-dv`)가 현행이다.** 비가중 취약점 ROI(`candidates`, `max_count` 기준)는 참고용으로 코드와 문서를 남겨 둔다. ETX 4회차 실행기(`simcompare_job_04_change_candidates.py`)는 `candidates-change`를, 4b·4c 실행기는 `candidates-dv`·`vulnerability-report`를 돈다.
 
 ### 변경점 ROI (candidates-change) — 현행
 
@@ -535,7 +535,7 @@ python -m simcompare compare2-report --compare2-dir data/compare2 --config compa
 | `--top-n N` | 4·5절 표 길이(기본 10) |
 | `--max-pairs-per-condition N` | 위치(조건)당 지도로 보이는 쌍 수(기본 3) |
 
-연결 옵션(`--candidates`·`--confirm`·`--windows`·`--dl1-search`) 중 하나라도 주면 `report.json`에 `locations`, `link_inputs`, `roi_figures`, `options`(`top_regions`, `top_improved`, `table_top_n`, `max_pairs_per_condition`)가 더해진다. 연결 입력이 없으면 이 키들은 없고 이전 `report.json` 키·`report.html`은 그대로다. N 은 양의 정수여야 하며 아니면 종료 코드 2 와 새 `--out` 의 `error.json`(`invalid_compare2_report_argument`)이다.
+연결 옵션(`--candidates`·`--confirm`·`--windows`·`--dl1-search`) 중 하나라도 주면 `report.json`에 `locations`, `link_inputs`, `roi_figures`, `options`(`top_regions`, `top_improved`, `table_top_n`, `max_pairs_per_condition`)가 더해진다. 연결 입력이 없으면 이 키들은 없고 이전 `report.json` 키·`report.html`은 그대로다. N 이 0 이하이면 종료 코드 2 와 새 `--out` 의 `error.json`(`invalid_compare2_report_argument`)이다. 정수가 아니면 argparse 오류(종료 코드 2, `error.json` 없음)다.
 
 **두 `top_n`**: 설정 `report.top_n`(기본 4)은 7절 조건 지도·설명 문장의 상위 조건 수이고 `report.json` 의 `top_n` 으로 기록된다. 명령줄 `--top-n`(기본 10)은 4·5절 표(위치 순위·전극 표)의 길이이고 `options.table_top_n` 으로만 기록된다. 서로 다른 값이다.
 
@@ -622,7 +622,7 @@ JOBS = [
 
 `compare`는 스트리밍이라 `max_operation_bytes` 기본 8 GiB로 충분한 것이 정상이다. 기본값을 넘으면 `oversized_real_operation: estimated N bytes exceed ...`로 멈추며 N이 추정치다. N에 여유를 더한 값(물리 메모리 이하)을 넣고 다시 실행한다. 종료 코드 3은 partial 항목이 있다는 뜻이며 `reasons`를 확인한다.
 
-**스케일 개선 후 재시작(2회차부터)**: 1회차 import 결과(`.npz`·옛 `.npy`)는 그대로 읽히므로 1회차는 다시 하지 않는다. 6개 실행기(`bundles/etx/simcompare_job_1~6_*.py`)를 모두 새 파일로 교체하고 2회차부터 다시 돈다(`JOBS`·`BASE_DIR`은 새 파일에서 다시 고친다). `real.yaml`의 새 선택 키는 `compare: {full_bucket_detail: false, top_buckets: 20}`(기본 요약, 위 "요약 모드")과 `condition_assignment.max_bucket_output_entries`(기본 1,000,000)와 `max_label_pattern_entries`(기본 24,000,000)다. 모든 bucket 목록(`full_bucket_detail: true`)은 GB 단위 `comparison.json`을 만들 수 있어 필요할 때만 켠다. 4·6회차도 계산 전 admission(위 설명)으로 `oversized_real_operation`이 나올 수 있다. 2회차를 새 실행기로 다시 돌리면 `comparison_masks.zip`이 함께 만들어져 6회차가 `compute_areas` 두 번을 건너뛴다(이미 끝난 2회차 출력은 그대로 유효하며 6회차가 재계산한다).
+**스케일 개선 후 재시작(2회차부터)**: 1회차 import 결과(`.npz`·옛 `.npy`)는 그대로 읽히므로 1회차는 다시 하지 않는다. 기본 흐름 실행기(`bundles/etx/simcompare_job_01_*.py`, `03_*`~`06_*`; 옛 1~6회차에 해당)를 모두 새 파일로 교체하고 2회차부터 다시 돈다(`JOBS`·`BASE_DIR`은 새 파일에서 다시 고친다). `real.yaml`의 새 선택 키는 `compare: {full_bucket_detail: false, top_buckets: 20}`(기본 요약, 위 "요약 모드")과 `condition_assignment.max_bucket_output_entries`(기본 1,000,000)와 `max_label_pattern_entries`(기본 24,000,000)다. 모든 bucket 목록(`full_bucket_detail: true`)은 GB 단위 `comparison.json`을 만들 수 있어 필요할 때만 켠다. 4·6회차도 계산 전 admission(위 설명)으로 `oversized_real_operation`이 나올 수 있다. 2회차를 새 실행기로 다시 돌리면 `comparison_masks.zip`이 함께 만들어져 6회차가 `compute_areas` 두 번을 건너뛴다(이미 끝난 2회차 출력은 그대로 유효하며 6회차가 재계산한다).
 
 **4~6회차 재시작**: 6개 실행기를 다시 받아 교체한다(`JOBS`·`BASE_DIR`은 새 파일에서 다시 고친다). 1·3회차 출력과 이미 끝난 2회차 `comparison.json/csv`는 그대로 유효하다(2회차 입력 형식·해시·`ElectrodeMaps.to_dict`는 바뀌지 않았다). 새로 생기거나 달라진 것: (1) **2회차 `compare`**가 `comparison_masks.zip`(그룹별 패킹 마스크, 입력 해시로 묶임)을 `comparison.json/csv`와 한 번에(같은 공개 트랜잭션) 만든다. 6회차가 이 파일이 맞으면 두 모델의 면적 계산을 건너뛰고(결과는 재계산과 같음), 없거나 입력이 다르면 조용히 다시 계산한다. 이미 끝난 2회차에서 이 파일만 얻으려면 2회차 `compare`를 새 실행기로 다시 돌린다(기존 `comparison.*`는 새 세대로 통째로 바뀌며, 실패하면 이전 세대가 그대로 남는다: 공개 트랜잭션을 연 뒤(reference 계산이 끝나고 쓰기를 시작한 뒤)의 오류는 CLI도 `comparison.json/csv/comparison_masks.zip`을 지우지 않고 `error.json`만 쓴다. 그 전의 오류도 `mode: real`이면 이전 세대를 지우지 않는다. 설정 파일을 읽지 못하는 경우와 합성 `compare`만 예외다). (2) **4회차 `review_rois.json`**은 슬림 형식이다: 행마다 coverage 스칼라 필드와 `observed_ref`만 두고 `observed`·`missing`·`not_applicable`·`measurement_errors` 목록은 최상위 `region_coverages`에 영역마다 한 번만 쓴다(같은 `review_roi_v1`; DL2 `psdl2.data.load_export`는 읽기만 확인했고 그대로 받는다). 5회차 `confirm-pairs`는 슬림·옛 형식 모두 읽고, 읽기 전에 파일 크기×해석 배수를 `max_operation_bytes`와 견주어 크면 `json.loads` 전에 멈춘다. 이미 만든 4회차 출력은 그대로 5회차에 쓸 수 있으나 큰 자료의 메모리를 줄이려면 4회차를 다시 돌린다. 이때 `candidates`·`confirm-pairs`는 이미 있는 `--out` 폴더를 거부하므로 예전 출력 폴더(예: `data/candidates_k3`)를 옮기거나 이름을 바꾸거나, 실행기 JOBS의 `--out`을 새 경로로 바꾼다. (3) **6회차**는 출력 폴더를 `local_delta.json`, `local_delta_rows.csv` 외 두 표, `window_sensitivity.*`, `local_delta.html`, `_thumbs.json`, 썸네일·개요 PNG의 한 세대로 공개한다. 죽은 뒤에는 같은 명령을 다시 돌리면 복구한다(`.local_delta.staging.*`는 지워도 되는 임시 폴더). 예전 6회차가 남긴 썸네일 PNG는 새 세대로 바뀐다.
 

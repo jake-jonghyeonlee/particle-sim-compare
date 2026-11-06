@@ -79,11 +79,12 @@ def test_every_runner_job_parses_with_the_real_cli_parser():
     parser = _parser()
     stages = _stages()
     assert set(NEW_STAGES) <= set(stages)
-    for stage, (_, jobs) in stages.items():
-        assert jobs, stage
-        for command, args, _ in jobs:
-            parsed = parser.parse_args([command, *args])
-            assert parsed.command == command, stage
+    for flow, table in (('base', stages), ('dv', _module().DV_STAGES)):
+        for stage, (_, jobs) in table.items():
+            assert jobs, (flow, stage)
+            for command, args, _ in jobs:
+                parsed = parser.parse_args([command, *args])
+                assert parsed.command == command, (flow, stage)
 
 
 def test_new_runner_stages_carry_the_multiproduct_arguments():
