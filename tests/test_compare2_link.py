@@ -78,7 +78,7 @@ def corr_pair(pid, a_electrodes=('A', 'B'), b_electrodes=('B', 'A'), layer='L1',
             'b': side_doc('PT', layer, b_electrodes, [11.0, 21.0]), 'source': {'kind': 'manual'}, 'status': status, 'reasons': []}
 
 
-def write_candidates(folder, *, direct_pairs=None, ref_hash=REF_HASH, tgt_hash=TGT_HASH, mutate=None):
+def write_candidates(folder, *, direct_pairs=None, ref_hash=REF_HASH, tgt_hash=TGT_HASH, mutate=None, present_in=None):
     """Two ROIs: ROI1 = regions R1+R2 (score 10), ROI2 = region R3 (score 20); the target_to_reference queries repeat them."""
     folder = Path(folder)
     payload = {'schema_version': 'candidate_queries_v1',
@@ -101,7 +101,8 @@ def write_candidates(folder, *, direct_pairs=None, ref_hash=REF_HASH, tgt_hash=T
             'pairs': [corr_pair(pid, a, b, layer='L2' if a == ('D', 'E') else 'L1') for pid, region, a, b in pairs]}
     sidecar = {'schema_version': 'direct_pairs_sidecar_v1',
                'pairs': {pid: {'region_id': region, 'change_kind': 'appeared', 'residual_um2': 1.5, 'area_reference_um2': 2.0,
-                               'area_target_um2': 3.5, 'present_in': 'both', 'layer_changed': False, 'flags': [], 'score_um2': 10.0}
+                               'area_target_um2': 3.5, 'present_in': (present_in or {}).get(pid, 'both'), 'layer_changed': False,
+                               'flags': [], 'score_um2': 10.0}
                          for pid, region, a, b in pairs}}
     write_json(folder / 'direct/roi_correspondence.json', corr)
     write_json(folder / 'direct/direct_pairs_sidecar.json', sidecar)
@@ -470,12 +471,17 @@ def test_adv1_case_absent_on_a_side_has_no_mapping_and_no_warning(hand):
     assert not link['warnings']
 
 
-def test_adv2_one_sided_direct_pair_has_no_mapping_for_the_side_without_endpoints(hand):
-    write_candidates(hand.cand, direct_pairs=[('direct_1', 'R2', ('A', 'B'), None), ('direct_2', 'R3', ('D', 'E'), ('E', 'D'))])
+def test_adv2_one_sided_direct_pair_has_no_endpoints_on_either_side(hand):
+    # real producer shape (change_candidates.py:419-430): present_in != both -> no endpoints on either side
+    write_candidates(hand.cand, direct_pairs=[('direct_1', 'R2', None, None), ('direct_2', 'R3', ('D', 'E'), ('E', 'D')),
+                                              ('direct_3', 'R3', None, None)],
+                     present_in={'direct_1': 'reference', 'direct_3': 'both'})
     link = link_of(hand, candidates_dir=hand.cand)
-    pair = next(p for p in link['pairs'] if p['pair_id'] == 'direct_1')
-    assert pair['conditions'] == {'reference': {'condition_id': 'AB@L1', 'reason': None},
-                                  'target': {'condition_id': None, 'reason': 'one_sided_pair_no_endpoints'}}
+    pairs = {p['pair_id']: p for p in link['pairs']}
+    one_sided = {'condition_id': None, 'reason': 'one_sided_pair_no_endpoints'}
+    assert pairs['direct_1']['conditions'] == {'reference': one_sided, 'target': one_sided}
+    missing = {'condition_id': None, 'reason': 'endpoints_missing'}                 # present_in == both but no endpoints
+    assert pairs['direct_3']['conditions'] == {'reference': missing, 'target': missing}
     assert not link['warnings']
     windows = write_windows(hand.tmp / 'win', hand.cand / 'direct/roi_correspondence.json', [named_row('direct_2', 10, 5)])
     loc = compute_locations(link_of(hand, candidates_dir=hand.cand, windows_dir=windows), loc_doc())
@@ -671,6 +677,17 @@ def test_g_ranking_top_n_map_pairs_and_ties():
     assert roi_m['reasons'] == ['pair_null:line:1', 'pair_null:pixel:1']
     wide = by_id(compute_locations(link, doc, max_pairs_per_condition=5), 'roi:m', 'rois')
     assert wide['map_pairs'] == ['m3', 'm1', 'm5', 'm2', 'm4']
+
+
+def test_f_denominator_floor_turns_noise_into_negligible():
+    link, doc = synthetic({'roi:noise': {'p': (0, 1e-24)}}, totals=(0.0, 0.0))        # dVI = 0 and a 1e-24 location sum
+    result = compute_locations(link, doc)
+    assert result['rois'][0]['net'] == 0.0 and result['counts']['negligible'] == 1
+    above, doc = synthetic({'roi:edge': {'p': (0, 4e-15)}}, totals=(0.0, 0.0))        # vi = 3e-15, just above RATIO_EPS 1e-15
+    edge = compute_locations(above, doc)['rois'][0]
+    assert abs(edge['net'] - 1.0) < 1e-12 and edge['class'] == 'worse'
+    doc['inputs']['constants'] = {'ratio_null_below': 1e-10}                           # the floor comes from the compare2 document
+    assert compute_locations(above, doc)['rois'][0]['class'] == 'negligible'
 
 
 def test_h_explained_ratio_and_residual(hand):

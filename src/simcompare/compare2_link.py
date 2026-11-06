@@ -252,7 +252,8 @@ def _pair_records(correspondence, sidecar, path_kind, assign, index, scores, war
                   'a': _side_record(pair['a']), 'b': _side_record(pair['b']),
                   'attributes': {key: side_data.get(key) for key in SIDECAR_ATTRIBUTES}, 'named_pair': {}}
         conditions = {}
-        one_sided = bool(pair['a'].get('endpoints')) != bool(pair['b'].get('endpoints'))
+        present = side_data.get('present_in')
+        one_sided = present is not None and present != 'both'      # a pair that exists on one side only has no endpoints
         for role, side in (('reference', pair['a']), ('target', pair['b'])):
             endpoints = side.get('endpoints')
             if not endpoints:
@@ -644,7 +645,7 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
     for roi in rois:
         if any(roi['delta_vi'][k] is None for k in KINDS):
             continue
-        roi['net'] = sum(0.0 if denominator[k] == 0 else roi['delta_vi'][k] / denominator[k] for k in KINDS)
+        roi['net'] = sum(0.0 if denominator[k] < eps else roi['delta_vi'][k] / denominator[k] for k in KINDS)     # below the floor: noise
         roi['class'] = _classify(roi['net'])
     counts = {name: sum(1 for r in rois if r['class'] == name) for name in ('worse', 'improved', 'negligible', 'uncomputable')}
     worse = sorted((r for r in rois if r['class'] == 'worse'), key=lambda r: (-r['net'], r['roi_key']))
