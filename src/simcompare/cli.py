@@ -44,6 +44,8 @@ def _parser() -> argparse.ArgumentParser:
     importer.add_argument("--root", required=True, help="입력 hotspot root")
     importer.add_argument("--out", required=True, help="새 출력 디렉터리")
     importer.add_argument("--expected-cases", help="누락된 case 폴더 확인용 case 이름 목록")
+    importer.add_argument("--include-cno", action="store_true",
+                          help="3-part lateralopen(CNO) 폴더를 manifest의 cno_cases로 함께 가져온다(기본은 건너뜀)")
     importer.add_argument("--expected-cases-from-roots", nargs="+", metavar="ROOT",
                           help="기대 case 목록을 --root와 여기 적은 다른 root에서 발견된 case 이름의 합집합으로 만든다 (--expected-cases와 함께 쓸 수 없음)")
     electrode = _korean_help(sub.add_parser(
@@ -304,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
             result = import_hotspots(args.root, Path(args.out),
                                      expected_cases=args.expected_cases if args.expected_cases else None,
                                      expected_case_roots=(list(args.expected_cases_from_roots)
-                                                          if args.expected_cases_from_roots is not None else None))
+                                                          if args.expected_cases_from_roots is not None else None),
+                                     include_cno=args.include_cno)
             _print(result)
             return 0 if result['status'] == 'available' else 3
         if args.command == "import-electrode-assets":

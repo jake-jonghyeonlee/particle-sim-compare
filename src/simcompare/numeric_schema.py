@@ -265,6 +265,11 @@ class NumericCase:
     reasons: tuple[str, ...] = ()
 
 
+def is_cno_case(case) -> bool:
+    """True for a lateralopen CNO case (one electrode, no pair); the only way modules tell it from a short case."""
+    return case.metadata.get('case_kind') == 'cno'
+
+
 @dataclass(frozen=True)
 class DensityRow:
     distribution_id: str

@@ -241,18 +241,21 @@ def discover_cno_cases(root: Path):
     root = Path(root)
     cases = _cno_entries(root)
     for case in cases:
-        path = root / case['source_relative_path']
-        try:
-            csv_info = _csv_areas(root, path, 'lateral_open')
-        except NumericContractError as exc:
-            case['csv'] = {'status': 'invalid', 'path': None, 'sha256': None, 'rows': {}, 'reason': exc.code,
-                           'detail': str(exc),
-                           'relative_path': (path / 'result' / 'lateral_open.csv').relative_to(root).as_posix()}
-            continue
-        if csv_info['path'] is not None:
-            csv_info['relative_path'] = (path / 'result' / csv_info['path']).relative_to(root).as_posix()
-        case['csv'] = csv_info
+        case['csv'] = _cno_csv(root, root / case['source_relative_path'])
     return cases
+
+
+def _cno_csv(root: Path, path: Path):
+    """The result/lateral_open.csv information of one CNO folder (a broken CSV is reported, not raised)."""
+    try:
+        csv_info = _csv_areas(root, path, 'lateral_open')
+    except NumericContractError as exc:
+        return {'status': 'invalid', 'path': None, 'sha256': None, 'rows': {}, 'reason': exc.code,
+                'detail': str(exc),
+                'relative_path': (path / 'result' / 'lateral_open.csv').relative_to(root).as_posix()}
+    if csv_info['path'] is not None:
+        csv_info['relative_path'] = (path / 'result' / csv_info['path']).relative_to(root).as_posix()
+    return csv_info
 
 
 def _discover_cases(root: Path, tree=None):
@@ -313,6 +316,151 @@ def _require_existing(value, argument: str, code: str) -> Path:
     return path
 
 
+def _import_records(root: Path, staging: Path, index: int, image_names: dict, csv_rows: dict, case_crop_shape,
+                    max_input_pixels: int, file_index: dict):
+    """One record per diameter of one case: stores each hotspot mask under staging/assets, indexes its source PNG.
+    Returns (records, bytes of compressed mask assets written)."""
+    records, asset_bytes = [], 0
+    for diameter in DIAMETERS_UM:
+        image_path = image_names.get(diameter)
+        csv_row = csv_rows.get(diameter)
+        record = {'diameter_um': diameter, 'input_status': 'missing', 'mask_path': None,
+                  'mask_sha256': None, 'png_area_um2': None, 'csv_area': csv_row,
+                  'area_tolerance_um2': None, 'area_difference_um2': None,
+                  'reason': 'hotspot_image_missing' if image_path is None else None}
+        if image_path is not None:
+            raw_rel = image_path.relative_to(root).as_posix()
+            image_path = resolve_path(root, raw_rel)
+            try:
+                with Image.open(image_path) as header_image:
+                    header_pixels = header_image.width * header_image.height
+            except (OSError, ValueError) as exc:
+                raise NumericContractError('png_decode_failed', raw_rel) from exc
+            if header_pixels > max_input_pixels:
+                raise NumericContractError('real_hotspot_pixel_limit', raw_rel)
+            mask, source_sha256 = _read_gray(image_path, raw_rel)
+            if case_crop_shape is not None and mask.shape != case_crop_shape:
+                raise NumericContractError('hotspot_crop_shape_mismatch', f'{raw_rel}:{mask.shape}!={case_crop_shape}')
+            mask_path = Path('assets') / f'{index:05d}_{diameter:02d}.npz'
+            np.savez_compressed(staging / mask_path, mask=mask)
+            asset_bytes += (staging / mask_path).stat().st_size
+            count = int(np.count_nonzero(mask))
+            area = count * 0.01
+            record.update(input_status='observed', mask_path=mask_path.as_posix(), mask_encoding=MASK_ENCODING,
+                          mask_sha256=_sha(staging / mask_path), source_path=raw_rel,
+                          source_sha256=source_sha256, occupied_pixels=count, png_area_um2=area,
+                          mask_shape_yx=list(mask.shape),
+                          reason=None)
+            file_index[raw_rel] = {'sha256': record['source_sha256'], 'path': raw_rel}
+            if csv_row is None:
+                record['csv_status'] = 'missing_diameter'
+            else:
+                tolerance = csv_row['area_rounding_half_unit'] + 0.005
+                difference = area - csv_row['value']
+                record.update(area_tolerance_um2=tolerance, area_difference_um2=difference,
+                              csv_status='consistent' if abs(difference) <= tolerance else 'mismatch')
+        elif csv_row is not None:
+            record['csv_status'] = 'csv_only'
+        else:
+            record['csv_status'] = 'missing_both'
+        records.append(record)
+    return records, asset_bytes
+
+
+def _import_cno_cases(root: Path, staging: Path, first_index: int, cno_entries: list, common_crop_shape,
+                      max_input_pixels: int, file_index: dict, diagnostics: list):
+    """cno_cases[] of the manifest (--include-cno). Returns (entries, bytes of compressed mask assets written).
+
+    Geometry uses the frame of the 5-part cases: confirmed needs (a) a readable images/1.png larger than 1000 px,
+    (b) every hotspot PNG the size of that 1.png minus 1000 px per axis, (c) that crop equal to the common crop of the
+    5-part cases. A miss makes the case unconfirmed with one cno_frame_mismatch diagnostic (never an error).
+    """
+    entries, asset_bytes = [], 0
+    for offset, cno in enumerate(sorted(cno_entries, key=lambda c: c['case_name'])):
+        name, case_dir = cno['case_name'], root / cno['source_relative_path']
+        images_sub = next((child for child in sorted(case_dir.iterdir())
+                           if child.is_dir() and child.name.lower() == IMAGES_DIRNAME), None)
+        image_dir = images_sub if images_sub is not None else case_dir
+        if images_sub is not None and any(child.is_file() and (child.name in ('1.png', '2.png')
+                                                               or HOTSPOT_RE.fullmatch(child.name))
+                                          for child in case_dir.iterdir()):
+            raise NumericContractError('ambiguous_real_images_location', str(case_dir))
+        csv_info = _cno_csv(root, case_dir)
+        entry = {'case_name': name, 'source_relative_path': cno['source_relative_path'], 'case_kind': 'cno',
+                 'failure_type': 'lateral_open',
+                 'endpoints': [{'electrode_id': cno['electrode_id'], 'actual_layer': cno['actual_layer'],
+                                'role': None}],
+                 'source_contract_version': CONTRACT_VERSION, 'frame_id': 'real_hotspot_crop_v1',
+                 'csv': csv_info, 'records': [], 'geometry_status': 'unconfirmed', 'electrode_shapes_yx': None,
+                 'crop_shape_yx': None, 'geometry_reasons': [], 'diagnostics': []}
+        if images_sub is not None:
+            entry['image_subdir'] = IMAGES_DIRNAME
+        if csv_info['status'] == 'observed':
+            file_index[csv_info['relative_path']] = {'sha256': csv_info['sha256'], 'path': csv_info['relative_path']}
+        csv_rows = csv_info['rows']
+        for extra_diameter in sorted(set(csv_rows) - set(DIAMETERS_UM)):
+            diagnostics.append({'case': name, 'diameter_um': extra_diameter, 'status': 'unexpected_csv_diameter'})
+        image_names = {}
+        for filename in sorted(os.listdir(image_dir)):
+            m = HOTSPOT_RE.fullmatch(filename)
+            if not m:
+                continue
+            prefix, suffix = m.groups()
+            if prefix.lower() != 'lateral_open':
+                diagnostics.append({'case': name, 'file': filename, 'status': 'invalid_defect_prefix'})
+                continue
+            diameter = int(suffix)
+            if diameter in image_names:
+                raise NumericContractError('duplicate_real_hotspot_diameter', f'{name}:{diameter}')
+            image_names[diameter] = image_dir / filename
+        reasons, crop_shape, electrode_shape = [], None, None
+        electrode = image_dir / '1.png'
+        if electrode.exists():
+            source_key = electrode.relative_to(root).as_posix()
+            electrode = resolve_path(root, source_key)
+            file_index[source_key] = {'sha256': _sha(electrode), 'path': source_key}
+            try:
+                with Image.open(electrode) as image:
+                    electrode_shape = (image.height, image.width)
+            except (OSError, ValueError):
+                reasons.append('electrode_image_unreadable')
+            else:
+                if min(electrode_shape) <= 1000:
+                    reasons.append('electrode_image_too_small')
+                else:
+                    crop_shape = (electrode_shape[0] - 1000, electrode_shape[1] - 1000)
+        else:
+            reasons.append('electrode_image_missing')
+        if (image_dir / '2.png').exists():
+            diagnostics.append({'case': name, 'file': (image_dir / '2.png').relative_to(root).as_posix(),
+                                'status': 'cno_unexpected_second_png'})
+            entry['diagnostics'].append('cno_unexpected_second_png')
+        if crop_shape is not None:
+            for diameter in sorted(image_names):
+                try:
+                    with Image.open(image_names[diameter]) as image:
+                        hotspot_shape = (image.height, image.width)
+                except (OSError, ValueError):
+                    continue  # the record step reports an undecodable PNG as png_decode_failed
+                if hotspot_shape != crop_shape:
+                    reasons.append('hotspot_crop_shape_mismatch')
+                    break
+            if common_crop_shape is None or crop_shape != tuple(common_crop_shape):
+                reasons.append('crop_frame_mismatch')
+        if reasons:
+            entry['geometry_reasons'] = reasons
+            entry['diagnostics'].append('cno_frame_mismatch')
+            diagnostics.append({'case': name, 'status': 'cno_frame_mismatch', 'reasons': list(reasons)})
+        else:
+            entry.update(geometry_status='confirmed', electrode_shapes_yx=[list(electrode_shape)],
+                         crop_shape_yx=list(crop_shape))
+        entry['records'], added_bytes = _import_records(root, staging, first_index + offset, image_names, csv_rows,
+                                                        None, max_input_pixels, file_index)
+        asset_bytes += added_bytes
+        entries.append(entry)
+    return entries, asset_bytes
+
+
 EXPECTED_CASES_FILENAME = 'expected_cases.txt'
 
 
@@ -327,8 +475,12 @@ def _expected_cases_text(expected: list, source: dict) -> str:
 
 
 def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None,
-                    expected_case_roots: list | None = None, max_input_pixels: int = 100_000_000):
-    """Import discovered cases one mask at a time into a versioned manifest."""
+                    expected_case_roots: list | None = None, max_input_pixels: int = 100_000_000,
+                    include_cno: bool = False):
+    """Import discovered cases one mask at a time into a versioned manifest.
+
+    include_cno (off by default) also imports the 3-part lateralopen (CNO) folders as manifest `cno_cases`; without it
+    they are only reported (cno_case_skipped) and the written bytes are the same as before the option existed."""
     _require_existing(root, '--root', 'real_hotspot_root_missing')
     if expected_cases is not None:
         _require_existing(expected_cases, '--expected-cases', 'expected_cases_file_missing')
@@ -458,66 +610,44 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                 case_crop_shape = None
                 entry['diagnostics'].append('electrode_image_missing')
                 entry['geometry_reasons'].append('electrode_image_missing')
-            for diameter in DIAMETERS_UM:
-                image_path = image_names.get(diameter)
-                csv_row = csv_rows.get(diameter)
-                record = {'diameter_um': diameter, 'input_status': 'missing', 'mask_path': None,
-                          'mask_sha256': None, 'png_area_um2': None, 'csv_area': csv_row,
-                          'area_tolerance_um2': None, 'area_difference_um2': None,
-                          'reason': 'hotspot_image_missing' if image_path is None else None}
-                if image_path is not None:
-                    raw_rel = image_path.relative_to(root).as_posix()
-                    image_path = resolve_path(root, raw_rel)
-                    try:
-                        with Image.open(image_path) as header_image:
-                            header_pixels = header_image.width * header_image.height
-                    except (OSError, ValueError) as exc:
-                        raise NumericContractError('png_decode_failed', raw_rel) from exc
-                    if header_pixels > max_input_pixels:
-                        raise NumericContractError('real_hotspot_pixel_limit', raw_rel)
-                    mask, source_sha256 = _read_gray(image_path, raw_rel)
-                    if case_crop_shape is not None and mask.shape != case_crop_shape:
-                        raise NumericContractError('hotspot_crop_shape_mismatch', f'{raw_rel}:{mask.shape}!={case_crop_shape}')
-                    mask_path = Path('assets') / f'{index:05d}_{diameter:02d}.npz'
-                    np.savez_compressed(staging / mask_path, mask=mask)
-                    asset_bytes += (staging / mask_path).stat().st_size
-                    count = int(np.count_nonzero(mask))
-                    area = count * 0.01
-                    record.update(input_status='observed', mask_path=mask_path.as_posix(), mask_encoding=MASK_ENCODING,
-                                  mask_sha256=_sha(staging / mask_path), source_path=raw_rel,
-                                  source_sha256=source_sha256, occupied_pixels=count, png_area_um2=area,
-                                  mask_shape_yx=list(mask.shape),
-                                  reason=None)
-                    file_index[raw_rel] = {'sha256': record['source_sha256'], 'path': raw_rel}
-                    if csv_row is None:
-                        record['csv_status'] = 'missing_diameter'
-                    else:
-                        tolerance = csv_row['area_rounding_half_unit'] + 0.005
-                        difference = area - csv_row['value']
-                        record.update(area_tolerance_um2=tolerance, area_difference_um2=difference,
-                                      csv_status='consistent' if abs(difference) <= tolerance else 'mismatch')
-                elif csv_row is not None:
-                    record['csv_status'] = 'csv_only'
-                else:
-                    record['csv_status'] = 'missing_both'
-                entry['records'].append(record)
+            entry['records'], added_bytes = _import_records(root, staging, index, image_names, csv_rows,
+                                                            case_crop_shape, max_input_pixels, file_index)
+            asset_bytes += added_bytes
             for diameter in sorted(set(image_names)-set(DIAMETERS_UM)):
                 diagnostics.append({'case': case_dir.name, 'diameter_um': diameter, 'status': 'unexpected_diameter'})
             entry['classification_status'] = 'unassigned_pair_table'
             entry['map_status'] = 'unconfigured'
             cases.append(entry)
-        for cno in cno_cases:
-            diagnostics.append({'case': cno['case_name'], 'status': 'cno_case_skipped',
-                                'source_relative_path': cno['source_relative_path'],
-                                'electrode_id': cno['electrode_id'], 'actual_layer': cno['actual_layer']})
-        for name in cno_expected:
-            diagnostics.append({'case': name, 'status': 'cno_expected_entry_ignored'})
+        cno_imported = None
+        if include_cno:
+            cno_imported, cno_bytes = _import_cno_cases(root, staging, len(found), cno_cases, common_crop_shape,
+                                                        max_input_pixels, file_index, diagnostics)
+            asset_bytes += cno_bytes
+            for cno in cno_imported:
+                diagnostics.append({'case': cno['case_name'], 'status': 'cno_case_included',
+                                    'source_relative_path': cno['source_relative_path'],
+                                    'electrode_id': cno['endpoints'][0]['electrode_id'],
+                                    'actual_layer': cno['endpoints'][0]['actual_layer'],
+                                    'geometry_status': cno['geometry_status']})
+            folder_keys = {_cno_name(cno['case_name']) for cno in cno_cases}
+            for name in cno_expected:
+                if _cno_name(name) not in folder_keys:
+                    diagnostics.append({'case': name, 'status': 'expected_cno_case_folder_missing'})
+        else:
+            for cno in cno_cases:
+                diagnostics.append({'case': cno['case_name'], 'status': 'cno_case_skipped',
+                                    'source_relative_path': cno['source_relative_path'],
+                                    'electrode_id': cno['electrode_id'], 'actual_layer': cno['actual_layer']})
+            for name in cno_expected:
+                diagnostics.append({'case': name, 'status': 'cno_expected_entry_ignored'})
         discovered_names = {case['case_name'] for case in cases}
         for missing in sorted(expected_set-discovered_names):
             diagnostics.append({'case': missing, 'status': 'expected_case_folder_missing'})
         if expected is None:
             diagnostics.append({'status': 'expected_case_inventory_unprovided', 'scope': 'absent_case_coverage_unconfirmed'})
         csv_missing_cases = [c['case_name'] for c in cases if c['csv']['status'] == 'missing']
+        if cno_imported:
+            csv_missing_cases += [c['case_name'] for c in cno_imported if c['csv']['status'] == 'missing']
         diagnostics.extend({'case': name, 'status': 'case_local_csv_missing'} for name in csv_missing_cases)
         frames = {'frame_id': 'real_hotspot_crop_v1', 'length_unit': 'um', 'pixel_pitch_um': 0.1,
                   'origin_xy_um': [50.0, 50.0], 'axis_order': 'yx', 'shape_yx': common_crop_shape,
@@ -536,6 +666,8 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                     'expected_cases': expected, 'expected_case_source': expected_source,
                     'expected_case_coverage_status': 'confirmed' if expected is not None else 'unconfirmed',
                     'frame': frames, 'cases': cases, 'diagnostics': diagnostics, 'source_files': file_index}
+        if include_cno:
+            manifest['cno_cases'] = cno_imported
         # Canonicalize through the JSON representation first so integer CSV row
         # keys and tuple shapes hash exactly as their persisted string/list forms.
         manifest = json.loads(json.dumps(manifest, ensure_ascii=False, allow_nan=False))
@@ -559,6 +691,117 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+def _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets, geometry_ok, frame_shape):
+    """Record, CSV and source-file invariants shared by cases[] and cno_cases[] entries."""
+    records = case.get('records', [])
+    if len(records) != len(DIAMETERS_UM) or {r.get('diameter_um') for r in records} != set(DIAMETERS_UM):
+        raise NumericContractError('real_case_diameter_coverage_invalid', case.get('case_name', ''))
+    case_csv_rows = case.get('csv', {}).get('rows', {})
+    for record in records:
+        if record.get('input_status') not in ('observed', 'missing'):
+            raise NumericContractError('invalid_real_input_status')
+        csv_row = record.get('csv_area')
+        indexed_csv_row = case_csv_rows.get(str(record.get('diameter_um')))
+        if csv_row != indexed_csv_row:
+            raise NumericContractError('real_csv_representation_mismatch', name)
+        csv_tolerance, csv_difference, derived_status = _csv_row_contract(
+            csv_row, record['diameter_um'], record.get('png_area_um2'))
+        if record.get('input_status') == 'observed':
+            source_path = record.get('source_path')
+            source_rel = PurePosixPath(source_path) if isinstance(source_path, str) else None
+            if (source_rel is None or source_rel.is_absolute() or '..' in source_rel.parts
+                    or source_rel.parent.as_posix() != image_base
+                    or source_path not in source_files or
+                    source_files[source_path].get('sha256') != record.get('source_sha256')):
+                raise NumericContractError('real_record_source_coverage_mismatch', name)
+            used_source_files.add(source_path)
+            asset = resolve_path(folder, record['mask_path'])
+            if record['mask_path'] in assets:
+                raise NumericContractError('duplicate_real_mask_asset', record['mask_path'])
+            assets.add(record['mask_path'])
+            if _sha(asset) != record.get('mask_sha256'):
+                raise NumericContractError('real_mask_hash_mismatch', record['mask_path'])
+            mask = None  # at most one mask alive at a time
+            mask = _load_mask(asset, record, mmap=True)
+            if mask.dtype != np.dtype(bool) or mask.ndim != 2 or (geometry_ok and list(mask.shape) != frame_shape):
+                raise NumericContractError('real_mask_binary_contract_mismatch', record['mask_path'])
+            if record.get('mask_shape_yx') != list(mask.shape):
+                raise NumericContractError('real_mask_shape_metadata_mismatch', record['mask_path'])
+            area = int(np.count_nonzero(mask)) * 0.01
+            if not isinstance(record.get('png_area_um2'), (int, float)) or not math.isfinite(record['png_area_um2']) or not math.isclose(area, record['png_area_um2'], rel_tol=0, abs_tol=1e-12):
+                raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
+            del mask
+            expected_csv_status = 'missing_diameter' if csv_row is None else derived_status
+            if csv_row is not None:
+                _csv_row_contract(csv_row, record['diameter_um'], area,
+                                  record.get('area_tolerance_um2'), record.get('area_difference_um2'))
+            if record.get('csv_status') != expected_csv_status:
+                raise NumericContractError('real_csv_status_invariant_mismatch', record['mask_path'])
+        elif (record.get('mask_path') is not None or record.get('mask_sha256') is not None
+              or record.get('mask_encoding') is not None):
+            raise NumericContractError('invalid_missing_real_record', name)
+        else:
+            expected_status = 'csv_only' if csv_row is not None else 'missing_both'
+            if (record.get('csv_status') != expected_status or record.get('png_area_um2') is not None
+                    or record.get('area_difference_um2') is not None or record.get('area_tolerance_um2') is not None):
+                raise NumericContractError('real_missing_record_invariant_mismatch', name)
+    csv_info = case.get('csv', {})
+    if csv_info.get('status') == 'observed':
+        csv_path = f"{case.get('source_relative_path')}/result/{case.get('failure_type')}.csv"
+        if csv_path not in source_files or source_files[csv_path].get('sha256') != csv_info.get('sha256'):
+            raise NumericContractError('real_csv_source_coverage_mismatch', name)
+        used_source_files.add(csv_path)
+
+
+def _check_cno_cases(folder, manifest, frame, frame_shape, case_names, source_files, used_source_files, assets):
+    """Validate manifest['cno_cases'] (written by import-hotspots --include-cno); cases[] checks are not touched."""
+    cno_cases = manifest['cno_cases']
+    if not isinstance(cno_cases, list):
+        raise NumericContractError('invalid_real_cno_cases')
+    seen = set()
+    for case in cno_cases:
+        name = case.get('case_name') if isinstance(case, dict) else None
+        key = _cno_name(name) if isinstance(name, str) else None
+        if key is None:
+            raise NumericContractError('invalid_real_cno_case_name', str(name))
+        if name in seen or name in case_names or key in {_cno_name(other) for other in seen}:
+            raise NumericContractError('duplicate_real_cno_case_name', name)
+        seen.add(name)
+        if case.get('case_kind') != 'cno' or case.get('failure_type') != 'lateral_open':
+            raise NumericContractError('invalid_real_cno_case_kind', name)
+        if case.get('source_contract_version') != CONTRACT_VERSION or case.get('frame_id') != frame['frame_id']:
+            raise NumericContractError('real_case_manifest_version_mismatch', name)
+        endpoints = case.get('endpoints')
+        if (not isinstance(endpoints, list) or len(endpoints) != 1 or not isinstance(endpoints[0], dict)
+                or endpoints[0].get('role') is not None
+                or (endpoints[0].get('electrode_id'), endpoints[0].get('actual_layer')) != key):
+            raise NumericContractError('invalid_real_cno_case_endpoints', name)
+        source_relative_path = case.get('source_relative_path')
+        source_path = PurePosixPath(source_relative_path) if isinstance(source_relative_path, str) else None
+        image_subdir = case.get('image_subdir')
+        if (source_path is None or source_path.is_absolute() or '..' in source_path.parts
+                or source_path.name != name or image_subdir not in (None, IMAGES_DIRNAME)):
+            raise NumericContractError('invalid_real_cno_case_source_binding', name)
+        image_base = source_relative_path if image_subdir is None else f'{source_relative_path}/{image_subdir}'
+        geometry_ok = case.get('geometry_status') == 'confirmed'
+        electrode_shapes = case.get('electrode_shapes_yx')
+        if geometry_ok:
+            if case.get('crop_shape_yx') != frame_shape:
+                raise NumericContractError('real_case_frame_mismatch', name)
+            if electrode_shapes != [[frame_shape[0] + 1000, frame_shape[1] + 1000]]:
+                raise NumericContractError('real_electrode_crop_transform_mismatch', name)
+        elif (case.get('geometry_status') != 'unconfirmed' or case.get('crop_shape_yx') is not None
+              or electrode_shapes is not None or not case.get('geometry_reasons')):
+            raise NumericContractError('invalid_unconfirmed_case_geometry', name)
+        _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets,
+                            geometry_ok, frame_shape)
+        electrode_key = f'{image_base}/1.png'
+        if electrode_key in source_files:
+            used_source_files.add(electrode_key)
+        elif geometry_ok:
+            raise NumericContractError('real_electrode_source_coverage_mismatch', name)
 
 
 def load_real_manifest(folder: Path, manifest_path='manifest.json'):
@@ -592,7 +835,8 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
     if any(value is not None for value in physical.values()):
         raise NumericContractError('real_physical_metadata_must_remain_unassigned')
     frame_shape = frame.get('shape_yx')
-    geometry_confirmed = any(case.get('geometry_status') == 'confirmed' for case in manifest.get('cases', []))
+    geometry_confirmed = any(case.get('geometry_status') == 'confirmed'
+                             for case in list(manifest.get('cases', [])) + list(manifest.get('cno_cases') or []))
     if frame_shape is None and not geometry_confirmed:
         pass
     elif (not isinstance(frame_shape, list) or len(frame_shape) != 2
@@ -659,70 +903,16 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
             raise NumericContractError('invalid_unconfirmed_case_geometry', name)
         if case.get('source_contract_version') != manifest['schema_version']:
             raise NumericContractError('real_case_manifest_version_mismatch')
-        records = case.get('records', [])
-        if len(records) != len(DIAMETERS_UM) or {r.get('diameter_um') for r in records} != set(DIAMETERS_UM):
-            raise NumericContractError('real_case_diameter_coverage_invalid', case.get('case_name', ''))
-        case_csv_rows = case.get('csv', {}).get('rows', {})
-        for record in records:
-            if record.get('input_status') not in ('observed', 'missing'):
-                raise NumericContractError('invalid_real_input_status')
-            csv_row = record.get('csv_area')
-            indexed_csv_row = case_csv_rows.get(str(record.get('diameter_um')))
-            if csv_row != indexed_csv_row:
-                raise NumericContractError('real_csv_representation_mismatch', name)
-            csv_tolerance, csv_difference, derived_status = _csv_row_contract(
-                csv_row, record['diameter_um'], record.get('png_area_um2'))
-            if record.get('input_status') == 'observed':
-                source_path = record.get('source_path')
-                source_rel = PurePosixPath(source_path) if isinstance(source_path, str) else None
-                if (source_rel is None or source_rel.is_absolute() or '..' in source_rel.parts
-                        or source_rel.parent.as_posix() != image_base
-                        or source_path not in source_files or
-                        source_files[source_path].get('sha256') != record.get('source_sha256')):
-                    raise NumericContractError('real_record_source_coverage_mismatch', name)
-                used_source_files.add(source_path)
-                asset = resolve_path(folder, record['mask_path'])
-                if record['mask_path'] in assets:
-                    raise NumericContractError('duplicate_real_mask_asset', record['mask_path'])
-                assets.add(record['mask_path'])
-                if _sha(asset) != record.get('mask_sha256'):
-                    raise NumericContractError('real_mask_hash_mismatch', record['mask_path'])
-                mask = None  # at most one mask alive at a time
-                mask = _load_mask(asset, record, mmap=True)
-                if mask.dtype != np.dtype(bool) or mask.ndim != 2 or (geometry_ok and list(mask.shape) != frame_shape):
-                    raise NumericContractError('real_mask_binary_contract_mismatch', record['mask_path'])
-                if record.get('mask_shape_yx') != list(mask.shape):
-                    raise NumericContractError('real_mask_shape_metadata_mismatch', record['mask_path'])
-                area = int(np.count_nonzero(mask)) * 0.01
-                if not isinstance(record.get('png_area_um2'), (int, float)) or not math.isfinite(record['png_area_um2']) or not math.isclose(area, record['png_area_um2'], rel_tol=0, abs_tol=1e-12):
-                    raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
-                del mask
-                expected_csv_status = 'missing_diameter' if csv_row is None else derived_status
-                if csv_row is not None:
-                    _csv_row_contract(csv_row, record['diameter_um'], area,
-                                      record.get('area_tolerance_um2'), record.get('area_difference_um2'))
-                if record.get('csv_status') != expected_csv_status:
-                    raise NumericContractError('real_csv_status_invariant_mismatch', record['mask_path'])
-            elif (record.get('mask_path') is not None or record.get('mask_sha256') is not None
-                  or record.get('mask_encoding') is not None):
-                raise NumericContractError('invalid_missing_real_record', name)
-            else:
-                expected_status = 'csv_only' if csv_row is not None else 'missing_both'
-                if (record.get('csv_status') != expected_status or record.get('png_area_um2') is not None
-                        or record.get('area_difference_um2') is not None or record.get('area_tolerance_um2') is not None):
-                    raise NumericContractError('real_missing_record_invariant_mismatch', name)
-        csv_info = case.get('csv', {})
-        if csv_info.get('status') == 'observed':
-            csv_path = f"{case.get('source_relative_path')}/result/{case.get('failure_type')}.csv"
-            if csv_path not in source_files or source_files[csv_path].get('sha256') != csv_info.get('sha256'):
-                raise NumericContractError('real_csv_source_coverage_mismatch', name)
-            used_source_files.add(csv_path)
+        _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets,
+                            geometry_ok, frame_shape)
         for image_name in ('1.png', '2.png'):
             key = f"{image_base}/{image_name}"
             if key in source_files:
                 used_source_files.add(key)
             elif geometry_ok:
                 raise NumericContractError('real_electrode_source_coverage_mismatch', name)
+    if 'cno_cases' in manifest:
+        _check_cno_cases(folder, manifest, frame, frame_shape, names, source_files, used_source_files, assets)
     if used_source_files != set(source_files):
         raise NumericContractError('unbound_real_source_file_index_entry')
     if manifest.get('expected_cases') is not None:
@@ -1449,6 +1639,52 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                                            'geometry_status': 'missing_expected_case'}},
                                  ('expected_case_folder_missing',) if pair else
                                  ('expected_case_folder_missing', 'unmapped_pair')))
+    # CNO (lateral_open, one electrode) cases follow the others in case_name order. They have no pair, so they never
+    # get unmapped_pair. An unconfirmed CNO is not added: its cno_frame_mismatch diagnostic stays in the manifest.
+    for raw_case in sorted(manifest.get('cno_cases') or [], key=lambda c: c['case_name']):
+        if raw_case.get('geometry_status') != 'confirmed':
+            continue
+        endpoint = raw_case['endpoints'][0]
+        analysis_layer = endpoint['actual_layer']
+        if analysis_layer not in stack:
+            raise NumericContractError('real_cno_layer_unassigned',
+                                       f"{raw_case['case_name']}: layer {analysis_layer} is not in layer_stack; "
+                                       'add it with a density_process_layer or import without --include-cno')
+        density_layer = stack[analysis_layer][1]
+        if not isinstance(density_layer, str) or not density_layer:
+            raise NumericContractError('real_density_layer_assignment_required', analysis_layer)
+        identity = CaseIdentity(assignment['product_id'], assignment['design_version'], assignment['source_id'],
+                                assignment['process_step_id'], assignment['exposure_id'], raw_case['case_name'],
+                                frame_id, manifest['schema_version'])
+        entries = {}
+        for source_record in raw_case['records']:
+            source_ca = None
+            load = source_record['input_status'] == 'observed'
+            if load:
+                csv_area = source_record.get('csv_area')
+                if csv_area is not None and source_record.get('csv_status') == 'consistent':
+                    source_ca = SourceCA(csv_area['value'], frame_id, frame.valid_hash)
+            reasons = () if source_record['input_status'] == 'observed' else ('missing_input',)
+            if source_record.get('csv_status') == 'mismatch':
+                reasons += ('csv_area_mismatch',)
+            tolerance = source_record.get('area_tolerance_um2') or 1e-9
+            entries[float(source_record['diameter_um'])] = (
+                source_record, source_record['input_status'], reasons, source_ca, tolerance, load)
+        records = LazyRecords(raw_case['case_name'], frame, shape, folder, identity, analysis_layer, entries)
+        case_reasons = list(raw_case.get('geometry_reasons', []))
+        if manifest.get('expected_case_coverage_status') != 'confirmed':
+            case_reasons.append('expected_case_inventory_unprovided')
+        cases.append(NumericCase(identity, (Endpoint(endpoint['electrode_id'], None, analysis_layer),),
+                                 'lateral_open', None, None, analysis_layer, density_layer, records,
+                                 {'case_id': raw_case['case_name'], 'ordered_endpoints': raw_case['endpoints'],
+                                  'records': copy.deepcopy(raw_case['records']),
+                                  'csv': copy.deepcopy(raw_case['csv']),
+                                  'geometry_status': raw_case.get('geometry_status'),
+                                  'source_relative_path': raw_case.get('source_relative_path')},
+                                 {'unit_id': assignment['unit_id'], 'height_um': None, 'height_evidence': None,
+                                  'source_case_metadata': raw_case, 'max_group_mask_cells': max_group_cells,
+                                  'case_kind': 'cno'},
+                                 tuple(sorted(set(case_reasons)))))
     expected_raw = [{'product_id': c.identity.product_id, 'design_version': c.identity.design_version,
                      'source_id': c.identity.source_id, 'process_step_id': c.identity.process_step_id,
                      'exposure_id': c.identity.exposure_id, 'case_id': c.identity.case_id,

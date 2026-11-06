@@ -1144,3 +1144,213 @@ def test_import_walks_the_tree_once(tmp_path, monkeypatch):
     calls.clear()
     discover_cno_cases(root)
     assert len(calls) == 1
+
+
+# ---- compare2/T19: import-hotspots --include-cno writes manifest cno_cases ---------------------
+# Golden of the mixed root built by _mixed_root (two 5-part cases + lateralopen-CNO-GCNT- and -PCNT-), imported with
+# include_cno=True and normalized by _normalized_cno_canonical_hash (the Pillow/zlib hashes of cases and cno_cases
+# records and of every source_files *.png entry masked, source_payload_hash dropped).
+CNO_ON_CANONICAL_SHA256 = '9f8526aab5021a7b91248b18af6020cb8ad725835751d172b4cd4e21d184bb4d'
+CNO_GCNT, CNO_PCNT = 'lateralopen-CNO-GCNT-', 'lateralopen-CNO-PCNT-'
+
+
+def _mixed_root(tmp_path, names=(CNO_GCNT, CNO_PCNT)):
+    root = tmp_path / 'src'
+    _source(root)
+    _source(root, 'lateral_short-C-L1-D-L1')
+    for name in names:
+        _cno(root, name)
+    return root
+
+
+def _normalized_cno_canonical_hash(manifest):
+    import copy
+    payload = copy.deepcopy({k: v for k, v in manifest.items() if k not in ('source_payload_hash', 'manifest_hash_recipe')})
+    for case in payload['cases'] + payload.get('cno_cases', []):
+        for record in case['records']:
+            if record.get('mask_sha256'):
+                record['mask_sha256'] = '<npz>'
+            if record.get('source_sha256'):
+                record['source_sha256'] = '<png>'
+    for path, info in payload['source_files'].items():
+        if path.endswith('.png'):
+            info['sha256'] = '<png>'
+    return _recipe(payload)
+
+
+def _cno_assignment(layers=('L1', 'GCNT', 'PCNT')):
+    assignment = _assignment(pair_table=False)
+    assignment['layer_stack'] = [{'actual_layer': layer, 'stack_order': order, 'density_process_layer': f'P{layer}'}
+                                 for order, layer in enumerate(layers, start=1)]
+    return assignment
+
+
+def test_include_cno_writes_cno_cases_with_records_and_new_hash(tmp_path):
+    root = _mixed_root(tmp_path)
+    off = import_hotspots(root, tmp_path / 'off')
+    on = import_hotspots(root, tmp_path / 'on', include_cno=True)
+    assert on['source_payload_hash'] != off['source_payload_hash'] and on['cases'] == off['cases'] == 2
+    manifest = _manifest_of(tmp_path / 'on')
+    assert 'cno_cases' not in _manifest_of(tmp_path / 'off')
+    assert [c['case_name'] for c in manifest['cno_cases']] == [CNO_GCNT, CNO_PCNT]
+    first = manifest['cno_cases'][0]
+    assert (first['case_kind'], first['failure_type'], first['source_relative_path'], first['image_subdir']) == (
+        'cno', 'lateral_open', CNO_GCNT, 'images')
+    assert first['endpoints'] == [{'electrode_id': 'CNO', 'actual_layer': 'GCNT', 'role': None}]
+    assert first['geometry_status'] == 'confirmed' and first['crop_shape_yx'] == [1270, 1270]
+    assert first['electrode_shapes_yx'] == [[2270, 2270]] and first['csv']['status'] == 'observed'
+    by_d = {r['diameter_um']: r for r in first['records']}
+    assert by_d[1]['input_status'] == 'observed' and by_d[1]['csv_status'] == 'mismatch' and by_d[1]['png_area_um2'] == 0.0
+    assert by_d[2]['input_status'] == 'missing' and by_d[2]['csv_status'] == 'csv_only'
+    included = [d for d in manifest['diagnostics'] if d.get('status') == 'cno_case_included']
+    assert [d['case'] for d in included] == [CNO_GCNT, CNO_PCNT]
+    assert not [d for d in manifest['diagnostics'] if d.get('status') == 'cno_case_skipped']
+    assert f'{CNO_GCNT}/images/1.png' in manifest['source_files'] and f'{CNO_GCNT}/result/lateral_open.csv' in manifest['source_files']
+    assert _normalized_cno_canonical_hash(manifest) == CNO_ON_CANONICAL_SHA256
+    assert load_real_manifest(tmp_path / 'on') == manifest
+
+
+def test_flag_off_mixed_root_still_matches_the_cno_free_golden(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root)
+    import_hotspots(root, tmp_path / 'out', include_cno=False)
+    manifest = _manifest_of(tmp_path / 'out')
+    assert 'cno_cases' not in manifest and [d['status'] for d in manifest['diagnostics']].count('cno_case_skipped') == 1
+    manifest['diagnostics'] = [d for d in manifest['diagnostics'] if d.get('status') != 'cno_case_skipped']
+    assert _normalized_canonical_hash(manifest) == NO_CNO_CANONICAL_SHA256
+
+
+def test_include_cno_cli_flag(tmp_path):
+    root = _mixed_root(tmp_path)
+    on = _run('import-hotspots', '--root', root, '--out', tmp_path / 'on', '--include-cno')
+    off = _run('import-hotspots', '--root', root, '--out', tmp_path / 'off')
+    assert on.returncode == off.returncode == 3, (on.stderr, off.stderr)
+    assert len(_manifest_of(tmp_path / 'on')['cno_cases']) == 2 and 'cno_cases' not in _manifest_of(tmp_path / 'off')
+
+
+def test_cno_manifest_validation_rejects_wrong_endpoints_and_names(tmp_path):
+    root = _mixed_root(tmp_path)
+    import_hotspots(root, tmp_path / 'on', include_cno=True)
+
+    count = []
+
+    def tamper(change, code):
+        count.append(code)
+        folder = tmp_path / f'bad_{len(count)}'
+        import shutil
+        shutil.copytree(tmp_path / 'on', folder)
+        _reseal_real_manifest(folder, change)
+        with pytest.raises(NumericContractError) as info:
+            load_real_manifest(folder)
+        assert info.value.code == code
+
+    tamper(lambda m: m['cno_cases'][0]['endpoints'].append(dict(m['cno_cases'][0]['endpoints'][0])),
+           'invalid_real_cno_case_endpoints')
+    tamper(lambda m: m['cno_cases'][0]['endpoints'][0].update(actual_layer='XCNT'), 'invalid_real_cno_case_endpoints')
+    tamper(lambda m: m['cno_cases'][0].update(case_name='lateral_short-A-L1-B-L1'), 'invalid_real_cno_case_name')
+    tamper(lambda m: m['cno_cases'][0].update(failure_type='lateral_short'), 'invalid_real_cno_case_kind')
+    tamper(lambda m: m['cno_cases'][1].update(case_name=CNO_GCNT), 'duplicate_real_cno_case_name')
+    tamper(lambda m: m['cno_cases'][0].update(crop_shape_yx=[1, 1]), 'real_case_frame_mismatch')
+
+
+def test_configure_adds_cno_numeric_cases(tmp_path):
+    from simcompare.adapters.real_hotspot import configured_dataset
+    from simcompare.numeric_schema import is_cno_case
+    root = _mixed_root(tmp_path)
+    import_hotspots(root, tmp_path / 'on', include_cno=True)
+    ds = configured_dataset(tmp_path / 'on', load_real_manifest(tmp_path / 'on'), _cno_assignment())
+    assert [c.identity.case_id for c in ds.cases] == ['lateral_short-A-L1-B-L1', 'lateral_short-C-L1-D-L1',
+                                                      CNO_GCNT, CNO_PCNT]
+    assert [is_cno_case(c) for c in ds.cases] == [False, False, True, True]
+    cno = ds.cases[2]
+    assert [(e.electrode_id, e.role, e.actual_layer) for e in cno.endpoints] == [('CNO', None, 'GCNT')]
+    assert (cno.failure_type, cno.pair_id, cno.classification, cno.analysis_layer, cno.density_process_layer) == (
+        'lateral_open', None, None, 'GCNT', 'PGCNT')
+    assert cno.metadata['case_kind'] == 'cno' and 'unmapped_pair' not in cno.reasons
+    assert 'unmapped_pair' in ds.cases[0].reasons
+    assert cno.records[1.0].input_status == 'observed' and cno.records[2.0].input_status == 'missing'
+    off = import_hotspots(root, tmp_path / 'off')
+    ds_off = configured_dataset(tmp_path / 'off', load_real_manifest(tmp_path / 'off'), _cno_assignment())
+    assert len(ds_off.cases) == 2 and off['cases'] == 2
+
+
+def test_configure_cno_layer_not_in_layer_stack_is_reported(tmp_path):
+    from simcompare.adapters.real_hotspot import configured_dataset
+    root = _mixed_root(tmp_path)
+    import_hotspots(root, tmp_path / 'on', include_cno=True)
+    with pytest.raises(NumericContractError) as info:
+        configured_dataset(tmp_path / 'on', load_real_manifest(tmp_path / 'on'), _cno_assignment(('L1', 'GCNT')))
+    assert info.value.code == 'real_cno_layer_unassigned' and CNO_PCNT in str(info.value)
+
+
+def _cno_images(root, name, *, electrode=(2270, 2270), hotspot=(1270, 1270), second_png=False):
+    folder = Path(root) / name / 'images'
+    Image.new('L', (electrode[1], electrode[0]), 0).save(folder / '1.png')
+    Image.new('L', (hotspot[1], hotspot[0]), 0).save(folder / 'hotspot_lateral_open01.png')
+    if second_png:
+        Image.new('L', (electrode[1], electrode[0]), 0).save(folder / '2.png')
+
+
+@pytest.mark.parametrize('kwargs, reason', [
+    ({'hotspot': (1000, 1000)}, 'hotspot_crop_shape_mismatch'),
+    ({'electrode': (2370, 2270), 'hotspot': (1370, 1270)}, 'crop_frame_mismatch'),
+    ({'electrode': (900, 900), 'hotspot': (900, 900)}, 'electrode_image_too_small')])
+def test_cno_geometry_counterexamples_are_unconfirmed_and_not_configured(tmp_path, kwargs, reason):
+    from simcompare.adapters.real_hotspot import configured_dataset
+    root = _mixed_root(tmp_path)
+    _cno_images(root, CNO_PCNT, **kwargs)
+    result = import_hotspots(root, tmp_path / 'on', include_cno=True)
+    assert result['status'] == 'partial'
+    manifest = _manifest_of(tmp_path / 'on')
+    bad = manifest['cno_cases'][1]
+    assert bad['geometry_status'] == 'unconfirmed' and reason in bad['geometry_reasons']
+    assert bad['crop_shape_yx'] is None and bad['electrode_shapes_yx'] is None
+    assert [d for d in manifest['diagnostics'] if d.get('status') == 'cno_frame_mismatch'
+            and d['case'] == CNO_PCNT and reason in d['reasons']]
+    assert manifest['cno_cases'][0]['geometry_status'] == 'confirmed'
+    assert load_real_manifest(tmp_path / 'on') is not None
+    ds = configured_dataset(tmp_path / 'on', load_real_manifest(tmp_path / 'on'), _cno_assignment())
+    assert [c.identity.case_id for c in ds.cases][2:] == [CNO_GCNT]
+
+
+def test_cno_missing_electrode_image_is_unconfirmed(tmp_path):
+    root = _mixed_root(tmp_path)
+    (root / CNO_GCNT / 'images/1.png').unlink()
+    import_hotspots(root, tmp_path / 'on', include_cno=True)
+    first = _manifest_of(tmp_path / 'on')['cno_cases'][0]
+    assert first['geometry_status'] == 'unconfirmed' and first['geometry_reasons'] == ['electrode_image_missing']
+    assert load_real_manifest(tmp_path / 'on') is not None
+
+
+def test_cno_second_png_is_reported(tmp_path):
+    root = _mixed_root(tmp_path)
+    _cno_images(root, CNO_GCNT, second_png=True)
+    import_hotspots(root, tmp_path / 'on', include_cno=True)
+    manifest = _manifest_of(tmp_path / 'on')
+    assert [d['case'] for d in manifest['diagnostics'] if d.get('status') == 'cno_unexpected_second_png'] == [CNO_GCNT]
+    assert manifest['cno_cases'][0]['geometry_status'] == 'confirmed'
+    assert f'{CNO_GCNT}/images/2.png' not in manifest['source_files']
+    assert load_real_manifest(tmp_path / 'on') is not None
+
+
+def test_cno_only_root_stays_an_error_with_include_cno(tmp_path):
+    root = tmp_path / 'src'
+    _cno(root)
+    with pytest.raises(NumericContractError, match='no_real_hotspot_cases_found'):
+        import_hotspots(root, tmp_path / 'out', include_cno=True)
+
+
+def test_include_cno_expected_cases_diagnostics(tmp_path):
+    root = _mixed_root(tmp_path)
+    expected = tmp_path / 'expected.txt'
+    expected.write_text(f'lateral_short-A-L1-B-L1\nlateral_short-C-L1-D-L1\n{CNO_GCNT}\nlateralopen-CNO-XCNT\n',
+                        encoding='utf-8')
+    import_hotspots(root, tmp_path / 'on', expected_cases=expected, include_cno=True)
+    manifest = _manifest_of(tmp_path / 'on')
+    assert manifest['expected_cases'] == ['lateral_short-A-L1-B-L1', 'lateral_short-C-L1-D-L1']
+    statuses = [(d['status'], d['case']) for d in manifest['diagnostics'] if 'cno' in d['status']]
+    assert ('expected_cno_case_folder_missing', 'lateralopen-CNO-XCNT') in statuses
+    assert not [s for s in statuses if s[0] == 'cno_expected_entry_ignored']
+    assert len([s for s in statuses if s[0] == 'expected_cno_case_folder_missing']) == 1
+    assert load_real_manifest(tmp_path / 'on') is not None
