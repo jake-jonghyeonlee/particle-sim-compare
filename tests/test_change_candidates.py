@@ -95,14 +95,49 @@ def hotspot_masks(side, extra_target_case=False):
     return masks
 
 
-def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False, dl1_electrodes=None, layer_stack=None):
+CNO_LAYER = 'GCNT'
+CNO_BLOB = (30, 40, 20, 40)                 # reference coordinates; the target copy moved with the layout
+CNO_CHANGE = {'apart': (60, 300, 20, 30),     # target coordinates: a CNO shape only the target has, away from CHANGE
+              'at_change': (CHANGE[0].start+OFFSET[1], CHANGE[1].start+OFFSET[0], 20, 30)}     # ... on top of CHANGE
+
+
+def cno_mask(side, change):
+    mask = rect(*CNO_BLOB)
+    if side == 'target':
+        mask = np.roll(mask, (OFFSET[1], OFFSET[0]), axis=(0, 1)) | rect(*CNO_CHANGE[change])
+    return mask
+
+
+def write_cno_folder(root, side, change, layer=CNO_LAYER, mask=None):
+    """root/lateralopen-CNO-<layer>-/{images,result}: one electrode image (1.png), one 5 um hotspot mask and its CSV row."""
+    folder = root/f'lateralopen-CNO-{layer}-'
+    (folder/'result').mkdir(parents=True)
+    save_black(folder/'images'/'1.png', pattern(1))
+    mask = cno_mask(side, change) if mask is None else mask
+    Image.fromarray(mask.astype(np.uint8)*255).save(folder/'images'/'hotspot_lateral_open05.png')
+    with (folder/'result'/'lateral_open.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+        writer = csv.writer(handle)
+        writer.writerow(['defect_size(um)', 'Area(um2)'])
+        writer.writerow(['5', f'{int(mask.sum())*PITCH*PITCH:.2f}'])
+    return folder
+
+
+def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False, dl1_electrodes=None, layer_stack=None,
+                  cno=None, include_cno=None):
     """hotspot tree -> import-hotspots -> import-electrode-assets -> one data_dir; returns (data_dir, assignment).
 
     The DL1 root also gets one electrode folder per electrode name (default: A, B, C and D when the target has the extra
-    case); candidates-change compares those folder names to decide whether the electrode set differs."""
+    case); candidates-change compares those folder names to decide whether the electrode set differs.
+    cno ('apart' | 'at_change'): also write a CNO folder (layer GCNT, added to layer_stack) whose target shape differs at that
+    place; include_cno (default: True when cno is given) is the import-hotspots --include-cno switch."""
     product = PRODUCTS[side]
     root = base/f'hotspot_{side}'
     masks = hotspot_masks(side, extra_target_case)
+    include_cno = (cno is not None) if include_cno is None else include_cno
+    if cno is not None:
+        write_cno_folder(root, side, cno)
+        layer_stack = layer_stack or [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'},
+                                      {'actual_layer': CNO_LAYER, 'stack_order': 2, 'density_process_layer': 'P2'}]
     for case, mask in masks.items():
         folder = root/'images'/case
         (folder/'result').mkdir(parents=True)
@@ -117,7 +152,7 @@ def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_ca
     expected = base/f'expected_{side}.txt'
     expected.write_text(''.join(f'{case}\n' for case in masks))
     imported = base/f'imported_{side}'
-    import_hotspots(root, imported, expected_cases=expected)
+    import_hotspots(root, imported, expected_cases=expected, include_cno=include_cno)
     pairs = 'AB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n' + ('AD,A,D,line,pair-v1\n' if CASE_AD in masks else '')
     (imported/'pairs.csv').write_text('pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\n' + pairs)
     assignment = {'product_id': product, 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',

@@ -845,6 +845,9 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
     if any(value is not None for value in physical.values()):
         raise NumericContractError('real_physical_metadata_must_remain_unassigned')
     frame_shape = frame.get('shape_yx')
+    if 'cno_cases' in manifest and (not isinstance(manifest['cno_cases'], list)
+                                    or any(not isinstance(case, dict) for case in manifest['cno_cases'])):
+        raise NumericContractError('invalid_real_cno_cases')
     geometry_confirmed = any(case.get('geometry_status') == 'confirmed'
                              for case in list(manifest.get('cases', [])) + list(manifest.get('cno_cases') or []))
     if frame_shape is None and not geometry_confirmed:

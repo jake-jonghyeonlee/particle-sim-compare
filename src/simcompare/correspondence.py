@@ -29,6 +29,8 @@ SOURCE_REQUIRED = {'manual': ('labelled_by', 'labelled_at'),
                    'template_match': ('method', 'version'),
                    'dl2_search': ('score', 'rank', 'checkpoint_fingerprint', 'index_fingerprint')}
 FAILURE_TYPES = ('lateral_short', 'vertical_short')
+CNO_FAILURE_TYPE = 'lateral_open'     # allowed only together with one CNO endpoint (see _is_cno_form)
+CNO_ELECTRODE = 'CNO'
 
 
 def _json_load(path: Path):
@@ -50,10 +52,18 @@ def _json_load(path: Path):
         raise NumericContractError('invalid_correspondence_file', str(exc)) from exc
 
 
-def _endpoints(value, where):
+def _is_cno_form(failure_type, value):
+    """True for the one conditional exception to the two-electrode rule: failure_type lateral_open with exactly one
+    endpoint whose electrode_id is CNO (a CNO case has a layer, not an electrode pair)."""
+    return (failure_type == CNO_FAILURE_TYPE and isinstance(value, list) and len(value) == 1
+            and isinstance(value[0], dict) and value[0].get('electrode_id') == CNO_ELECTRODE)
+
+
+def _endpoints(value, where, failure_type=None):
     if value is None:
         return None
-    if not isinstance(value, list) or len(value) != 2 or any(not isinstance(e, dict) for e in value):
+    cno = _is_cno_form(failure_type, value)
+    if not isinstance(value, list) or (len(value) != 2 and not cno) or any(not isinstance(e, dict) for e in value):
         raise NumericContractError('invalid_correspondence_endpoints', where)
     result = []
     for entry in value:
@@ -63,7 +73,7 @@ def _endpoints(value, where):
             result.append(Endpoint(entry['electrode_id'], entry['role'], entry['actual_layer']))
         except NumericContractError as exc:
             raise NumericContractError('invalid_correspondence_endpoints', where) from exc
-    if result[0].electrode_id == result[1].electrode_id:
+    if len(result) == 2 and result[0].electrode_id == result[1].electrode_id:
         raise NumericContractError('invalid_correspondence_endpoints', where + ': two distinct electrodes required')
     return tuple(result)
 
@@ -81,7 +91,7 @@ def _side(raw, where):
         raise NumericContractError('invalid_correspondence_center', where)
     center = tuple(finite(v, where + '.center_xy_um') for v in center)
     failure_type = raw.get('failure_type')
-    if failure_type is not None and failure_type not in FAILURE_TYPES:
+    if failure_type is not None and failure_type not in FAILURE_TYPES and not _is_cno_form(failure_type, raw.get('endpoints')):
         raise NumericContractError('invalid_correspondence_failure_type', where)
     roi_id = raw.get('roi_id')
     if roi_id is not None:
@@ -90,7 +100,7 @@ def _side(raw, where):
     for field in SIDE_FILTERS:
         if raw.get(field) is not None:
             filters[field] = text(raw[field], where + '.' + field)
-    endpoints = _endpoints(raw.get('endpoints'), where)
+    endpoints = _endpoints(raw.get('endpoints'), where, failure_type)
     return {'product_id': raw['product_id'], 'design_version': raw['design_version'], 'frame_id': raw['frame_id'],
             'center_xy_um': list(center), 'analysis_layer': raw['analysis_layer'],
             'endpoints': None if endpoints is None else [asdict(e) for e in endpoints],
@@ -187,7 +197,7 @@ class BoundSide:
     frame: Frame
     center_xy_um: tuple[float, float]
     analysis_layer: str
-    endpoints: tuple[Endpoint, Endpoint] | None
+    endpoints: tuple[Endpoint, ...] | None      # two distinct electrodes, or one CNO endpoint for lateral_open
     failure_type: str | None
     roi_id: str | None
     filters: dict

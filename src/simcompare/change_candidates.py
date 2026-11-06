@@ -29,6 +29,8 @@ ALIGNMENT_SCHEMA = 'cnt_alignment_v1'
 ELECTRODE_SET_BASIS = 'dl1_electrode_folders'
 UNION_BASIS = 'paired_and_one_sided_cases'   # 합집합·순위 = 짝지어진 조합 + 한쪽 조합(그쪽 합집합에만). 전극이 한쪽에만 있어도 포함한다
 NO_CASE_REASON = 'no_case_in_this_model'      # 이 방향 모델에는 기여 case 가 없다(전부 반대 모델에만 있는 조합)
+CNO_ONLY_REASON = 'cno_only_query_no_dl2'     # 기여 case 가 전부 CNO 다: DL2 export 를 요청하지 않으므로 DL2 confirm 은 불가, direct 경로는 정상
+CNO_DL2_EXPORT = 'not_applicable_cno'         # CNO 기여 case 의 dl2_export 표기(CNO 를 쓰지 않는 입력에는 키가 없다)
 DIRECT_SOURCE = {'kind': 'template_match', 'method': 'cnt_alignment_v1', 'version': '1'}
 DIRECT_SIDECAR_SCHEMA = 'direct_pairs_sidecar_v1'
 DIRECT_LIMITATION = 'compare-windows does not verify these input hashes'
@@ -390,6 +392,10 @@ def _direct_side(case, center, rows_by_key, frame):
     if row is not None and row.get('status') == 'ready':       # DL2 는 blocked ROI 를 색인하지 않으므로 ready 행만 잇는다
         side['roi_id'] = row['roi_id']
     return side, identity
+
+
+def _pair_is_cno(pair):
+    return is_cno_case(pair.ref_case if pair.ref_case is not None else pair.tgt_case)
 
 
 def _layer_cases(dataset, layer):
@@ -1870,6 +1876,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 case = pair.ref_case if query_name == 'reference' else pair.tgt_case
                 if case is None:       # 한쪽 조합: 반대 방향 질의 제품에는 case 문맥이 없어 manual 행을 만들지 않는다
                     continue
+                if is_cno_case(case):  # CNO 는 DL2 export 를 요청하지 않는다(dl2_export: not_applicable_cno)
+                    continue
                 identity = asdict(case.identity)
                 key = _row_key(identity, case.failure_type, case.analysis_layer, center, item.frame)
                 requests.setdefault(key, {**identity, 'center_xy_um': center,
@@ -1961,7 +1969,11 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
             if len(rows) < len(entry['keys']):
                 reasons.add('roi_row_missing')
             if not rows and not reasons:
-                reasons.add(NO_CASE_REASON if contrib[i]['contributing_cases'] and not entry['keys'] else 'no_roi_rows')
+                if contrib[i]['contributing_cases'] and not entry['keys']:
+                    cno_only = all(_pair_is_cno(pair_by_key[c['case_key']]) for c in contrib[i]['contributing_cases'])
+                    reasons.add(CNO_ONLY_REASON if cno_only else NO_CASE_REASON)
+                else:
+                    reasons.add('no_roi_rows')
             flags = list(window['flags'])
             shift_here = entry['shift_here']
             if _clipped(entry['center'], tuple(item.frame.bbox_um), window_um):
@@ -1994,7 +2006,8 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                      'iou_global': c['iou_global'], 'iou_local': c['iou_local'],
                      'local_shift_um': c['local_shift_um'], 'flags': c['flags'],
                      'present_in': pair_by_key[c['case_key']].present_in,
-                     'layer_changed': pair_by_key[c['case_key']].layer_changed, **_layer_key(c)}
+                     'layer_changed': pair_by_key[c['case_key']].layer_changed, **_layer_key(c),
+                     **({'dl2_export': CNO_DL2_EXPORT} if _pair_is_cno(pair_by_key[c['case_key']]) else {})}
                     for c in contrib[i]['contributing_cases']],
                 'one_sided_cases': [
                     {'case_key': c['case_key'], 'present_in': pair_by_key[c['case_key']].present_in,
@@ -2126,7 +2139,7 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
     all_queries = [q for d in directions for q in d['queries']]
     # 반대 모델에만 있는 조합뿐인 방향 질의(NO_CASE_REASON)는 내보낼 ROI 가 원래 없으므로 완전성을 깨지 않는다.
     complete = (not warnings and all((q['status'] == 'ready' and q['n_rois'] == q['n_rois_ready'])
-                                     or q['reasons'] == [NO_CASE_REASON] for q in all_queries)
+                                     or q['reasons'] in ([NO_CASE_REASON], [CNO_ONLY_REASON]) for q in all_queries)
                 and all(s.status == 'available' for s in sides.values()))
     funnel_doc = {'schema_version': 'candidate_funnel_v1', 'directions': funnels, 'top_k': top_k,
                   'top_k_scope': 'per_direction', 'index_coverage': coverage,

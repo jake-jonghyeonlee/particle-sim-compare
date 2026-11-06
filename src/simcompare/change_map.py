@@ -22,7 +22,12 @@ import numbers
 import numpy as np
 
 from .cnt_align import _fft_size, _grid, _lags, _pick_best, _spectrum
-from .numeric_schema import NumericContractError, diameter_key
+from .numeric_schema import NumericContractError, diameter_key, is_cno_case as _is_cno_case
+
+
+def is_cno_case(case):
+    """``numeric_schema.is_cno_case`` for objects that may carry no metadata (plain test doubles are never CNO)."""
+    return hasattr(case, 'metadata') and _is_cno_case(case)
 
 CLASS_IOU_DELTA = 0.2
 CLASS_IOU_MIN = 0.2
@@ -158,7 +163,9 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um, ref_electrodes=None, tg
     ``cases_only_in_*``. 같은 (키, analysis_layer) 가 한 dataset 에 둘 이상이면 ``duplicate_case_key`` 로 둘 다 제외한다.
     양쪽 대표 지름 record 가 관측(면적 0 포함)일 때만 쌍을 만든다. mask 는 읽지 않는다.
     한쪽에 중복이 있으면 반대편의 단일 case 도 ``duplicate_case_key_on_other_side`` 로 제외 목록에 남긴다(둘 다 쌍에서 빠진다).
-    lateral_short·vertical_short 가 아닌 case 는 ``map_requires_short_only`` 로 제외한다(electrode_map 관례).
+    lateral_short·vertical_short 가 아닌 case 는 ``map_requires_short_only`` 로 제외한다(electrode_map 관례). 예외는 CNO case
+    (``is_cno_case``, 전극 endpoint 1개): 포함하고 case_key 는 ``lateral_open|CNO|<층>|<층>`` 이다. 한쪽 조합이면 flag 는
+    ``new_electrode``/``removed_electrode`` 대신 ``cno_case`` 다(stats 에 ``cno_case_included`` 가 생긴다).
     ``ref_electrodes``·``tgt_electrodes``(모델별 DL1 전극 폴더 이름 목록)를 둘 다 주면 한쪽 조합도 쌍에 넣는다: 한쪽 모델에만 있는
     case(``cases_only_in_*``)와 층이 바뀐 case(``case_layer_mismatch``)를 자기 층의 한쪽 조합(``present_in`` = 있는 쪽,
     flags ``one_sided_case`` + 층 변경이면 ``layer_changed``)으로 넣는다. 전극이 반대 모델 전극 목록에 없어도 넣고(전극 추가·삭제도
@@ -202,11 +209,14 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um, ref_electrodes=None, tg
             return
         other_names = tgt_names if side == 'reference' else ref_names
         electrode_flag = None
-        if any(electrode not in other_names for electrode, _ in endpoints):
+        if is_cno_case(cases[0]):      # CNO is a layer-level item: no DL1 electrode folder, so no new/removed electrode
+            electrode_flag = 'cno_case'
+            counts['cno_case_included'] = counts.get('cno_case_included', 0) + 1
+        elif any(electrode not in other_names for electrode, _ in endpoints):
             electrode_flag = 'removed_electrode' if side == 'reference' else 'new_electrode'
         flags = sorted({f'{side}:{r}' for r in head} | {'one_sided_case'} | ({'layer_changed'} if layer_changed else set())
                        | ({electrode_flag} if electrode_flag else set()))
-        if electrode_flag:
+        if electrode_flag in ('removed_electrode', 'new_electrode'):
             counts[electrode_flag + '_included'] += 1
         if side == 'reference':
             pairs.append(CasePair(text, layer, cases[0], None, found, None, flags, layer_changed))
@@ -219,7 +229,8 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um, ref_electrodes=None, tg
     for key in sorted(set(ref_groups) | set(tgt_groups)):
         failure_type, endpoints = key
         ref_layers, tgt_layers = ref_groups.get(key, {}), tgt_groups.get(key, {})
-        if failure_type not in SHORT_FAILURE_TYPES:
+        is_cno = any(is_cno_case(case) for layers in (ref_layers, tgt_layers) for group in layers.values() for case in group)
+        if failure_type not in SHORT_FAILURE_TYPES and not is_cno:
             for side, layers in (('reference', ref_layers), ('target', tgt_layers)):
                 for layer in sorted(layers):
                     for _ in layers[layer]:
