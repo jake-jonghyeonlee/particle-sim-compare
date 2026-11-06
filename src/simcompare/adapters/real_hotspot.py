@@ -38,7 +38,7 @@ IMAGES_DIRNAME = 'images'
 CSV_HEADERS = (['defect_size(um)', 'Area(um2)'], ['DefectSize (um)', 'Area(um^2)'],
                ['DefectSize(um)', 'Area(um^2)'])
 CASE_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$')
-CNO_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)$')
+CNO_RE = re.compile(r'^([^-]+)-([^-]+)-([^-]+)-?$')  # a single trailing '-' is allowed (real folder names)
 HOTSPOT_RE = re.compile(r'^hotspot_([a-z_]+?)(\d+)\.png$', re.IGNORECASE)
 
 
@@ -212,6 +212,8 @@ def _cno_dirs(root: Path, tree=None):
     found.sort(key=lambda p: (p.name, p.relative_to(root).as_posix()))
     names = [p.name for p in found]
     duplicates = sorted({name for name in names if names.count(name) > 1})
+    keys = [_cno_name(name) for name in names]  # 'x-CNO-L' and 'x-CNO-L-' name the same CNO layer
+    duplicates = sorted(set(duplicates) | {name for name, key in zip(names, keys) if keys.count(key) > 1})
     if duplicates:
         raise NumericContractError('duplicate_real_cno_case_name', ', '.join(duplicates))
     return found

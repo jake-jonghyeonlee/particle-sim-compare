@@ -9,7 +9,9 @@ numeric_config: real.yaml
 output_dir: data/compare2
 
 # 밀도 CSV 폴더. 제품군마다 파일 두 개: <제품군>_line.csv, <제품군>_pixel.csv (아래 model_groups 의 키 = 제품군 이름).
-# CSV 형식: 첫 줄 = 빈칸 + 크기 헤더(예 3, 5, 10; "3um", "3µm" 도 됨), 이후 한 줄 = 레이어 이름 + 크기별 glass 당 개수.
+# CSV 형식 두 가지를 자동으로 구분한다(line·pixel 공통).
+#   (가) 첫 줄 = 빈칸 + 크기 헤더(예 3, 5, 10; "3um", "3µm" 도 됨), 이후 한 줄 = 레이어 이름 + 크기별 glass 당 개수.
+#   (나) 실제 자료 방향: 첫 줄 = 빈칸(또는 아무 글자) + 레이어 이름(layer stack 과 같은 대문자 이름), 이후 한 줄 = 크기(1, 2, 3 …) + 레이어별 개수.
 # Excel 에서는 'CSV UTF-8' 로 저장한다. 빈 칸은 '값 없음'이고 0 이 아니다.
 density_dir: data/density
 
@@ -27,7 +29,7 @@ products:
   reference:
     model_group: mobile              # model_groups 의 키
     resolution: [1500, 1850]         # 패널 해상도(가로, 세로 픽셀 수, 양의 정수 둘)
-    hotspot_root: data/input/hotspot/QA4_R00   # 1회차와 같은 hotspot 입력 폴더(CNO 폴더 lateralopen-CNO-<cnt층> 도 여기서 읽는다). 제품 폴더 이름으로 바꾼다
+    hotspot_root: data/input/hotspot/QA4_R00   # 1회차와 같은 hotspot 입력 폴더(CNO 폴더 lateralopen-CNO-<cnt층> 와 끝에 '-' 가 붙은 lateralopen-CNO-<cnt층>- 도 여기서 읽는다). 제품 폴더 이름으로 바꾼다
     unit_size_um: [45, 45]           # 선택. unit 한 변 µm(가로, 세로). 8회차 지도 위치 계산에 쓴다. 생략하면 hotspot frame 크기에서 (frame + 1000 px) / 2 로 계산한다
     dl1_model: QA4_R00               # 선택. 8회차 overlay 용 DL1 모델 폴더 이름(report.dl1_root 아래). 없으면 그 제품은 overlay 를 건너뛴다
   target:

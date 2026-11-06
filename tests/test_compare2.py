@@ -25,8 +25,10 @@ def close(x, y):
 
 # ---- fixture builders -------------------------------------------------------------------------------------------
 
-def write_side(base, name, cases, pairs, cno=None):
-    """cases: (defect, ea, la, eb, lb, {diameter: cells}); pairs: (pair_id, ea, eb, class). Returns (root, imported)."""
+def write_side(base, name, cases, pairs, cno=None, skip=()):
+    """cases: (defect, ea, la, eb, lb, {diameter: cells}); pairs: (pair_id, ea, eb, class). Returns (root, imported).
+
+    skip: diameters whose hotspot image and CSV row are not written (those records are missing)."""
     root = base / name / 'src'
     names = []
     for defect, ea, la, eb, lb, masks in cases:
@@ -38,6 +40,8 @@ def write_side(base, name, cases, pairs, cno=None):
             Image.new('L', (1004, 1004), 0).save(folder / electrode)
         rows = ['defect_size(um),Area(um2)']
         for diameter in DIAMETERS_UM:
+            if diameter in skip:
+                continue
             cells = masks.get(diameter, ())
             array = np.zeros((4, 4), dtype=np.uint8)
             for cell in cells:
@@ -66,14 +70,20 @@ def assignment():
                             for layer, (order, dlayer) in STACK.items()]}
 
 
-def write_density(folder, group, line, pixel):
-    """line/pixel: {density_layer: {diameter: value}}; every other size is 0.0."""
+def write_density(folder, group, line, pixel, transposed=False):
+    """line/pixel: {density_layer: {diameter: value}}; every other size is 0.0.
+
+    transposed: the real layout (first row = layers, one row per size)."""
     folder.mkdir(parents=True, exist_ok=True)
     for kind, table in (('line', line), ('pixel', pixel)):
-        header = ['layer'] + [f'{d}um' for d in DIAMETERS_UM]
-        lines = [','.join(header)]
-        for layer, values in table.items():
-            lines.append(','.join([layer] + [repr(values.get(d, 0.0)) for d in DIAMETERS_UM]))
+        if transposed:
+            lines = [','.join(['size'] + list(table))]
+            for d in DIAMETERS_UM:
+                lines.append(','.join([str(d)] + [repr(values.get(d, 0.0)) for values in table.values()]))
+        else:
+            lines = [','.join(['layer'] + [f'{d}um' for d in DIAMETERS_UM])]
+            for layer, values in table.items():
+                lines.append(','.join([layer] + [repr(values.get(d, 0.0)) for d in DIAMETERS_UM]))
         (folder / f'{group}_{kind}.csv').write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
@@ -82,10 +92,11 @@ DENS_PIXEL = {'P1': {1: 3.0, 2: 1.5, 3: 0.75}, 'P2': {1: 6.0, 2: 3.0, 3: 1.5}, '
 
 
 def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, line=None, pixel=None,
-        ref_cno=None, tgt_cno=None, scale=1.0, out_name='out', diameters=None):
+        ref_cno=None, tgt_cno=None, scale=1.0, out_name='out', diameters=None, skip=(),
+        density_transposed=False):
     """Build both sides, write the configs, run `simcompare compare2`. Returns (exit code, output folder)."""
-    ref_root, ref_imp = write_side(tmp, 'ref', *ref, cno=ref_cno)
-    tgt_root, tgt_imp = write_side(tmp, 'tgt', *tgt, cno=tgt_cno)
+    ref_root, ref_imp = write_side(tmp, 'ref', *ref, cno=ref_cno, skip=skip)
+    tgt_root, tgt_imp = write_side(tmp, 'tgt', *tgt, cno=tgt_cno, skip=skip)
     numeric = {'schema_version': 'numeric_config_v1', 'mode': 'real', 'output_dir': 'unused',
                'reference': {'data_dir': str(ref_imp), 'condition_assignment': assignment()},
                'target': {'data_dir': str(tgt_imp), 'condition_assignment': assignment()}}
@@ -93,7 +104,7 @@ def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, li
     scaled = lambda table: {layer: {d: v * scale for d, v in values.items()} for layer, values in table.items()}
     for group in {ref_group, tgt_group}:
         write_density(tmp / 'density', group, scaled(DENS_LINE if line is None else line),
-                      scaled(DENS_PIXEL if pixel is None else pixel))
+                      scaled(DENS_PIXEL if pixel is None else pixel), transposed=density_transposed)
     glass_cfg = {'value': glass, 'unit': 'um2'}
     cfg = {'schema_version': 'compare2_config_v1', 'numeric_config': 'numeric.yaml', 'output_dir': out_name,
            'density_dir': 'density',
@@ -617,7 +628,8 @@ def test_single_diameter_subset_matches_hand_calculation(tmp_path):
     assert code == 0, doc['sides']['reference']['reasons']
     assert doc['formula_basis'] == 'diameter_subset'
     assert doc['inputs']['diameter_filter'] == {'mode': 'listed', 'diameters_um': [3.0],
-                                                'observed_diameters_um': [1.0, 2.0, 3.0], 'not_observed_um': []}
+                                                'observed_diameters_um': [float(d) for d in DIAMETERS_UM],
+                                                'not_observed_um': []}  # an image exists for every size (area may be 0)
     for role, (cases, _pairs) in (('reference', ref), ('target', tgt)):
         expect = oracle(only(cases, {3}), PAIRS, DENS_LINE, DENS_PIXEL, FACTOR, FACTOR)
         side = doc['sides'][role]
@@ -642,13 +654,12 @@ KINDS_UNDER_TEST = ('line', 'pixel')
 
 def test_unobserved_listed_diameter_is_partial(tmp_path):
     ref, tgt = two_sides()
-    code, out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[3, 10])
+    code, out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[3, 10], skip=(10,))
     assert code == 3
     assert doc['inputs']['diameter_filter']['not_observed_um'] == [10.0]
-    assert doc['inputs']['diameter_filter']['observed_diameters_um'] == [1.0, 2.0, 3.0]
+    assert doc['inputs']['diameter_filter']['observed_diameters_um'] == [float(d) for d in DIAMETERS_UM if d != 10]
     assert 'diameter_filter_not_observed:10' in json.loads((out / 'execution.json').read_text())['reasons']
-    expect = oracle(only(ref[0], {3}), PAIRS, DENS_LINE, DENS_PIXEL, FACTOR, FACTOR)
-    assert close(doc['sides']['reference']['lambda']['line'], expect['lam_line'])
+    assert doc['sides']['reference']['status'] == 'partial'  # the listed 10 um has no input on this side
 
 
 def test_cno_follows_the_diameter_filter(tmp_path):
@@ -659,7 +670,7 @@ def test_cno_follows_the_diameter_filter(tmp_path):
     assert close(doc['sides']['reference']['lambda']['cno'], 1.0 * 1.5 * FACTOR * math.pi / 4)
     full = doc['full_range']['sides']['reference']['lambda']['cno']
     assert close(full, (2.0 * 0.5 + 1.0 * 1.5 + 0.5 * 2.5) * FACTOR * math.pi / 4)
-    assert doc['inputs']['diameter_filter']['observed_diameters_um'] == [1.0, 2.0, 3.0]
+    assert doc['inputs']['diameter_filter']['observed_diameters_um'] == [float(d) for d in DIAMETERS_UM]
 
 
 def test_full_range_equals_the_run_without_the_key(tmp_path):
@@ -724,3 +735,83 @@ def test_missing_glass_area_nulls_full_range_like_the_subset(tmp_path):
     assert doc['sides']['reference']['vi_line'] is None
     assert doc['full_range']['sides']['reference']['vi_line'] is None
     assert doc['full_range']['delta']['delta_vi_line'] is None and doc['full_range']['delta']['delta_vi_line_pct'] is None
+
+
+# ---- compare2/V1b: real input formats and V1 review follow-ups --------------------------------------------------
+
+def test_trailing_hyphen_cno_folders_feed_the_cno_lambda(tmp_path):
+    names = ['lateralopen-CNO-GCNT-', 'lateralopen-CNO-PCNT-', 'lateralopen-CNO-OCNT-']
+    pixel = {**DENS_PIXEL, **{layer: DENS_PIXEL['gcnt'] for layer in ('GCNT', 'PCNT', 'OCNT')}}
+    cnos = {name: CNO_CSV for name in names}
+    code, out = run(tmp_path, (base_cases(), PAIRS), (base_cases(), PAIRS), pixel=pixel, ref_cno=cnos, tgt_cno=cnos)
+    doc = load(out)
+    assert code == 0, doc['sides']['reference']['reasons']
+    side = doc['sides']['reference']
+    assert [(r['case_name'], r['density_layer']) for r in side['cno']] == [
+        ('lateralopen-CNO-GCNT-', 'GCNT'), ('lateralopen-CNO-OCNT-', 'OCNT'), ('lateralopen-CNO-PCNT-', 'PCNT')]
+    assert close(side['lambda']['cno'], 3 * (2.0 * 0.5 + 1.0 * 1.5 + 0.5 * 2.5) * FACTOR * math.pi / 4)
+
+
+def test_transposed_density_csv_gives_the_same_result(tmp_path):
+    ref, tgt = two_sides()
+    cnos = {CNO_NAME: CNO_CSV}
+    _c, _o, rows = run_pair(tmp_path, 'rows', ref, tgt, ref_cno=cnos, tgt_cno=cnos)
+    _c, _o, trans = run_pair(tmp_path, 'trans', ref, tgt, ref_cno=cnos, tgt_cno=cnos, density_transposed=True)
+    assert trans['sides'] == rows['sides'] and trans['delta'] == rows['delta']
+    for role in ('reference', 'target'):
+        a, b = rows['products'][role], trans['products'][role]
+        for key in a:
+            if key not in ('density_files', 'hotspot_root'):
+                assert a[key] == b[key], key
+        assert {k: v['sha256'] for k, v in a['density_files'].items()} != \
+            {k: v['sha256'] for k, v in b['density_files'].items()}  # only the input hashes differ
+
+
+def test_listed_diameter_with_images_but_no_hotspot_is_observed(tmp_path):
+    ref, tgt = two_sides()
+    ref = (only(ref[0], {1, 2}), PAIRS)
+    tgt = (only(tgt[0], {1, 2}), PAIRS)
+    code, _out, doc = run_pair(tmp_path, 'zero', ref, tgt, diameters=[3])
+    assert code == 0
+    assert doc['inputs']['diameter_filter']['not_observed_um'] == []
+    assert doc['sides']['reference']['lambda']['line'] == 0.0
+    code, out, doc = run_pair(tmp_path, 'none', ref, tgt, diameters=[3], skip=(3,))
+    assert code == 3 and doc['inputs']['diameter_filter']['not_observed_um'] == [3.0]
+    assert 'diameter_filter_not_observed:3' in json.loads((out / 'execution.json').read_text())['reasons']
+
+
+def test_cno_row_makes_a_diameter_observed(tmp_path):
+    ref, tgt = two_sides()
+    cnos = {CNO_NAME: CNO_CSV}
+    _c, _o, doc = run_pair(tmp_path, 'cno', ref, tgt, diameters=[3], skip=(3,), ref_cno=cnos, tgt_cno=cnos)
+    assert doc['inputs']['diameter_filter']['not_observed_um'] == []
+
+
+def test_removal_of_a_fully_filtered_condition_is_zero(tmp_path):
+    ref, tgt = two_sides()
+    _code, _out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[3])
+    (cond,) = [c for c in doc['delta']['conditions'] if c['condition_id'] == 'AC@L1']  # AC has no 3 um cell
+    assert cond['removal_b'] == {'delta_vi_line': 0.0, 'delta_vi_pixel': 0.0}
+
+
+def test_summary_csv_shows_the_diameter_subset_only_with_the_key(tmp_path):
+    ref, tgt = two_sides()
+    _c, plain, _d = run_pair(tmp_path, 'plain', ref, tgt)
+    _c, sub, _d = run_pair(tmp_path, 'sub', ref, tgt, diameters=[1, 3])
+    with (plain / 'compare2_summary.csv').open(encoding='utf-8-sig') as handle:
+        assert 'formula_basis' not in csv.DictReader(handle).fieldnames
+    with (sub / 'compare2_summary.csv').open(encoding='utf-8-sig') as handle:
+        rows = list(csv.DictReader(handle))
+    assert [r['scope'] for r in rows] == ['reference', 'target', 'delta']
+    assert {(r['formula_basis'], r['diameters_um']) for r in rows} == {('diameter_subset', '1;3')}
+
+
+def test_full_range_partial_warning(tmp_path):
+    ref, tgt = two_sides()
+    code, _out, doc = run_pair(tmp_path, 'warn', ref, tgt, diameters=[3], skip=(10,))
+    assert code == 0 and doc['inputs']['diameter_filter']['not_observed_um'] == []
+    assert doc['inputs']['diameter_filter']['warnings'] == ['full_range_partial:reference',
+                                                            'full_range_partial:target']
+    assert doc['full_range']['sides']['reference']['status'] == 'partial'
+    _c, _o, clean = run_pair(tmp_path, 'clean', ref, tgt, diameters=[3])
+    assert 'warnings' not in clean['inputs']['diameter_filter']

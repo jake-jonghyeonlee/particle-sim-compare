@@ -319,32 +319,55 @@ def _read_density(path: Path) -> DensityTable:
     rows = [row for row in rows if any(cell.strip() for cell in row)]
     if not rows or len(rows[0]) < 2:
         raise NumericContractError('invalid_density_csv', f'{path.name}: header needs at least one size column')
-    sizes: List[Decimal] = []
-    for cell in rows[0][1:]:
-        size = _size_header(cell, path)
-        if size in sizes:
-            raise NumericContractError('duplicate_density_size', f'{path.name}: {cell.strip()}')
-        sizes.append(size)
-    values: Dict[str, Dict[Decimal, Optional[float]]] = {}
     for row in rows[1:]:
         if len(row) != len(rows[0]):
             raise NumericContractError('invalid_density_csv', f'{path.name}: expected {len(rows[0])} columns, got {len(row)}')
-        layer = row[0].strip()
+
+    def parse_sizes(cells) -> Optional[List[Decimal]]:
+        parsed_sizes: List[Decimal] = []
+        for cell in cells:
+            try:
+                size = _size_header(cell, path)
+            except NumericContractError:
+                return None
+            if size in parsed_sizes:
+                raise NumericContractError('duplicate_density_size', f'{path.name}: {cell.strip()}')
+            parsed_sizes.append(size)
+        return parsed_sizes
+
+    def parse_value(cell: str, layer: str, size: Decimal) -> Optional[float]:
+        cell = cell.strip()
+        if not cell:
+            return None
+        try:
+            return finite(float(cell), 'density', nonnegative=True)
+        except (ValueError, NumericContractError):
+            raise NumericContractError('invalid_density_value', f'{path.name}: {layer}/{size}: {cell!r}') from None
+
+    values: Dict[str, Dict[Decimal, Optional[float]]] = {}
+    sizes = parse_sizes(rows[0][1:])
+    if sizes is not None:  # first row = sizes, one row per layer
+        for row in rows[1:]:
+            layer = row[0].strip()
+            if not layer:
+                raise NumericContractError('invalid_density_csv', f'{path.name}: empty layer name')
+            if layer in values:
+                raise NumericContractError('duplicate_density_layer', f'{path.name}: {layer}')
+            values[layer] = {size: parse_value(cell, layer, size) for size, cell in zip(sizes, row[1:])}
+        return DensityTable(path, hashlib.sha256(raw).hexdigest(), tuple(sizes), values)
+    sizes = parse_sizes([row[0] for row in rows[1:]]) if len(rows) > 1 else None
+    if sizes is None:
+        raise NumericContractError('invalid_density_csv', f'{path.name}: neither the first row nor the first column holds sizes')
+    layers = [cell.strip() for cell in rows[0][1:]]  # first row = layers, one row per size
+    for layer in layers:
         if not layer:
             raise NumericContractError('invalid_density_csv', f'{path.name}: empty layer name')
         if layer in values:
             raise NumericContractError('duplicate_density_layer', f'{path.name}: {layer}')
-        parsed: Dict[Decimal, Optional[float]] = {}
-        for size, cell in zip(sizes, row[1:]):
-            cell = cell.strip()
-            if not cell:
-                parsed[size] = None
-                continue
-            try:
-                parsed[size] = finite(float(cell), 'density', nonnegative=True)
-            except (ValueError, NumericContractError):
-                raise NumericContractError('invalid_density_value', f'{path.name}: {layer}/{size}: {cell!r}') from None
-        values[layer] = parsed
+        values[layer] = {}
+    for size, row in zip(sizes, rows[1:]):
+        for layer, cell in zip(layers, row[1:]):
+            values[layer][size] = parse_value(cell, layer, size)
     return DensityTable(path, hashlib.sha256(raw).hexdigest(), tuple(sizes), values)
 
 

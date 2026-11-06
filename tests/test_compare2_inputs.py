@@ -196,6 +196,37 @@ def test_density_loads_and_normalizes_headers(tmp_path):
     assert tables['pixel'].get('A', 2) == 2.0
 
 
+def test_density_transposed_layout_equals_the_row_layout(tmp_path):
+    rows = load_density(_density(tmp_path, 'name,1,2,3\nL1,0.5,1,2\nGCNT,3,,5\n'), 'mobile')['line']
+    other = tmp_path / 'other'
+    other.mkdir()
+    (other / 'mobile_line.csv').write_text(',L1,GCNT\n1,0.5,3\n2,1,\n3 um,2,5\n', encoding='utf-8')
+    (other / 'mobile_pixel.csv').write_text('um,A\n1,1\n2,2\n', encoding='utf-8')
+    tables = load_density(other, 'mobile')
+    line = tables['line']
+    assert line.sizes == rows.sizes and line.layers == rows.layers == ('L1', 'GCNT')
+    for layer in rows.layers:
+        for size in rows.sizes:
+            assert line.get(layer, size) == rows.get(layer, size)
+    assert line.lookup('GCNT', 2) == (None, 'density_value_missing')
+    assert tables['pixel'].get('A', 2) == 2.0
+
+
+@pytest.mark.parametrize('text, code', [
+    ('n,L1\nx,1\n', 'invalid_density_csv'),               # neither the first row nor the first column holds sizes
+    ('n,L1,L1\n1,1,2\n', 'duplicate_density_layer'),
+    ('n,L1\n1,1\n1.0,2\n', 'duplicate_density_size'),
+    ('n,L1\n1,-1\n', 'invalid_density_value'),
+    ('n,L1,\n1,1,2\n', 'invalid_density_csv'),            # empty layer name
+    ('n,L1,L2\n1,1\n', 'invalid_density_csv'),            # short row
+    ('n,L1\n', 'invalid_density_csv'),                    # no size rows
+])
+def test_density_transposed_errors(tmp_path, text, code):
+    with pytest.raises(NumericContractError) as info:
+        load_density(_density(tmp_path, text), 'mobile')
+    assert _code(info) == code
+
+
 def test_density_missing_reasons(tmp_path):
     line = load_density(_density(tmp_path, 'n,1,2\nGAT,1,\n'), 'mobile')['line']
     assert line.lookup('GAT', 1) == (1.0, None)

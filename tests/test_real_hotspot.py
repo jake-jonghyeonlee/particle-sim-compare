@@ -917,6 +917,43 @@ def test_mixed_root_skips_cno_folder_with_one_diagnostic(tmp_path):
     assert load_real_manifest(tmp_path / 'out') is not None
 
 
+def test_trailing_hyphen_cno_names_are_cno_folders(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    names = ['lateralopen-CNO-GCNT-', 'lateralopen-CNO-PCNT-', 'lateralopen-CNO-OCNT-']
+    for name in names:
+        _cno(root, name)
+    result = import_hotspots(root, tmp_path / 'out')
+    manifest = _manifest_of(tmp_path / 'out')
+    assert result['cases'] == 1 and [c['case_name'] for c in manifest['cases']] == ['lateral_short-A-L1-B-L1']
+    found = discover_cno_cases(root)
+    assert [(c['case_name'], c['electrode_id'], c['actual_layer']) for c in found] == [
+        ('lateralopen-CNO-GCNT-', 'CNO', 'GCNT'), ('lateralopen-CNO-OCNT-', 'CNO', 'OCNT'),
+        ('lateralopen-CNO-PCNT-', 'CNO', 'PCNT')]
+    assert all(c['csv']['status'] == 'observed' for c in found)
+    skipped = [d['case'] for d in manifest['diagnostics'] if d.get('status') == 'cno_case_skipped']
+    assert sorted(skipped) == sorted(names)
+
+
+def test_both_cno_name_forms_of_one_layer_are_a_duplicate(tmp_path):
+    root = tmp_path / 'src'
+    _source(root)
+    _cno(root, 'lateralopen-CNO-GCNT')
+    _cno(root, 'lateralopen-CNO-GCNT-')
+    with pytest.raises(NumericContractError) as info:
+        discover_cno_cases(root)
+    assert info.value.code == 'duplicate_real_cno_case_name'
+    with pytest.raises(NumericContractError) as info:
+        import_hotspots(root, tmp_path / 'out')
+    assert info.value.code == 'duplicate_real_cno_case_name'
+
+
+def test_cno_name_with_two_trailing_hyphens_or_empty_part_is_not_cno(tmp_path):
+    from simcompare.adapters.real_hotspot import _cno_name
+    assert _cno_name('lateralopen-CNO-GCNT--') is None and _cno_name('lateralopen--GCNT-') is None
+    assert _cno_name('lateralopen-CNO-GCNT') == ('CNO', 'GCNT') and _cno_name('lateralopen-CNO-GCNT-') == ('CNO', 'GCNT')
+
+
 def test_cno_without_images_is_found_and_skipped(tmp_path):
     root = tmp_path / 'src'
     _source(root)

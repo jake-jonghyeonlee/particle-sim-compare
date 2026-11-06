@@ -486,16 +486,16 @@ python -m simcompare compare2 --config compare2.yaml --out data/compare2
 
 입력 폴더 규칙:
 
-- 밀도 CSV: 제품군마다 `<제품군>_line.csv`, `<제품군>_pixel.csv`. 첫 줄은 빈칸 + 크기 헤더(`3`, `5`, `10` 또는 `3um`처럼 단위 붙임), 이후 한 줄이 한 레이어다. 행 = 레이어 이름, 열 = 크기(µm), 값 = glass 당 개수. 빈 칸은 '값 없음'이며 0이 아니다. Excel에서는 'CSV UTF-8'로 저장한다(다른 인코딩이면 `invalid_density_csv`).
+- 밀도 CSV: 제품군마다 `<제품군>_line.csv`, `<제품군>_pixel.csv`. 두 방향을 자동으로 구분한다. (가) 첫 줄은 빈칸 + 크기 헤더(`3`, `5`, `10` 또는 `3um`처럼 단위 붙임), 이후 한 줄이 한 레이어다. 행 = 레이어 이름, 열 = 크기(µm). (나) 실제 자료 방향: 첫 줄은 빈칸(또는 `size` 같은 아무 글자) + 레이어 이름(layer stack 과 같은 대문자 이름), 이후 한 줄이 한 크기(`1`, `2`, `3` …)다. 첫 줄 둘째 칸부터가 모두 크기면 (가), 아니고 첫 열 둘째 줄부터가 모두 크기면 (나), 둘 다 아니면 `invalid_density_csv`다. 값 = glass 당 개수. 레이어 이름은 대소문자를 구분한다. 빈 칸은 '값 없음'이며 0이 아니다. Excel에서는 'CSV UTF-8'로 저장한다(다른 인코딩이면 `invalid_density_csv`).
 - 제품군 CRP는 설정하지 않는다. 군 이름이 `mobile` 또는 `watch`면 1.0, 그 밖은 2.92다.
-- CNO 폴더: hotspot root 아래 `lateralopen-CNO-<cnt층>` 폴더. `images/`와 `result/lateral_open.csv`를 둔다. 이미지는 읽지 않고 CSV만 읽는다. 없으면 CNO 항은 0 기여다.
+- CNO 폴더: hotspot root 아래 `lateralopen-CNO-<cnt층>` 또는 끝에 `-`가 하나 더 붙은 `lateralopen-CNO-<cnt층>-` 폴더(예 `lateralopen-CNO-GCNT-`; 층 이름은 `-`를 뺀 부분, 대소문자 그대로). 같은 층의 두 형식이 함께 있으면 `duplicate_real_cno_case_name`이다. `images/`와 `result/lateral_open.csv`를 둔다. 이미지는 읽지 않고 CSV만 읽는다. 없으면 CNO 항은 0 기여다.
 
 출력(`--out`):
 
 | 파일 | 내용 |
 |---|---|
 | `compare2.json` | 전체 결과(`compare2_v1`): 입력 해시, 제품별 λ·CAA·vi, 레이어·조건 분해, 변화(delta), 검산 |
-| `compare2_summary.csv` | 제품·지표 요약 |
+| `compare2_summary.csv` | 제품·지표 요약. `lambda_diameters_um` 이 있을 때만 열 `formula_basis`(`diameter_subset`)와 `diameters_um`(예 `1;2;3`)이 붙는다 |
 | `compare2_layers.csv` | 레이어×크기별 값 |
 | `compare2_conditions.csv` | 조건별 변화와 "B에서 제거 시" 차이 |
 | `compare2_cno.csv` | CNO 폴더별 값 |
@@ -506,6 +506,7 @@ python -m simcompare compare2 --config compare2.yaml --out data/compare2
 
 지표 해석:
 
+- 지름 선택(`lambda_diameters_um`): 지름 `d` 가 `diameter_filter_not_observed:<d>`(종료 코드 3)가 되는 때는 두 제품 모두에서 그 지름의 입력 이미지가 하나도 없고(모든 record 가 missing) CNO 행도 없을 때뿐이다. 이미지가 있고 hotspot 이 없으면(면적 0) 관측으로 본다. 선택한 지름 밖의 전체 지름 값(`full_range`)이 available 이 아니면 `inputs.diameter_filter.warnings` 에 `full_range_partial:<reference|target>` 가 들어간다(상태·종료 코드는 그대로).
 - 값은 비율이며 양품 수율로 읽지 않는다. 설정한 glass 면적과 밀도로 환산한 값이다.
 - 계산: `λ = 밀도(glass 당 개수) × 관측 CA(µm²) × 계수`. 계수에 `/4`(2×2 crop 면적)와 패널 해상도·가중치가 들어 있다. 테두리 복원은 하지 않는다. `caa = 1 − exp(−λ)`, `vi_line = caa ÷ 1.2159`, `vi_pixel = caa ÷ CRP ÷ 1.5462`. CNO는 `λ × π/4`다.
 - 변화 분해: reference→target `Δvi`를 조건(전극쌍×레이어)별 기여로 나눈다. 조건별 몫과 공유 몫, CNO 몫(두 제품군 CRP가 다르면 CRP 차이 몫)을 합치면 100%다. 몫은 부호가 있다(양수 = 증가 기여).

@@ -103,7 +103,7 @@ def _diameter_json(key):
 
 def _new_cell():
     """Areas in um^2 (cells x pitch^2 per group)."""
-    return {'ok': True, 'reasons': set(), 'line': 0.0, 'peff': 0.0, 'transfer': 0.0,
+    return {'ok': True, 'reasons': set(), 'has_input': False, 'line': 0.0, 'peff': 0.0, 'transfer': 0.0,
             'shared_l': 0.0, 'shared_p': 0.0, 'excl_l': defaultdict(float), 'excl_p': defaultdict(float),
             'tr': defaultdict(float)}
 
@@ -119,6 +119,9 @@ def _extract(areas):
         ck = (key.analysis_layer, key.density_process_layer, size_key(key.diameter_um))
         pitch_area = group.frame.pixel_pitch_um ** 2  # each group adds cells x its own pitch^2 (area, um^2)
         item = cells.setdefault(ck, _new_cell())
+        coverage = group.union.coverage  # an input image (or a true not-applicable) exists, whatever its area
+        if coverage.observed + coverage.not_applicable > 0:
+            item['has_input'] = True
         for status, reasons in ((group.line.area.status, group.line.area.reasons),
                                 (group.union.status, group.union.reasons)):
             # not_applicable (vertical size below the interlayer distance) is a true 0 contribution
@@ -182,8 +185,9 @@ def _sum_opt(values):
 def _compute_side(role, product, group, tables, extracted, meta, diameters=None):
     """One side's numbers. `diameters` (a set of size keys) limits every cell, CNO row and delta input to those sizes."""
     cells, classes, electrodes = extracted['cells'], extracted['classes'], extracted['electrodes']
-    # every analysed diameter has a (possibly empty) cell, so "observed" means a non-zero area or a CNO row
-    observed = {ck[2] for ck, item in cells.items() if item['line'] or item['peff'] or item['transfer']}
+    # every analysed diameter has a (possibly empty) cell, so "observed" means an input image exists (hotspot
+    # area may be 0) or a CNO row exists; a diameter whose records are all missing is not observed
+    observed = {ck[2] for ck, item in cells.items() if item['has_input']}
     factors = {'line': lambda_factor(product, group, 'line'), 'pixel': lambda_factor(product, group, 'pixel'),
                'cno': cno_lambda_factor(product, group)}
     reasons = set()
@@ -442,7 +446,10 @@ def _delta(a, b):
         removal = None
         if cb is not None:
             removal = {'delta_vi_line': None, 'delta_vi_pixel': None}
-            if b['ok']['line'] and cb['computable']:
+            if cb.get('filtered_out'):  # the filter removed every cell: removing it changes nothing
+                removal = {'delta_vi_line': 0.0 if b['ok']['line'] else None,
+                           'delta_vi_pixel': 0.0 if b['ok']['pixel'] else None}
+            elif b['ok']['line'] and cb['computable']:
                 removal['delta_vi_line'] = _vi_line(b['lam']['line'] - cb['v']['excl_l']) - b['vi']['line']
             if b['ok']['pixel'] and cb['computable']:
                 removal['delta_vi_pixel'] = _vi_pixel(
@@ -626,6 +633,11 @@ def _csv_documents(doc):
                     'slope_line': (delta['slopes'].get('line') or {}).get('value'),
                     'slope_pixel': (delta['slopes'].get('pixel') or {}).get('value'),
                     'conservation': delta['check']['status']})
+    if doc.get('formula_basis') == 'diameter_subset':  # only with lambda_diameters_um; else the CSV bytes stay as before
+        summary_fields = summary_fields + ['formula_basis', 'diameters_um']
+        listed = ';'.join(f'{size:g}' for size in doc['inputs']['diameter_filter']['diameters_um'])
+        for row in summary:
+            row['formula_basis'], row['diameters_um'] = 'diameter_subset', listed
 
     layer_fields = ['scope', 'layer', 'density_layer', 'diameter_um', 'density_line', 'density_pixel',
                     'line_area_um2', 'pixel_eff_area_um2', 'transfer_area_um2', 'lambda_line', 'lambda_pixel',
@@ -816,6 +828,10 @@ def build_compare2(config_path):
             'observed_diameters_um': [_diameter_json(key) for key in sorted(observed)],
             'not_observed_um': [_diameter_json(key) for key in not_observed]}
         document['full_range'] = _full_range_json(full_sides['reference'], full_sides['target'])
+        warnings = [f'full_range_partial:{role}' for role in ROLES
+                    if document['full_range']['sides'][role]['status'] != 'available']
+        if warnings:  # informational: the top-level status and exit code do not change
+            document['inputs']['diameter_filter']['warnings'] = warnings
         if not_observed:
             partial = True
             reasons.extend(f'diameter_filter_not_observed:{key}' for key in not_observed)
