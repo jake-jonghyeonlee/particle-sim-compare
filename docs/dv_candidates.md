@@ -13,7 +13,7 @@
 ```
 
 4b 와 4c 는 변경점 ROI(4회차 `candidates-change`)와 독립이다. 출력 폴더도 따로 쓴다.
-ETX 실행기는 `simcompare_job_4b_candidates_dv.py`, `simcompare_job_4c_vulnerability_report.py` 다.
+ETX 실행기는 `bundles/etx/dv/simcompare_job_05_candidates_dv.py`, `bundles/etx/dv/simcompare_job_06_vulnerability_report.py` 다(예전 이름 `simcompare_job_4b_candidates_dv.py`, `simcompare_job_4c_vulnerability_report.py`).
 
 ## candidates-dv
 

@@ -397,6 +397,20 @@ def _layer_size_lambdas(side, kind_index):
     return out
 
 
+def _cno_by_layer(side):
+    """A side's CNO rows keyed by (electrode_id, density_layer): the same electrode and layer under two folder-name
+    forms (3-part, trailing hyphen) is one row, the lambdas summed."""
+    merged = {}
+    for name in sorted(side['cno']):
+        row = side['cno'][name]
+        key = (row['electrode_id'], row['density_layer'])
+        if key not in merged:
+            merged[key] = dict(row)
+        else:
+            merged[key]['lambda'] = _sum_opt([merged[key]['lambda'], row['lambda']])
+    return merged
+
+
 def _delta(a, b):
     ident_set = sorted(set(a['conds']) | set(b['conds']), key=lambda i: (i[1], i[0]))
     families = {kind: a['ok'][kind] and b['ok'][kind] for kind in KINDS}
@@ -463,9 +477,11 @@ def _delta(a, b):
             'share_line': _ratio(v_line, dvi_line), 'share_pixel': _ratio(v_pixel, dvi_pixel),
             'removal_b': removal})
 
-    for name in sorted(set(a['cno']) | set(b['cno'])):
-        ra, rb = a['cno'].get(name), b['cno'].get(name)
+    cno_a, cno_b = _cno_by_layer(a), _cno_by_layer(b)
+    for key in sorted(set(cno_a) | set(cno_b), key=lambda k: (((cno_b.get(k) or cno_a[k])['case_name']), str(k))):
+        ra, rb = cno_a.get(key), cno_b.get(key)
         base = rb or ra
+        name = base['case_name']
         va = 0.0 if ra is None else ra['lambda']
         vb = 0.0 if rb is None else rb['lambda']
         d_c = _sub(vb, va) if families['pixel'] else None
@@ -699,14 +715,14 @@ def _csv_documents(doc):
     cno_fields = ['case_name', 'electrode_id', 'density_layer', 'presence', 'reference_csv_status', 'target_csv_status',
                   'reference_lambda', 'target_lambda', 'delta_lambda_pixel', 'delta_vi_pixel', 'share_pixel',
                   'removal_b_delta_vi_pixel', 'reasons']
-    cno_by_side = {role: {c['case_name']: c for c in sides[role]['cno']} for role in ROLES}
+    cno_by_side = {role: _cno_by_layer({'cno': {c['case_name']: c for c in sides[role]['cno']}}) for role in ROLES}
     cno = []
     for row in delta['cno']:
         out = {k: row[k] for k in ('case_name', 'electrode_id', 'density_layer', 'presence', 'delta_lambda_pixel',
                                    'delta_vi_pixel', 'share_pixel')}
         reasons = []
         for role in ROLES:
-            item = cno_by_side[role].get(row['case_name'])
+            item = cno_by_side[role].get((row['electrode_id'], row['density_layer']))
             if item is not None:
                 out[f'{role}_csv_status'] = item['csv_status']
                 out[f'{role}_lambda'] = item['lambda']

@@ -781,7 +781,7 @@ def test_enospc_after_partial_second_asset_cleans_staging(tmp_path, monkeypatch)
 
 
 def test_stage1_runner_logs_import_error(tmp_path):
-    runner_src = Path(__file__).resolve().parents[1]/'bundles/etx/simcompare_job_1_import_hotspots.py'
+    runner_src = Path(__file__).resolve().parents[1]/'bundles/etx/simcompare_job_01_import_hotspots.py'
     text = runner_src.read_text(encoding='utf-8')
     root = tmp_path/'work'/'src'
     _source(root, shape=(1002, 1002))
@@ -800,7 +800,7 @@ def test_stage1_runner_logs_import_error(tmp_path):
     env = {**os.environ, 'PYTHONPATH': str(hook)}
     result = subprocess.run([sys.executable, str(runner)], capture_output=True, text=True, env=env, cwd=str(tmp_path))
     assert result.returncode != 0
-    log = (work/'runs/simcompare_1_import_hotspots.log').read_text(encoding='utf-8')
+    log = (work/'runs/simcompare_01_import_hotspots.log').read_text(encoding='utf-8')
     assert 'No space left on device' in log and 'No space left on device' in result.stderr
     assert not (work/'imp'/'manifest.json').exists() and not (work/'imp'/'assets').exists()
     assert not [p for p in work.iterdir() if p.name.startswith('imp.tmp-')]

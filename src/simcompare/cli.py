@@ -234,6 +234,14 @@ def _parser() -> argparse.ArgumentParser:
     c2r.add_argument("--compare2-dir", required=True, help="compare2 출력 폴더(compare2.json 이 있는 곳)")
     c2r.add_argument("--config", required=True, help="compare2 를 실행할 때 쓴 compare2_config_v1 YAML(같은 파일이어야 함)")
     c2r.add_argument("--out", required=True, help="새 출력 디렉터리(이미 있거나 --compare2-dir 안이면 거부)")
+    c2r.add_argument("--candidates", help="(선택) 4회차 candidates-change 출력 폴더. ROI 위치별 ΔVI·분류 절을 붙인다")
+    c2r.add_argument("--confirm", help="(선택) 5회차 confirm-pairs 출력 폴더(DL2 경로)")
+    c2r.add_argument("--windows", help="(선택) 6회차 compare-windows 출력 폴더")
+    c2r.add_argument("--dl1-search", action="append", default=[], metavar="FILE", help="(선택, 반복 가능) DL1 검색 결과 파일")
+    c2r.add_argument("--top-regions", type=int, default=5, help="ROI 영역 순위 수(기본 5)")
+    c2r.add_argument("--top-improved", type=int, default=3, help="개선 ROI 수(기본 3)")
+    c2r.add_argument("--top-n", type=int, default=10, help="4·5절 표 길이(기본 10). 7절 조건 지도 수(config report.top_n)와 다름")
+    c2r.add_argument("--max-pairs-per-condition", type=int, default=3, help="조건당 표시할 쌍 수(기본 3)")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -321,7 +329,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report
-            return compare2_report.main_compare2_report(args.compare2_dir, args.config, args.out, _print)
+            return compare2_report.main_compare2_report(
+                args.compare2_dir, args.config, args.out, _print,
+                candidates_dir=args.candidates, confirm_dir=args.confirm, windows_dir=args.windows,
+                dl1_search=args.dl1_search, top_regions=args.top_regions, top_improved=args.top_improved,
+                top_n=args.top_n, max_pairs_per_condition=args.max_pairs_per_condition)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

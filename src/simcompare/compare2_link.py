@@ -206,11 +206,9 @@ def _build_rois(payload, index, warnings):
             fold = query.get('unit_fold') or {}
             replicas = [{key: item.get(key) for key in ('region_id', 'unit_index_xy', 'distance_um', 'score_um2', 'layers')}
                         for item in fold.get('replicas') or [] if isinstance(item, dict)]
-            try:
-                n_replicas = int(fold.get('n_replicas') or 0)
-            except (TypeError, ValueError):
-                n_replicas = -1
-            if n_replicas < 0:
+            raw_replicas = fold.get('n_replicas')
+            n_replicas = 0 if raw_replicas is None else raw_replicas
+            if isinstance(n_replicas, bool) or not isinstance(n_replicas, int) or n_replicas < 0:
                 raise _error('compare2_link_schema_mismatch',
                              f'{roi["roi_key"]}: unit_fold.n_replicas {fold.get("n_replicas")!r} must be a non-negative integer')
             roi['unit_fold'] = {'n_replicas': n_replicas, 'replicas': replicas}

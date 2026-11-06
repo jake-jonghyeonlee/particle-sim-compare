@@ -234,7 +234,9 @@ C가 소유하는 형식이다. 수동 라벨, template matching, DL2 검색이 
 | `products.reference/target` | 예 | `model_group`(`model_groups`의 키), `resolution: [가로, 세로]`(양의 정수 둘), `hotspot_root`; 선택 `unit_size_um: [가로, 세로]`(양수), `dl1_model` |
 | `report` | 아니오 | `dl1_root`(기본 없음), `map_window_um`(30), `diameter_um`(3), `top_n`(4, 양의 정수) |
 
-CRP는 설정하지 않는다: 군 이름(대소문자 무관)이 `mobile` 또는 `watch`면 1.0, 그 밖은 2.92다. 밀도 CSV는 `<군>_line.csv`, `<군>_pixel.csv`이며 두 방향을 자동 판별한다: 첫 열이 레이어 이름·첫 줄이 크기(µm) 헤더이거나, 전치(첫 줄이 레이어 이름·첫 열이 크기; 실제 자료 방향)다. 첫 줄 둘째 칸부터가 모두 크기면 앞 방식, 아니고 첫 열 둘째 줄부터가 모두 크기면 전치 방식, 둘 다 아니면 `invalid_density_csv`다. 값은 glass 당 개수(0 이상)다. 레이어 이름은 대소문자를 구분한다. CNO 폴더 이름은 `lateralopen-CNO-<층>` 또는 끝에 `-`가 하나 더 붙은 `lateralopen-CNO-<층>-`이며 같은 층의 두 형식이 함께 있으면 `duplicate_real_cno_case_name`이다. 빈 칸은 `null`(값 없음)이고 0이 아니다. UTF-8(BOM 허용)만 읽는다.
+CRP는 설정하지 않는다: 군 이름(대소문자 무관)이 `mobile` 또는 `watch`면 1.0, 그 밖은 2.92다. 밀도 CSV는 `<군>_line.csv`, `<군>_pixel.csv`이며 두 방향을 자동 판별한다: 첫 열이 레이어 이름·첫 줄이 크기(µm) 헤더이거나, 전치(첫 줄이 레이어 이름·첫 열이 크기; 실제 자료 방향)다. 첫 줄 둘째 칸부터가 모두 크기면 앞 방식, 아니고 첫 열 둘째 줄부터가 모두 크기면 전치 방식, 둘 다 아니면 `invalid_density_csv`다. 값은 glass 당 개수(0 이상)다. 레이어 이름은 대소문자를 구분한다. 빈 칸은 `null`(값 없음)이고 0이 아니다. UTF-8(BOM 허용)만 읽는다. 방향을 판별하지 못하면 `invalid_density_csv` 메시지에 처음 실패한 칸의 행·열 번호(빈 줄을 뺀 번호)와 원문이 들어 있다.
+
+CNO 폴더 이름은 `lateralopen-CNO-<층>` 또는 끝에 `-`가 하나 더 붙은 `lateralopen-CNO-<층>-`이며 같은 제품 안에서 같은 층의 두 형식이 함께 있으면 `duplicate_real_cno_case_name`이다. reference 와 target 의 CNO 변화는 폴더 이름이 아니라 (전극, 밀도 층)으로 짝짓는다(한쪽이 3-part, 다른 쪽이 끝 `-` 형식이어도 같은 층이면 한 행이고 `case_name` 은 target 이름이다).
 
 ### compare2 출력 (`compare2_v1`) — compare2 T3
 

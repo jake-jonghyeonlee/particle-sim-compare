@@ -220,9 +220,9 @@ def _build_chain(python, tmp, with_models=False):
     def stage(name, jobs, label=None):
         logs[label or name], results[label or name] = _run_stage(python, base, tmp, name, jobs, label)
 
-    stage('1_import_hotspots', _jobs('1_import_hotspots'))
+    stage('01_import_hotspots', _jobs('01_import_hotspots'))
     if with_models:
-        stage('1m_import_models', _jobs('1m_import_models'))
+        stage('models_01_import', _jobs('models_01_import'))
         (base / f'data/models/{MODEL_FOLDER}/pairs.csv').write_text(
             'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
             encoding='utf-8')
@@ -231,8 +231,8 @@ def _build_chain(python, tmp, with_models=False):
             'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
             encoding='utf-8')
     _config(base, with_assets=False)                         # manual step: real.yaml (stage 2 form)
-    stage('2_validate_compare', _jobs('2_validate_compare'))
-    stage('3_import_electrode_assets', _jobs('3_import_electrode_assets'))
+    stage('diag_validate_compare', _jobs('diag_validate_compare'))
+    stage('03_import_assets', _jobs('03_import_assets'))
     for side in MODELS:                                      # manual step: place the stage-3 result, then the sha256 update
         out, data = base / f'data/assets/{side}', base / f'data/imported/{side}'
         for name in ('review_assets.json', 'electrode_asset_import_record.json'):
@@ -241,7 +241,7 @@ def _build_chain(python, tmp, with_models=False):
         for path in (out / 'assets').iterdir():
             shutil.copyfile(path, data / 'assets' / path.name)
     if with_models:
-        stage('3m_import_model_assets', _jobs('3m_import_model_assets'))
+        stage('models_02_import_assets', _jobs('models_02_import_assets'))
         out, data = base / f'data/assets/models/{MODEL_FOLDER}', base / f'data/models/{MODEL_FOLDER}'
         for name in ('review_assets.json', 'electrode_asset_import_record.json'):
             shutil.copyfile(out / name, data / name)
@@ -250,7 +250,7 @@ def _build_chain(python, tmp, with_models=False):
             shutil.copyfile(path, data / 'assets' / path.name)
         _write_models_yaml(base, with_assets=True)
     _config(base, with_assets=True)
-    stage('4_candidates', _jobs('4_candidates', STAGE_ARGS))
+    stage('04_change_candidates', _jobs('04_change_candidates', STAGE_ARGS))
     # the DL2 path: a synthetic NCC JSON, then confirm-pairs --list only (decisions need the human)
     models = {side: SimpleNamespace(spec=SimpleNamespace(shape=SHAPE, product_id=PRODUCTS[side])) for side in MODELS}
     (base / 'data/dl2').mkdir()
@@ -258,20 +258,20 @@ def _build_chain(python, tmp, with_models=False):
         matches = gen.fake_matches(base / 'data/changes', models, base / 'data/dl2', seed=3)
         shutil.move(str(matches['reference_to_target']), base / 'data/dl2/ncc_r2t.json')
         shutil.move(str(matches['target_to_reference']), base / 'data/dl2/ncc_t2r.json')
-        stage('5_confirm_pairs', _jobs('5_confirm_pairs', only=1))
-    stage('6_compare_windows', _jobs('6_compare_windows'))
+        stage('05_confirm_pairs_dl2', _jobs('05_confirm_pairs_dl2', only=1))
+    stage('06_compare_windows', _jobs('06_compare_windows'))
     if with_models:     # the multi-product flow: 5m instead of 5, 6 again on the DL2 correspondence (reference pairs), 6m, 7
         _write_search_batch(base)
-        stage('5m_confirm_pairs_models', _jobs('5m_confirm_pairs_models'))
-        stage('6_compare_windows', _jobs('6_compare_windows', {'--correspondence': 'data/confirmed/roi_correspondence.json'}),
-              label='6_compare_windows_dl2')
-        stage('6m_compare_windows_models', _jobs('6m_compare_windows_models'))
-        seven = [(name, [arg.replace('QA4_R00=', f'{PRODUCTS["reference"]}=') for arg in args]) for name, args in _jobs('7_model_report')]
-        stage('7_model_report', seven)      # the synthetic world names its reference PROD_R, the runner example QA4_R00
+        stage('models_03_confirm_pairs', _jobs('models_03_confirm_pairs'))
+        stage('06_compare_windows', _jobs('06_compare_windows', {'--correspondence': 'data/confirmed/roi_correspondence.json'}),
+              label='06_compare_windows_dl2')
+        stage('models_04_compare_windows', _jobs('models_04_compare_windows'))
+        seven = [(name, [arg.replace('QA4_R00=', f'{PRODUCTS["reference"]}=') for arg in args]) for name, args in _jobs('models_05_report')]
+        stage('models_05_report', seven)      # the synthetic world names its reference PROD_R, the runner example QA4_R00
     # a wrong DL1 root: the stage-4 log alone must say which argument and which path is wrong
-    wrong = _jobs('4_candidates', {**STAGE_ARGS, '--cnt-from-dl1-root': 'data/input/dl1_TYPO', '--out': 'data/changes_typo'})
+    wrong = _jobs('04_change_candidates', {**STAGE_ARGS, '--cnt-from-dl1-root': 'data/input/dl1_TYPO', '--out': 'data/changes_typo'})
     # a later stage's job is appended to show that the runner stops at exit 2 and never starts it
-    stage('4_candidates', wrong + _jobs('6_compare_windows'), label='4_candidates_wrong_root')
+    stage('04_change_candidates', wrong + _jobs('06_compare_windows'), label='04_change_candidates_wrong_root')
     return SimpleNamespace(base=base, logs=logs, results=results, seconds=time.time() - started, python=python)
 
 
@@ -293,12 +293,12 @@ def model_chain(request, tmp_path_factory):
 # ---- the checks -------------------------------------------------------------------------------------------------------
 
 EXPECTED_COMMANDS = {
-    '1_import_hotspots': ['import-hotspots', 'import-hotspots'],
-    '2_validate_compare': ['validate-data', 'compare'],
-    '3_import_electrode_assets': ['import-electrode-assets', 'import-electrode-assets'],
-    '4_candidates': ['candidates-change'],
-    '5_confirm_pairs': ['confirm-pairs'],
-    '6_compare_windows': ['compare-windows']}
+    '01_import_hotspots': ['import-hotspots', 'import-hotspots'],
+    'diag_validate_compare': ['validate-data', 'compare'],
+    '03_import_assets': ['import-electrode-assets', 'import-electrode-assets'],
+    '04_change_candidates': ['candidates-change'],
+    '05_confirm_pairs_dl2': ['confirm-pairs'],
+    '06_compare_windows': ['compare-windows']}
 
 
 def test_every_stage_log_identifies_the_run_and_every_command_exits_zero_or_three(chain):
@@ -312,7 +312,7 @@ def test_every_stage_log_identifies_the_run_and_every_command_exits_zero_or_thre
         assert all(int(code) in (0, 3) for _, code in codes), (stage, codes, text[-1500:])
         assert chain.results[stage].returncode in (0, 3), (stage, chain.results[stage].stderr[-1500:])
     if chain.python != sys.executable:
-        assert 'python 3.9.' in chain.logs['4_candidates']
+        assert 'python 3.9.' in chain.logs['04_change_candidates']
 
 
 def test_stage_one_to_three_wrote_the_expected_folders(chain):
@@ -341,7 +341,7 @@ def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(
     assert payload['change_args']['apply_align'] == 'local' and len(alignment['unit_offsets']) == 4     # the example applies the alignment
     corr = json.loads((changes / 'direct/roi_correspondence.json').read_text(encoding='utf-8'))
     assert corr['schema_version'] == 'roi_correspondence_v1' and corr['pairs']
-    assert 'candidates-change exit 0' in chain.logs['4_candidates'] or 'candidates-change exit 3' in chain.logs['4_candidates']
+    assert 'candidates-change exit 0' in chain.logs['04_change_candidates'] or 'candidates-change exit 3' in chain.logs['04_change_candidates']
 
 
 def test_stage_six_reads_the_direct_file_and_writes_local_delta_rows(chain):
@@ -351,19 +351,19 @@ def test_stage_six_reads_the_direct_file_and_writes_local_delta_rows(chain):
         encoding='utf-8'))['pairs'] if p['status'] == 'ready'}
     assert ready and delta['rows'] and {r['pair_id'] for r in delta['rows']} == ready
     assert (local / 'local_delta.html').is_file()
-    assert "--correspondence 'data/changes/direct/roi_correspondence.json'" in chain.logs['6_compare_windows']
+    assert "--correspondence 'data/changes/direct/roi_correspondence.json'" in chain.logs['06_compare_windows']
 
 
 def test_stage_five_lists_the_dl2_candidates_of_the_change_folder(chain):
-    text = chain.logs['5_confirm_pairs']
+    text = chain.logs['05_confirm_pairs_dl2']
     assert "--candidates 'data/changes'" in text and 'confirm-pairs exit 0' in text
-    assert 'n_candidates' in chain.results['5_confirm_pairs'].stdout or 'n_candidates' in text
+    assert 'n_candidates' in chain.results['05_confirm_pairs_dl2'].stdout or 'n_candidates' in text
 
 
 def test_wrong_dl1_root_is_visible_in_the_stage_four_log_alone(chain):
     """A DL1 root that does not exist is an input error: exit 2 before anything is written, the runner stops (the next stage's
     job is never started) and no `--out` folder exists. The log alone shows the argument with its resolved path and the code."""
-    label = '4_candidates_wrong_root'
+    label = '04_change_candidates_wrong_root'
     text = chain.logs[label]
     resolved = chain.base.resolve() / 'data/input/dl1_TYPO'
     assert f"--cnt-from-dl1-root 'data/input/dl1_TYPO' -> {resolved}" in text      # the argument and its resolved path
@@ -375,12 +375,12 @@ def test_wrong_dl1_root_is_visible_in_the_stage_four_log_alone(chain):
 
 
 MODEL_COMMANDS = {
-    '1m_import_models': ['import-hotspots'],
-    '3m_import_model_assets': ['import-electrode-assets'],
-    '5m_confirm_pairs_models': ['confirm-pairs', 'confirm-pairs'],
-    '6_compare_windows_dl2': ['compare-windows'],
-    '6m_compare_windows_models': ['compare-windows'],
-    '7_model_report': ['model-report']}
+    'models_01_import': ['import-hotspots'],
+    'models_02_import_assets': ['import-electrode-assets'],
+    'models_03_confirm_pairs': ['confirm-pairs', 'confirm-pairs'],
+    '06_compare_windows_dl2': ['compare-windows'],
+    'models_04_compare_windows': ['compare-windows'],
+    'models_05_report': ['model-report']}
 
 
 def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_pairs(model_chain):

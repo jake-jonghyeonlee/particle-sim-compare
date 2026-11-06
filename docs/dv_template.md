@@ -47,4 +47,4 @@ CSV 는 UTF-8 BOM, 줄바꿈 LF 다(Excel 에서 열린다). 표준 출력에 �
 2. `dv_sheet.csv` 의 `impedance` 와 전압 칸을 채운다.
 3. 다음 제품: 채운 시트를 `--impedance-db` 로 준다. 이미 아는 전극의 임피던스만 채워지고, 새 전극만 `new_electrodes.csv` 에 남는다.
 
-ETX 실행기: `bundles/etx/simcompare_job_0_dv_template.py`(0회차, 1~6회차와 독립). 예시 파일: `docs/domain-input-example/deltav/`.
+ETX 실행기: `bundles/etx/dv/simcompare_job_03_dv_template.py`(dv_03회차, 기본 흐름과 독립; 예전 이름 `simcompare_job_0_dv_template.py`). 예시 파일: `docs/domain-input-example/deltav/`.

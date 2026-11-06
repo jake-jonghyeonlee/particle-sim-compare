@@ -526,6 +526,18 @@ python -m simcompare compare2-report --compare2-dir data/compare2 --config compa
 | `--compare2-dir` | `compare2` 출력 폴더(`compare2.json`이 있는 곳) |
 | `--config` | `compare2`를 실행할 때 쓴 같은 설정 파일(해시가 다르면 오류) |
 | `--out` | 아직 없는 새 폴더. 이미 있거나 `--compare2-dir` 안이면 거부한다 |
+| `--candidates DIR` | (선택) `candidates-change` 출력 폴더(ETX 04회차 `data/changes`). ROI 위치별 ΔVI·분류 절을 붙인다 |
+| `--confirm DIR` | (선택) `confirm-pairs` 출력 폴더(ETX 05회차, DL2 경로 `data/confirmed`) |
+| `--windows DIR` | (선택) `compare-windows` 출력 폴더(ETX 06회차 `data/local`) |
+| `--dl1-search FILE` | (선택, 반복 가능) DL1 검색 결과 파일 |
+| `--top-regions N` | 보이는 악화 위치 수(기본 5) |
+| `--top-improved N` | 보이는 개선 위치 수(기본 3) |
+| `--top-n N` | 4·5절 표 길이(기본 10) |
+| `--max-pairs-per-condition N` | 위치(조건)당 지도로 보이는 쌍 수(기본 3) |
+
+연결 옵션(`--candidates`·`--confirm`·`--windows`·`--dl1-search`) 중 하나라도 주면 `report.json`에 `locations`, `link_inputs`, `roi_figures`, `options`(`top_regions`, `top_improved`, `table_top_n`, `max_pairs_per_condition`)가 더해진다. 연결 입력이 없으면 이 키들은 없고 이전 `report.json` 키·`report.html`은 그대로다. N 은 양의 정수여야 하며 아니면 종료 코드 2 와 새 `--out` 의 `error.json`(`invalid_compare2_report_argument`)이다.
+
+**두 `top_n`**: 설정 `report.top_n`(기본 4)은 7절 조건 지도·설명 문장의 상위 조건 수이고 `report.json` 의 `top_n` 으로 기록된다. 명령줄 `--top-n`(기본 10)은 4·5절 표(위치 순위·전극 표)의 길이이고 `options.table_top_n` 으로만 기록된다. 서로 다른 값이다.
 
 설정의 `report` 키(모두 선택): `map_window_um`(기본 30), `diameter_um`(기본 3), `top_n`(기본 4), `dl1_root`(기본 없음). 상위 `top_n` 조건마다 reference(A)와 target(B)의 hotspot 지도(3 µm 기본)를 그린다. 지도는 정렬하지 않고 A를 unit 안의 같은 상대 위치에서 자른다. 레이어 overlay는 `report.dl1_root`(DL1 Layer PNG)와 `products.<role>.dl1_model`이 있어야 하며 없으면 overlay 없이 지도만 나온다.
 
@@ -618,7 +630,38 @@ JOBS = [
 
 **4~6회차 실측과 예상 시간·메모리**(`docs/plan/scale_stage46/T5_benchmark.md`, 합성 자료, macOS 12코어·48 GiB, 모델당 1,682 case·한 layer·32 지름, 창 10/20/30 µm·jitter 0.5; 세 실행을 동시에 돌려 시간은 단독보다 최대 1.3~1.4배 길다): 3회차 `import-electrode-assets` 모델당 1.2~2.4분·0.57 GiB. 4회차 `candidates` 5~6.5분·1.2~1.3 GiB(crop 1262²/1500², 중앙 큰 영역 1개 또는 분리된 영역 196개). 5회차 `confirm-pairs` 3.5~4.6분·0.9~1.25 GiB(모든 마스크를 인증하므로 분 단위). 6회차 `compare-windows`: 2회차 artefact가 있으면 쌍 50개 5~5.5분·0.8~1.1 GiB, 쌍 200개 6~9.5분·0.9~1.25 GiB; artefact가 없으면 쌍 200개 14~23분·1.5 GiB(전극 59개를 공유하는 자료)~3.4 GiB(case마다 전극이 따로인 자료)(재계산이 면적 계산 한 번을 더 한다). 출력은 쌍 200개에 약 275 MB(행 수 = 쌍 × 창 크기 × 32). 2회차 `compare`는 `comparison_masks.zip` 약 50~70 MB가 더 늘고 그 비용은 시간·RAM에 거의 안 보인다. 한 번에 디스크는 1262²에서 모델·중간 산출물까지 약 3.5~3.8 GB, 1500²에서 약 4.7 GB가 필요했다. 6회차 admission 추정은 실제 RSS보다 크다(쌍 50·재계산 기준 추정 7.84 GB, 실측 1.6 GB): 기본 `max_operation_bytes`(8 GiB)에 걸리면 추정치 X에 여유를 더한 값(물리 메모리 이하)을 넣는다. 거부는 입력 인증(약 100초) 뒤 계산 전에 일어나고 아무것도 공개하지 않는다.
 
-2b회차(선택, 1회차 뒤) — line/pixel vi 비교(`simcompare_job_2b_compare2.py`). 2회차 출력과 4–6회차는 필요 없다. `configs/etx/compare2.example.yaml`을 BASE_DIR의 `compare2.yaml`(`real.yaml` 옆)로 복사해 제품군 glass 면적·가중치·해상도를 채우고(설정 안의 상대 경로는 이 파일 위치 기준이다), 밀도 CSV를 `data/density/<제품군>_line.csv`·`_pixel.csv`로 둔다. 상세는 아래 "compare2 (line/pixel vi 비교)".
+**ETX 실행 파일 이름(실행 순서)**: 파일 이름은 `simcompare_job_<번호>_<이름>.py`이고 번호가 실행 순서다. 이 절의 아래 설명은 예전 번호(0~8)를 쓰므로 옛 이름 → 새 이름 표로 바꿔 읽는다. CLI 명령 이름(`compare2`, `compare2-report` 등)은 그대로이며 별칭은 없다.
+
+| 위치 | 기본 흐름 `bundles/etx/` | 다제품 `bundles/etx/` | ΔV·위험도 `bundles/etx/dv/` |
+|---|---|---|---|
+| 순서 | `01_import_hotspots` → `02_vi_compute`(선택) → `03_import_assets` → `04_change_candidates` → `05_confirm_pairs_dl2`(선택, DL2 경로) → `06_compare_windows` → `07_vi_report`(최종 보고서) | `models_01_import` → `models_02_import_assets` → `models_03_confirm_pairs` → `models_04_compare_windows` → `models_05_report` | `01_import_hotspots` → `02_import_assets` → `03_dv_template` → `04_dv_grade` → `05_candidates_dv` → `06_vulnerability_report` |
+| 진단 | `diag_validate_compare`(`validate-data`·`compare`) | | |
+
+| 옛 이름 (`simcompare_job_…`) | 새 이름 |
+|---|---|
+| `0_dv_template` | `dv/03_dv_template` |
+| `0b_dv_grade` | `dv/04_dv_grade` |
+| `1_import_hotspots` | `01_import_hotspots` (dv 에도 같은 JOBS 의 `dv/01_import_hotspots`) |
+| `1m_import_models` | `models_01_import` |
+| `2_validate_compare` | `diag_validate_compare` |
+| `2b_compare2` | `02_vi_compute` |
+| `3_import_electrode_assets` | `03_import_assets` (dv 에도 같은 JOBS 의 `dv/02_import_assets`) |
+| `3m_import_model_assets` | `models_02_import_assets` |
+| `4_candidates` | `04_change_candidates` |
+| `4b_candidates_dv` | `dv/05_candidates_dv` |
+| `4c_vulnerability_report` | `dv/06_vulnerability_report` |
+| `5_confirm_pairs` | `05_confirm_pairs_dl2` |
+| `5m_confirm_pairs_models` | `models_03_confirm_pairs` |
+| `6_compare_windows` | `06_compare_windows` |
+| `6m_compare_windows_models` | `models_04_compare_windows` |
+| `7_model_report` | `models_05_report` |
+| `8_compare2_report` | `07_vi_report` |
+
+**dv 폴더**: ΔV·위험도 흐름은 기본 흐름과 트리가 달라 `bundles/etx/dv/`에서 따로 진행한다. 공통 단계(import, 전극 asset)는 기본 흐름과 같은 JOBS·설명이고 번호만 dv 순서다. 파일 이름이 같아도(`01_import_hotspots`) 폴더가 다르면 다른 흐름이며, 실행 파일의 `BASE_DIR`·`LOG_FILE`(`runs/simcompare_<이름>.log`) 기준 폴더는 그 파일이 있는 폴더(또는 `BASE_DIR`)다.
+
+`07_vi_report` 의 JOBS 는 `--candidates data/changes --windows data/local` 을 포함한다. 04·06회차를 안 돌렸으면 두 줄을 지우고, DL2(05)를 썼으면 `--confirm data/confirmed` 를, DL1 검색 결과가 있으면 `--dl1-search <파일>` 을 더한다. `06_compare_windows` 는 `--window-sizes 10 20 30`(30 = `compare2.yaml` `report.map_window_um` 기본)이다.
+
+2b회차(선택, 1회차 뒤; 새 이름 `02_vi_compute`) — line/pixel vi 비교(`simcompare_job_02_vi_compute.py`). 2회차 출력과 4–6회차는 필요 없다. `configs/etx/compare2.example.yaml`을 BASE_DIR의 `compare2.yaml`(`real.yaml` 옆)로 복사해 제품군 glass 면적·가중치·해상도를 채우고(설정 안의 상대 경로는 이 파일 위치 기준이다), 밀도 CSV를 `data/density/<제품군>_line.csv`·`_pixel.csv`로 둔다. 상세는 아래 "compare2 (line/pixel vi 비교)".
 
 ```python
 JOBS = [("compare2", ["--config", "compare2.yaml", "--out", "data/compare2"])]
@@ -641,7 +684,7 @@ JOBS = [
 
 3회차 뒤: 각 출력의 `review_assets.json`, `electrode_asset_import_record.json`, `assets/`를 해당 `data_dir`로 복사하고 `real.yaml`의 reference·target에 `asset_manifest`, `electrode_import_record`({path, sha256})를 넣는다(위 "전극 PNG → review_assets_v1" 절).
 
-4회차 — 변경점 ROI(`candidates-change`; 실행기 파일 이름은 그대로 `simcompare_job_4_candidates.py`):
+4회차 — 변경점 ROI(`candidates-change`; 실행기 파일 이름은 `simcompare_job_04_change_candidates.py`):
 
 ```python
 JOBS = [("candidates-change", ["--config", "real.yaml", "--cnt-from-dl1-root", "data/input/dl1",
@@ -654,14 +697,16 @@ JOBS = [("candidates-change", ["--config", "real.yaml", "--cnt-from-dl1-root", "
 
 DL2 — 위치 매칭(**DL2 경로 전용**: 직접 대응을 쓰면 DL2와 5회차를 건너뛰고 6회차로 간다. 다른 제품 탐색이 필요할 때만 쓴다. DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job_baseline_ncc.py`, 같은 `BASE_DIR`에서 실행): 4회차 결과로 두 방향 `baseline_ncc --all-ready`를 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 검토 시트 `data/dl2/*_sheet/sheet.html`을 만든다. torch는 필요 없다. ETX 실행기로 만든 export에는 `producer_commit`이 없으므로(git checkout이 아님, 사유는 export에 기록) DL2 실행기는 `--allow-unversioned-producer`를 쓴다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`=`accept`|`reject`)를 쓴다. `candidate_id` 목록은 5회차 첫 작업(`confirm-pairs --list`)이 로그에 찍는다.
 
-5회차 — 확정 쌍 변환(DL2 경로 전용, `simcompare_job_5_confirm_pairs.py`; `--candidates data/changes`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
+5회차 — 확정 쌍 변환(DL2 경로 전용, `simcompare_job_05_confirm_pairs_dl2.py`; `--candidates data/changes`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
 
-6회차 — 국부 ΔCA(`simcompare_job_6_compare_windows.py`): 기본 `--correspondence`는 4회차의 `data/changes/direct/roi_correspondence.json`이다(DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다). 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
+6회차 — 국부 ΔCA(`simcompare_job_06_compare_windows.py`): 기본 `--correspondence`는 4회차의 `data/changes/direct/roi_correspondence.json`이다(DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다). 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
 
-8회차(선택, 2b회차 뒤) — compare2 보고서(`simcompare_job_8_compare2_report.py`): `data/compare2/compare2.json`과 같은 BASE_DIR의 `compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report".
+8회차(선택, 2b회차 뒤; 새 이름 `07_vi_report`) — compare2 보고서(`simcompare_job_07_vi_report.py`): `data/compare2/compare2.json`과 같은 BASE_DIR의 `compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report".
 
 ```python
-JOBS = [("compare2-report", ["--compare2-dir", "data/compare2", "--config", "compare2.yaml", "--out", "data/compare2_report"])]
+JOBS = [("compare2-report", ["--compare2-dir", "data/compare2", "--config", "compare2.yaml",
+                             "--candidates", "data/changes", "--windows", "data/local",
+                             "--out", "data/compare2_report"])]
 ```
 
 통합 보고서(`report`)는 아직 실자료 경로를 지원하지 않는다: 실자료 `compare`는 `comparison.json`/`comparison.csv`(조건 배정이 있으면 `real_hotspot_comparison_v2`, 없으면 `real_hotspot_comparison_v1`)만 쓰고, `report`는 합성 numeric_v2의 `comparison_fractions.csv` 등을 요구해 `missing_input_file`(종료 코드 2)로 멈춘다. 그래서 ETX 회차에 넣지 않았다. 쌍별 결과는 6회차 `local_delta.html`에서 본다.

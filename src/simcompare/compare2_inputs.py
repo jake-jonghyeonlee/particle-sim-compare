@@ -323,12 +323,16 @@ def _read_density(path: Path) -> DensityTable:
         if len(row) != len(rows[0]):
             raise NumericContractError('invalid_density_csv', f'{path.name}: expected {len(rows[0])} columns, got {len(row)}')
 
-    def parse_sizes(cells) -> Optional[List[Decimal]]:
+    failures: List[str] = []
+
+    def parse_sizes(cells, where) -> Optional[List[Decimal]]:
         parsed_sizes: List[Decimal] = []
-        for cell in cells:
+        for index, cell in enumerate(cells):
             try:
                 size = _size_header(cell, path)
             except NumericContractError:
+                row_no, col_no = where(index)
+                failures.append(f'row {row_no}, column {col_no}: {cell!r}')
                 return None
             if size in parsed_sizes:
                 raise NumericContractError('duplicate_density_size', f'{path.name}: {cell.strip()}')
@@ -345,7 +349,7 @@ def _read_density(path: Path) -> DensityTable:
             raise NumericContractError('invalid_density_value', f'{path.name}: {layer}/{size}: {cell!r}') from None
 
     values: Dict[str, Dict[Decimal, Optional[float]]] = {}
-    sizes = parse_sizes(rows[0][1:])
+    sizes = parse_sizes(rows[0][1:], lambda index: (1, index + 2))
     if sizes is not None:  # first row = sizes, one row per layer
         for row in rows[1:]:
             layer = row[0].strip()
@@ -355,9 +359,13 @@ def _read_density(path: Path) -> DensityTable:
                 raise NumericContractError('duplicate_density_layer', f'{path.name}: {layer}')
             values[layer] = {size: parse_value(cell, layer, size) for size, cell in zip(sizes, row[1:])}
         return DensityTable(path, hashlib.sha256(raw).hexdigest(), tuple(sizes), values)
-    sizes = parse_sizes([row[0] for row in rows[1:]]) if len(rows) > 1 else None
+    sizes = parse_sizes([row[0] for row in rows[1:]], lambda index: (index + 2, 1)) if len(rows) > 1 else None
     if sizes is None:
-        raise NumericContractError('invalid_density_csv', f'{path.name}: neither the first row nor the first column holds sizes')
+        first = '; '.join(failures) or 'no data rows'
+        raise NumericContractError(
+            'invalid_density_csv',
+            f'{path.name}: neither the first row nor the first column holds sizes (first failed cell: {first}; '
+            'rows counted without blank lines)')
     layers = [cell.strip() for cell in rows[0][1:]]  # first row = layers, one row per size
     for layer in layers:
         if not layer:

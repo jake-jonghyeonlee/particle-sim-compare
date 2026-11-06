@@ -227,6 +227,14 @@ def test_density_transposed_errors(tmp_path, text, code):
     assert _code(info) == code
 
 
+def test_density_orientation_failure_names_the_first_failed_cell(tmp_path):
+    with pytest.raises(NumericContractError) as info:
+        load_density(_density(tmp_path, 'n,1,big\nA,1,2\nB,3,4\n'), 'mobile')
+    message = str(info.value)
+    assert _code(info) == 'invalid_density_csv'
+    assert "row 1, column 3: 'big'" in message and "row 2, column 1: 'A'" in message
+
+
 def test_density_missing_reasons(tmp_path):
     line = load_density(_density(tmp_path, 'n,1,2\nGAT,1,\n'), 'mobile')['line']
     assert line.lookup('GAT', 1) == (1.0, None)

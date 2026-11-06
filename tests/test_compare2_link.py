@@ -816,7 +816,7 @@ def test_v4_adv2_replica_summary_keeps_the_producer_layers(hand):
     assert replica['layers'] == ['L1', 'L2'] and 'center_xy_um' not in replica
 
 
-@pytest.mark.parametrize('bad', [-1, -3, 'many', [2]])
+@pytest.mark.parametrize('bad', [-1, -3, 'many', [2], 2.7, True])
 def test_v4_adv3_negative_or_non_numeric_n_replicas_is_a_schema_mismatch(hand, bad):
     def fold(payload):
         payload['directions'][0]['queries'][0]['unit_fold'] = {'n_replicas': bad, 'replicas': []}

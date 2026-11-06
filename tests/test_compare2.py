@@ -752,6 +752,27 @@ def test_trailing_hyphen_cno_folders_feed_the_cno_lambda(tmp_path):
     assert close(side['lambda']['cno'], 3 * (2.0 * 0.5 + 1.0 * 1.5 + 0.5 * 2.5) * FACTOR * math.pi / 4)
 
 
+def test_cno_delta_pairs_by_electrode_and_layer_not_by_folder_name(tmp_path):
+    """V5 (V1b adv1): reference 3-part name vs target trailing-hyphen name of the same layer is one delta row."""
+    ref_name, tgt_name = CNO_NAME, CNO_NAME + '-'
+    tgt_csv = 'defect_size(um),Area(um2)\n1,0.5\n2,1.5\n3,5.0\n'
+    code, out = run(tmp_path, (base_cases(), PAIRS), (base_cases(), PAIRS), ref_cno={ref_name: CNO_CSV}, tgt_cno={tgt_name: tgt_csv})
+    doc = load(out)
+    (row,) = doc['delta']['cno']
+    lam_a = (2.0 * 0.5 + 1.0 * 1.5 + 0.5 * 2.5) * FACTOR * math.pi / 4
+    lam_b = (2.0 * 0.5 + 1.0 * 1.5 + 0.5 * 5.0) * FACTOR * math.pi / 4
+    assert row['presence'] == 'both' and row['case_name'] == tgt_name and row['density_layer'] == 'gcnt'
+    assert close(row['delta_lambda_pixel'], lam_b - lam_a)                      # sums preserved: no "gone" + "new" split
+    (csv_row,) = csv.DictReader((out / 'compare2_cno.csv').open(encoding='utf-8-sig'))
+    assert csv_row['case_name'] == tgt_name and csv_row['reference_csv_status'] == csv_row['target_csv_status'] == 'observed'
+    assert close(float(csv_row['reference_lambda']), lam_a) and close(float(csv_row['target_lambda']), lam_b)
+    # reference only: the row keeps the reference name
+    (tmp_path / 'second').mkdir()
+    code, out = run(tmp_path / 'second', (base_cases(), PAIRS), (base_cases(), PAIRS), ref_cno={ref_name: CNO_CSV})
+    (only_ref,) = load(out)['delta']['cno']
+    assert only_ref['presence'] == 'gone' and only_ref['case_name'] == ref_name
+
+
 def test_transposed_density_csv_gives_the_same_result(tmp_path):
     ref, tgt = two_sides()
     cnos = {CNO_NAME: CNO_CSV}

@@ -458,8 +458,10 @@ def _build_figures(cfg, cfg2, infos, specs, warnings):
             state = states[role][fid]
             if state['origin'] is None:
                 state['origin'] = _origin(centers[fid], side_size)
-            if state['crop'] is None:
+            if state['crop'] is None or specs[fid][role]['center_um'] is None:
                 state['crop'] = np.zeros((side_size, side_size), dtype=bool)
+            if specs[fid][role]['center_um'] is None:       # no centre recorded: an empty window, never the frame middle
+                state['status'] = 'center_missing'
         _load_overlays(cfg2, info, fids, states[role], side_size, warnings,
                        layer_of={fid: specs[fid][role]['layer'] for fid in fids})
     return states
@@ -637,7 +639,7 @@ def _sentences(cond, fig, side_conds, diameter):
     return items
 
 
-def _mapset(index, figs, same, diameter, window_um, aligned=False):
+def _mapset(index, figs, same, diameter, window_um, aligned=False, pitch_differs=False):
     out = ['<div class="mapset"' + ('' if index is None else f' id="m{index}"') + '>']
     for role in ROLES:
         fig = figs[role]
@@ -647,12 +649,15 @@ def _mapset(index, figs, same, diameter, window_um, aligned=False):
             caption += f' · {_size_text(diameter)} µm 입력 없음'
         elif fig['status'] == 'no_cases':
             caption += ' · 해당 조건 없음'
+        elif fig['status'] == 'center_missing':
+            caption += ' · 중심 좌표 없음(빈 창)'
         if overlay:
             caption += f' · {overlay}'
         out.append(f'<figure><img alt="{_e(ROLE_TEXT[role])} {_size_text(diameter)} µm 지도" '
                    f'src="{_png_uri(fig["png"])}"><figcaption>{_e(caption)}</figcaption></figure>')
     if aligned:
         note = ('A·B 대응 중심에 맞춘 창을 겹쳐 비교(공통 회색 · 신규 빨강 · 소멸 파랑).' if same
+                else 'A·B 픽셀 크기(pitch)가 달라 겹쳐 비교하지 않았습니다.' if pitch_differs
                 else 'A·B 창 크기가 달라 겹쳐 비교하지 않았습니다.')
     else:
         note = ('A·B 같은 위치에 겹쳐 비교(공통 회색 · 신규 빨강 · 소멸 파랑).' if same
@@ -973,7 +978,8 @@ def _roi_card(view, word, rank, roi_key, klass):
             continue
         figs, same = shown
         out.append(f'<div><div class="muted">{_e(_pair_name(view["link_pairs"][pid]))}</div>'
-                   + _mapset(None, figs, same, diameter, cfg2.report.map_window_um, aligned=True) + '</div>')
+                   + _mapset(None, figs, same, diameter, cfg2.report.map_window_um, aligned=True,
+                             pitch_differs=view['infos']['target']['pitch'] != view['infos']['reference']['pitch']) + '</div>')
     out.append('</div><div>')
     cases = [(c, False) for c in lk['contributing_cases']] + [(c, True) for c in lk['one_sided_cases']]
     lines = ''.join(f'<li>{_e(_case_line(c))}</li>' for c, _one in cases[:MAX_LISTED_CASES])
@@ -1013,8 +1019,8 @@ def _roi_card(view, word, rank, roi_key, klass):
 
 
 def _roi_rank_table(view, keys):
-    head = ('<tr><th>순위</th><th class="l">위치</th><th class="l">설계 변경</th><th>쌍 수</th><th>Δvi_line</th>'
-            '<th>Δvi_pixel</th><th>net</th><th>반복 수</th></tr>')
+    head = ('<tr><th>순위</th><th class="l">위치</th><th class="l">설계 변경</th><th>쌍 수</th><th>Δvi_line (근사)</th>'
+            '<th>Δvi_pixel (근사)</th><th>net (근사)</th><th>반복 수</th></tr>')
     rows = []
     for rank, key in enumerate(keys, start=1):
         roi = view['rois'][key]
@@ -1607,6 +1613,8 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
         record['locations'] = {key: loc[key] for key in ('counts', 'top_worse', 'top_improved', 'explained', 'diameters_um',
                                                          'approximation_note')}
         record['link_inputs'] = link['inputs']
+        record['options'] = {'top_regions': top_regions, 'top_improved': top_improved, 'table_top_n': top_n,
+                             'max_pairs_per_condition': max_pairs_per_condition}
         record['roi_figures'] = roi_figures
     return [('report.html', page), ('report.json', _json_text(record))], record
 
@@ -1618,13 +1626,13 @@ def run_compare2_report(compare2_dir, config_path, out, **options):
                                    'elapsed_seconds', 'exit_code')}
 
 
-def main_compare2_report(compare2_dir, config, out, print_result, error_stream=None):
+def main_compare2_report(compare2_dir, config, out, print_result, error_stream=None, **options):
     """CLI body: prints the result, or writes error.json into a new --out and returns 2."""
     error_stream = error_stream or sys.stderr
     output = Path(out)
     existed = output.exists()
     try:
-        result = run_compare2_report(compare2_dir, config, out)
+        result = run_compare2_report(compare2_dir, config, out, **options)
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
         code = getattr(exc, 'code', 'input_or_config_error')
         print(f'오류: {exc}', file=error_stream)

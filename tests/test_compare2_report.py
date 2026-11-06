@@ -395,6 +395,10 @@ def test_a_without_links_the_report_has_the_v5_sections_and_the_old_json_keys(tm
     assert html.count('4·6회차 결과 없음') == 3             # the summary counts and the two ROI sections
     assert '<details><summary>7. 결함 조건별 상세' in html and 'id="dist-layer"' in html
     assert set(record) == OLD_RECORD_KEYS                    # no linked input: no new key
+    _files, built = build_report(out, tmp_path / 'compare2.yaml', tmp_path / 'again')
+    skipped = set(TIMES) | {'outputs'}                       # visual/time fields and the --out dependent paths
+    built = json.loads(json.dumps(built))
+    assert {k: v for k, v in record.items() if k not in skipped} == {k: v for k, v in built.items() if k not in skipped}
     assert 'class="roi"' not in html
     assert '전체 = 선택 범위 (이물 크기 필터 없음)' in html     # no full_range in this compare2
 
@@ -406,7 +410,8 @@ def test_b_real_chain_report_has_cards_tables_and_locations(linked, tmp_path):
     assert loc['counts']['worse'] == 1
     expected = {key: loc[key] for key in ('counts', 'top_worse', 'top_improved', 'explained', 'diameters_um', 'approximation_note')}
     assert record['locations'] == json.loads(json.dumps(expected))
-    assert set(record) == OLD_RECORD_KEYS | {'locations', 'link_inputs', 'roi_figures'}
+    assert set(record) == OLD_RECORD_KEYS | {'locations', 'link_inputs', 'roi_figures', 'options'}
+    assert record['options'] == {'top_regions': 5, 'top_improved': 3, 'table_top_n': 10, 'max_pairs_per_condition': 3}
     assert set(record['link_inputs']) == {'candidates', 'windows'}
     assert html.count('class="roi"') == 1
     for needle in ('① 설계 변경', '② vi 영향', '③ 순위', '④ 관련 결함 조건', '상위 1곳의 위치 근사합이', '근사합으로 설명되지 않는 잔차',
@@ -490,3 +495,84 @@ def test_i_the_condition_maps_still_use_the_old_path_when_a_link_is_given(linked
     html, record = linked_report(linked, tmp_path)
     assert record['maps'] == changed(linked.c2) and len(record['figures']) == record['maps']
     assert html.count('class="mapslot"') >= record['maps']
+
+
+# ---- V5: CLI link options and review follow-ups --------------------------------------------------------------------------
+
+def cli_report(linked, folder, *options):
+    return main(['compare2-report', '--compare2-dir', str(linked.c2), '--config', str(linked.config), '--out', str(folder),
+                 *options])
+
+
+def test_cli_link_options_reach_build_report(linked, tmp_path):
+    folder = tmp_path / 'linked'
+    code = cli_report(linked, folder, '--candidates', str(linked.cand), '--windows', str(linked.win),
+                      '--top-regions', '2', '--top-improved', '1', '--top-n', '3', '--max-pairs-per-condition', '1')
+    assert code in (0, 3)
+    record = json.loads((folder / 'report.json').read_text(encoding='utf-8'))
+    assert record['locations']['counts']['worse'] == 1 and len(record['roi_figures']) == 1
+    assert record['options'] == {'top_regions': 2, 'top_improved': 1, 'table_top_n': 3, 'max_pairs_per_condition': 1}
+    assert record['top_n'] == 4                       # config report.top_n (default), not --top-n
+    plain = tmp_path / 'plain'
+    assert cli_report(linked, plain) in (0, 3)
+    assert set(json.loads((plain / 'report.json').read_text(encoding='utf-8'))) == OLD_RECORD_KEYS
+    for bad in ('0', '-2'):
+        refused = tmp_path / f'bad{bad}'
+        assert cli_report(linked, refused, '--top-n', bad) == 2
+        assert json.loads((refused / 'error.json').read_text(encoding='utf-8'))['code'] == 'invalid_compare2_report_argument'
+
+
+def test_adv1_missing_centre_gives_an_empty_window_with_center_missing(monkeypatch):
+    import simcompare.compare2_report as cr
+    import simcompare.pipeline as pipeline
+    monkeypatch.setattr(pipeline, '_compare_options', lambda cfg: (None, None))
+
+    def scan(cfg, info, top, fids, diameter, size, origin_for, states, key_of=None):
+        for fid in fids:
+            state = cr._new_state()
+            state.update(status='ok', crop=np.ones((size, size), dtype=bool))
+            state['origin'] = origin_for(fid, state)
+            states[fid] = state
+    monkeypatch.setattr(cr, '_scan_side', scan)
+    monkeypatch.setattr(cr, '_load_overlays', lambda *a, **k: None)
+    frame = SimpleNamespace(shape_yx=(100, 100), origin_xy_um=(0.0, 0.0))
+    info = {'pitch': 1.0, 'frame': frame, 'limit': 1 << 40}
+    cfg2 = SimpleNamespace(report=SimpleNamespace(diameter_um=5.0, map_window_um=10))
+    spec = {role: {'key': None, 'layer': None, 'center_um': (50.0, 50.0)} for role in ('reference', 'target')}
+    spec['target'] = {'key': None, 'layer': None, 'center_um': None}
+    states = cr._build_figures(None, cfg2, {'reference': info, 'target': info}, {'f': spec}, [])
+    assert states['reference']['f']['status'] == 'ok' and states['reference']['f']['crop'].all()
+    assert states['target']['f']['status'] == 'center_missing' and not states['target']['f']['crop'].any()
+
+
+def test_adv2_added_and_removed_pairs_show_one_sided_enlarged_maps(linked, tmp_path):
+    _html, record = linked_report(linked, tmp_path)
+    assert len(record['roi_figures']) == 2
+    for fig in record['roi_figures']:
+        reference, target = fig['reference']['cells'], fig['target']['cells']
+        assert (reference > 0) != (target > 0), (reference, target)      # one side has the pattern, the other none
+
+
+def test_adv3_rank_table_columns_say_approximate(linked, tmp_path):
+    html, _ = linked_report(linked, tmp_path)
+    assert 'Δvi_line (근사)' in html and 'Δvi_pixel (근사)' in html and 'net (근사)' in html
+
+
+def test_adv5_pitch_only_difference_has_its_own_sentence():
+    from simcompare.compare2_report import _mapset
+    figs = {role: {'area_um2': 0.0, 'components': 0, 'status': 'ok', 'overlay': None, 'png': b''} for role in ('reference', 'target')}
+    pitch = _mapset(None, figs, False, 5.0, 10, aligned=True, pitch_differs=True)
+    size = _mapset(None, figs, False, 5.0, 10, aligned=True)
+    assert 'A·B 픽셀 크기(pitch)가 달라' in pitch and 'A·B 창 크기가 달라' in size
+
+
+def test_adv7_report_build_time_with_and_without_the_link(linked, tmp_path, capsys):
+    import time
+    timings = {}
+    for name, kwargs in (('without', {}), ('with', {'candidates_dir': linked.cand, 'windows_dir': linked.win})):
+        started = time.time()
+        build_report(linked.c2, linked.config, tmp_path / name, **kwargs)
+        timings[name] = round(time.time() - started, 3)
+    with capsys.disabled():
+        print(f'\nV5 adv7 build_report seconds on the real chain fixture: {timings}')
+    assert all(value >= 0 for value in timings.values())
