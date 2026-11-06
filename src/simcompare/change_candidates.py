@@ -21,7 +21,7 @@ import sys
 import numpy as np
 
 from . import alignment_report, candidates, change_map, layer_align, local_align, template_export
-from .numeric_schema import DIAMETERS_UM, NumericContractError, diameter_key
+from .numeric_schema import DIAMETERS_UM, NumericContractError, diameter_key, is_cno_case
 
 DIAMETER_UM = 5
 ROI_SOURCE = 'cnt_change'
@@ -89,6 +89,8 @@ def _check_diameter_observed(sides, diameter):
     for name, side in sides.items():
         observed = False
         for case in side.dataset.cases:
+            if is_cno_case(case):   # a CNO case must not confirm the diameter of a short-only run
+                continue
             found = next((d for d in case.records if diameter_key(d) == wanted), None)
             if found is not None and change_map._header(case.records, found).input_status == 'observed':
                 observed = True

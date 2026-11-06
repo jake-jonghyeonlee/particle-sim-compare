@@ -25,6 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .numeric_schema import is_cno_case
+
 SCHEMA_VERSION = 'candidate_queries_v1'
 OVERLAP_EPS = 1e-12
 DIRECTIONS = (('reference_to_target', 'reference', 'target'), ('target_to_reference', 'target', 'reference'))
@@ -367,7 +369,8 @@ def export_index(cfg, side, folder, diameter_um, track, memo, reserved_bytes, mi
 def index_coverage(side):
     """index export가 데이터셋 전극 전체를 (role, layer)별로 덮는지 센다."""
     state = side.index
-    universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases for e in case.endpoints}
+    # CNO (one electrode, lateral_open) cases have no electrode-pair index ROI: left out of the universe
+    universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases if not is_cno_case(case) for e in case.endpoints}
     ready = [r for r in state['rows'] if r['status'] == 'ready']
     covered = {_endpoint_key(item['endpoint']) for row in ready
                for item in (row.get('source_assets') or {}).get('layouts', [])} & universe
@@ -397,7 +400,7 @@ def index_coverage(side):
 
 def _query_export_note(side):
     """질의 export는 선택한 영역의 case 전극 layout만 참조한다. 데이터셋 전극 전체와 비교해 부족하면 알린다(정보)."""
-    universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases for e in case.endpoints}
+    universe = {_endpoint_key(asdict(e)) for case in side.dataset.cases if not is_cno_case(case) for e in case.endpoints}
     covered = {_endpoint_key(item['endpoint']) for row in side.rows if row['status'] == 'ready'
                for item in (row.get('source_assets') or {}).get('layouts', [])}
     missing = sorted(universe-covered, key=lambda k: tuple(str(v) for v in k))

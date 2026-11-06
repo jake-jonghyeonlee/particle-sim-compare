@@ -17,7 +17,7 @@ from .linepixel import PackedMask
 from .measurement import measure_full_mask, measure_union
 from .numeric_schema import (CaseIdentity, Frame, MaskRecord, Measurement, NumericCase, NumericDataset,
     NumericContractError, NumericFrameError, PhysicalWindow, binary_mask,
-    diameter_key, finite, require_same_frame, text)
+    diameter_key, finite, is_cno_case, require_same_frame, text)
 
 DEFAULT_DIAMETER_UM = 5.0
 SCOPE_DECISION = {'status': 'answered', 'value': 'short_only',
@@ -500,7 +500,7 @@ def compute_graded_electrode_maps(inputs: NumericDataset | Iterable[NumericCase]
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     extra = 0
     if dataset is not None and dataset.frames:
-        cases = dataset.cases
+        cases = [case for case in dataset.cases if not is_cno_case(case)]
         extra = graded_extra_bytes(next(iter(dataset.frames.values())).valid.size, len({_key(case) for case in cases}))
     maps, layers = _compute(inputs, diameter_um=diameter_um, min_count=threshold, reserved_bytes=reserved_bytes + extra,
                             grade_of_case=grade_of_case, select=roi_grade)
@@ -514,6 +514,9 @@ def _compute(inputs, *, diameter_um, min_count, reserved_bytes, grade_of_case=No
     selection = None if grade_of_case is None else select
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     cases = list(dataset.cases if dataset else inputs)
+    # CNO (one electrode, lateral_open) cases are not short cases: left out of the map and of the manifest check
+    cno_identities = {tuple(asdict(c.identity).values()) for c in cases if is_cno_case(c)}
+    cases = [c for c in cases if not is_cno_case(c)]
     if dataset is not None:
         from .adapters.real_hotspot import guard_stage_map
         guard_stage_map('electrode-map', dataset, reserved=reserved_bytes)  # fail fast before any mask is loaded
@@ -541,6 +544,8 @@ def _compute(inputs, *, diameter_um, min_count, reserved_bytes, grade_of_case=No
             raise NumericContractError('map_requires_short_only', case.failure_type)
         grouped.setdefault(_key(case), []).append(case)
     provenance['excluded_cases'] = sorted(excluded, key=lambda r: json.dumps(r, sort_keys=True))
+    if cno_identities:
+        provenance['cno_cases_excluded'] = len(cno_identities)
     # Dataset manifest에 있는 case가 사라졌으면 전체 완전성도 보류한다.
     missing_manifest = []
     if dataset:
@@ -548,7 +553,7 @@ def _compute(inputs, *, diameter_um, min_count, reserved_bytes, grade_of_case=No
         actual = {tuple(getattr(c.identity, k) for k in identity_fields) for c in cases}
         for raw in dataset.provenance.get('cases', []):
             identity = tuple(raw.get(k) for k in identity_fields)
-            if identity not in actual:
+            if identity not in actual and identity not in cno_identities:
                 missing_manifest.append(identity)
     provenance['missing_manifest_cases'] = missing_manifest
     layers, graded_layers = [], []

@@ -23,7 +23,7 @@ from . import candidates
 from .electrode_map import (ROI_GRADES, ElectrodeMaps, _components, _run_counts, compute_graded_electrode_maps,
                             graded_extra_bytes, stable_region_id)
 from .heatmap import write_heatmap
-from .numeric_schema import NumericContractError
+from .numeric_schema import NumericContractError, is_cno_case
 
 VULNERABILITY_SCHEMA = 'vulnerability_v1'
 SCORE_RULE_VERSION = 'dv_roi_rank_v1'
@@ -80,10 +80,16 @@ def _link_side(name, side, dv):
     """dv-grade 출력 ↔ 이 제품의 데이터셋. 쓰기 전에 모두 검사한다. (case_id -> grade, 등급 없는 case_id 목록)."""
     manifest = dv['manifest']
     cases = {}
+    n_cno = 0
     for case in side.dataset.cases:
+        if is_cno_case(case):   # CNO has no electrode-pair dv grade: left out of the link
+            n_cno += 1
+            continue
         if case.identity.case_id in cases:
             raise _bad('dv_candidates_duplicate_case_id', f'{name}: 데이터셋에 case_id {case.identity.case_id!r} 가 두 번 있습니다')
         cases[case.identity.case_id] = case
+    if n_cno:
+        side.input_record['cno_cases_excluded'] = n_cno
     if not cases:   # candidates 의 side_unavailable 과 같다: 오류가 아니라 경고 + 종료 코드 3 (경고는 _run 이 붙인다)
         # case 가 없으면 제품은 config 로만 알 수 있다. case 가 있을 때처럼 condition_assignment.product_id(필수 키)를 쓴다.
         section = side.section or {}
@@ -300,7 +306,8 @@ def _plan_side(cfg, out, name, side, dv, grade_of, ungraded, args, diameter_um, 
         side.input_record['map_coverage_reasons'] = incomplete
     layer_cases = {}
     for case in side.dataset.cases:
-        layer_cases.setdefault(case.analysis_layer, []).append(case)
+        if not is_cno_case(case):
+            layer_cases.setdefault(case.analysis_layer, []).append(case)
     held = graded_extra_bytes(maps.layers[0].frame.valid.size, len(maps.layers)) if maps.layers else 0   # 등급 배열이 아직 살아 있다
     regions_done = 0
     for index, (layer, gl) in enumerate(zip(maps.layers, graded.layers)):

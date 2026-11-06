@@ -16,7 +16,7 @@ import subprocess
 import numpy as np
 
 from .numeric_images import MASK_SEMANTICS, check_hash, read_binary, resolve_path
-from .numeric_schema import CaseIdentity, Frame, NumericContractError, finite, text, require_same_frame, current_gate_decisions
+from .numeric_schema import CaseIdentity, Frame, NumericContractError, finite, is_cno_case, text, require_same_frame, current_gate_decisions
 
 IDENTITY_FIELDS = tuple(CaseIdentity.__dataclass_fields__)
 
@@ -138,6 +138,8 @@ def check_asset_manifest(dataset, root, reference, memo=None):
         return {}, ['source_asset_manifest_invalid',getattr(exc,'code','malformed_asset_manifest')]
     result = {}
     for case in dataset.cases:
+        if is_cno_case(case):   # CNO has no electrode-pair layout asset
+            continue
         key = _identity(asdict(case.identity))
         raw = entries.get(key)
         if raw is None:
@@ -196,6 +198,8 @@ def _manual_case(dataset, request):
         return None, sorted(set(reasons+['case_context_required']))
     matches = []
     for case in dataset.cases:
+        if is_cno_case(case):
+            continue
         identity = asdict(case.identity)
         if any(identity[k] != request.get(k) for k in ('product_id','design_version','frame_id')):
             continue

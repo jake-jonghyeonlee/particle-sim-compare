@@ -25,7 +25,7 @@ import numpy as np
 from PIL import Image
 
 from ..numeric_images import resolve_path
-from ..numeric_schema import NumericContractError
+from ..numeric_schema import NumericContractError, is_cno_case
 from ..png_strict import _PNGError, _validate_png_structure, decoder_session
 from ..roi_export import _frame_payload
 from .real_hotspot import CONTRACT_VERSION as REAL_CONTRACT_VERSION, _case_name, configured_dataset, load_real_manifest
@@ -536,7 +536,11 @@ def import_electrode_assets(source_kind, root, out, *, numeric_data_dir, source_
         raise _error('stack_order_not_applicable', 'no DL1 folder is read')
     order = _load_stack_order(stack_order)
     dataset = _load_dataset(numeric_data_dir, manifest_path, condition_assignment)
-    cases = sorted(dataset.cases, key=lambda c: tuple(asdict(c.identity).values()))
+    # CNO (one electrode, lateral_open) cases have no electrode asset: skipped, not blocked (exit code unchanged)
+    cno_skipped = [{'case_id': c.identity.case_id, 'product_id': c.identity.product_id,
+                    'reasons': ['cno_case_no_electrode_asset']}
+                   for c in sorted(dataset.cases, key=lambda c: tuple(asdict(c.identity).values())) if is_cno_case(c)]
+    cases = sorted((c for c in dataset.cases if not is_cno_case(c)), key=lambda c: tuple(asdict(c.identity).values()))
     if not cases:
         raise _error('numeric_dataset_has_no_cases')
     for frame_id in sorted({c.identity.frame_id for c in cases}):
@@ -684,6 +688,8 @@ def import_electrode_assets(source_kind, root, out, *, numeric_data_dir, source_
             'counts': {'dataset_cases': len(cases), 'cases_converted': len(entries), 'cases_blocked': len(blocked),
                        'png_files_read': len(used_files), 'png_files_decoded': len(decoded),
                        'distinct_asset_masks_written': len(writer.written), 'layout_asset_references': writer.references}}
+        if cno_skipped:
+            record['skipped_cases'] = cno_skipped
         (staging / RECORD_NAME).write_bytes(_json_bytes(record))
         os.replace(staging, out)
     except Exception:

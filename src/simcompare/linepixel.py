@@ -21,7 +21,7 @@ from .numeric_schema import (
     DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES, DEFAULT_TOP_BUCKETS,
     DIAMETERS_UM, CaseIdentity, Endpoint, Frame, MaskRecord, Measurement,
     NumericCase, NumericContractError, NumericDataset, Status,
-    diameter_key, finite, require_same_frame, text,
+    diameter_key, finite, is_cno_case, require_same_frame, text,
 )
 
 LINE = 'line'
@@ -304,12 +304,17 @@ class AreaResult:
     pair_table_version: str | None
     pair_table_hash: str | None
     is_synthetic: bool = False
+    # not a dataclass field (no annotation): generic dataclass walkers must not see a key for a root without CNO
+    cno_cases_excluded = 0
 
     def to_dict(self) -> dict:
-        return {'schema_version': 'linepixel_area_v1', 'basis': 'full_mask_valid',
-                'is_synthetic':self.is_synthetic, 'input_hash': self.input_hash, 'pair_table_version': self.pair_table_version,
-                'pair_table_hash': self.pair_table_hash, 'gates': current_gate_decisions() if self.gates else {},
-                'groups': [self.groups[key].to_dict() for key in sorted(self.groups)]}
+        out = {'schema_version': 'linepixel_area_v1', 'basis': 'full_mask_valid',
+               'is_synthetic':self.is_synthetic, 'input_hash': self.input_hash, 'pair_table_version': self.pair_table_version,
+               'pair_table_hash': self.pair_table_hash, 'gates': current_gate_decisions() if self.gates else {},
+               'groups': [self.groups[key].to_dict() for key in sorted(self.groups)]}
+        if self.cno_cases_excluded:
+            out['cno_cases_excluded'] = self.cno_cases_excluded
+        return out
 
 
 def bucket_key(group: GroupKey, classification: str, pair_ids: Iterable[str], *,
@@ -790,6 +795,9 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
         raise NumericContractError('invalid_resource_limit', 'max_label_pattern_entries must be a positive integer')
     dataset = inputs if isinstance(inputs, NumericDataset) else None
     cases = list(dataset.cases if dataset else inputs)
+    # CNO (one electrode, lateral_open) cases are not short cases: left out of the areas and of the coverage check
+    cno_identities = {case.identity for case in cases if isinstance(case, NumericCase) and is_cno_case(case)}
+    cases = [case for case in cases if not (isinstance(case, NumericCase) and is_cno_case(case))]
     grouped, seen, pair_definitions, electrode_definitions = {}, set(), {}, {}
     for case in cases:
         _validate_case(case)
@@ -824,12 +832,12 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
     provenance = dataset.provenance if dataset else {}
     if dataset is not None:
         expected = {CaseIdentity(**{name: raw[name] for name in CaseIdentity.__dataclass_fields__})
-                    for raw in provenance['cases']}
+                    for raw in provenance['cases']} - cno_identities
         if seen != expected:
             raise NumericContractError('expected_case_coverage_mismatch')
     table_version = provenance.get('pair_table_version')
     raw_copies = {id(case): copy.deepcopy(case.raw) for case in cases}
-    return AreaResult({key: _group(key, grouped[key], chunk_cells, table_version, raw_copies=raw_copies,
+    result = AreaResult({key: _group(key, grouped[key], chunk_cells, table_version, raw_copies=raw_copies,
                                    max_bucket_entries=max_bucket_output_entries,
                                    max_label_entries=max_label_pattern_entries,
                                    top_buckets=top_buckets if bucket_detail == 'summary' else None,
@@ -837,6 +845,9 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
                        for key in sorted(grouped)},
                       copy.deepcopy(dataset.gates) if dataset else {}, provenance.get('input_hash'),
                       table_version, provenance.get('pair_table_hash'), bool(provenance.get('is_synthetic',False)))
+    if cno_identities:
+        result.cno_cases_excluded = len(cno_identities)
+    return result
 
 
 # T4: explicit synthetic density + one-unit basis; G1/G2 real decisions remain pending.

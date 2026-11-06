@@ -250,9 +250,10 @@ def _cno_csv(root: Path, path: Path):
     try:
         csv_info = _csv_areas(root, path, 'lateral_open')
     except NumericContractError as exc:
+        relative = (path / 'result' / 'lateral_open.csv').relative_to(root).as_posix()
         return {'status': 'invalid', 'path': None, 'sha256': None, 'rows': {}, 'reason': exc.code,
-                'detail': str(exc),
-                'relative_path': (path / 'result' / 'lateral_open.csv').relative_to(root).as_posix()}
+                'detail': f'{exc.code}: {relative}',   # root-relative: the exception text holds an absolute path
+                'relative_path': relative}
     if csv_info['path'] is not None:
         csv_info['relative_path'] = (path / 'result' / csv_info['path']).relative_to(root).as_posix()
     return csv_info
@@ -397,6 +398,9 @@ def _import_cno_cases(root: Path, staging: Path, first_index: int, cno_entries: 
             entry['image_subdir'] = IMAGES_DIRNAME
         if csv_info['status'] == 'observed':
             file_index[csv_info['relative_path']] = {'sha256': csv_info['sha256'], 'path': csv_info['relative_path']}
+        if csv_info['status'] == 'invalid':
+            diagnostics.append({'case': name, 'status': 'cno_csv_invalid', 'reason': csv_info['reason'],
+                                'relative_path': csv_info['relative_path']})
         csv_rows = csv_info['rows']
         for extra_diameter in sorted(set(csv_rows) - set(DIAMETERS_UM)):
             diagnostics.append({'case': name, 'diameter_um': extra_diameter, 'status': 'unexpected_csv_diameter'})
@@ -413,7 +417,11 @@ def _import_cno_cases(root: Path, staging: Path, first_index: int, cno_entries: 
             if diameter in image_names:
                 raise NumericContractError('duplicate_real_hotspot_diameter', f'{name}:{diameter}')
             image_names[diameter] = image_dir / filename
+        for diameter in sorted(set(image_names) - set(DIAMETERS_UM)):
+            diagnostics.append({'case': name, 'diameter_um': diameter, 'status': 'unexpected_diameter'})
         reasons, crop_shape, electrode_shape = [], None, None
+        if not set(image_names) & set(DIAMETERS_UM):
+            reasons.append('no_hotspot_images')
         electrode = image_dir / '1.png'
         if electrode.exists():
             source_key = electrode.relative_to(root).as_posix()
@@ -437,8 +445,10 @@ def _import_cno_cases(root: Path, staging: Path, first_index: int, cno_entries: 
             entry['diagnostics'].append('cno_unexpected_second_png')
         if crop_shape is not None:
             for diameter in sorted(image_names):
+                # resolve inside the root before the header is opened (a symlink out of the root is an error)
+                hotspot_path = resolve_path(root, image_names[diameter].relative_to(root).as_posix())
                 try:
-                    with Image.open(image_names[diameter]) as image:
+                    with Image.open(hotspot_path) as image:
                         hotspot_shape = (image.height, image.width)
                 except (OSError, ValueError):
                     continue  # the record step reports an undecodable PNG as png_decode_failed
@@ -1498,6 +1508,13 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     if physical is not None and max_operation_bytes > physical:
         raise NumericContractError('invalid_resource_limit',
                                    f'max_operation_bytes {max_operation_bytes} exceeds physical memory {physical}')
+    raw_cno_cases = manifest.get('cno_cases') or []
+    if (not isinstance(raw_cno_cases, list)
+            or any(not isinstance(raw, dict) or not isinstance(raw.get('case_name'), str)
+                   or not isinstance(raw.get('endpoints'), list) or len(raw['endpoints']) != 1
+                   or not isinstance(raw['endpoints'][0], dict) or not isinstance(raw.get('records'), list)
+                   for raw in raw_cno_cases)):
+        raise NumericContractError('invalid_real_cno_cases')
     group_counts, observed_count = {}, 0
     for raw_case in manifest['cases']:
         a, b = raw_case['endpoints']
@@ -1526,6 +1543,12 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
         if not isinstance(stack[layer][1], str) or not stack[layer][1]:
             raise NumericContractError('real_density_layer_assignment_required', layer)
         group_counts[layer] = group_counts.get(layer, 0) + 1
+    # A confirmed CNO case is built below as a case of its own layer, so it counts as one more group member there
+    # (an unconfirmed one is not built; a layer outside the stack is refused when the case is built).
+    for raw_case in raw_cno_cases:
+        layer = raw_case['endpoints'][0].get('actual_layer')
+        if raw_case.get('geometry_status') == 'confirmed' and layer in stack:
+            group_counts[layer] = group_counts.get(layer, 0) + 1
     frame_cells = shape[0] * shape[1]
     # max_materialized_source_cells bounds what one layer x diameter group materialises: sources + pair masks.
     widest = max(group_counts.values(), default=0) * frame_cells
@@ -1641,7 +1664,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                  ('expected_case_folder_missing', 'unmapped_pair')))
     # CNO (lateral_open, one electrode) cases follow the others in case_name order. They have no pair, so they never
     # get unmapped_pair. An unconfirmed CNO is not added: its cno_frame_mismatch diagnostic stays in the manifest.
-    for raw_case in sorted(manifest.get('cno_cases') or [], key=lambda c: c['case_name']):
+    for raw_case in sorted(raw_cno_cases, key=lambda c: c['case_name']):
         if raw_case.get('geometry_status') != 'confirmed':
             continue
         endpoint = raw_case['endpoints'][0]
