@@ -12,7 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .numeric_schema import NumericContractError, diameter_key, finite
+from .numeric_schema import DIAMETERS_UM, NumericContractError, diameter_key, finite
 
 CONFIG_SCHEMA = 'compare2_config_v1'
 CNO_FACTOR = math.pi / 4
@@ -73,6 +73,7 @@ class Compare2Config:
     report: ReportConfig
     config_path: Path
     config_sha256: str
+    lambda_diameters_um: Optional[Tuple[Decimal, ...]] = None
 
 
 def _invalid(detail: str):
@@ -184,6 +185,29 @@ def _report(base: Path, raw) -> ReportConfig:
                         _positive(raw.get('diameter_um', REPORT_DEFAULTS['diameter_um']), 'report.diameter_um'), top_n)
 
 
+def _lambda_diameters(raw) -> Optional[Tuple[Decimal, ...]]:
+    """None (key absent or null: every observed diameter) or the sorted, unique size keys of the listed diameters."""
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise _invalid('lambda_diameters_um must be a non-empty list of diameters')
+    allowed = {size_key(d) for d in DIAMETERS_UM}
+    keys: List[Decimal] = []
+    for item in raw:
+        if type(item) not in (int, float):
+            raise _invalid(f'lambda_diameters_um: not a number: {item!r}')
+        try:
+            key = size_key(item)
+        except NumericContractError:
+            raise _invalid(f'lambda_diameters_um: not a positive finite number: {item!r}') from None
+        if key not in allowed:
+            raise _invalid(f'lambda_diameters_um: {item!r} is not a simulated diameter')
+        if key in keys:
+            raise _invalid(f'lambda_diameters_um: duplicate diameter {item!r}')
+        keys.append(key)
+    return tuple(sorted(keys))
+
+
 def load_compare2_config(path) -> Compare2Config:
     import yaml
     path = Path(path).resolve()
@@ -193,7 +217,7 @@ def load_compare2_config(path) -> Compare2Config:
     except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise _invalid(str(exc)) from exc
     cfg = _mapping(cfg, 'config', {'schema_version', 'numeric_config', 'output_dir', 'density_dir', 'model_groups',
-                                   'products', 'report'},
+                                   'products', 'report', 'lambda_diameters_um'},
                    {'schema_version', 'numeric_config', 'output_dir', 'density_dir', 'model_groups', 'products'})
     if cfg['schema_version'] != CONFIG_SCHEMA:
         raise NumericContractError('unsupported_compare2_config', f'use schema_version: {CONFIG_SCHEMA}')
@@ -210,7 +234,8 @@ def load_compare2_config(path) -> Compare2Config:
         reference=_product(base, 'reference', products['reference'], groups),
         target=_product(base, 'target', products['target'], groups),
         report=_report(base, cfg.get('report')),
-        config_path=path, config_sha256=hashlib.sha256(raw_bytes).hexdigest())
+        config_path=path, config_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        lambda_diameters_um=_lambda_diameters(cfg.get('lambda_diameters_um')))
 
 
 def lambda_factor(product: ProductConfig, group: GroupConfig, kind: str) -> Optional[float]:

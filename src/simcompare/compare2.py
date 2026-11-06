@@ -179,8 +179,11 @@ def _sum_opt(values):
     return None if any(v is None for v in values) else sum(values)
 
 
-def _compute_side(role, product, group, tables, extracted, meta):
+def _compute_side(role, product, group, tables, extracted, meta, diameters=None):
+    """One side's numbers. `diameters` (a set of size keys) limits every cell, CNO row and delta input to those sizes."""
     cells, classes, electrodes = extracted['cells'], extracted['classes'], extracted['electrodes']
+    # every analysed diameter has a (possibly empty) cell, so "observed" means a non-zero area or a CNO row
+    observed = {ck[2] for ck, item in cells.items() if item['line'] or item['peff'] or item['transfer']}
     factors = {'line': lambda_factor(product, group, 'line'), 'pixel': lambda_factor(product, group, 'pixel'),
                'cno': cno_lambda_factor(product, group)}
     reasons = set()
@@ -195,6 +198,8 @@ def _compute_side(role, product, group, tables, extracted, meta):
     entries = {}
     for ck in sorted(cells):
         layer, dlayer, diameter = ck
+        if diameters is not None and diameter not in diameters:
+            continue
         item = cells[ck]
         density, notes = {}, []
         for kind in KINDS:
@@ -259,12 +264,25 @@ def _compute_side(role, product, group, tables, extracted, meta):
                                                    'class': classes.get((pid, layer)),
                                                    'electrodes': electrodes.get((pid, layer))})
             cond['by_size'].append((ck, item['excl_l'].get(pid, 0), item['excl_p'].get(pid, 0), item['tr'].get(pid, 0)))
+    seen = set()  # conditions with any cell before the diameter filter
+    if diameters is not None:
+        for ck, item in cells.items():
+            seen.update((pid, ck[0]) for pid in set(item['excl_l']) | set(item['excl_p']) | set(item['tr']))
     for ident, pair in electrodes.items():
         if ident not in conds:
             conds[ident] = {'pid': ident[0], 'layer': ident[1], 'by_size': [], 'computable': False,
                             'class': None, 'electrodes': pair}
-            reasons.add('condition_not_computable')
+            if ident in seen:  # the filter removed every cell: a true 0 contribution, not a missing input
+                conds[ident]['filtered_out'] = True
+            else:
+                reasons.add('condition_not_computable')
     for ident, cond in conds.items():
+        if cond.get('filtered_out'):
+            cond['v'] = {'excl_l': 0.0, 'excl_p': 0.0, 'tr': 0.0}
+            cond['area_excl'] = cond['area_tr'] = 0.0
+            cond['rows'] = []
+            cond['reasons'] = ['diameter_filter_removed_all']
+            continue
         if not cond['computable']:
             cond['v'] = {'excl_l': None, 'excl_p': None, 'tr': None}
             cond['area_excl'] = cond['area_tr'] = 0.0
@@ -293,6 +311,7 @@ def _compute_side(role, product, group, tables, extracted, meta):
     # CNO
     cno_rows, cno_ok = {}, True
     for case in collect_cno(product.hotspot_root):
+        observed.update(size_key(diameter) for diameter in case.rows)
         row = {'case_name': case.case_name, 'electrode_id': case.electrode_id, 'density_layer': case.density_layer,
                'csv_status': case.status, 'csv_relative_path': case.csv_relative_path, 'lambda': None, 'reasons': []}
         if case.status != 'observed':
@@ -306,6 +325,8 @@ def _compute_side(role, product, group, tables, extracted, meta):
         else:
             parts = []
             for diameter, area in sorted(case.rows.items()):
+                if diameters is not None and size_key(diameter) not in diameters:
+                    continue
                 value, why = tables['pixel'].lookup(case.density_layer, diameter)
                 if value is None:
                     row['reasons'].append(f'{why}:pixel:{case.density_layer}')
@@ -331,7 +352,7 @@ def _compute_side(role, product, group, tables, extracted, meta):
         'x_pixel': x_pixel,
         'caa': {'line': None if total_line is None else _g(total_line),
                 'pixel': None if x_pixel is None or not ok['pixel'] else _g(x_pixel) / crp},
-        'meta': meta}
+        'meta': meta, 'observed': observed}
     side['vi'] = {'line': None if side['caa']['line'] is None else side['caa']['line'] / VI_LINE_DIVISOR,
                   'pixel': None if side['caa']['pixel'] is None else side['caa']['pixel'] / VI_PIXEL_DIVISOR}
     side['conservation'] = _conservation(side)
@@ -538,6 +559,30 @@ def _side_json(side):
         'conservation_check': side['conservation']}, status, reasons
 
 
+def _full_range_json(side_a, side_b):
+    """Indicators over every observed diameter (no condition breakdown), next to a diameter-subset run."""
+    docs = {}
+    for side in (side_a, side_b):
+        doc, status, reasons = _side_json(side)
+        docs[side['role']] = {
+            'lambda': doc['lambda'], 'caa_line': doc['caa_line'], 'caa_pixel': doc['caa_pixel'],
+            'vi_line': doc['vi_line'], 'vi_pixel': doc['vi_pixel'],
+            'caa_line_rounded': doc['caa_line_rounded'], 'caa_pixel_rounded': doc['caa_pixel_rounded'],
+            'vi_line_rounded': doc['vi_line_rounded'], 'vi_pixel_rounded': doc['vi_pixel_rounded'],
+            'status': status, 'reasons': reasons}
+    ind = _delta(side_a, side_b)['indicators']
+    delta = {key: ind[key] for key in sorted(ind)}
+    pct = {}
+    for name in ('lambda', 'caa', 'vi'):
+        for kind in KINDS:
+            base = side_a['lam' if name == 'lambda' else name][kind]
+            change = ind[f'delta_{name}_{kind}']
+            ratio = _ratio(change, base)
+            pct[f'delta_{name}_{kind}_pct'] = None if ratio is None else ratio * 100
+    delta.update(pct)
+    return {'sides': docs, 'delta': delta}
+
+
 def _product_json(side, density_tables):
     product, group = side['product'], side['group']
     return {'role': side['role'], 'model_group': group.name, 'crp': side['crp'],
@@ -726,10 +771,15 @@ def build_compare2(config_path):
     metas = {}
     for role in ROLES:
         extracted[role], metas[role] = _load_side(cfg, role, top)
+    listed = cfg2.lambda_diameters_um
+    subset = None if listed is None else set(listed)
+    full_sides = {}
     for role in ROLES:
         product = getattr(cfg2, role)
-        sides[role] = _compute_side(role, product, cfg2.model_groups[product.model_group], tables[role],
-                                    extracted[role], metas[role])
+        args = (role, product, cfg2.model_groups[product.model_group], tables[role], extracted[role], metas[role])
+        sides[role] = _compute_side(*args, diameters=subset)
+        if subset is not None:  # same extraction, no filter: the all-diameter indicators next to the subset
+            full_sides[role] = _compute_side(*args)
     delta = _delta(sides['reference'], sides['target'])
     side_docs, reasons, partial = {}, [], False
     for role in ROLES:
@@ -757,6 +807,18 @@ def build_compare2(config_path):
         'products': {role: _product_json(sides[role], tables[role]) for role in ROLES},
         'sides': side_docs,
         'delta': delta}
+    if subset is not None:
+        observed = set().union(*(side['observed'] for side in full_sides.values()))
+        not_observed = [key for key in listed if key not in observed]
+        document['formula_basis'] = 'diameter_subset'
+        document['inputs']['diameter_filter'] = {
+            'mode': 'listed', 'diameters_um': [_diameter_json(key) for key in listed],
+            'observed_diameters_um': [_diameter_json(key) for key in sorted(observed)],
+            'not_observed_um': [_diameter_json(key) for key in not_observed]}
+        document['full_range'] = _full_range_json(full_sides['reference'], full_sides['target'])
+        if not_observed:
+            partial = True
+            reasons.extend(f'diameter_filter_not_observed:{key}' for key in not_observed)
     return document, ('partial' if partial else 'available'), reasons
 
 

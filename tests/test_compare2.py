@@ -82,7 +82,7 @@ DENS_PIXEL = {'P1': {1: 3.0, 2: 1.5, 3: 0.75}, 'P2': {1: 6.0, 2: 3.0, 3: 1.5}, '
 
 
 def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, line=None, pixel=None,
-        ref_cno=None, tgt_cno=None, scale=1.0, out_name='out'):
+        ref_cno=None, tgt_cno=None, scale=1.0, out_name='out', diameters=None):
     """Build both sides, write the configs, run `simcompare compare2`. Returns (exit code, output folder)."""
     ref_root, ref_imp = write_side(tmp, 'ref', *ref, cno=ref_cno)
     tgt_root, tgt_imp = write_side(tmp, 'tgt', *tgt, cno=tgt_cno)
@@ -101,6 +101,8 @@ def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, li
                             for group in {ref_group, tgt_group}},
            'products': {'reference': {'model_group': ref_group, 'resolution': RES, 'hotspot_root': str(ref_root)},
                         'target': {'model_group': tgt_group, 'resolution': RES, 'hotspot_root': str(tgt_root)}}}
+    if diameters is not None:
+        cfg['lambda_diameters_um'] = diameters
     (tmp / 'compare2.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')
     code = main(['compare2', '--config', str(tmp / 'compare2.yaml')])
     return code, tmp / out_name
@@ -567,3 +569,158 @@ def test_round_area_helper_and_unrounded_lambda():
 def test_usage_reference_lists_delta_check_failed():
     text = (Path(__file__).resolve().parents[1] / 'docs' / 'usage_reference.md').read_text(encoding='utf-8')
     assert 'delta_check_failed' in text[text.index('`compare2`의 종료 코드 3 원인'):][:600]
+
+
+# ---- lambda_diameters_um (diameter subset + full-range indicators) ----------------------------------------------
+
+GOLDEN = {  # masked sha256 of the outputs of the fixture below, taken from the code before lambda_diameters_um existed
+    'compare2.json': '656dcd639ca6512afd7ed6fa75f8ec420f46d1f02d35f8f5664dbad96cfb65b8',
+    'compare2_summary.csv': '4306ab9e66b91f6fbb1a7a2ef2261966ed0845eebae0b1d139f8b1c392b38c27',
+    'compare2_layers.csv': '01cf8566d35d359e9ac38583127eb6987cd9fd5f232e3960ef27ed9c049a30c9',
+    'compare2_conditions.csv': '14aaab246c3c1b800375091fe6d5461e2612d969bde5c12650a7547897ea2a60',
+    'compare2_cno.csv': '1a3fb0477c7fa69017b27a6fae93c3f42a24eb65b86b1949c3d36d4368655f6c'}
+
+
+def two_sides():
+    tgt = base_cases(AB={1: {0, 1}, 2: {0, 1, 2}, 3: {0}}, DE={1: {1, 4}, 2: {4, 5, 6}, 3: {4}})
+    return (base_cases(), PAIRS), (tgt, PAIRS)
+
+
+def only(cases, keep):
+    """The same cases with the cells of every other diameter dropped (the oracle of a diameter subset)."""
+    return [(d, ea, la, eb, lb, {k: v for k, v in masks.items() if k in keep}) for d, ea, la, eb, lb, masks in cases]
+
+
+def run_pair(tmp, name, ref, tgt, **kwargs):
+    folder = tmp / name
+    folder.mkdir()
+    code, out = run(folder, ref, tgt, **kwargs)
+    return code, out, load(out)
+
+
+def test_no_key_keeps_default_outputs_byte_identical(tmp_path):
+    import hashlib
+    import re
+    ref, tgt = two_sides()
+    code, out = run(tmp_path, ref, tgt)
+    assert code == 0
+    for name, digest in GOLDEN.items():
+        text = (out / name).read_bytes().decode('utf-8').replace(str(tmp_path), 'TMP')
+        assert hashlib.sha256(re.sub(r'[0-9a-f]{64}', 'H', text).encode('utf-8')).hexdigest() == digest, name
+    doc = load(out)
+    assert 'full_range' not in doc and 'formula_basis' not in doc and 'diameter_filter' not in doc['inputs']
+
+
+def test_single_diameter_subset_matches_hand_calculation(tmp_path):
+    ref, tgt = two_sides()
+    code, out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[3])
+    assert code == 0, doc['sides']['reference']['reasons']
+    assert doc['formula_basis'] == 'diameter_subset'
+    assert doc['inputs']['diameter_filter'] == {'mode': 'listed', 'diameters_um': [3.0],
+                                                'observed_diameters_um': [1.0, 2.0, 3.0], 'not_observed_um': []}
+    for role, (cases, _pairs) in (('reference', ref), ('target', tgt)):
+        expect = oracle(only(cases, {3}), PAIRS, DENS_LINE, DENS_PIXEL, FACTOR, FACTOR)
+        side = doc['sides'][role]
+        assert close(side['lambda']['line'], expect['lam_line']) and close(side['lambda']['pixel'], expect['lam_pixel'])
+        assert side['conservation_check']['status'] == 'passed'
+        assert {s['diameter_um'] for row in side['layers'] for s in row['by_size']} == {3.0}
+        vi_line, vi_pixel = vi(expect['lam_line'], expect['lam_pixel'])
+        assert close(side['vi_line'], vi_line) and close(side['vi_pixel'], vi_pixel)
+    delta = doc['delta']
+    assert delta['check']['status'] == 'passed'
+    for kind in KINDS_UNDER_TEST:
+        parts = sum(c[f'delta_vi_{kind}'] for c in delta['conditions']) + delta['shared'][f'delta_vi_{kind}']
+        assert close(parts, delta['indicators'][f'delta_vi_{kind}'])
+        assert {s['diameter_um'] for row in delta['layers'] for s in row['by_size']} == {3.0}
+    with (out / 'compare2_layers.csv').open(encoding='utf-8-sig') as handle:
+        sizes = {r['diameter_um'] for r in csv.DictReader(handle) if r['scope'] == 'reference' and r['diameter_um']}
+    assert sizes == {'3.0'}
+
+
+KINDS_UNDER_TEST = ('line', 'pixel')
+
+
+def test_unobserved_listed_diameter_is_partial(tmp_path):
+    ref, tgt = two_sides()
+    code, out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[3, 10])
+    assert code == 3
+    assert doc['inputs']['diameter_filter']['not_observed_um'] == [10.0]
+    assert doc['inputs']['diameter_filter']['observed_diameters_um'] == [1.0, 2.0, 3.0]
+    assert 'diameter_filter_not_observed:10' in json.loads((out / 'execution.json').read_text())['reasons']
+    expect = oracle(only(ref[0], {3}), PAIRS, DENS_LINE, DENS_PIXEL, FACTOR, FACTOR)
+    assert close(doc['sides']['reference']['lambda']['line'], expect['lam_line'])
+
+
+def test_cno_follows_the_diameter_filter(tmp_path):
+    ref, tgt = two_sides()
+    code, out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[2], ref_cno={CNO_NAME: CNO_CSV},
+                              tgt_cno={CNO_NAME: CNO_CSV})
+    assert code == 0, doc['sides']['reference']['reasons']
+    assert close(doc['sides']['reference']['lambda']['cno'], 1.0 * 1.5 * FACTOR * math.pi / 4)
+    full = doc['full_range']['sides']['reference']['lambda']['cno']
+    assert close(full, (2.0 * 0.5 + 1.0 * 1.5 + 0.5 * 2.5) * FACTOR * math.pi / 4)
+    assert doc['inputs']['diameter_filter']['observed_diameters_um'] == [1.0, 2.0, 3.0]
+
+
+def test_full_range_equals_the_run_without_the_key(tmp_path):
+    ref, tgt = two_sides()
+    kwargs = dict(ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: CNO_CSV})
+    _c, _o, plain = run_pair(tmp_path, 'plain', ref, tgt, **kwargs)
+    _c, _o, sub = run_pair(tmp_path, 'sub', ref, tgt, diameters=[1, 3], **kwargs)
+    for role in ('reference', 'target'):
+        full, base = sub['full_range']['sides'][role], plain['sides'][role]
+        for key in ('lambda', 'caa_line', 'caa_pixel', 'vi_line', 'vi_pixel', 'vi_line_rounded', 'vi_pixel_rounded',
+                    'status', 'reasons'):
+            assert full[key] == base[key], key
+    base = plain['delta']['indicators']
+    got = sub['full_range']['delta']
+    for key, value in base.items():
+        assert got[key] == value, key
+    assert close(got['delta_vi_line_pct'], base['delta_vi_line'] / plain['sides']['reference']['vi_line'] * 100)
+    assert sub['sides']['reference']['lambda']['line'] != plain['sides']['reference']['lambda']['line']
+
+
+def test_condition_with_every_cell_filtered_out(tmp_path):
+    from decimal import Decimal
+    from collections import defaultdict
+    from simcompare import compare2
+    from simcompare.compare2_inputs import GroupConfig, ProductConfig
+
+    class Table:
+        def lookup(self, layer, diameter):
+            return 2.0, None
+
+    def cell(excl):
+        item = compare2._new_cell()
+        item['excl_l'] = defaultdict(float, excl)
+        item['line'] = sum(excl.values())
+        return item
+
+    # AB has cells only at 1 um, AC only at 3 um; the filter keeps 3 um
+    cells = {('L1', 'P1', Decimal(1)): cell({'AB': 0.04}), ('L1', 'P1', Decimal(3)): cell({'AC': 0.02})}
+    extracted = {'cells': cells, 'classes': {('AB', 'L1'): 'line', ('AC', 'L1'): 'line'},
+                 'electrodes': {('AB', 'L1'): ['A', 'B'], ('AC', 'L1'): ['A', 'C']}}
+    root = tmp_path / 'root'
+    root.mkdir()
+    product = ProductConfig('reference', 'mobile', (20, 10), root)
+    group = GroupConfig('mobile', 50.0, 1.0, 1.0)
+    meta = {'expected_case_coverage_status': 'confirmed', 'same_name_cases_unresolved': False}
+    tables = {'line': Table(), 'pixel': Table()}
+    side = compare2._compute_side('reference', product, group, tables, extracted, meta, diameters={Decimal(3)})
+    ab, ac = side['conds'][('AB', 'L1')], side['conds'][('AC', 'L1')]
+    assert not ab['computable'] and ab['reasons'] == ['diameter_filter_removed_all'] and ab['rows'] == []
+    assert ab['v'] == {'excl_l': 0.0, 'excl_p': 0.0, 'tr': 0.0}
+    assert ac['computable'] and close(ac['v']['excl_l'], 2.0 * 0.02 * FACTOR)
+    assert 'condition_not_computable' not in side['reasons'] and side['conservation']['status'] == 'passed'
+    assert close(side['lam']['line'], 2.0 * 0.02 * FACTOR)
+    full = compare2._compute_side('reference', product, group, tables, extracted, meta)
+    assert full['conds'][('AB', 'L1')]['computable'] and close(full['lam']['line'], 2.0 * 0.06 * FACTOR)
+
+
+def test_missing_glass_area_nulls_full_range_like_the_subset(tmp_path):
+    ref, tgt = two_sides()
+    code, out, doc = run_pair(tmp_path, 'sub', ref, tgt, diameters=[3], glass=None)
+    assert code == 3
+    assert doc['sides']['reference']['vi_line'] is None
+    assert doc['full_range']['sides']['reference']['vi_line'] is None
+    assert doc['full_range']['delta']['delta_vi_line'] is None and doc['full_range']['delta']['delta_vi_line_pct'] is None

@@ -70,6 +70,21 @@ def test_unknown_keys_are_rejected(tmp_path, mutate):
     assert _code(info) == 'invalid_compare2_config'
 
 
+def test_lambda_diameters_is_optional_and_normalised(tmp_path):
+    assert load_compare2_config(_config(tmp_path)).lambda_diameters_um is None
+    assert load_compare2_config(_config(tmp_path, lambda c: c.update(lambda_diameters_um=None))).lambda_diameters_um is None
+    cfg = load_compare2_config(_config(tmp_path, lambda c: c.update(lambda_diameters_um=[5, 3.0, 1])))
+    assert cfg.lambda_diameters_um == (Decimal(1), Decimal(3), Decimal(5))
+
+
+@pytest.mark.parametrize('value', [[0.5], [3, 3.0], ['3'], [], 3, [True], [-1], [0], [float('nan')], [float('inf')],
+                                   [31], [3, None]])
+def test_invalid_lambda_diameters(tmp_path, value):
+    with pytest.raises(NumericContractError) as info:
+        load_compare2_config(_config(tmp_path, lambda c: c.update(lambda_diameters_um=value)))
+    assert _code(info) == 'invalid_compare2_config'
+
+
 @pytest.mark.parametrize('mutate', [
     lambda c: c.pop('density_dir'),
     lambda c: c['products']['target'].pop('hotspot_root'),
