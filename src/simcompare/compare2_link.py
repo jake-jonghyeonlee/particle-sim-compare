@@ -203,7 +203,11 @@ def _build_rois(payload, index, warnings):
                    'window_um': query.get('window_um'), 'roi_ids': sorted(query.get('roi_ids') or []),
                    'contributing_cases': [_case_record(c, index, warnings) for c in query.get('contributing_cases') or []],
                    'one_sided_cases': [_case_record(c, index, warnings) for c in query.get('one_sided_cases') or []]}
-            roi['change_kinds'] = sorted({c.get('change_kind') for c in roi['contributing_cases'] if c.get('change_kind')})
+            fold = query.get('unit_fold') or {}
+            replicas = [{key: item.get(key) for key in ('region_id', 'unit_index_xy', 'distance_um', 'score_um2')}
+                        for item in fold.get('replicas') or [] if isinstance(item, dict)]
+            roi['unit_fold'] = {'n_replicas': int(fold.get('n_replicas') or 0), 'replicas': replicas}
+            roi['change_kinds'] =sorted({c.get('change_kind') for c in roi['contributing_cases'] if c.get('change_kind')})
             rois.append(roi)
             for region in regions:
                 by_region.setdefault(region, key)
@@ -466,7 +470,10 @@ NET_THRESHOLD = 0.005
 DEFAULT_RATIO_EPS = 1e-15       # compare2.RATIO_EPS; the document's inputs.constants.ratio_null_below wins when present
 APPROXIMATION_NOTE = ('Approximation: each pair is valued with the window area of its own hotspot map and the side density and factor; '
                       'shared parts and transfer are not separated. CNO and CRP differences, changes outside the ROIs and '
-                      'overlapping windows stay in the residual (residual_unexplained_by_location_sum).')
+                      'overlapping windows stay in the residual (residual_unexplained_by_location_sum). '
+                      'Unit-fold repeats are approximated as the representative location value times the repeat count '
+                      '(the repeated locations are assumed to hold the same design). Locations cut by the round-4 --top-k '
+                      'and changes outside the ROIs also stay in the residual.')
 
 
 def _dkey(value):
@@ -551,6 +558,8 @@ def _pair_location(pair, diameters, tables, slopes):
                     terms[role] = 0.0
                     continue
                 area = named[d].get(area_key)
+                if named[d].get(area_key.replace('_value_um2', '_status')) == 'not_applicable':
+                    area = 0.0          # same as compare2: not_applicable is a true 0 contribution ('missing' stays null)
                 if area is None:
                     reasons.add(f'area_missing:{role}:{d}')
                     failed = True
@@ -601,7 +610,9 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
     slopes = {k: (((compare2_doc.get('delta') or {}).get('slopes') or {}).get(k) or {}).get('value') for k in KINDS}
     indicators = (compare2_doc.get('delta') or {}).get('indicators') or {}
     total_vi = {k: indicators.get(f'delta_vi_{k}') for k in KINDS}
-    eps = ((compare2_doc.get('inputs') or {}).get('constants') or {}).get('ratio_null_below', DEFAULT_RATIO_EPS)
+    eps = ((compare2_doc.get('inputs') or {}).get('constants') or {}).get('ratio_null_below')
+    if eps is None:
+        eps = DEFAULT_RATIO_EPS
     pairs = sorted((_pair_location(p, diameters, tables, slopes) for p in link.get('pairs') or []), key=lambda p: p['pair_id'])
     by_roi = {}
     for pair in pairs:
@@ -612,6 +623,7 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
     rois = []
     for roi in sorted(link.get('rois') or [], key=lambda r: r['roi_key']):
         members, reasons = by_roi.get(roi['roi_key'], []), set()
+        factor = 1 + int((roi.get('unit_fold') or {}).get('n_replicas') or 0)
         values = {}
         for k in KINDS:
             nulls = sum(1 for p in members if p['delta_vi'][k] is None)
@@ -620,8 +632,8 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
             elif nulls:
                 values[k] = None
                 reasons.add(f'pair_null:{k}:{nulls}')
-            else:
-                values[k] = sum(p['delta_vi'][k] for p in members)
+            else:       # a unit-fold ROI stands for 1 + n_replicas locations: representative value times the count
+                values[k] = factor * sum(p['delta_vi'][k] for p in members)
         if not members:
             reasons.add('roi_without_pairs')
         ranked = sorted(members, key=lambda p: (any(p['delta_vi'][k] is None for k in KINDS),
@@ -632,6 +644,9 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
         for p in members:
             conditions.update(link_pairs[p['pair_id']]['conditions'][role]['condition_id'] for role in ROLES)
         rois.append({'roi_key': roi['roi_key'], 'delta_vi': values, 'net': None, 'class': 'uncomputable',
+                     'replica_factor': factor, 'unit_fold': roi.get('unit_fold'), 'pairs_total': len(members),
+                     'pairs_null_by_kind': {k: sum(1 for p in members if p['delta_vi'][k] is None) for k in KINDS},
+                     'pairs_one_sided': sum(1 for p in members if 'one_sided_pair_no_endpoints' in p['reasons']),
                      'reasons': sorted(reasons), 'map_pairs': [p['pair_id'] for p in ranked[:max_pairs_per_condition]],
                      'design_change': {'change_kinds': roi['change_kinds'],
                                        'contributing_cases': [_case_summary(c) for c in roi['contributing_cases']],

@@ -644,11 +644,14 @@ def test_f_classification_boundaries_and_both_denominator_branches(hand):
     assert abs(by_id(gone, 'roi:R1+R2', 'rois')['net'] - 1.0) < 1e-12
 
 
-def synthetic(specs, totals=(100.0, 0.0)):
-    """specs: roi -> {pair_id: (a, b) or None}; every pair is AB@L1 (line) at d=3 with Δλ = 1.5 b - 0.2 a."""
+def synthetic(specs, totals=(100.0, 0.0), folds=None):
+    """specs: roi -> {pair_id: (a, b) or None}; every pair is AB@L1 (line) at d=3 with Δλ = 1.5 b - 0.2 a.
+
+    folds: roi -> n_replicas of its unit_fold record."""
     rois, pairs = [], []
     for roi_key, members in specs.items():
-        rois.append({'roi_key': roi_key, 'contributing_cases': [], 'one_sided_cases': [], 'change_kinds': []})
+        rois.append({'roi_key': roi_key, 'contributing_cases': [], 'one_sided_cases': [], 'change_kinds': [],
+                     'unit_fold': {'n_replicas': (folds or {}).get(roi_key, 0), 'replicas': []}})
         for pid, area in members.items():
             named = {} if area is None else {'3': {'a_value_um2': area[0], 'b_value_um2': area[1], 'a_status': 'available',
                                                     'b_status': 'available'}}
@@ -677,6 +680,61 @@ def test_g_ranking_top_n_map_pairs_and_ties():
     assert roi_m['reasons'] == ['pair_null:line:1', 'pair_null:pixel:1']
     wide = by_id(compute_locations(link, doc, max_pairs_per_condition=5), 'roi:m', 'rois')
     assert wide['map_pairs'] == ['m3', 'm1', 'm5', 'm2', 'm4']
+
+
+def test_unit_fold_replica_factor_scales_the_roi_and_changes_the_ranking():
+    specs = {'roi:a': {'a1': (0, 40), 'a2': (0, 40)}, 'roi:b': {'b1': (0, 100)}}          # vi: a pairs 30 + 30 = 60, b 75
+    link, doc = synthetic(specs, totals=(1000.0, 0.0))
+    plain = compute_locations(link, doc)
+    assert plain['top_worse'] == ['roi:b', 'roi:a'] and by_id(plain, 'roi:a', 'rois')['replica_factor'] == 1
+    link, doc = synthetic(specs, totals=(1000.0, 0.0), folds={'roi:a': 3})
+    folded = compute_locations(link, doc)
+    roi_a = by_id(folded, 'roi:a', 'rois')
+    assert roi_a['replica_factor'] == 4 and abs(roi_a['delta_vi']['line'] - 4 * 60.0) < 1e-9
+    assert [p['delta_vi']['line'] for p in folded['pairs'] if p['roi_key'] == 'roi:a'] == [30.0, 30.0]    # pairs keep their own values
+    assert folded['top_worse'] == ['roi:a', 'roi:b']
+    assert abs(folded['explained']['line']['ratio_top_worse'] - (240.0 + 75.0) / 1000.0) < 1e-12
+    assert abs(folded['explained']['line']['residual_unexplained_by_location_sum'] - (1000.0 - 315.0)) < 1e-9
+    assert roi_a['pairs_total'] == 2 and roi_a['pairs_null_by_kind'] == {'line': 0, 'pixel': 0} and roi_a['pairs_one_sided'] == 0
+    assert 'Unit-fold' in folded['approximation_note'] and '--top-k' in folded['approximation_note']
+
+
+def test_build_rois_carries_unit_fold_from_the_query(hand):
+    def fold(payload):
+        payload['directions'][0]['queries'][0]['unit_fold'] = {
+            'n_replicas': 3, 'replicas': [{'region_id': f'X{i}', 'unit_index_xy': [i, 0], 'distance_um': 1.0, 'score_um2': 2.0,
+                                           'center_xy_um': [0, 0]} for i in range(3)]}
+    write_candidates(hand.cand, mutate=fold)
+    link = link_of(hand, candidates_dir=hand.cand)
+    assert link['rois'][0]['unit_fold']['n_replicas'] == 3 and len(link['rois'][0]['unit_fold']['replicas']) == 3
+    assert 'center_xy_um' not in link['rois'][0]['unit_fold']['replicas'][0]
+    assert link['rois'][1]['unit_fold'] == {'n_replicas': 0, 'replicas': []}
+    windows = write_windows(hand.tmp / 'win', hand.cand / 'direct/roi_correspondence.json', BASE_ROWS)
+    result = compute_locations(link_of(hand, candidates_dir=hand.cand, windows_dir=windows), loc_doc())
+    assert abs(by_id(result, 'roi:R1+R2', 'rois')['delta_vi']['line'] - 4 * 4.8) < 1e-12
+
+
+def test_not_applicable_area_is_zero_and_missing_stays_null(hand):
+    rows = [{**named_row('direct_1', 10, 3, '', 2.0), 'a_status': 'not_applicable'}, named_row('direct_1', 10, 5, 3.0, 4.0)]
+    p1 = by_id(locs(hand, rows=rows), 'direct_1')
+    assert abs(p1['delta_lambda']['line'] - (0.3 * 2 * 5 + 0.4 * 4 * 5 - 0.2 * 3 * 2)) < 1e-12
+    rows = [{**named_row('direct_1', 10, 3, '', 2.0), 'a_status': 'missing'}, named_row('direct_1', 10, 5, 3.0, 4.0)]
+    p1 = by_id(locs(hand, rows=rows), 'direct_1')
+    assert p1['delta_lambda']['line'] is None and 'area_missing:reference:3' in p1['reasons']
+
+
+def test_null_ratio_floor_uses_the_default():
+    link, doc = synthetic({'roi:noise': {'p': (0, 1e-24)}}, totals=(0.0, 0.0))
+    doc['inputs']['constants'] = {'ratio_null_below': None}
+    assert compute_locations(link, doc)['rois'][0]['class'] == 'negligible'
+
+
+def test_roi_counts_null_and_one_sided_pairs():
+    link, doc = synthetic({'roi:m': {'m1': (0, 4), 'm2': None}})
+    link['pairs'][1]['conditions'] = {role: {'condition_id': None, 'reason': 'one_sided_pair_no_endpoints'} for role in ROLES}
+    roi = compute_locations(link, doc)['rois'][0]
+    assert roi['pairs_total'] == 2 and roi['pairs_null_by_kind'] == {'line': 1, 'pixel': 1} and roi['pairs_one_sided'] == 1
+    assert roi['class'] == 'uncomputable'
 
 
 def test_f_denominator_floor_turns_noise_into_negligible():
