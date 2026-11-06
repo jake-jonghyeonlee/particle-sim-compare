@@ -204,9 +204,16 @@ def _build_rois(payload, index, warnings):
                    'contributing_cases': [_case_record(c, index, warnings) for c in query.get('contributing_cases') or []],
                    'one_sided_cases': [_case_record(c, index, warnings) for c in query.get('one_sided_cases') or []]}
             fold = query.get('unit_fold') or {}
-            replicas = [{key: item.get(key) for key in ('region_id', 'unit_index_xy', 'distance_um', 'score_um2')}
+            replicas = [{key: item.get(key) for key in ('region_id', 'unit_index_xy', 'distance_um', 'score_um2', 'layers')}
                         for item in fold.get('replicas') or [] if isinstance(item, dict)]
-            roi['unit_fold'] = {'n_replicas': int(fold.get('n_replicas') or 0), 'replicas': replicas}
+            try:
+                n_replicas = int(fold.get('n_replicas') or 0)
+            except (TypeError, ValueError):
+                n_replicas = -1
+            if n_replicas < 0:
+                raise _error('compare2_link_schema_mismatch',
+                             f'{roi["roi_key"]}: unit_fold.n_replicas {fold.get("n_replicas")!r} must be a non-negative integer')
+            roi['unit_fold'] = {'n_replicas': n_replicas, 'replicas': replicas}
             roi['change_kinds'] =sorted({c.get('change_kind') for c in roi['contributing_cases'] if c.get('change_kind')})
             rois.append(roi)
             for region in regions:
@@ -636,6 +643,9 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
                 values[k] = factor * sum(p['delta_vi'][k] for p in members)
         if not members:
             reasons.add('roi_without_pairs')
+        fold = roi.get('unit_fold') or {}
+        if int(fold.get('n_replicas') or 0) != len(fold.get('replicas') or []):
+            reasons.add('unit_fold_count_mismatch')       # information only: the value above uses n_replicas
         ranked = sorted(members, key=lambda p: (any(p['delta_vi'][k] is None for k in KINDS),
                                                 -sum(abs(p['delta_vi'][k]) for k in KINDS if p['delta_vi'][k] is not None),
                                                 p['pair_id']))

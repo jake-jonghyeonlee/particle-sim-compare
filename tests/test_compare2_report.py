@@ -5,12 +5,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
 import yaml
 from PIL import Image
 
 from simcompare.cli import main
-from test_compare2 import CNO_CSV, CNO_NAME, PAIRS, base_cases, load, run
+from simcompare.compare2_link import build_link, compute_locations
+from simcompare.compare2_report import build_report
+from simcompare.numeric_schema import NumericContractError
+from test_change_candidates import PRODUCTS, world  # noqa: F401  (world is a module-scoped fixture there)
+from test_compare2 import CNO_CSV, CNO_NAME, PAIRS, base_cases, load, run, write_density
+from test_compare2_link import dl1_doc, real_chain, write_json  # noqa: F401  (real_chain is a module-scoped fixture there)
 
 TGT_CASES = base_cases(AB={1: {0, 1, 2, 3}, 2: {0, 1}, 3: {0, 1}}, GH={1: {0, 1, 2}, 2: {0}})
 
@@ -344,3 +352,141 @@ def test_cli_runs_as_module(tmp_path):
                                                                  'PATH': '/usr/bin:/bin'})
     assert result.returncode == 3, result.stderr
     assert (folder / 'report.html').is_file()
+
+
+# ---- V4: mockup v5 layout, rounds 4/5/6 and DL1 ----------------------------------------------------------------------------
+
+OLD_RECORD_KEYS = {'command', 'schema_version', 'status', 'compare2_status', 'exit_code', 'compare2_json_sha256', 'config',
+                   'compare2_dir', 'diameter_um', 'map_window_um', 'top_n', 'conditions', 'cno_rows', 'maps', 'figures',
+                   'warnings', 'outputs', 'started_at', 'finished_at', 'elapsed_seconds'}
+BANNED = ('http://', 'https://', '<link', '<script src')
+TIMES = ('started_at', 'finished_at', 'elapsed_seconds')
+
+
+@pytest.fixture(scope='module')
+def linked(real_chain):
+    """The real producer chain with a compare2 whose two sides differ in density, so the ROI has a non-zero delta-vi."""
+    base = real_chain.base
+    write_density(base / 'density', 'grp2', {'P1': {5: 3.0}}, {'P1': {5: 2.0}})
+    cfg = yaml.safe_load((base / 'compare2.yaml').read_text(encoding='utf-8'))
+    cfg['model_groups']['grp2'] = dict(cfg['model_groups']['grp'])
+    cfg['products']['target']['model_group'] = 'grp2'
+    cfg.update(output_dir=str(base / 'c2_rep'), lambda_diameters_um=[5], report={'map_window_um': 10, 'diameter_um': 5})
+    config = base / 'compare2_rep.yaml'
+    config.write_text(yaml.safe_dump(cfg), encoding='utf-8')
+    assert main(['compare2', '--config', str(config)]) in (0, 3)
+    doc = json.loads((base / 'c2_rep/compare2.json').read_text(encoding='utf-8'))
+    return SimpleNamespace(base=base, c2=base / 'c2_rep', config=config, cand=real_chain.cand, win=real_chain.windows, doc=doc)
+
+
+def linked_report(linked, tmp_path, **kwargs):
+    kwargs = {'candidates_dir': linked.cand, 'windows_dir': linked.win, **kwargs}
+    files, record = build_report(linked.c2, linked.config, tmp_path / 'out', **kwargs)
+    return dict(files)['report.html'], record
+
+
+def test_a_without_links_the_report_has_the_v5_sections_and_the_old_json_keys(tmp_path):
+    code, out = build(tmp_path)
+    exit_code, folder = report(tmp_path, out)
+    html = text(folder)
+    record = json.loads((folder / 'report.json').read_text(encoding='utf-8'))
+    for section in ('s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'):
+        assert f'id="{section}"' in html
+    assert html.count('4·6회차 결과 없음') == 3             # the summary counts and the two ROI sections
+    assert '<details><summary>7. 결함 조건별 상세' in html and 'id="dist-layer"' in html
+    assert set(record) == OLD_RECORD_KEYS                    # no linked input: no new key
+    assert 'class="roi"' not in html
+    assert '전체 = 선택 범위 (이물 크기 필터 없음)' in html     # no full_range in this compare2
+
+
+def test_b_real_chain_report_has_cards_tables_and_locations(linked, tmp_path):
+    html, record = linked_report(linked, tmp_path)
+    link = build_link(linked.doc, candidates_dir=linked.cand, windows_dir=linked.win, map_window_um=10.0)
+    loc = compute_locations(link, linked.doc)
+    assert loc['counts']['worse'] == 1
+    expected = {key: loc[key] for key in ('counts', 'top_worse', 'top_improved', 'explained', 'diameters_um', 'approximation_note')}
+    assert record['locations'] == json.loads(json.dumps(expected))
+    assert set(record) == OLD_RECORD_KEYS | {'locations', 'link_inputs', 'roi_figures'}
+    assert set(record['link_inputs']) == {'candidates', 'windows'}
+    assert html.count('class="roi"') == 1
+    for needle in ('① 설계 변경', '② vi 영향', '③ 순위', '④ 관련 결함 조건', '상위 1곳의 위치 근사합이', '근사합으로 설명되지 않는 잔차',
+                   'unit 안 위치', '×1</td>', '위험 증가 <b>1</b>곳', '추가', '제거'):
+        assert needle in html, needle
+    assert len(record['roi_figures']) == 2 == len(loc['rois'][0]['map_pairs'])
+    assert html.count('data:image/png;base64,') == 2 * changed(linked.c2) + 2 * len(record['roi_figures'])
+    assert all(len(f['png_sha256']['reference']) == 64 and f['aligned_diff_colours'] for f in record['roi_figures'])
+    assert {w['code'] for w in record['warnings']} == {'overlay_dl1_not_configured'} and record['exit_code'] == 3
+    for banned in BANNED:
+        assert banned not in html
+
+
+def test_c_options_change_the_counts_and_bad_values_are_refused(linked, tmp_path):
+    html, record = linked_report(linked, tmp_path, max_pairs_per_condition=1)
+    assert len(record['roi_figures']) == 1 and '쌍 2개 중 영향이 큰 1개만' in html
+    assert linked_report(linked, tmp_path)[0].count('<td class="l"><b>') == 3        # line electrode rows, top_n 10
+    assert linked_report(linked, tmp_path, top_n=1)[0].count('<td class="l"><b>') == 1
+    assert '(--top-regions 1)' in linked_report(linked, tmp_path, top_regions=1)[0]
+    assert '(--top-improved 7)' in linked_report(linked, tmp_path, top_improved=7)[0]
+    for name in ('top_regions', 'top_improved', 'top_n', 'max_pairs_per_condition'):
+        for bad in (0, -1, 1.5, '3', True, None):
+            with pytest.raises(NumericContractError) as info:
+                build_report('x', 'y', 'z', **{name: bad})
+            assert info.value.code == 'invalid_compare2_report_argument'
+
+
+def test_d_uncomputable_roi_is_explained_and_a_null_ratio_prints_a_dash(linked, tmp_path):
+    html, record = linked_report(linked, tmp_path, windows_dir=None)             # round 4 alone: no window rows at all
+    assert record['locations']['counts']['uncomputable'] == 1
+    assert '계산 불가 변경 위치 1곳' in html and '6회차 창 결과에 이 쌍의 named_pair 행이 없습니다' in html
+    assert any(w['code'] == 'location_uncomputable' and 'named_pair_missing' in w['detail'] for w in record['warnings'])
+    assert 'class="roi"' not in html
+    from simcompare.compare2_report import _cover, _reason_sentence
+    assert '5회차' in _reason_sentence('confirm_named_pair_unavailable')
+    assert '한쪽에만' in _reason_sentence('one_sided_pair_no_endpoints')
+    assert '3 µm' in _reason_sentence('window_row_missing:3') and '기준 A' in _reason_sentence('condition_unmapped:reference')
+    empty = {'ratio_top_worse': None, 'ratio_top_improved': None, 'residual_unexplained_by_location_sum': None}
+    cover = _cover({'loc': {'explained': {'line': empty, 'pixel': empty}}}, ['k'], 'worse')
+    assert cover.count('<b>—</b>') == 2 and 'Δvi_line —' in cover
+
+
+def test_e_full_range_and_diameter_filter_are_shown(linked, tmp_path):
+    html, _ = linked_report(linked, tmp_path)
+    assert linked.doc['full_range'] and linked.doc['inputs']['diameter_filter']['diameters_um'] == [5.0]
+    assert '전체 범위 (모든 이물 크기)' in html and '선택 범위 (5 µm)' in html and '선택 범위: 이물 5 µm.' in html
+    assert '전체 = 선택' not in html
+
+
+def test_f_dl1_table_marks_the_selected_product_and_prints_a_dict_reason(linked, tmp_path):
+    rankings = [{'product_id': PRODUCTS['reference'], 'score': 0.9, 'input_identity': '1' * 64},
+                {'product_id': 'OTHER', 'score': 0.5, 'input_identity': '2' * 64}]
+    path = write_json(tmp_path / 'dl1' / 'search.json', dl1_doc(query_id=PRODUCTS['target'], rankings=rankings))
+    html, record = linked_report(linked, tmp_path, dl1_search=[path])
+    assert 'DL1 추천 후보' in html and 'search.json' in html and '선택됨 (compare2 제품)' in html
+    assert html.count('선택됨 (compare2 제품)') == 1 and 'fine: dict reason' in html and 'X (no_assets)' in html
+    assert record['link_inputs']['dl1']['files'] and 'dl1_query_mismatch' not in {w['code'] for w in record['warnings']}
+    only, record = linked_report(linked, tmp_path, candidates_dir=None, windows_dir=None, dl1_search=[path])
+    assert 'DL1 추천 후보' in only and only.count('4·6회차 결과 없음') == 3
+    assert 'dl1_query_unverified' in {w['code'] for w in record['warnings']}
+
+
+def test_g_linked_report_is_deterministic(linked, tmp_path):
+    first_html, first = linked_report(linked, tmp_path)
+    second_html, second = linked_report(linked, tmp_path)
+    assert first_html == second_html
+    strip = lambda r: {k: v for k, v in r.items() if k not in TIMES}
+    assert json.dumps(strip(first), sort_keys=True) == json.dumps(strip(second), sort_keys=True)
+
+
+def test_h_unlinked_report_is_byte_stable_and_has_no_script_src(tmp_path):
+    code, out = build(tmp_path)
+    first = build_report(out, tmp_path / 'compare2.yaml', tmp_path / 'o')[0]
+    second = build_report(out, tmp_path / 'compare2.yaml', tmp_path / 'o')[0]
+    assert first[0] == second[0]
+    for banned in BANNED:
+        assert banned not in first[0][1]
+
+
+def test_i_the_condition_maps_still_use_the_old_path_when_a_link_is_given(linked, tmp_path):
+    html, record = linked_report(linked, tmp_path)
+    assert record['maps'] == changed(linked.c2) and len(record['figures']) == record['maps']
+    assert html.count('class="mapslot"') >= record['maps']

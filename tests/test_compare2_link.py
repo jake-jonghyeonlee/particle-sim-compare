@@ -794,3 +794,33 @@ def test_i_real_producer_chain_runs_and_sums_close(real_chain, real_chain_d5):
 
 def test_k_locations_are_deterministic(hand):
     assert dump(locs(hand)) == dump(locs(hand))
+
+
+def test_v4_adv1_replica_count_mismatch_is_an_information_reason():
+    link, doc = synthetic({'roi:a': {'a1': (0, 40)}, 'roi:b': {'b1': (0, 40)}}, totals=(1000.0, 0.0), folds={'roi:a': 3})
+    link['rois'][1]['unit_fold'] = {'n_replicas': 1, 'replicas': [{'region_id': 'X'}]}      # roi:b is consistent
+    result = compute_locations(link, doc)
+    roi_a, roi_b = by_id(result, 'roi:a', 'rois'), by_id(result, 'roi:b', 'rois')
+    assert 'unit_fold_count_mismatch' in roi_a['reasons'] and 'unit_fold_count_mismatch' not in roi_b['reasons']
+    assert roi_a['replica_factor'] == 4 and roi_a['class'] == 'worse'                      # the value still follows n_replicas
+    assert roi_b['replica_factor'] == 2
+
+
+def test_v4_adv2_replica_summary_keeps_the_producer_layers(hand):
+    def fold(payload):
+        payload['directions'][0]['queries'][0]['unit_fold'] = {
+            'n_replicas': 1, 'replicas': [{'region_id': 'X0', 'unit_index_xy': [1, 0], 'distance_um': 1.0, 'score_um2': 2.0,
+                                           'layers': ['L1', 'L2'], 'center_xy_um': [0, 0]}]}
+    write_candidates(hand.cand, mutate=fold)
+    replica = link_of(hand, candidates_dir=hand.cand)['rois'][0]['unit_fold']['replicas'][0]
+    assert replica['layers'] == ['L1', 'L2'] and 'center_xy_um' not in replica
+
+
+@pytest.mark.parametrize('bad', [-1, -3, 'many', [2]])
+def test_v4_adv3_negative_or_non_numeric_n_replicas_is_a_schema_mismatch(hand, bad):
+    def fold(payload):
+        payload['directions'][0]['queries'][0]['unit_fold'] = {'n_replicas': bad, 'replicas': []}
+    write_candidates(hand.cand, mutate=fold)
+    with pytest.raises(NumericContractError) as info:
+        link_of(hand, candidates_dir=hand.cand)
+    assert code_of(info) == 'compare2_link_schema_mismatch'
