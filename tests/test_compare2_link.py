@@ -341,7 +341,8 @@ def test_confirm_pairs_follow_query_roi_ids_and_multi_roi_takes_the_larger_score
     assert pairs['c3']['conditions']['reference'] == {'condition_id': None, 'reason': 'confirm_named_pair_unavailable'}
     assert pairs['c3']['conditions']['target'] == {'condition_id': None, 'reason': 'confirm_named_pair_unavailable'}
     assert pairs['c1']['conditions']['reference']['condition_id'] == 'AB@L1'
-    assert pairs['direct_1']['path'] == 'direct'
+    assert sorted(pairs) == ['c1', 'c2', 'c3']          # confirm pairs replace the direct pairs
+    assert len(link['rois']) == 2                         # ROIs still come from candidate_queries
 
 
 def test_multi_roi_tie_goes_to_the_smaller_roi_key(hand):

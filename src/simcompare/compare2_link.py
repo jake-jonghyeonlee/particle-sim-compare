@@ -357,11 +357,12 @@ def build_link(compare2_doc, *, candidates_dir=None, confirm_dir=None, windows_d
         rois, by_region = _build_rois(payload, index, warnings)
         scores = {roi['roi_key']: roi['score_um2'] for roi in rois}
         known = {roi['roi_key'] for roi in rois}
-        pairs.update(_pair_records(direct_corr, direct_sidecar, 'direct',
-                                   lambda side: {by_region[side.get('region_id')]} if side.get('region_id') in by_region else set(),
-                                   index, scores, warnings))
-        used_correspondence = ('candidates', DIRECT_CORRESPONDENCE, cand_files)
-        pair_products['direct'] = direct_corr
+        if confirm_dir is None:     # confirm pairs replace the direct pairs (D3): direct files are still required and read
+            pairs.update(_pair_records(direct_corr, direct_sidecar, 'direct',
+                                       lambda side: {by_region[side.get('region_id')]} if side.get('region_id') in by_region else set(),
+                                       index, scores, warnings))
+            used_correspondence = ('candidates', DIRECT_CORRESPONDENCE, cand_files)
+            pair_products['direct'] = direct_corr
         inputs['candidates'] = cand_files.record('candidates')
 
         if confirm_dir is not None:
@@ -380,9 +381,6 @@ def build_link(compare2_doc, *, candidates_dir=None, confirm_dir=None, windows_d
                     keys |= lookup.get((candidate.get('direction'), candidate.get('query_roi_id')), set())
                 return keys & known
             confirm_pairs = _pair_records(confirm_corr, confirm_sidecar, 'confirm', assign_confirm, index, scores, warnings)
-            clash = sorted(set(pairs) & set(confirm_pairs))
-            if clash:
-                raise _mismatch('pair_id_collision', 'direct and confirm files share pair ids: ' + ', '.join(clash))
             pairs.update(confirm_pairs)
             used_correspondence = ('confirm', CONFIRM_CORRESPONDENCE, conf_files)
             pair_products['confirm'] = confirm_corr
