@@ -29,8 +29,7 @@ SOURCE_REQUIRED = {'manual': ('labelled_by', 'labelled_at'),
                    'template_match': ('method', 'version'),
                    'dl2_search': ('score', 'rank', 'checkpoint_fingerprint', 'index_fingerprint')}
 FAILURE_TYPES = ('lateral_short', 'vertical_short')
-CNO_FAILURE_TYPE = 'lateral_open'     # allowed only together with one CNO endpoint (see _is_cno_form)
-CNO_ELECTRODE = 'CNO'
+CNO_FAILURE_TYPE = 'lateral_open'     # allowed only together with exactly one endpoint (see _is_cno_form)
 
 
 def _json_load(path: Path):
@@ -54,9 +53,9 @@ def _json_load(path: Path):
 
 def _is_cno_form(failure_type, value):
     """True for the one conditional exception to the two-electrode rule: failure_type lateral_open with exactly one
-    endpoint whose electrode_id is CNO (a CNO case has a layer, not an electrode pair)."""
-    return (failure_type == CNO_FAILURE_TYPE and isinstance(value, list) and len(value) == 1
-            and isinstance(value[0], dict) and value[0].get('electrode_id') == CNO_ELECTRODE)
+    endpoint, whatever its electrode name (a CNO case has a layer, not an electrode pair; its electrode_id is the folder's
+    middle part, usually CNO)."""
+    return failure_type == CNO_FAILURE_TYPE and isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict)
 
 
 def _endpoints(value, where, failure_type=None):

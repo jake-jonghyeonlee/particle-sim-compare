@@ -96,7 +96,7 @@ REASON_TEXT = {
     'dice_below_min': '최적 offset 의 Dice 가 --align-min-dice 보다 낮습니다.',
     'search_bound_hit': '최적 offset 이 탐색 반경 가장자리에 닿았습니다.'}
 
-CASE_FLAGS = ('new_electrode', 'removed_electrode')      # 기여 case 표의 전극 표시 칸에 싣는 flag
+CASE_FLAGS = ('new_electrode', 'removed_electrode', 'cno_case')    # 기여 case 표의 전극 표시 칸에 싣는 flag
 
 FLAG_TEXT = {
     'window_partially_unobserved': '창의 일부가 비교 영역 밖입니다.',
@@ -969,7 +969,7 @@ BADGE = {'aligned': ('ok', '정렬됨'), 'aligned_uncertain': ('uncertain', '불
 CHANGE_KIND_TEXT = {'appeared': '창 안 새로 생김', 'disappeared': '창 안 사라짐', 'shifted': '형상 변화', 'reshaped': '형상 변화',
                     'mixed_undetermined': '형상 변화'}
 PRESENT_TEXT = {'both': '둘 다', 'reference': 'reference 만', 'target': 'target 만'}
-ELECTRODE_FLAG_TEXT = {'new_electrode': '새 전극', 'removed_electrode': '없어진 전극'}
+ELECTRODE_FLAG_TEXT = {'new_electrode': '새 전극', 'removed_electrode': '없어진 전극', 'cno_case': 'CNO 항목'}
 CONTRIBUTION_TOP_ROWS = 10
 QUADRANTS = (('top_left', '위', '왼쪽'), ('top_right', '위', '오른쪽'),
              ('bottom_left', '아래', '왼쪽'), ('bottom_right', '아래', '오른쪽'))
@@ -1267,8 +1267,12 @@ def _stretch_section(stretch_map):
 
 
 def split_case_key(case_key):
-    """case_key → (불량 유형, 전극 쌍, 층). ``change_map._key_text`` 형식 ``type|A|layerA|B|layerB|layer`` 가 아니면 (None, None, None)."""
+    """case_key → (불량 유형, 전극 쌍, 층). ``change_map._key_text`` 형식 ``type|A|layerA|B|layerB|layer`` (CNO 는 4-part
+    ``type|electrode|layer|layer``) 가 아니면 (None, None, None)."""
     fields = str(case_key).split('|')
+    if len(fields) == 4:      # CNO: ``type|electrode|endpoint layer|layer`` (one electrode, no pair)
+        failure, electrode, layer_e, layer = fields
+        return failure, (electrode if layer_e == layer else '%s (%s)' % (electrode, layer_e)), layer
     if len(fields) != 6:
         return None, None, None
     failure, a, layer_a, b, layer_b, layer = fields

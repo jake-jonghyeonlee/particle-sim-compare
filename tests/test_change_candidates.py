@@ -108,9 +108,9 @@ def cno_mask(side, change):
     return mask
 
 
-def write_cno_folder(root, side, change, layer=CNO_LAYER, mask=None):
-    """root/lateralopen-CNO-<layer>-/{images,result}: one electrode image (1.png), one 5 um hotspot mask and its CSV row."""
-    folder = root/f'lateralopen-CNO-{layer}-'
+def write_cno_folder(root, side, change, layer=CNO_LAYER, mask=None, electrode='CNO'):
+    """root/lateralopen-<electrode>-<layer>-/{images,result}: one electrode image (1.png), one 5 um hotspot mask and its CSV row."""
+    folder = root/f'lateralopen-{electrode}-{layer}-'
     (folder/'result').mkdir(parents=True)
     save_black(folder/'images'/'1.png', pattern(1))
     mask = cno_mask(side, change) if mask is None else mask
@@ -123,7 +123,7 @@ def write_cno_folder(root, side, change, layer=CNO_LAYER, mask=None):
 
 
 def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_case=False, dl1_electrodes=None, layer_stack=None,
-                  cno=None, include_cno=None):
+                  cno=None, include_cno=None, cno_name=('CNO', CNO_LAYER)):
     """hotspot tree -> import-hotspots -> import-electrode-assets -> one data_dir; returns (data_dir, assignment).
 
     The DL1 root also gets one electrode folder per electrode name (default: A, B, C and D when the target has the extra
@@ -135,9 +135,9 @@ def build_product(base, side, extra_cnt_layer=True, roles=ROLES, extra_target_ca
     masks = hotspot_masks(side, extra_target_case)
     include_cno = (cno is not None) if include_cno is None else include_cno
     if cno is not None:
-        write_cno_folder(root, side, cno)
+        write_cno_folder(root, side, cno, layer=cno_name[1], electrode=cno_name[0])
         layer_stack = layer_stack or [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'},
-                                      {'actual_layer': CNO_LAYER, 'stack_order': 2, 'density_process_layer': 'P2'}]
+                                      {'actual_layer': cno_name[1], 'stack_order': 2, 'density_process_layer': 'P2'}]
     for case, mask in masks.items():
         folder = root/'images'/case
         (folder/'result').mkdir(parents=True)

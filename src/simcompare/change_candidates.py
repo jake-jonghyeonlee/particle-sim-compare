@@ -1970,8 +1970,11 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
                 reasons.add('roi_row_missing')
             if not rows and not reasons:
                 if contrib[i]['contributing_cases'] and not entry['keys']:
-                    cno_only = all(_pair_is_cno(pair_by_key[c['case_key']]) for c in contrib[i]['contributing_cases'])
-                    reasons.add(CNO_ONLY_REASON if cno_only else NO_CASE_REASON)
+                    # 이 모델 쪽에 case 가 있는 기여만 본다: 그것이 모두 CNO 면 DL2 요청이 원래 없는 query 다
+                    mine = [pair_by_key[c['case_key']].ref_case if query_name == 'reference' else pair_by_key[c['case_key']].tgt_case
+                            for c in contrib[i]['contributing_cases']]
+                    mine = [case for case in mine if case is not None]
+                    reasons.add(CNO_ONLY_REASON if mine and all(is_cno_case(case) for case in mine) else NO_CASE_REASON)
                 else:
                     reasons.add('no_roi_rows')
             flags = list(window['flags'])

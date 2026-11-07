@@ -25,10 +25,11 @@ L1_KEYS = {'lateral_short|A|L1|B|L1|L1', 'lateral_short|A|L1|C|L1|L1'}
 DIRECTIONS = ('reference_to_target', 'target_to_reference')
 
 
-def make_world(base, *, reference_cno, target_cno, include_cno=True, extra=()):
+def make_world(base, *, reference_cno, target_cno, include_cno=True, cno_name=('CNO', tcc.CNO_LAYER)):
     datas, assignments = {}, {}
     for side, cno in (('reference', reference_cno), ('target', target_cno)):
-        datas[side], assignments[side] = tcc.build_product(base, side, cno=cno, include_cno=include_cno and cno is not None)
+        datas[side], assignments[side] = tcc.build_product(base, side, cno=cno, include_cno=include_cno and cno is not None,
+                                                           cno_name=cno_name)
     config = tcc.write_config(base, datas, assignments, map_spec={'diameter_um': 5})
     return SimpleNamespace(base=base, config=config, dl1=base/'dl1', datas=datas, assignments=assignments)
 
@@ -127,6 +128,56 @@ def test_same_cno_input_twice_gives_identical_bytes(on, tmp_path):
     out = tmp_path/'again'
     assert run(on.world, out, '--unit-fold') == on.code
     assert tcc.digests(out) == tcc.digests(on.out)
+
+
+def test_cno_with_another_electrode_name_and_a_lowercase_layer_runs_end_to_end(tmp_path):
+    """T21 review B1: the CNO electrode_id is the folder's middle part (CNO1 here) and the layer keeps its case."""
+    world = make_world(tmp_path, reference_cno='apart', target_cno='apart', cno_name=('CNO1', 'gcnt'))
+    out = tmp_path/'out'
+    assert run(world, out) in (0, 3)
+    payload = tcc.load(out)
+    key = 'lateral_open|CNO1|gcnt|gcnt'
+    keyed = [q for d in DIRECTIONS for q in tcc.queries(payload, d) if key in {c['case_key'] for c in q['contributing_cases']}]
+    assert len(keyed) == 2 and all(q['reasons'] == ['cno_only_query_no_dl2'] for q in keyed)
+    document_ = correspondence.load_correspondence(out/'direct/roi_correspondence.json')
+    pairs = [p for p in document_['pairs'] if p['a']['analysis_layer'] == 'gcnt']
+    assert pairs and all(p['status'] == 'ready' and p['a']['endpoints'][0]['electrode_id'] == 'CNO1' for p in pairs)
+    assert [w['code'] for w in payload['warnings']] == ['top_k_not_filled'] * 2
+
+
+def test_cno_only_blocked_queries_keep_the_run_complete(tmp_path):
+    """T21 review ADV5: with a filled top_k the CNO-only blocked query alone does not make the run partial."""
+    world = make_world(tmp_path, reference_cno='apart', target_cno='apart')
+    out = tmp_path/'out'
+    assert run(world, out, top_k=2) == 0
+    payload = tcc.load(out)
+    assert payload['status'] == 'available' and payload['warnings'] == []
+    assert any(q['reasons'] == ['cno_only_query_no_dl2'] for d in DIRECTIONS for q in tcc.queries(payload, d))
+    assert all(q['status'] == 'ready' or q['reasons'] == ['cno_only_query_no_dl2']
+               for d in DIRECTIONS for q in tcc.queries(payload, d))
+
+
+def test_a_direction_without_any_dl2_request_still_runs(tmp_path):
+    """T21 review ADV5: top_k 1 keeps only the CNO query per direction, so no DL2 request is made at all."""
+    world = make_world(tmp_path, reference_cno='apart', target_cno='apart')
+    out = tmp_path/'out'
+    assert run(world, out, top_k=1) == 0
+    payload = tcc.load(out)
+    for direction in DIRECTIONS:
+        (query,) = tcc.queries(payload, direction)
+        assert query['layers'] == [tcc.CNO_LAYER] and query['reasons'] == ['cno_only_query_no_dl2'] and query['roi_ids'] == []
+    assert payload['status'] == 'available'
+
+
+def test_alignment_html_shows_a_cno_case_row(on):
+    """T21 review ADV4: the 4-part key is split and the cno_case flag has a label."""
+    from simcompare import alignment_report
+    assert alignment_report.split_case_key(CNO_KEY) == ('lateral_open', 'CNO', tcc.CNO_LAYER)
+    assert alignment_report.split_case_key('lateral_open|CNO1|a|b') == ('lateral_open', 'CNO1 (a)', 'b')
+    assert alignment_report.split_case_key('x|y|z') == (None, None, None)
+    row = alignment_report._case_row({'case_key': CNO_KEY, 'change_kind': 'appeared', 'residual_um2': 1.0, 'flags': ['cno_case'],
+                                      'present_in': 'target'})
+    assert 'CNO 항목' in row and 'lateral_open' in row
 
 
 # --- merge-scope all: a query that mixes a CNO case with short cases ----------------------------------------------------
@@ -232,10 +283,18 @@ def test_one_cno_endpoint_is_refused_for_every_other_failure_type():
         assert code_of(side(failure_type=failure_type, endpoints=one), side()) == 'invalid_correspondence_endpoints'
 
 
-def test_one_non_cno_endpoint_is_refused():
+def test_one_endpoint_of_lateral_open_is_accepted_whatever_the_electrode_name():
+    for name in ('CNO1', 'cno', 'A'):
+        one = [{'electrode_id': name, 'role': None, 'actual_layer': 'l'}]
+        payload = correspondence.validate_correspondence(document(side(failure_type='lateral_open', endpoints=one),
+                                                                  side(failure_type='lateral_open', endpoints=one)))
+        assert payload['pairs'][0]['a']['endpoints'][0]['electrode_id'] == name
+
+
+def test_one_endpoint_of_another_failure_type_is_refused():
     one = [{'electrode_id': 'A', 'role': None, 'actual_layer': 'L'}]
     assert code_of(side(endpoints=one), side()) == 'invalid_correspondence_endpoints'
-    assert code_of(side(failure_type='lateral_open', endpoints=one), side()) == 'invalid_correspondence_failure_type'
+    assert code_of(side(failure_type='vertical_short', endpoints=one), side()) == 'invalid_correspondence_endpoints'
 
 
 def test_two_electrodes_rules_are_unchanged():
