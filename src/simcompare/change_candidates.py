@@ -442,6 +442,8 @@ def _direct_side_one_sided(case, layer, center, rows_by_key, item, other_case=No
     unit_id = case.metadata.get('unit_id')
     if unit_id:
         side['unit_id'] = unit_id
+    if is_cno_case(case):       # the marker of a one-sided CNO pair: compare-windows measures the CNO case mask, never the short union
+        side['failure_type'] = case.failure_type
     row = rows_by_key.get(_row_key(identity, case.failure_type, case.analysis_layer, center, item.frame))
     if row is not None and row.get('status') == 'ready':
         side['roi_id'] = row['roi_id']

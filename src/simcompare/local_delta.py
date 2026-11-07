@@ -80,9 +80,9 @@ def _window_area(window: PhysicalWindow) -> float:
 
 
 def is_cno_side(side: BoundSide) -> bool:
-    """A CNO side: failure_type lateral_open with exactly one endpoint (the T21 correspondence form).
-    A one-sided pair has no endpoints, so it is never a CNO side and keeps the group rules."""
-    return side.failure_type == CNO_FAILURE_TYPE and side.endpoints is not None and len(side.endpoints) == 1
+    """A CNO side: failure_type lateral_open with exactly one endpoint (two-sided pair), or with no endpoints (the present
+    side of a one-sided CNO pair, the marker round 4 writes). A side of a one-sided pair without the marker is the absent side."""
+    return side.failure_type == CNO_FAILURE_TYPE and (side.endpoints is None or len(side.endpoints) == 1)
 
 
 def _group_matches(key, side: BoundSide, diameter) -> bool:
@@ -373,6 +373,8 @@ class _Run:
         self.masks = MaskCache()
         self._datasets = {'a': reference, 'b': target}
         self._indexes = {}
+        self._cno = {}
+        self._empty = {}
         self._records = {}
 
     def named_matches(self, label, side):
@@ -380,6 +382,24 @@ class _Run:
         if index is None:
             index = self._indexes[label] = NamedCaseIndex(self._datasets[label].cases)
         return index.matches(side)
+
+    def cno_matches(self, label, side):
+        """CNO cases of the side's (product, design, frame, layer) with the side's failure_type and filters."""
+        index = self._cno.get(label)
+        if index is None:
+            index = self._cno[label] = {}
+            for case in self._datasets[label].cases:
+                if is_cno_case(case):
+                    identity = case.identity
+                    index.setdefault((identity.product_id, identity.design_version, identity.frame_id, case.analysis_layer), []).append(case)
+        key = (side.product_id, side.design_version, side.frame.frame_id, side.analysis_layer)
+        return _named_filter(index.get(key, ()), side)
+
+    def empty_mask(self, frame):
+        mask = self._empty.get(frame.frame_id)
+        if mask is None or mask.shape != frame.shape_yx:
+            mask = self._empty[frame.frame_id] = np.zeros(frame.shape_yx, bool)
+        return mask
 
     def new_pair(self):
         self._records.clear()
@@ -424,8 +444,45 @@ def _cno_jitter(reference, target, pair, diameter, size, jitter_um, run):
     for dx, dy in offsets:
         wa = _square((pair.a.center_xy_um[0] + dx, pair.a.center_xy_um[1] + dy), size)
         wb = _square((pair.b.center_xy_um[0] + dx, pair.b.center_xy_um[1] + dy), size)
-        values.append(_named_pair(reference, target, pair, diameter, wa, wb, run=run, cno=True)['delta'].value)
+        values.append(_cno_pair(reference, target, pair, diameter, wa, wb, run)['delta'].value)
     return _jitter_summary(jitter_um, offsets, values)
+
+
+def _cno_side_metric(label, dataset, side, diameter, window, run, out):
+    """One side of a CNO pair that has no endpoints on at least one side. A marked side (lateral_open) is measured on its
+    single CNO case; an unmarked side is the side without the CNO case, where the CNO area is 0 (an empty mask on its frame)."""
+    if not is_cno_side(side):
+        mask = run.empty_mask(side.frame)
+        measured = _measure_cropped(side.frame, mask, window, diameter=diameter, analysis_layer=side.analysis_layer)
+        return _from_measurement(measured, window, 'physical_window_single_case')
+    matches = [case for case in run.cno_matches(label, side) if is_cno_case(case)]
+    if len(matches) != 1:
+        reason = f'cno_case_not_found_{label}' if not matches else f'cno_case_ambiguous_{label}'
+        out['reasons'].append(reason)
+        return _unavailable(window, (reason,))
+    case = matches[0]
+    out['cases'][label] = {'case_id': case.identity.case_id, 'failure_type': case.failure_type,
+                           'pair_id': case.pair_id, 'classification': case.classification}
+    if diameter not in case.records:
+        reason = f'cno_no_record_for_diameter_{label}'
+        out['reasons'].append(reason)
+        return _unavailable(window, (reason,))
+    record = run.record(label, case, diameter)
+    measured = _measure_cropped(record.frame, record.mask, window, diameter=diameter, analysis_layer=record.analysis_layer,
+                                identity=record.identity, input_status=record.input_status, reasons=record.reasons)
+    return _from_measurement(measured, window, 'physical_window_single_case')
+
+
+def _cno_pair(reference, target, pair, diameter, window_a, window_b, run):
+    """{'a','b','delta',...} of a CNO pair on CNO case masks only: named route when both sides name their endpoints, else
+    the one-sided route (marked side = its CNO case, other side = no CNO case there)."""
+    if pair.a.endpoints is not None and pair.b.endpoints is not None:
+        return _named_pair(reference, target, pair, diameter, window_a, window_b, run=run, cno=True)
+    out = {'a': None, 'b': None, 'delta': None, 'cases': {'a': None, 'b': None}, 'reasons': []}
+    out['a'] = _cno_side_metric('a', reference, pair.a, diameter, window_a, run, out)
+    out['b'] = _cno_side_metric('b', target, pair.b, diameter, window_b, run, out)
+    out['delta'] = delta_of(out['a'], out['b'])
+    return out
 
 
 def _ranks(values):
@@ -584,19 +641,20 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
 
 def _cno_row(reference, target, pair, size, diameter, window_a, window_b, jitter_um, run):
     """The row of a CNO pair at one window size and diameter: every value is measured on the CNO case mask only (no short group)."""
-    named = _named_pair(reference, target, pair, diameter, window_a, window_b, run=run, cno=True)
+    named = _cno_pair(reference, target, pair, diameter, window_a, window_b, run)
     window = {**_cno_comparison(named, window_a, window_b), 'side_um': size}
     core_side = Fraction(str(size)) - Fraction(str(diameter))
     if core_side <= 0:
         core = _not_applicable_comparison(None, 'window_smaller_than_diameter')
     else:
         core_a, core_b = _square(pair.a.center_xy_um, core_side), _square(pair.b.center_xy_um, core_side)
-        core = {**_cno_comparison(_named_pair(reference, target, pair, diameter, core_a, core_b, run=run, cno=True), core_a, core_b),
+        core = {**_cno_comparison(_cno_pair(reference, target, pair, diameter, core_a, core_b, run), core_a, core_b),
                 'side_um': float(core_side)}
     jitter = None if jitter_um is None else _cno_jitter(reference, target, pair, diameter, size, jitter_um, run)
     return {'pair_id': pair.pair_id, 'window_size_um': size, 'diameter_um': float(diameter),
             'status': window['delta']['union'].status, 'window': window, 'attributable_core': core,
-            'named_pair': named, 'jitter': jitter, 'group_a': None, 'group_b': None, 'cno_case': True}
+            'named_pair': named if pair.a.endpoints is not None and pair.b.endpoints is not None else None,
+            'jitter': jitter, 'group_a': None, 'group_b': None, 'cno_case': True}
 
 
 def _as_dataset(source) -> NumericDataset:

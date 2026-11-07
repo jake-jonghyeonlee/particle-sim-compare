@@ -214,16 +214,38 @@ def test_one_sided_cno_pair_has_no_endpoints_and_is_blocked_by_the_existing_rule
 
 
 @pytest.mark.parametrize('only', ['reference', 'target'])
-def test_one_sided_cno_in_a_shared_layer_name_has_no_named_pair_row(tmp_path, only):
-    """With the short layer's name the pair is ready but has no endpoints: no named_pair row (the group rule is unchanged)."""
+def test_one_sided_cno_in_a_shared_layer_name_is_measured_on_the_cno_mask_only(tmp_path, only):
+    """T22 follow-up: round 4 marks the present side (failure_type lateral_open, no endpoints); round 6 measures it on the
+    CNO case mask and the absent side as no CNO (0), never the short union of the shared layer; short pairs do not change."""
     world = make_world(tmp_path, layer='L1', reference_cno='apart' if only == 'reference' else None,
                        target_cno='apart' if only == 'target' else None)
     corr = candidates(world, tmp_path/'cand')
     document = json.loads(corr.read_text(encoding='utf-8'))
-    bare = [p for p in document['pairs'] if p['a'].get('endpoints') is None]
-    rows = csv_rows(windows(world, corr, tmp_path/'win'))
-    for pair in bare:
+    marked = [p for p in document['pairs'] if 'lateral_open' in (p['a'].get('failure_type'), p['b'].get('failure_type'))]
+    present, absent = ('a', 'b') if only == 'reference' else ('b', 'a')
+    assert marked and all(p[present].get('endpoints') is None and p[present]['failure_type'] == 'lateral_open'
+                          and p[absent].get('failure_type') is None for p in marked)
+    out = windows(world, corr, tmp_path/'win')
+    rows = csv_rows(out)
+    for pair in marked:
         assert not [r for r in rows if r['pair_id'] == pair['pair_id'] and r['metric'] == 'named_pair']
+        union = metric_row(rows, pair['pair_id'], 'union')
+        want = hand_area(tcc.cno_mask(only, 'apart'), pair[present]['center_xy_um'])
+        assert float(union[f'{present}_value_um2']) == pytest.approx(want, abs=1e-6)
+        assert union[f'{absent}_status'] == 'available' and float(union[f'{absent}_value_um2']) == 0.0
+        assert metric_row(rows, pair['pair_id'], 'lateral_only')['a_status'] == 'not_applicable'
+    payload = json.loads((out/'local_delta.json').read_text(encoding='utf-8'))
+    assert all(r['cno_case'] is True and r['group_a'] is None and r['named_pair'] is None
+               for r in payload['rows'] if r['pair_id'] in {p['pair_id'] for p in marked})
+    (tmp_path/'bare').mkdir()
+    bare = make_world(tmp_path/'bare', layer='L1', include_cno=False)
+    short = [p for p in document['pairs'] if p not in marked]
+    document['pairs'] = short
+    filtered = tmp_path/'short_only.json'
+    filtered.write_text(json.dumps(document), encoding='utf-8')
+    off = windows(bare, filtered, tmp_path/'win_off')
+    ids = {p['pair_id'] for p in short}
+    assert short and [r for r in rows if r['pair_id'] in ids] == csv_rows(off)
 
 
 def test_a_pair_with_one_cno_side_and_one_short_side_names_the_missing_case(own_layer, tmp_path):

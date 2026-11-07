@@ -90,7 +90,9 @@ def _side(raw, where):
         raise NumericContractError('invalid_correspondence_center', where)
     center = tuple(finite(v, where + '.center_xy_um') for v in center)
     failure_type = raw.get('failure_type')
-    if failure_type is not None and failure_type not in FAILURE_TYPES and not _is_cno_form(failure_type, raw.get('endpoints')):
+    # lateral_open is the CNO marker: with one endpoint (a two-sided CNO pair) or with none (the present side of a one-sided CNO pair)
+    if (failure_type is not None and failure_type not in FAILURE_TYPES and not _is_cno_form(failure_type, raw.get('endpoints'))
+            and not (failure_type == CNO_FAILURE_TYPE and raw.get('endpoints') is None)):
         raise NumericContractError('invalid_correspondence_failure_type', where)
     roi_id = raw.get('roi_id')
     if roi_id is not None:

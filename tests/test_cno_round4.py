@@ -233,6 +233,9 @@ def test_one_sided_cno_gets_cno_case_flag_not_electrode_flags(tmp_path, only):
     direct = correspondence.load_correspondence(out/'direct/roi_correspondence.json')
     one_sided = [p for p in direct['pairs'] if p['a']['analysis_layer'] == tcc.CNO_LAYER]
     assert one_sided and all(p['a'].get('endpoints') is None and p['b'].get('endpoints') is None for p in one_sided)
+    marker = {'reference': 'a', 'target': 'b'}[only]       # T22: only the side holding the CNO case carries lateral_open
+    other = 'b' if marker == 'a' else 'a'
+    assert all(p[marker].get('failure_type') == 'lateral_open' and p[other].get('failure_type') is None for p in one_sided)
 
 
 def test_pair_cases_includes_cno_and_still_excludes_other_open_cases(tmp_path):
@@ -304,7 +307,8 @@ def test_two_electrodes_rules_are_unchanged():
     assert code_of(side(endpoints=three), side()) == 'invalid_correspondence_endpoints'
     two = side()['endpoints']
     assert code_of(side(failure_type='lateral_open', endpoints=two), side()) == 'invalid_correspondence_failure_type'
-    assert code_of(side(failure_type='lateral_open', endpoints=None), side()) == 'invalid_correspondence_failure_type'
+    marked = correspondence.validate_correspondence(document(side(failure_type='lateral_open', endpoints=None), side()))    # T22: the one-sided CNO marker
+    assert marked['pairs'][0]['a']['failure_type'] == 'lateral_open' and marked['pairs'][0]['a']['endpoints'] is None
     assert code_of(side(endpoints=[]), side()) == 'invalid_correspondence_endpoints'
     two_cno = [{'electrode_id': 'CNO', 'role': None, 'actual_layer': 'L'}] * 2
     assert code_of(side(failure_type='lateral_open', endpoints=two_cno), side()) == 'invalid_correspondence_failure_type'
