@@ -22,7 +22,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .local_delta import METRICS, LocalDeltaResult, MaskCache, NamedCaseIndex, _count, _named_case, find_group, group_mask
+from .local_delta import (METRICS, LocalDeltaResult, MaskCache, NamedCaseIndex, _count, _named_case, find_group, group_mask,
+                          is_cno_side)
 from .numeric_schema import DIAMETERS_UM, diameter_key
 from .publication import staged_file
 
@@ -258,6 +259,9 @@ def _side_thumbnails(side, dataset, assets, areas, display_row, window_key, labe
         out['layout'], _ = _render(side.frame, crop, list(zip(layouts, ELECTRODE_COLOURS)), rectangles)
         out['layout_masks'] = layouts
     diameter = display_row['diameter_um']
+    if is_cno_side(side):    # a CNO case is no short group: nothing of the short hotspot pieces may be drawn for it
+        out['hotspot_note'] = 'cno_case_has_no_failure_pieces'
+        return out
     group, _ = find_group(areas, side, diameter, label)
     if group is not None:
         base = [] if layouts is None else [(m, (225, 225, 225)) for m in layouts]

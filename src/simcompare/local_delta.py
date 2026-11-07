@@ -30,9 +30,11 @@ from .measurement import measure_union
 from .publication import staged_file
 from .numeric_schema import (
     DIAMETERS_UM, Frame, MaskRecord, NumericContractError, NumericDataset, PhysicalWindow, Status,
-    diameter_key, finite,
+    diameter_key, finite, is_cno_case,
 )
 
+CNO_FAILURE_TYPE = 'lateral_open'
+CNO_PIECE_REASON = 'cno_case_has_no_failure_pieces'
 METRICS = ('union', *FAILURE_PIECES)
 # Both sides x every metric x 4 diameters. Unpacking costs ~0.06 ms per 1262^2 mask while a window measurement costs ~10 ms, so the cache only has
 # to cover the 24 uses of a row's 8 masks (a row needs 8 unpacks instead of 24); the 256 entries that would keep every diameter of a layer
@@ -75,6 +77,12 @@ def _window_area(window: PhysicalWindow) -> float:
     """Exact decimal rectangle area of the declared bounds (not a float sum of cell slivers)."""
     x0, y0, x1, y1 = (Fraction(str(v)) for v in window.bounds_um())
     return float((x1 - x0) * (y1 - y0))
+
+
+def is_cno_side(side: BoundSide) -> bool:
+    """A CNO side: failure_type lateral_open with exactly one endpoint (the T21 correspondence form).
+    A one-sided pair has no endpoints, so it is never a CNO side and keeps the group rules."""
+    return side.failure_type == CNO_FAILURE_TYPE and side.endpoints is not None and len(side.endpoints) == 1
 
 
 def _group_matches(key, side: BoundSide, diameter) -> bool:
@@ -399,6 +407,27 @@ def _not_applicable_comparison(side_um, reason):
             'delta': {n: delta for n in METRICS}, 'bounds_um': None, 'side_um': side_um}
 
 
+def _cno_comparison(named, window_a, window_b):
+    """The window / core comparison of a CNO pair from its named-pair measurement (the CNO case mask only). The union is
+    the CNO case itself; a CNO case has no failure pieces, so those are not_applicable on both sides."""
+    def not_applicable(window):
+        return WindowMetric(None, None, 'not_applicable', (CNO_PIECE_REASON,), _window_area(window), 0.0, None)
+    a = {'union': named['a'], **{n: not_applicable(window_a) for n in FAILURE_PIECES}}
+    b = {'union': named['b'], **{n: not_applicable(window_b) for n in FAILURE_PIECES}}
+    return {'a': a, 'b': b, 'delta': {name: delta_of(a[name], b[name]) for name in METRICS},
+            'bounds_um': {'a': list(window_a.bounds_um()), 'b': list(window_b.bounds_um())}}
+
+
+def _cno_jitter(reference, target, pair, diameter, size, jitter_um, run):
+    offsets = [(jitter_um, 0.0), (-jitter_um, 0.0), (0.0, jitter_um), (0.0, -jitter_um)]
+    values = []
+    for dx, dy in offsets:
+        wa = _square((pair.a.center_xy_um[0] + dx, pair.a.center_xy_um[1] + dy), size)
+        wb = _square((pair.b.center_xy_um[0] + dx, pair.b.center_xy_um[1] + dy), size)
+        values.append(_named_pair(reference, target, pair, diameter, wa, wb, run=run, cno=True)['delta'].value)
+    return _jitter_summary(jitter_um, offsets, values)
+
+
 def _ranks(values):
     order = np.argsort(values, kind='mergesort')
     ranks = np.empty(len(values), dtype=float)
@@ -504,6 +533,9 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
         for size in sizes:
             window_a, window_b = _square(pair.a.center_xy_um, size), _square(pair.b.center_xy_um, size)
             for diameter in DIAMETERS_UM:
+                if is_cno_side(pair.a) or is_cno_side(pair.b):
+                    rows.append(_cno_row(reference, target, pair, size, diameter, window_a, window_b, jitter_um, run))
+                    continue
                 group_a, reasons_a = find_group(areas_a, pair.a, diameter, 'a')
                 group_b, reasons_b = find_group(areas_b, pair.b, diameter, 'b')
                 window = _compare(group_a, group_b, reasons_a, reasons_b, diameter, window_a, window_b, run.masks)
@@ -536,7 +568,10 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
     status = ('unavailable' if not ready else 'available' if not reasons else 'partial')
     ranking = _ranking(rows, sizes, sort_diameter_um)
     sensitivity = window_sensitivity(rows, sizes, sort_diameter_um)
-    explained = explained_fraction(rows, ready, areas_a, areas_b, sizes, run.masks)
+    # CNO pairs are no short group: their rows carry no group and stay out of the short-fraction explanation
+    explained = explained_fraction([r for r in rows if not r.get('cno_case')],
+                                   [p for p in ready if not (is_cno_side(p.a) or is_cno_side(p.b))],
+                                   areas_a, areas_b, sizes, run.masks)
     run.masks.clear()   # the page writer builds its own small cache; the compute-phase one must not outlive the phase
     products = {'a': {'product_id': _product(reference), 'frames': _frames(reference)},
                 'b': {'product_id': _product(target), 'frames': _frames(target)}}
@@ -545,6 +580,23 @@ def compute_local_delta(pairs, reference: NumericDataset, target: NumericDataset
                   'n_pairs': len(pairs), 'n_ready': len(ready), 'n_blocked': len(pairs) - len(ready)}
     return LocalDeltaResult(list(pairs), sizes, jitter_um, sort_diameter_um, rows, ranking, sensitivity, products,
                             provenance, status, tuple(sorted(reasons)), (areas_a, areas_b), explained)
+
+
+def _cno_row(reference, target, pair, size, diameter, window_a, window_b, jitter_um, run):
+    """The row of a CNO pair at one window size and diameter: every value is measured on the CNO case mask only (no short group)."""
+    named = _named_pair(reference, target, pair, diameter, window_a, window_b, run=run, cno=True)
+    window = {**_cno_comparison(named, window_a, window_b), 'side_um': size}
+    core_side = Fraction(str(size)) - Fraction(str(diameter))
+    if core_side <= 0:
+        core = _not_applicable_comparison(None, 'window_smaller_than_diameter')
+    else:
+        core_a, core_b = _square(pair.a.center_xy_um, core_side), _square(pair.b.center_xy_um, core_side)
+        core = {**_cno_comparison(_named_pair(reference, target, pair, diameter, core_a, core_b, run=run, cno=True), core_a, core_b),
+                'side_um': float(core_side)}
+    jitter = None if jitter_um is None else _cno_jitter(reference, target, pair, diameter, size, jitter_um, run)
+    return {'pair_id': pair.pair_id, 'window_size_um': size, 'diameter_um': float(diameter),
+            'status': window['delta']['union'].status, 'window': window, 'attributable_core': core,
+            'named_pair': named, 'jitter': jitter, 'group_a': None, 'group_b': None, 'cno_case': True}
 
 
 def _as_dataset(source) -> NumericDataset:
@@ -570,12 +622,15 @@ def _frames(dataset):
             for fid, f in sorted(dataset.frames.items())}
 
 
-def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=None, union_b=None, run=None):
+def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=None, union_b=None, run=None, cno=False):
+    """cno=True: the CNO route of a CNO pair; only CNO cases match and no short union is involved (no union is passed)."""
     out = {'a': None, 'b': None, 'delta': None, 'cases': {'a': None, 'b': None}, 'reasons': []}
     metrics = {}
     unions = {'a': union_a, 'b': union_b}
     for label, dataset, side, window in (('a', reference, pair.a, window_a), ('b', target, pair.b, window_b)):
         matches = _named_case(dataset.cases, side) if run is None else run.named_matches(label, side)
+        if cno:
+            matches = [case for case in matches if is_cno_case(case)]
         if len(matches) != 1:
             reason = f'named_pair_case_not_found_{label}' if not matches else f'named_pair_case_ambiguous_{label}'
             out['reasons'].append(reason)
@@ -584,6 +639,11 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
         case = matches[0]
         out['cases'][label] = {'case_id': case.identity.case_id, 'failure_type': case.failure_type,
                                'pair_id': case.pair_id, 'classification': case.classification}
+        if cno and diameter not in case.records:
+            reason = f'named_pair_no_record_for_diameter_{label}'
+            out['reasons'].append(reason)
+            metrics[label] = _unavailable(window, (reason,))
+            continue
         record = case.records[diameter] if run is None else run.record(label, case, diameter)
         measured = _measure_cropped(record.frame, record.mask, window, diameter=diameter, analysis_layer=record.analysis_layer,
                                     identity=record.identity, input_status=record.input_status, reasons=record.reasons)
@@ -609,6 +669,10 @@ def _jitter(pair, group_a, group_b, reasons_a, reasons_b, diameter, size, jitter
         delta = delta_of(measure_group_metric(group_a, 'union', diameter, wa, reasons_a, masks),
                          measure_group_metric(group_b, 'union', diameter, wb, reasons_b, masks))
         values.append(delta.value)
+    return _jitter_summary(jitter_um, offsets, values)
+
+
+def _jitter_summary(jitter_um, offsets, values):
     complete = all(v is not None for v in values)
     sign_stable = None
     if complete:
