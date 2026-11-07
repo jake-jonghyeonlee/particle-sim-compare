@@ -198,7 +198,7 @@ class BoundSide:
     frame: Frame
     center_xy_um: tuple[float, float]
     analysis_layer: str
-    endpoints: tuple[Endpoint, ...] | None      # two distinct electrodes, or one CNO endpoint for lateral_open
+    endpoints: tuple[Endpoint, ...] | None      # two distinct electrodes, or one endpoint (any electrode name) for a CNO lateral_open
     failure_type: str | None
     roi_id: str | None
     filters: dict

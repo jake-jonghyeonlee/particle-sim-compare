@@ -150,6 +150,38 @@ def test_dv_common_steps_have_the_same_jobs_as_the_base_flow():
     assert [c for c, _, _ in module.DV_STAGES['03_dv_template'][1]] == ['dv-template'] * 2 and names[:2] == ['01_import_hotspots', '02_import_assets']
 
 
+def test_t24_only_the_two_01_import_jobs_turn_include_cno_on():
+    """T24: ETX 01 (and the dv copy) import with --include-cno; no other stage's JOBS changed (models_01 stays off)."""
+    module = _module()
+    for table in (module.STAGES, module.DV_STAGES):
+        for stage, (_, jobs) in table.items():
+            flagged = [command for command, args, _ in jobs if '--include-cno' in args]
+            if stage == '01_import_hotspots':
+                assert flagged == ['import-hotspots', 'import-hotspots'], stage
+                assert all('--include-cno' in args for _, args, _ in jobs)
+            else:
+                assert not flagged, stage
+    for path in (ROOT / 'bundles/etx/simcompare_job_01_import_hotspots.py', ROOT / 'bundles/etx/dv/simcompare_job_01_import_hotspots.py'):
+        text = path.read_text(encoding='utf-8')
+        jobs = text[text.index('JOBS = ['):text.index('LOG_FILE = ')]
+        assert jobs.count("'--include-cno'") == 2, path
+    for path in sorted((ROOT / 'bundles/etx').rglob('*.py')):
+        if path.name != 'simcompare_job_01_import_hotspots.py':
+            text = path.read_text(encoding='utf-8')
+            assert "'--include-cno'" not in text[text.index('JOBS = ['):text.index('LOG_FILE = ')], path
+
+
+def test_t24_dv_01_header_is_defined_directly_with_the_dv_folders_and_the_cno_note():
+    module = _module()
+    base, dv = module.STAGES['01_import_hotspots'][0], module.DV_STAGES['01_import_hotspots'][0]
+    assert any('--include-cno' in line and '01회차부터 다시' in line for line in base)
+    assert any('--include-cno' in line and 'dv_01회차부터 다시' in line for line in dv)
+    text = '\n'.join(dv)
+    assert 'data/dv_template, data/dv_grade, data/changes_dv, data/vulnerability_report.' in text
+    assert '예전 실행기로 이미 import했다면' not in text and 'data/confirmed' not in text      # the base-flow wording is not left over
+    assert any(line.startswith('dv_01회차: hotspot import.') for line in dv)
+
+
 def test_compare_windows_runner_includes_the_report_map_window_and_vi_report_links_rounds_4_and_6():
     from simcompare.compare2_inputs import load_compare2_config
     stages = _stages()

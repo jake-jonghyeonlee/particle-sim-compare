@@ -296,7 +296,7 @@ def _side_is_cno(side):
     """The correspondence form of a CNO side: failure_type lateral_open with one endpoint, or with none (the marked side
     of a one-sided CNO pair; the side without the marker is the absent side)."""
     endpoints = side.get('endpoints')
-    return side.get('failure_type') == CNO_FAILURE and (not endpoints or len(endpoints) == 1)
+    return side.get('failure_type') == CNO_FAILURE and (endpoints is None or len(endpoints) == 1)     # [] is no marker
 
 
 def _pair_records(correspondence, sidecar, path_kind, assign, index, cno_index, scores, warnings):
@@ -577,24 +577,36 @@ APPROXIMATION_NOTE_CNO = APPROXIMATION_NOTE.replace(
     'total (area basis), changes outside')
 
 
-def _has_cno(doc):
-    return any((((doc.get('sides') or {}).get(role)) or {}).get('cno') for role in ROLES)
+def _has_cno_pair(link):
+    """The CNO wording applies when the link holds a CNO pair, not merely when compare2 has CNO rows."""
+    return any(p.get('cno_case') for p in link.get('pairs') or [])
 
 
 def _dkey(value):
     return format(size_key(value), 'f')
 
 
-def _location_diameters(doc):
+def _location_diameters(doc, row_diameters=None, dropped_out=None):
+    """Diameter keys; CNO-only diameters dropped for lack of round-6 rows are appended to dropped_out. No filter: every diameter compare2 summed (short sizes ∪ CNO sizes);
+    a CNO diameter that no round-6 row has (and no short size has) is dropped, so a non-standard CNO size cannot turn
+    the short pairs null (T23 review adv1)."""
     flt = (doc.get('inputs') or {}).get('diameter_filter') or {}
     values = flt.get('diameters_um')
-    if values is None:      # no filter: every diameter compare2 summed (short sizes ∪ CNO sizes)
+    dropped = []
+    if values is None:
         values = [size.get('diameter_um') for role in ROLES
                   for layer in (((doc.get('sides') or {}).get(role)) or {}).get('layers') or []
                   for size in layer.get('by_size') or []]
-        values += [size.get('diameter_um') for role in ROLES
-                   for row in (((doc.get('sides') or {}).get(role)) or {}).get('cno') or []
-                   for size in row.get('by_size') or []]
+        short = {size_key(v) for v in values if v is not None}
+        cno = {size_key(size.get('diameter_um')) for role in ROLES
+               for row in (((doc.get('sides') or {}).get(role)) or {}).get('cno') or []
+               for size in row.get('by_size') or [] if size.get('diameter_um') is not None}
+        if row_diameters:
+            dropped = sorted(k for k in cno - short if format(k, 'f') not in row_diameters)
+            cno -= set(dropped)
+        values = list(short | cno)
+    if dropped_out is not None:
+        dropped_out.extend(format(key, 'f') for key in dropped)
     return [format(key, 'f') for key in sorted({size_key(v) for v in values if v is not None})]
 
 
@@ -792,7 +804,9 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
     """Delta-vi per pair and ROI from the window areas, ROI classification and the explained ratio; values come from compare2 only."""
     if link is None:
         raise _error('compare2_link_input_missing', 'compute_locations needs a link')
-    diameters = _location_diameters(compare2_doc)
+    row_diameters = {d for p in link.get('pairs') or [] for d in (p.get('named_pair') or {})}
+    outside_rows = []
+    diameters = _location_diameters(compare2_doc, row_diameters, outside_rows)
     tables = {role: _SideTables(compare2_doc, role) for role in ROLES}
     slopes = {k: (((compare2_doc.get('delta') or {}).get('slopes') or {}).get(k) or {}).get('value') for k in KINDS}
     indicators = (compare2_doc.get('delta') or {}).get('indicators') or {}
@@ -882,7 +896,8 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
     for k in KINDS:
         if slopes[k] is None:
             warnings.append({'code': 'slope_missing', 'detail': k})
+    warnings.extend({'code': 'location_diameter_outside_window_rows', 'detail': d} for d in outside_rows)
     return {'schema_version': LOCATIONS_SCHEMA, 'diameters_um': [float(d) for d in diameters],
-            'approximation_note': APPROXIMATION_NOTE_CNO if _has_cno(compare2_doc) else APPROXIMATION_NOTE, 'pairs': pairs, 'rois': rois, 'counts': counts,
+            'approximation_note': APPROXIMATION_NOTE_CNO if _has_cno_pair(link) else APPROXIMATION_NOTE, 'pairs': pairs, 'rois': rois, 'counts': counts,
             'top_worse': [r['roi_key'] for r in top_w], 'top_improved': [r['roi_key'] for r in top_i],
             'explained': explained, 'warnings': warnings}

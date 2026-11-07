@@ -630,6 +630,15 @@
       "CNO uses the CSV only and does not check overlap with pixel short (user, 2026-11-06)",
       "the report comes straight from compare2, without ETX stages 4-6"
     ],
+    "cno_integration_decisions_2026_11_07": [
+      "CNO is opt-in: import-hotspots --include-cno (ETX 01 and dv 01 examples turn it on); without it every output stays byte-identical",
+      "a CNO case has one 1.png: geometry = one electrode shape, crop and origin as the 5-part cases",
+      "CNO area is the image area inside the round-6 window (CNO case mask only), not the CSV total; the difference stays in the residual",
+      "a CNO side is failure_type lateral_open with one endpoint (any electrode name) or none (marker of a one-sided pair); [] is no marker; marker vs short form is cno_pair_side_form_mismatch",
+      "round 3 skips CNO (short only); round 4 makes 4-part case_key lateral_open|<electrode>|<layer>|<layer>; no DL2 export for CNO",
+      "location formula: delta_lambda = sum_d (rho_B*b_d*F_B - rho_A*a_d*F_A)*pi/4, pixel only, delta_vi_line = 0; a CNO-only diameter without round-6 rows is dropped with a warning",
+      "a CNO-enabled run restarts from round 1 (import) because round 4 output must be rebuilt"
+    ],
     "condition_breakdown_definition": "Plan section 7. Change breakdown (A to B, totals 100%) uses the existing L / P_eff partition. Removal impact is separate: line = -excl_L, +transfer(l) at the pixel lambda; pixel = -excl_Peff; CNO = -its own lambda. compute_areas(condition_stats=True) supplies the integer cell counts (line/pixel exclusive and shared, transfer by line pair, transfer shared)."
   }
 }

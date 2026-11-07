@@ -1025,9 +1025,10 @@ def _roi_card(view, word, rank, roi_key, klass):
                    '<p class="muted">조건 전체의 Δvi(×10⁻⁴)이며 이 위치만의 값이 아닙니다.</p>')
     else:
         out.append('<p class="muted">연결된 결함 조건이 없습니다.</p>')
-    if lr['pairs_total'] > len(lr['map_pairs']):
-        out.append(f'<p class="muted">쌍 {lr["pairs_total"]}개 중 영향이 큰 {len(lr["map_pairs"])}개만 지도로 보입니다'
-                   '(--max-pairs-per-condition).</p>')
+    mapped = [pid for pid in lr['map_pairs'] if not view['link_pairs'][pid].get('cno_case')]     # a CNO pair draws no map
+    if lr['pairs_total'] > len(mapped):
+        out.append(f'<p class="muted">쌍 {lr["pairs_total"]}개 중 영향이 큰 {len(mapped)}개만 지도로 보입니다'
+                   '(--max-pairs-per-condition).' + (' CNO 쌍은 지도가 없습니다.' if len(mapped) < len(lr['map_pairs']) else '') + '</p>')
     out.append('</div></div></div>')
     return ''.join(out)
 

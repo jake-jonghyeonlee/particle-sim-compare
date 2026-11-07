@@ -248,6 +248,58 @@ def test_one_sided_cno_in_a_shared_layer_name_is_measured_on_the_cno_mask_only(t
     assert short and [r for r in rows if r['pair_id'] in ids] == csv_rows(off)
 
 
+def _mixed_world_rows(world, corr, tmp_path, edit):
+    document = json.loads(corr.read_text(encoding='utf-8'))
+    cno, _ = split_pairs(corr)
+    pair = json.loads(json.dumps(cno[0]))
+    pair['pair_id'] = 'mixed'
+    edit(pair)
+    document['pairs'] = [pair]
+    path = tmp_path/'mixed.json'
+    path.write_text(json.dumps(document), encoding='utf-8')
+    return csv_rows(windows(world, path, tmp_path/'win'))
+
+
+SHORT_ENDPOINTS = [{'electrode_id': 'A', 'role': 'gate', 'actual_layer': tcc.CNO_LAYER},
+                   {'electrode_id': 'B', 'role': 'data', 'actual_layer': tcc.CNO_LAYER}]
+
+
+def test_t24_one_sided_marker_against_a_short_form_is_a_side_form_mismatch(own_layer, tmp_path):
+    """A marked side (lateral_open, no endpoints) against a short-form side is unavailable with the mismatch reason, never an empty mask 0."""
+    def edit(pair):
+        pair['a']['endpoints'] = None
+        pair['b']['endpoints'] = SHORT_ENDPOINTS
+        pair['b']['failure_type'] = 'lateral_short'
+    row = metric_row(_mixed_world_rows(own_layer.world, own_layer.corr, tmp_path, edit), 'mixed', 'union')
+    assert row['b_status'] == 'unavailable' and 'cno_pair_side_form_mismatch_b' in row['delta_reasons']
+    assert row['delta_status'] == 'unavailable'
+
+
+def test_t24_unmarked_side_that_holds_a_cno_case_is_unavailable_with_a_reason(own_layer, tmp_path):
+    """The side without the marker is the absent side; if its dataset holds a CNO case there after all, its area is not a true 0."""
+    def edit(pair):
+        pair['a']['endpoints'] = None
+        pair['b']['endpoints'] = None
+        pair['b']['failure_type'] = None
+    row = metric_row(_mixed_world_rows(own_layer.world, own_layer.corr, tmp_path, edit), 'mixed', 'union')
+    assert row['a_status'] == 'available'
+    assert row['b_status'] == 'unavailable' and 'cno_absent_on_side_but_case_found_b' in row['delta_reasons']
+
+
+def test_t24_empty_endpoint_list_is_no_cno_marker(own_layer, tmp_path):
+    """endpoints [] is rejected by the correspondence check, so it cannot be mistaken for the one-sided marker."""
+    document = json.loads(own_layer.corr.read_text(encoding='utf-8'))
+    cno, _ = split_pairs(own_layer.corr)
+    pair = json.loads(json.dumps(cno[0]))
+    pair['a']['endpoints'] = []
+    document['pairs'] = [pair]
+    path = tmp_path/'empty.json'
+    path.write_text(json.dumps(document), encoding='utf-8')
+    with pytest.raises(Exception) as caught:
+        correspondence.load_correspondence(path)
+    assert 'invalid_correspondence' in str(caught.value) or 'invalid_correspondence' in repr(getattr(caught.value, 'code', ''))
+
+
 def test_a_pair_with_one_cno_side_and_one_short_side_names_the_missing_case(own_layer, tmp_path):
     cno, _ = split_pairs(own_layer.corr)
     document = json.loads(own_layer.corr.read_text(encoding='utf-8'))
@@ -261,8 +313,8 @@ def test_a_pair_with_one_cno_side_and_one_short_side_names_the_missing_case(own_
     path.write_text(json.dumps(document), encoding='utf-8')
     rows = csv_rows(windows(own_layer.world, path, tmp_path/'win'))
     row = named_row(rows, 'mixed')
-    assert row['b_status'] == 'unavailable' and 'named_pair_case_not_found_b' in row['delta_reasons']
-    assert row['a_status'] == 'available'
+    assert row['b_status'] == 'unavailable' and 'cno_pair_side_form_mismatch_b' in row['delta_reasons']      # was named_pair_case_not_found_b before T24
+    assert row['a_status'] == 'unavailable'
 
 
 # --- (d) the stage-2 mask artefact has no CNO group ------------------------------------------------------------------------
@@ -274,7 +326,22 @@ def test_a_stage2_artefact_does_not_change_cno_rows(own_layer, tmp_path):
     meta = json.dumps([key for key in json.loads(__import__('zipfile').ZipFile(str(tmp_path/'cmp'/ARTEFACT_NAME)).read('meta.json'))['sides']['reference']['groups']])
     assert tcc.CNO_LAYER not in meta                                  # CNO is in no stored group (compute_areas leaves it out)
     reused = windows(own_layer.world, own_layer.corr, tmp_path/'cmp', )
+    cno, _ = split_pairs(own_layer.corr)
+    ids = {p['pair_id'] for p in cno}
+    assert ids
+    # every row of a CNO pair (all metrics and kinds, not only named_pair) is the same with or without the artefact (T22 review adv6)
+    assert [r for r in csv_rows(reused) if r['pair_id'] in ids] == [r for r in csv_rows(own_layer.out) if r['pair_id'] in ids]
     assert [r for r in csv_rows(reused) if r['metric'] == 'named_pair'] == [r for r in csv_rows(own_layer.out) if r['metric'] == 'named_pair']
+
+
+def test_t24_piece_rows_of_a_cno_pair_carry_the_no_failure_pieces_reason_in_the_csv(own_layer):
+    cno, _ = split_pairs(own_layer.corr)
+    rows = csv_rows(own_layer.out)
+    for pair in cno:
+        for metric in ('lateral_only', 'vertical_only', 'simultaneous'):
+            row = metric_row(rows, pair['pair_id'], metric)
+            assert row['delta_status'] == 'not_applicable' and 'cno_case_has_no_failure_pieces' in row['delta_reasons']
+        assert 'cno_case_has_no_failure_pieces' not in metric_row(rows, pair['pair_id'], 'union')['delta_reasons']
 
 
 # --- (e) models flow: window_cases -------------------------------------------------------------------------------------------

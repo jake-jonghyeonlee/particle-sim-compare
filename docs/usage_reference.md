@@ -490,6 +490,8 @@ python -m simcompare compare2 --config compare2.yaml --out data/compare2
 - 제품군 CRP는 설정하지 않는다. 군 이름이 `mobile` 또는 `watch`면 1.0, 그 밖은 2.92다.
 - CNO 폴더: hotspot root 아래 `lateralopen-CNO-<cnt층>` 또는 끝에 `-`가 하나 더 붙은 `lateralopen-CNO-<cnt층>-` 폴더(예 `lateralopen-CNO-GCNT-`; 층 이름은 `-`를 뺀 부분, 대소문자 그대로). 같은 층의 두 형식이 함께 있으면 `duplicate_real_cno_case_name`이다. `images/`와 `result/lateral_open.csv`를 둔다. 이미지는 읽지 않고 CSV만 읽는다. 없으면 CNO 항은 0 기여다.
 
+- CNO 를 위치 단위(2·4·6·7회차)까지 쓰려면 01회차 `import-hotspots` 에 `--include-cno` 를 준다(ETX 01 예시와 dv 01 예시에는 이미 켜 두었다). **CNO 를 켠 실행은 01회차부터 다시 한다**: 4회차 결과는 T22 이후 코드로 다시 만들어야 하고, 켜지 않은 import·4회차 출력에는 CNO 가 없다. 한쪽 모델에만 있는 CNO 위치는 반대쪽에 같은 이름의 short 층이 있을 때만 ready 이고 없으면 blocked 다. CNO 쌍은 지도가 없다(ROI 카드는 지도 쌍 수에서 CNO 쌍을 뺀다). 계약은 `docs/data_contract.md` 의 "CNO 위치 Δvi와 link".
+
 출력(`--out`):
 
 | 파일 | 내용 |

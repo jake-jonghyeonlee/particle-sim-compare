@@ -128,6 +128,49 @@ def test_d_diameter_set_has_the_cno_sizes_and_the_filter_wins():
     assert compare2_link._location_diameters(plain) == ['3', '5']
 
 
+def test_t24_cno_only_diameter_without_window_rows_is_dropped_with_a_warning(tmp_path):
+    """T23 adv1: a non-standard CNO size (7) that round 6 has no row for must not turn the pairs null; one warning names it."""
+    doc = cno_doc(rho_ref={3: 0.2, 5: 0.3, 7: 0.1}, rho_tgt={3: 0.4, 5: 0.5, 7: 0.1})
+    dropped = []
+    assert compare2_link._location_diameters(doc, {'3', '5'}, dropped) == ['3', '5'] and dropped == ['7']
+    assert compare2_link._location_diameters(doc, {'3', '5', '7'}) == ['3', '5', '7']
+    assert compare2_link._location_diameters(doc, set()) == ['3', '5', '7']       # no round-6 rows at all: nothing to compare with
+    rows = [named_row('c1', 10, 3, 1.0, 2.0), named_row('c1', 10, 5, 3.0, 4.0)]
+    _link, result = cno_locations(tmp_path, TWO_SIDED, rows, doc)
+    assert result['diameters_um'] == [3.0, 5.0]
+    p = pair_of(result, 'c1')
+    assert p['delta_vi']['pixel'] is not None and not any(r.startswith('window_row_missing') for r in p['reasons'])
+    assert [w for w in result['warnings'] if w['code'] == 'location_diameter_outside_window_rows'] == [
+        {'code': 'location_diameter_outside_window_rows', 'detail': '7'}]
+
+
+def test_t24_short_diameter_without_rows_still_reports_the_missing_row(tmp_path):
+    doc = cno_doc()
+    rows = [named_row('c1', 10, 3, 1.0, 2.0)]          # no 5 um row: a short size, so it stays and the pair says why
+    _link, result = cno_locations(tmp_path, TWO_SIDED, rows, doc)
+    assert 'window_row_missing:5' in pair_of(result, 'c1')['reasons']
+
+
+def test_t24_cno_note_needs_a_cno_pair_in_the_link_not_cno_rows_in_compare2(tmp_path):
+    doc = cno_doc()          # compare2 has CNO rows, but the link below holds a short pair only
+    cand = write_candidates(tmp_path / 'cand')
+    windows = write_windows(tmp_path / 'win', cand / 'direct/roi_correspondence.json', [named_row('direct_1', 10, 3, 1.0, 2.0)])
+    link = build_link(doc, candidates_dir=cand, windows_dir=windows, map_window_um=10.0)
+    assert not any(p.get('cno_case') for p in link['pairs'])
+    assert compute_locations(link, doc)['approximation_note'] == compare2_link.APPROXIMATION_NOTE
+    rows = [named_row('c1', 10, 3, 1.0, 2.0), named_row('c1', 10, 5, 3.0, 4.0)]
+    _link, result = cno_locations(tmp_path / 'cno', TWO_SIDED, rows, doc)
+    assert result['approximation_note'] == compare2_link.APPROXIMATION_NOTE_CNO
+
+
+def test_t24_side_marker_is_one_rule_in_link_and_correspondence():
+    cno = {'failure_type': 'lateral_open'}
+    assert compare2_link._side_is_cno({**cno, 'endpoints': None}) and compare2_link._side_is_cno({**cno, 'endpoints': [{}]})
+    assert not compare2_link._side_is_cno({**cno, 'endpoints': []})          # [] is no marker
+    assert not compare2_link._side_is_cno({**cno, 'endpoints': [{}, {}]})
+    assert not compare2_link._side_is_cno({'failure_type': 'lateral_short', 'endpoints': None})
+
+
 def test_e_roi_sum_plus_residual_is_the_total(tmp_path):
     doc = cno_doc()
     doc['delta']['indicators']['delta_vi_pixel'] = 9.0
@@ -260,6 +303,10 @@ def test_c_real_chain_computes_the_cno_roi_and_the_report_shows_the_chip(chain, 
     assert record['locations'] == json.loads(json.dumps(expected))
     assert '<span class="chip">CNO</span>' in html and 'CNO(GCNT) lateral open' in html
     assert 'CNO 는 위치 창 안의 이미지 면적으로 근사' in html
+    # T24 adv3: the map count of an ROI card counts the drawn maps only, a CNO pair draws none
+    shown = [r for r in cno_rois if r['roi_key'] in loc['top_worse'] + loc['top_improved']]
+    if shown:
+        assert 'CNO 쌍은 지도가 없습니다.' in html and '0개만 지도로 보입니다' in html
     # the pair value equals the formula on the round-6 rows
     rows = r6.csv_rows(chain.win)
     cno_pairs = [p for p in link['pairs'] if p.get('cno_case')]

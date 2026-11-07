@@ -53,17 +53,32 @@ def test_relative_paths_resolve_from_runner_folder_not_launch_cwd(tmp_path):
 def test_t17_runner_log_resolves_link_option_paths(tmp_path):
     work = tmp_path / 'runner'
     work.mkdir()
-    args = ['--config', 'compare2.yaml', '--windows', 'QA4_R00=data/local', '--candidates', 'data/changes',
+    args = ['--config', 'compare2.yaml', '--windows', 'data/local', '--candidates', 'data/changes',
             '--confirm', 'data/confirmed', '--compare2-dir', 'data/compare2',
             '--dl1-search', 'dl1a', '--dl1-search', 'dl1b', '--out', 'data/report']
     script = _build(work, [('compare2-report', args)])
     subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
     log = (work / 'job.log').read_text(encoding='utf-8')
     base = work.resolve()
-    for flag, value, path in (('--windows', 'QA4_R00=data/local', 'data/local'), ('--candidates', 'data/changes', 'data/changes'),
+    for flag, value, path in (('--windows', 'data/local', 'data/local'), ('--candidates', 'data/changes', 'data/changes'),
                               ('--confirm', 'data/confirmed', 'data/confirmed'), ('--compare2-dir', 'data/compare2', 'data/compare2'),
                               ('--dl1-search', 'dl1a', 'dl1a'), ('--dl1-search', 'dl1b', 'dl1b')):
         assert f'{flag} {value!r} -> {base / path}' in log, (flag, value)
+
+
+def test_t24_equals_split_is_per_command(tmp_path):
+    """T17 adv1/adv2: only KEY=PATH options (model-report --windows, confirm-pairs --match) split at '='; compare2-report
+    --windows is a plain path, with or without a '=' in it."""
+    cases = [('compare2-report', 'data/local', 'data/local'),               # no '='
+             ('model-report', 'QA4_R00=data/local', 'data/local'),          # KEY=PATH: the part after '=' is the path
+             ('compare2-report', 'odd=dir/local', 'odd=dir/local')]        # the whole value is the path
+    for i, (command, value, path) in enumerate(cases):
+        work = tmp_path / f'runner{i}'      # a failing job stops the runner, so every case has its own runner
+        work.mkdir()
+        script = _build(work, [(command, ['--windows', value, '--out', 'data/out'])])
+        subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+        log = (work / 'job.log').read_text(encoding='utf-8')
+        assert f"--windows {value!r} -> {work.resolve() / path}" in log, (command, value)
 
 
 def test_base_dir_overrides_runner_folder(tmp_path):

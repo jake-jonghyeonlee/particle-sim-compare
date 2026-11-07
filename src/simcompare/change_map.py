@@ -164,7 +164,7 @@ def pair_cases(ref_dataset, tgt_dataset, *, diameter_um, ref_electrodes=None, tg
     양쪽 대표 지름 record 가 관측(면적 0 포함)일 때만 쌍을 만든다. mask 는 읽지 않는다.
     한쪽에 중복이 있으면 반대편의 단일 case 도 ``duplicate_case_key_on_other_side`` 로 제외 목록에 남긴다(둘 다 쌍에서 빠진다).
     lateral_short·vertical_short 가 아닌 case 는 ``map_requires_short_only`` 로 제외한다(electrode_map 관례). 예외는 CNO case
-    (``is_cno_case``, 전극 endpoint 1개): 포함하고 case_key 는 ``lateral_open|CNO|<층>|<층>`` 이다. 한쪽 조합이면 flag 는
+    (``is_cno_case``, 전극 endpoint 1개): 포함하고 case_key 는 ``lateral_open|<electrode>|<층>|<층>`` 이다(전극 이름 무관: 폴더 이름 가운데 부분 원문, 보통 CNO). 한쪽 조합이면 flag 는
     ``new_electrode``/``removed_electrode`` 대신 ``cno_case`` 다(stats 에 ``cno_case_included`` 가 생긴다).
     ``ref_electrodes``·``tgt_electrodes``(모델별 DL1 전극 폴더 이름 목록)를 둘 다 주면 한쪽 조합도 쌍에 넣는다: 한쪽 모델에만 있는
     case(``cases_only_in_*``)와 층이 바뀐 case(``case_layer_mismatch``)를 자기 층의 한쪽 조합(``present_in`` = 있는 쪽,

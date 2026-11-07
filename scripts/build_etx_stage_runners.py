@@ -45,21 +45,28 @@ def _model_electrode(model):
     ], f"모델 {model}. --max-asset-memory-mb는 기본값이 없는 필수 인자이며 16384는 예시다. 모델마다 한 번 실행한다")
 
 
-def _import_header(own, assets, roi):
+def _import_header(own, assets, roi, dv=False):
+    """dv=True 는 dv 폴더용 문구(예전 실행기 안내 생략, 다시 만들 출력 폴더가 dv 흐름의 것)를 직접 정의한다."""
+    if dv:
+        redo = ["이미 import했고 다시 한다면 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다",
+                "(--out은 없는 경로여야 한다): data/imported/reference·target, data/assets/reference·target, data/dv_template, data/dv_grade, data/changes_dv, data/vulnerability_report."]
+    else:
+        redo = [f"예전 실행기로 이미 import했다면(기대 목록 없음 → {roi}회차 ROI 전부 blocked) {own}회차부터 다시 한다. 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다",
+                "(--out은 없는 경로여야 한다): data/imported/reference·target, data/assets/reference·target, data/changes, data/confirmed, data/local."]
     return [f"{own}회차: hotspot import. 끝나면 pairs.csv를 data/imported/reference/와 data/imported/target/ 안에 복사한다.",
             "각 import는 --expected-cases-from-roots로 다른 모델의 root를 함께 주어, 기대 case 목록을 두 모델에서 발견된 case 이름의 합집합으로 만든다",
             "(한쪽에만 없는 case 폴더는 expected_case_folder_missing으로 보고된다. 두 모델 모두에 없는 case는 찾을 수 없다).",
-            f"예전 실행기로 이미 import했다면(기대 목록 없음 → {roi}회차 ROI 전부 blocked) {own}회차부터 다시 한다. 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다",
-            "(--out은 없는 경로여야 한다): data/imported/reference·target, data/assets/reference·target, data/changes, data/confirmed, data/local.",
+            f"--include-cno 는 CNO(lateral_open) case 도 import 한다. CNO 를 쓰지 않으면 두 줄에서 지운다. 켠 실행은 {own}회차부터 다시 한다(4회차 결과도 다시 만든다).",
+            *redo,
             f"회차 사이 수작업도 다시 한다: {own}회차 뒤 pairs.csv 복사, {assets}회차 뒤 import 결과 배치와 real.yaml electrode_import_record.sha256 갱신."]
 
 
 IMPORT_JOBS = [
     ("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_R00", "--expected-cases-from-roots", f"{DATA}/input/hotspot/QA4_T00",
-                         "--out", f"{DATA}/imported/reference"],
+                         "--include-cno", "--out", f"{DATA}/imported/reference"],
      "reference (QA4_R00). --out은 아직 없는 새 경로"),
     ("import-hotspots", ["--root", f"{DATA}/input/hotspot/QA4_T00", "--expected-cases-from-roots", f"{DATA}/input/hotspot/QA4_R00",
-                         "--out", f"{DATA}/imported/target"],
+                         "--include-cno", "--out", f"{DATA}/imported/target"],
      "target (QA4_T00)")]
 
 ASSETS_HEADER = [
@@ -244,12 +251,7 @@ STAGES = {
 
 # ΔV·위험도 흐름(bundles/etx/dv/). 기본 흐름과 따로 진행하며, 공통 단계(import·asset)는 같은 JOBS 를 복사해 둔다.
 DV_STAGES = {
-    "01_import_hotspots": ([DV_NOTE.format(base="01")] + [
-        line.replace("예전 실행기로 이미 import했다면(기대 목록 없음 → dv_05회차 ROI 전부 blocked) dv_01회차부터 다시 한다. 먼저",
-                     "이미 import했고 다시 한다면 먼저")
-        .replace("data/imported/reference·target, data/assets/reference·target, data/changes, data/confirmed, data/local.",
-                 "data/imported/reference·target, data/assets/reference·target, data/dv_template, data/dv_grade, data/changes_dv, data/vulnerability_report.")
-        for line in _import_header("dv_01", "dv_02", "dv_05")], IMPORT_JOBS),
+    "01_import_hotspots": ([DV_NOTE.format(base="01")] + _import_header("dv_01", "dv_02", "dv_05", dv=True), IMPORT_JOBS),
     "02_import_assets": ([DV_NOTE.format(base="03")] + [h.replace("{own}", "dv_02") for h in ASSETS_HEADER], ASSETS_JOBS),
     "03_dv_template": (
         ["dv_03회차(dv 흐름, 기본 01~07회차와 독립): 제품 case 폴더 이름에서 전극×타이밍 전압 시트의 빈 양식(dv_sheet.csv)을 만든다.",

@@ -111,14 +111,18 @@ PATH_FLAGS = {"--root", "--out", "--config", "--expected-cases", "--expected-cas
               "--correspondence", "--windows", "--confirm", "--dl1-search", "--compare2-dir"}
 
 
-def _resolved_args(args):
-    """경로를 받는 옵션마다 `옵션 원문 -> 해석된 절대 경로`를 만든다(상대 경로는 이미 chdir한 BASE_DIR 기준)."""
+KEY_PATH_FLAGS = {"confirm-pairs": ("--match",), "model-report": ("--windows",)}     # KEY=PATH 형식 옵션(명령별)
+
+
+def _resolved_args(args, command=None):
+    """경로를 받는 옵션마다 `옵션 원문 -> 해석된 절대 경로`를 만든다(상대 경로는 이미 chdir한 BASE_DIR 기준).
+    KEY=PATH 형식은 명령별 옵션만 `=` 뒤를 경로로 보고, 다른 명령(compare2-report --windows DIR 등)은 값 전체가 경로다."""
     lines, flag = [], None
     for arg in (str(a) for a in args):
         if arg.startswith("--"):
             flag = arg if arg in PATH_FLAGS else None
         elif flag is not None:
-            value = arg.split("=", 1)[1] if flag in ("--match", "--windows") and "=" in arg else arg
+            value = arg.split("=", 1)[1] if flag in KEY_PATH_FLAGS.get(str(command), ()) and "=" in arg else arg
             lines.append(f"{flag} {arg!r} -> {os.path.abspath(os.path.expanduser(value))}")
     return lines
 
@@ -154,7 +158,7 @@ def run_jobs(jobs):
     for name, args in jobs:
         argv = [str(name), *(str(a) for a in args)]
         print(f"[simcompare_job] {stamp()} start {' '.join(argv)}", file=sys.stderr, flush=True)
-        for line in _resolved_args(args):
+        for line in _resolved_args(args, name):
             print(f"[simcompare_job]   {line}", file=sys.stderr, flush=True)
         started = time.time()
         sys.argv = ["simcompare", *argv]

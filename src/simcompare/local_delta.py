@@ -304,6 +304,8 @@ def delta_of(a: WindowMetric, b: WindowMetric) -> WindowDelta:
         for label, metric in (('a', a), ('b', b)):
             if {'all_vertical_sources_not_applicable', 'below_height_vertical_short'} & set(metric.reasons):
                 reasons.add(f'below_height_vertical_short_{label}')
+            if CNO_PIECE_REASON in metric.reasons:
+                reasons.add(CNO_PIECE_REASON)
         return WindowDelta(None, 'not_applicable', tuple(sorted(reasons)), None)
     if a.status == 'available' and b.status == 'available':
         value = finite(b.value - a.value, 'delta')
@@ -452,6 +454,10 @@ def _cno_side_metric(label, dataset, side, diameter, window, run, out):
     """One side of a CNO pair that has no endpoints on at least one side. A marked side (lateral_open) is measured on its
     single CNO case; an unmarked side is the side without the CNO case, where the CNO area is 0 (an empty mask on its frame)."""
     if not is_cno_side(side):
+        if run.cno_matches(label, side):     # the absent side holds a CNO case after all: its area is not a true 0
+            reason = f'cno_absent_on_side_but_case_found_{label}'
+            out['reasons'].append(reason)
+            return _unavailable(window, (reason,))
         mask = run.empty_mask(side.frame)
         measured = _measure_cropped(side.frame, mask, window, diameter=diameter, analysis_layer=side.analysis_layer)
         return _from_measurement(measured, window, 'physical_window_single_case')
@@ -475,10 +481,20 @@ def _cno_side_metric(label, dataset, side, diameter, window, run, out):
 
 def _cno_pair(reference, target, pair, diameter, window_a, window_b, run):
     """{'a','b','delta',...} of a CNO pair on CNO case masks only: named route when both sides name their endpoints, else
-    the one-sided route (marked side = its CNO case, other side = no CNO case there)."""
+    the one-sided route (marked side = its CNO case, other side = no CNO case there). A side without the CNO marker that
+    has a short form (two endpoints or a failure_type) makes the pair unavailable: its area would be a silent 0."""
+    out = {'a': None, 'b': None, 'delta': None, 'cases': {'a': None, 'b': None}, 'reasons': []}
+    mismatch = [label for label, side in (('a', pair.a), ('b', pair.b))
+                if not is_cno_side(side) and (side.endpoints is not None or side.failure_type is not None)]
+    if mismatch:
+        for label, window in (('a', window_a), ('b', window_b)):
+            reasons = tuple(f'cno_pair_side_form_mismatch_{m}' for m in mismatch)
+            out[label] = _unavailable(window, reasons)
+            out['reasons'].extend(reasons if label == 'a' else ())
+        out['delta'] = delta_of(out['a'], out['b'])
+        return out
     if pair.a.endpoints is not None and pair.b.endpoints is not None:
         return _named_pair(reference, target, pair, diameter, window_a, window_b, run=run, cno=True)
-    out = {'a': None, 'b': None, 'delta': None, 'cases': {'a': None, 'b': None}, 'reasons': []}
     out['a'] = _cno_side_metric('a', reference, pair.a, diameter, window_a, run, out)
     out['b'] = _cno_side_metric('b', target, pair.b, diameter, window_b, run, out)
     out['delta'] = delta_of(out['a'], out['b'])
