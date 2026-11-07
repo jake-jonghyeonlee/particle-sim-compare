@@ -22,7 +22,7 @@ from PIL import Image
 
 from .compare2 import SCHEMA_VERSION as COMPARE2_SCHEMA, _json_text, _publish
 from .compare2_inputs import VI_LINE_DIVISOR, VI_PIXEL_DIVISOR, load_compare2_config
-from .compare2_link import APPROXIMATION_NOTE, build_link, compute_locations
+from .compare2_link import APPROXIMATION_NOTE, APPROXIMATION_NOTE_CNO, build_link, cno_condition_id, compute_locations
 from .numeric_schema import NumericContractError
 
 REPORT_COMMAND = 'compare2-report'
@@ -741,11 +741,14 @@ REASON_TEXT = {
     'diameter_set_empty': '선택한 이물 크기가 없습니다.',
     'density_missing_zero_area': '면적이 0 인 항의 밀도가 비어 있습니다(값은 0 으로 셉니다).',
     'unit_fold_count_mismatch': 'unit 반복 수(n_replicas)와 반복 목록 길이가 다릅니다(값은 n_replicas 기준).'}
+REASON_TEXT['cno_pair_side_form_mismatch'] = ('한쪽은 CNO 형식이고 반대쪽은 short 형식(끝점·불량 유형)이라 CNO 쌍으로 계산하지 않았습니다.')
 APPROXIMATION_TEXT = (
     '근사: 쌍마다 자기 창의 불량 면적과 그 면의 밀도·보정 계수로 계산합니다. 공유 영역과 line↔pixel 이동은 나누지 않습니다. '
     'CNO·CRP 차이, ROI 밖 변화, 겹친 창은 잔차(근사합으로 설명되지 않는 몫)에 남습니다. '
     'unit 반복 위치는 대표 위치 값에 반복 수를 곱해 근사하며(반복 위치가 같은 설계라고 가정), '
     '4회차 --top-k 로 잘린 위치와 ROI 밖 변화도 잔차에 남습니다.')
+APPROXIMATION_TEXT_CNO = APPROXIMATION_TEXT.replace(
+    'CNO·CRP 차이, ROI 밖 변화', 'CNO 는 위치 창 안의 이미지 면적으로 근사하며, CSV 총량과의 면적 기준 차이와 CRP 차이, ROI 밖 변화')
 
 
 def _kind_text(kind):
@@ -918,8 +921,11 @@ def _dl1_block(view):
 def _case_line(case):
     layer = case.get('analysis_layer') or case.get('layer') or '—'
     electrodes = case.get('electrodes')
-    name = f'{electrodes[0]}–{electrodes[1]}' if electrodes else str(case.get('case_key'))
-    text = f'{layer} 레이어 {name}: {_kind_text(case.get("change_kind"))}'
+    if case.get('failure') == 'lateral_open' and electrodes and len(electrodes) == 1:
+        text = f'CNO({layer}) lateral open: {_kind_text(case.get("change_kind"))}'
+    else:
+        name = f'{electrodes[0]}–{electrodes[1]}' if electrodes else str(case.get('case_key'))
+        text = f'{layer} 레이어 {name}: {_kind_text(case.get("change_kind"))}'
     if case.get('residual_um2') is not None:
         text += f' (형상 차이 {_num(case["residual_um2"])} µm²)'
     if case.get('layer_changed'):
@@ -999,6 +1005,13 @@ def _roi_card(view, word, rank, roi_key, klass):
     for cid in lr['condition_ids']:
         cond = view['cond_by_id'].get(cid)
         if cond is None:
+            cno = view['cno_by_id'].get(cid)
+            if cno is not None:       # a CNO condition: the same chip as the CNO row of the condition table
+                rows.append(f'<tr><td class="l">{_e(cno["density_layer"] or "—")} · {_e(cno["electrode_id"] or cno["case_name"])} '
+                            '<span class="chip">CNO</span></td>'
+                            '<td class="l"><span class="sw" style="background:var(--pixel)"></span> pixel</td>'
+                            f'<td class="l">{_presence_badge(cno["presence"]) or "양쪽"}</td><td>—</td>'
+                            f'<td class="{_sign_class(cno["delta_vi_pixel"])}">{_s4(cno["delta_vi_pixel"])}</td></tr>')
             continue
         rows.append(f'<tr><td class="l">{_e(cond["layer"])} · {_e(_pair_label(cond))}</td>'
                     f'<td class="l"><span class="sw" style="background:var(--{_types(cond["class"])[0]})"></span> {_e(cond["class"])}</td>'
@@ -1161,7 +1174,9 @@ def _inputs_table(doc, view):
             files = '<br>'.join(f'{_e(name)} {_short_sha(sha)}' for name, sha in sorted(record['files'].items()))
             rows.append((names[kind], (_e(record['path']) + '<br>' if 'path' in record else '') + files))
         note = view['loc']['approximation_note']
-        rows.append(('위치 Δvi 근사', _e(APPROXIMATION_TEXT if note == APPROXIMATION_NOTE else note)))
+        text = (APPROXIMATION_TEXT if note == APPROXIMATION_NOTE
+                else APPROXIMATION_TEXT_CNO if note == APPROXIMATION_NOTE_CNO else note)
+        rows.append(('위치 Δvi 근사', _e(text)))
     args = view['args']
     rows.append(('보이는 위치 수', f'악화 --top-regions {args["top_regions"]} · 개선 --top-improved {args["top_improved"]}'))
     rows.append(('Top 표 길이', f'--top-n {args["top_n"]}'))
@@ -1473,6 +1488,8 @@ def _roi_figures(cfg, cfg2, infos, view, warnings):
     for roi_key in loc['top_worse'] + loc['top_improved']:
         for pid in view['rois'][roi_key]['map_pairs']:
             pair = view['link_pairs'][pid]
+            if pair.get('cno_case'):        # a CNO pair has no condition map (the CNO row of the condition table has none either)
+                continue
             spec = {}
             for role, side in (('reference', pair['a']), ('target', pair['b'])):
                 cond = side_cond[role].get((pair['conditions'][role] or {}).get('condition_id'))
@@ -1566,6 +1583,8 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
                             'png_sha256': {role: hashlib.sha256(figs[role]['png']).hexdigest() for role in ROLES}})
     view = {'link': link, 'loc': loc, 'json_sha': json_sha, 'cfg2': cfg2, 'infos': infos, 'rois': {}, 'link_rois': {},
             'link_pairs': {}, 'roi_maps': {}, 'rank': {}, 'cond_by_id': {c['condition_id']: c for c in conds},
+            'cno_by_id': {cno_condition_id(c['electrode_id'], c['density_layer']): c for c in doc['delta']['cno']
+                          if isinstance(c.get('electrode_id'), str) and isinstance(c.get('density_layer'), str)},
             'side_cond_by_id': {role: {c['condition_id']: c for c in doc['sides'][role]['conditions']} for role in ROLES},
             'args': {'top_regions': top_regions, 'top_improved': top_improved, 'top_n': top_n,
                      'max_pairs_per_condition': max_pairs_per_condition}}

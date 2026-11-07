@@ -15,7 +15,7 @@ import io
 import json
 from pathlib import Path
 
-from .compare2_inputs import size_key
+from .compare2_inputs import CNO_FACTOR, size_key
 from .numeric_schema import NumericContractError
 
 SCHEMA_VERSION = 'compare2_link_v1'
@@ -141,6 +141,55 @@ def _map_condition(index, role, layer, electrodes, warnings):
     return {'condition_id': None, 'reason': 'unmapped_condition'}
 
 
+CNO_FAILURE = 'lateral_open'
+
+
+def cno_condition_id(electrode_id, density_layer):
+    return f'cno:{electrode_id}@{density_layer}'
+
+
+def _is_cno_parsed(parsed):
+    return parsed.get('failure') == CNO_FAILURE and parsed.get('electrodes') is not None and len(parsed['electrodes']) == 1
+
+
+def _cno_index(compare2_doc):
+    """role -> {'by_key': {(electrode_id, density_layer): id}, 'by_layer': {layer: [id, ...]}} over compare2 sides[role].cno.
+    A CNO case is one compare2 row per (electrode, density layer); the density layer is the case's analysis layer."""
+    index = {}
+    for role in ROLES:
+        by_key, by_layer = {}, {}
+        for row in (((compare2_doc.get('sides') or {}).get(role)) or {}).get('cno') or []:
+            electrode, layer = row.get('electrode_id'), row.get('density_layer')
+            if not isinstance(electrode, str) or not isinstance(layer, str):
+                continue
+            cid = cno_condition_id(electrode, layer)
+            by_key[(electrode, layer)] = cid
+            by_layer.setdefault(layer, set()).add(cid)
+        index[role] = {'by_key': by_key, 'by_layer': {layer: sorted(ids) for layer, ids in by_layer.items()}}
+    return index
+
+
+def _map_cno_condition(cno_index, role, layer, electrode, warnings):
+    """-> {'condition_id': id|None, 'reason': None|str}; electrode None (the marked side of a one-sided pair names no
+    endpoint) maps by layer when the side has exactly one CNO row there."""
+    text = f'cno:{electrode if electrode is not None else "?"}@{layer}'
+    if layer is None:
+        return {'condition_id': None, 'reason': 'condition_key_unavailable'}
+    if electrode is not None:
+        cid = cno_index[role]['by_key'].get((electrode, layer))
+        if cid is not None:
+            return {'condition_id': cid, 'reason': None}
+    else:
+        ids = cno_index[role]['by_layer'].get(layer, [])
+        if len(ids) == 1:
+            return {'condition_id': ids[0], 'reason': None}
+        if len(ids) > 1:
+            warnings.add('ambiguous_condition_key', f'{role}:{text}: {",".join(ids)}')
+            return {'condition_id': None, 'reason': 'ambiguous_condition_key'}
+    warnings.add('unmapped_condition', f'{role}:{text}: no compare2 CNO row with this electrode and layer')
+    return {'condition_id': None, 'reason': 'unmapped_condition'}
+
+
 class _Warnings:
     def __init__(self):
         self.items = {}
@@ -155,8 +204,11 @@ class _Warnings:
 # ---- round 4: ROIs ----------------------------------------------------------------------------------------------------------
 
 def _parse_case_key(case_key, layer=None):
-    """'failure|e1|l1|e2|l2[|analysis_layer]' -> dict; unparsable keys give None fields."""
+    """'failure|e1|l1|e2|l2[|analysis_layer]' -> dict; unparsable keys give None fields.
+    A CNO case has the 4-part key 'lateral_open|electrode|layer|layer': one electrode, the layer is the analysis layer."""
     parts = case_key.split('|') if isinstance(case_key, str) else []
+    if len(parts) == 4 and parts[0] == 'lateral_open' and all(parts) and parts[2] == parts[3]:
+        return {'failure': parts[0], 'electrodes': [parts[1]], 'endpoint_layers': [parts[2]], 'analysis_layer': parts[2]}
     if len(parts) not in (5, 6) or not all(parts):
         return {'failure': None, 'electrodes': None, 'endpoint_layers': None, 'analysis_layer': layer}
     endpoints = sorted([(parts[1], parts[2]), (parts[3], parts[4])])
@@ -165,7 +217,7 @@ def _parse_case_key(case_key, layer=None):
             'analysis_layer': parts[5] if len(parts) == 6 else layer}
 
 
-def _case_record(raw, index, warnings):
+def _case_record(raw, index, cno_index, warnings):
     record = {key: raw[key] for key in sorted(raw)}
     parsed = _parse_case_key(raw.get('case_key'), raw.get('layer'))
     if parsed['electrodes'] is None:
@@ -178,6 +230,8 @@ def _case_record(raw, index, warnings):
             conditions[role] = {'condition_id': None, 'reason': 'case_absent_on_side'}
         elif parsed['electrodes'] is None:
             conditions[role] = {'condition_id': None, 'reason': 'condition_key_unavailable'}
+        elif _is_cno_parsed(parsed):
+            conditions[role] = _map_cno_condition(cno_index, role, parsed['analysis_layer'], parsed['electrodes'][0], warnings)
         else:
             conditions[role] = _map_condition(index, role, parsed['analysis_layer'], parsed['electrodes'], warnings)
     record['conditions'] = conditions
@@ -188,7 +242,7 @@ def _query_regions(query):
     return sorted(({query.get('region_id')} | set(query.get('merged_from') or ())) - {None})
 
 
-def _build_rois(payload, index, warnings):
+def _build_rois(payload, index, cno_index, warnings):
     """ROIs = reference_to_target queries (region_id ∪ merged_from); opposite-direction queries on the same region are duplicates."""
     rois, by_region = [], {}
     for direction in payload.get('directions') or []:
@@ -201,8 +255,8 @@ def _build_rois(payload, index, warnings):
                    'layers': sorted(query.get('layers') or []), 'score_um2': query.get('score_um2'),
                    'status': query.get('status'), 'center_xy_um': query.get('center_xy_um'),
                    'window_um': query.get('window_um'), 'roi_ids': sorted(query.get('roi_ids') or []),
-                   'contributing_cases': [_case_record(c, index, warnings) for c in query.get('contributing_cases') or []],
-                   'one_sided_cases': [_case_record(c, index, warnings) for c in query.get('one_sided_cases') or []]}
+                   'contributing_cases': [_case_record(c, index, cno_index, warnings) for c in query.get('contributing_cases') or []],
+                   'one_sided_cases': [_case_record(c, index, cno_index, warnings) for c in query.get('one_sided_cases') or []]}
             fold = query.get('unit_fold') or {}
             replicas = [{key: item.get(key) for key in ('region_id', 'unit_index_xy', 'distance_um', 'score_um2', 'layers')}
                         for item in fold.get('replicas') or [] if isinstance(item, dict)]
@@ -238,7 +292,14 @@ def _side_record(side):
             'analysis_layer': side.get('analysis_layer'), 'endpoints': side.get('endpoints'), 'roi_id': side.get('roi_id')}
 
 
-def _pair_records(correspondence, sidecar, path_kind, assign, index, scores, warnings):
+def _side_is_cno(side):
+    """The correspondence form of a CNO side: failure_type lateral_open with one endpoint, or with none (the marked side
+    of a one-sided CNO pair; the side without the marker is the absent side)."""
+    endpoints = side.get('endpoints')
+    return side.get('failure_type') == CNO_FAILURE and (not endpoints or len(endpoints) == 1)
+
+
+def _pair_records(correspondence, sidecar, path_kind, assign, index, cno_index, scores, warnings):
     pairs = {}
     sidecar_pairs = sidecar.get('pairs') or {}
     ids = [p.get('pair_id') for p in correspondence.get('pairs') or []]
@@ -263,6 +324,23 @@ def _pair_records(correspondence, sidecar, path_kind, assign, index, scores, war
         conditions = {}
         present = side_data.get('present_in')
         one_sided = present is not None and present != 'both'      # a pair that exists on one side only has no endpoints
+        cno_flags = {role: _side_is_cno(side) for role, side in (('reference', pair['a']), ('target', pair['b']))}
+        if any(cno_flags.values()):
+            record['cno_case'] = True
+            mismatch = any(not cno_flags[role] and (side.get('endpoints') or side.get('failure_type') is not None)
+                           for role, side in (('reference', pair['a']), ('target', pair['b'])))
+            for role, side in (('reference', pair['a']), ('target', pair['b'])):
+                if mismatch:        # one side marked CNO, the other a short form: the area would be silently 0 (T22 review adv1)
+                    conditions[role] = {'condition_id': None, 'reason': 'cno_pair_side_form_mismatch'}
+                elif not cno_flags[role]:
+                    conditions[role] = {'condition_id': None, 'reason': 'cno_absent_on_side'}
+                else:
+                    endpoints = side.get('endpoints')
+                    electrode = endpoints[0].get('electrode_id') if endpoints else None
+                    conditions[role] = _map_cno_condition(cno_index, role, side.get('analysis_layer'), electrode, warnings)
+            record['conditions'] = conditions
+            pairs[pid] = record
+            continue
         for role, side in (('reference', pair['a']), ('target', pair['b'])):
             endpoints = side.get('endpoints')
             if not endpoints:
@@ -298,9 +376,16 @@ def _named_rows(rows, map_window_um):
     """pair_id -> {diameter text: {a_value_um2, b_value_um2, a_status, b_status}}; exactly one row per (pair, diameter)."""
     if not any(_same_window(_number(row.get('window_size_um')), map_window_um) for row in rows):
         raise _error('compare2_link_window_missing', f'local_delta_rows.csv has no row with window_size_um == {map_window_um:g}')
+    return _metric_rows(rows, map_window_um, 'named_pair')
+
+
+def _metric_rows(rows, map_window_um, metric, kind=None):
+    """pair_id -> {diameter text: values} of one metric (and row kind) at the map window; one row per (pair, diameter)."""
     found = {}
     for row in rows:
-        if row.get('metric') != 'named_pair' or not _same_window(_number(row.get('window_size_um')), map_window_um):
+        if row.get('metric') != metric or not _same_window(_number(row.get('window_size_um')), map_window_um):
+            continue
+        if kind is not None and row.get('kind') != kind:
             continue
         diameter = _number(row.get('diameter_um'))
         if diameter is None or diameter <= 0:
@@ -370,6 +455,7 @@ def build_link(compare2_doc, *, candidates_dir=None, confirm_dir=None, windows_d
     reference_hash = _manifest_hash(compare2_doc, 'reference') if (candidates_dir or windows_dir) else None
     target_hash = _manifest_hash(compare2_doc, 'target') if (candidates_dir or windows_dir) else None
     index = _condition_index(compare2_doc)
+    cno_index = _cno_index(compare2_doc)
     pair_products = {}
     used_correspondence = None
 
@@ -382,13 +468,13 @@ def build_link(compare2_doc, *, candidates_dir=None, confirm_dir=None, windows_d
             got = ((payload.get('inputs') or {}).get(role) or {}).get('dataset_input_hash')
             if got != want:
                 raise _mismatch('candidates_dataset_input_hash', f'{role}: {got!r} != compare2 {want!r}')
-        rois, by_region = _build_rois(payload, index, warnings)
+        rois, by_region = _build_rois(payload, index, cno_index, warnings)
         scores = {roi['roi_key']: roi['score_um2'] for roi in rois}
         known = {roi['roi_key'] for roi in rois}
         if confirm_dir is None:     # confirm pairs replace the direct pairs (D3): direct files are still required and read
             pairs.update(_pair_records(direct_corr, direct_sidecar, 'direct',
                                        lambda side: {by_region[side.get('region_id')]} if side.get('region_id') in by_region else set(),
-                                       index, scores, warnings))
+                                       index, cno_index, scores, warnings))
             used_correspondence = ('candidates', DIRECT_CORRESPONDENCE, cand_files)
             pair_products['direct'] = direct_corr
         inputs['candidates'] = cand_files.record('candidates')
@@ -408,7 +494,8 @@ def build_link(compare2_doc, *, candidates_dir=None, confirm_dir=None, windows_d
                 for candidate in side.get('candidates') or []:
                     keys |= lookup.get((candidate.get('direction'), candidate.get('query_roi_id')), set())
                 return keys & known
-            confirm_pairs = _pair_records(confirm_corr, confirm_sidecar, 'confirm', assign_confirm, index, scores, warnings)
+            confirm_pairs = _pair_records(confirm_corr, confirm_sidecar, 'confirm', assign_confirm, index, cno_index, scores,
+                                          warnings)
             pairs.update(confirm_pairs)
             used_correspondence = ('confirm', CONFIRM_CORRESPONDENCE, conf_files)
             pair_products['confirm'] = confirm_corr
@@ -450,6 +537,11 @@ def build_link(compare2_doc, *, candidates_dir=None, confirm_dir=None, windows_d
         for pid, by_diameter in named.items():
             if pid in pairs:
                 pairs[pid]['named_pair'] = by_diameter
+        if any(p.get('cno_case') for p in pairs.values()):     # a one-sided CNO pair has no named_pair row: its window union is the CNO area
+            unions = _metric_rows(rows, float(map_window_um), 'union', 'window')
+            for pid, pair in pairs.items():
+                if pair.get('cno_case') and not pair['named_pair'] and pid in unions:
+                    pair['named_pair'] = unions[pid]
         inputs['windows'] = win_files.record('windows')
 
     known_ids = {i for role in ROLES for i in _known_product_ids(compare2_doc, role) | ids[role]}
@@ -479,6 +571,14 @@ APPROXIMATION_NOTE = ('Approximation: each pair is valued with the window area o
                       'Unit-fold repeats are approximated as the representative location value times the repeat count '
                       '(the repeated locations are assumed to hold the same design). Locations cut by the round-4 --top-k '
                       'and changes outside the ROIs also stay in the residual.')
+# Same text for a compare2 document that holds CNO rows: a CNO pair is valued by its image area inside the window.
+APPROXIMATION_NOTE_CNO = APPROXIMATION_NOTE.replace(
+    'CNO and CRP differences, changes outside', 'CRP differences, the difference between the CNO window image area and the CSV '
+    'total (area basis), changes outside')
+
+
+def _has_cno(doc):
+    return any((((doc.get('sides') or {}).get(role)) or {}).get('cno') for role in ROLES)
 
 
 def _dkey(value):
@@ -488,10 +588,13 @@ def _dkey(value):
 def _location_diameters(doc):
     flt = (doc.get('inputs') or {}).get('diameter_filter') or {}
     values = flt.get('diameters_um')
-    if values is None:      # no filter: every diameter compare2 summed
+    if values is None:      # no filter: every diameter compare2 summed (short sizes ∪ CNO sizes)
         values = [size.get('diameter_um') for role in ROLES
                   for layer in (((doc.get('sides') or {}).get(role)) or {}).get('layers') or []
                   for size in layer.get('by_size') or []]
+        values += [size.get('diameter_um') for role in ROLES
+                   for row in (((doc.get('sides') or {}).get(role)) or {}).get('cno') or []
+                   for size in row.get('by_size') or []]
     return [format(key, 'f') for key in sorted({size_key(v) for v in values if v is not None})]
 
 
@@ -509,6 +612,13 @@ class _SideTables:
             for size in row.get('by_size') or []:
                 table[_dkey(size['diameter_um'])] = {'line': size.get('density_line'), 'pixel': size.get('density_pixel')}
             self.dlayers.setdefault(row.get('layer'), set()).add(row.get('density_layer'))
+        # CNO: condition id -> {diameter key: density_pixel}; the two folder-name forms of one (electrode, layer) share the density
+        self.cno = {}
+        for row in side.get('cno') or []:
+            if isinstance(row.get('electrode_id'), str) and isinstance(row.get('density_layer'), str):
+                table = self.cno.setdefault(cno_condition_id(row['electrode_id'], row['density_layer']), {})
+                for size in row.get('by_size') or []:
+                    table.setdefault(_dkey(size['diameter_um']), size.get('density_pixel'))
 
     def density_of(self, condition, dkey, kind):
         layer, dlayer = condition.get('layer'), None
@@ -521,7 +631,77 @@ class _SideTables:
         return ((self.density.get((layer, dlayer)) or {}).get(dkey) or {}).get(kind)
 
 
-def _pair_location(pair, diameters, tables, slopes):
+def _cno_pair_location(pair, diameters, tables, slopes, cno_factor, out, reasons, done):
+    """Δλ_cno,loc = Σ_d (ρ_B(layer,d)·b_d·F_pixel,B − ρ_A(layer,d)·a_d·F_pixel,A)·π/4, Δvi_pixel = s_pixel·Δλ, Δvi_line = 0.
+    a_d, b_d = the CNO window area of the round-6 row (named_pair, or the window union of a one-sided pair; the absent side is
+    a true 0). The CRP difference and the CSV-total area basis stay in the residual."""
+    conds = pair.get('conditions') or {}
+    if any((conds.get(role) or {}).get('reason') == 'cno_pair_side_form_mismatch' for role in ROLES):
+        reasons.add('cno_pair_side_form_mismatch')
+        return done()
+    named = pair.get('named_pair') or {}
+    if not named:
+        reasons.add('named_pair_missing')
+        return done()
+    if not diameters:
+        reasons.add('diameter_set_empty')
+    reasons.update(f'window_row_missing:{d}' for d in diameters if d not in named)
+    ids = {}
+    for role in ROLES:
+        cond = conds.get(role) or {}
+        if cond.get('reason') == 'cno_absent_on_side':
+            continue
+        if cond.get('condition_id') is None or cond['condition_id'] not in tables[role].cno:
+            reasons.add(f'condition_unmapped:{role}')
+        else:
+            ids[role] = cond['condition_id']
+    if (any(r.startswith('condition_unmapped') for r in reasons) or not diameters
+            or any(r.startswith('window_row_missing') for r in reasons)):
+        return done()
+    total, failed = 0.0, False
+    for d in diameters:
+        terms = {}
+        for role, area_key in (('reference', 'a_value_um2'), ('target', 'b_value_um2')):
+            area = named[d].get(area_key)
+            if named[d].get(area_key.replace('_value_um2', '_status')) == 'not_applicable':
+                area = 0.0
+            if area is None:
+                reasons.add(f'area_missing:{role}:{d}')
+                failed = True
+                continue
+            rho = tables[role].cno.get(ids[role], {}).get(d) if role in ids else None
+            factor = tables[role].factor['pixel']
+            if area == 0:
+                terms[role] = 0.0
+                if role in ids and (rho is None or factor is None):
+                    reasons.add('density_missing_zero_area')
+                continue
+            if role not in ids:         # an absent side must measure 0; a positive area there has no density to value it
+                reasons.add(f'condition_unmapped:{role}')
+                failed = True
+                continue
+            if rho is None:
+                reasons.add(f'density_missing:{role}:{d}')
+                failed = True
+            if factor is None:
+                reasons.add(f'factor_missing:{role}')
+                failed = True
+            if rho is not None and factor is not None:
+                terms[role] = rho * area * factor * cno_factor
+        if len(terms) == len(ROLES):
+            total += terms['target'] - terms['reference']
+    if not failed:
+        out['delta_lambda']['pixel'] = total
+        out['delta_lambda']['line'] = 0.0
+        out['delta_vi']['line'] = 0.0
+        if slopes['pixel'] is None:
+            reasons.add('slope_missing:pixel')
+        else:
+            out['delta_vi']['pixel'] = slopes['pixel'] * total
+    return done()
+
+
+def _pair_location(pair, diameters, tables, slopes, cno_factor=CNO_FACTOR):
     reasons = set()
     out = {'pair_id': pair['pair_id'], 'roi_key': pair.get('roi_key'), 'path': pair.get('path'),
            'delta_lambda': {k: None for k in KINDS}, 'delta_vi': {k: None for k in KINDS}, 'reasons': []}
@@ -533,6 +713,8 @@ def _pair_location(pair, diameters, tables, slopes):
     if pair.get('path') == 'confirm':
         reasons.add('confirm_named_pair_unavailable')
         return done()
+    if pair.get('cno_case'):
+        return _cno_pair_location(pair, diameters, tables, slopes, cno_factor, out, reasons, done)
     named = pair.get('named_pair') or {}
     if not named:
         one_sided = any((conds.get(role) or {}).get('reason') == 'one_sided_pair_no_endpoints' for role in ROLES)
@@ -618,7 +800,11 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
     eps = ((compare2_doc.get('inputs') or {}).get('constants') or {}).get('ratio_null_below')
     if eps is None:
         eps = DEFAULT_RATIO_EPS
-    pairs = sorted((_pair_location(p, diameters, tables, slopes) for p in link.get('pairs') or []), key=lambda p: p['pair_id'])
+    cno_factor = ((compare2_doc.get('inputs') or {}).get('constants') or {}).get('cno_factor')
+    if cno_factor is None:
+        cno_factor = CNO_FACTOR
+    pairs = sorted((_pair_location(p, diameters, tables, slopes, cno_factor) for p in link.get('pairs') or []),
+                   key=lambda p: p['pair_id'])
     by_roi = {}
     for pair in pairs:
         if pair['roi_key'] is not None:
@@ -697,6 +883,6 @@ def compute_locations(link, compare2_doc, *, top_regions=5, top_improved=3, max_
         if slopes[k] is None:
             warnings.append({'code': 'slope_missing', 'detail': k})
     return {'schema_version': LOCATIONS_SCHEMA, 'diameters_um': [float(d) for d in diameters],
-            'approximation_note': APPROXIMATION_NOTE, 'pairs': pairs, 'rois': rois, 'counts': counts,
+            'approximation_note': APPROXIMATION_NOTE_CNO if _has_cno(compare2_doc) else APPROXIMATION_NOTE, 'pairs': pairs, 'rois': rois, 'counts': counts,
             'top_worse': [r['roi_key'] for r in top_w], 'top_improved': [r['roi_key'] for r in top_i],
             'explained': explained, 'warnings': warnings}

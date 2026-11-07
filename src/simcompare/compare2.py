@@ -327,7 +327,7 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
         elif factors['cno'] is None:
             row['reasons'].append(group.glass_area_reason or 'glass_area_pending')
         else:
-            parts = []
+            parts, by_size = [], []
             for diameter, area in sorted(case.rows.items()):
                 if diameters is not None and size_key(diameter) not in diameters:
                     continue
@@ -337,8 +337,11 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
                     parts = None
                     break
                 parts.append(value * area * factors['cno'])
+                by_size.append({'diameter_um': _diameter_json(diameter), 'density_pixel': value, 'area_csv_um2': _area(area),
+                                'lambda': value * area * factors['cno']})
             if parts is not None:
                 row['lambda'] = sum(parts)
+                row['by_size'] = by_size      # the per-diameter density the location formula of compare2-report reads
         row['reasons'] = sorted(set(row['reasons']))
         if row['lambda'] is None:
             cno_ok = False
