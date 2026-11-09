@@ -588,12 +588,14 @@ def _removal_cell(removal, name):
     return f'<td class="{_sign_class(value)}">{_s4(value)}</td>'
 
 
-def _sentences(cond, fig, side_conds, diameter):
+def _sentences(cond, fig, side_conds, diameter, absent_note=False):
     """Report sentences of one condition (HTML strings). fig is the render result or None."""
     items = []
     presence = cond['presence']
     status = {'new': '신규: 대상 B에만 있는 조건입니다.', 'gone': '소멸: 기준 A에만 있던 조건입니다.',
               'both': '양쪽: 기준 A와 대상 B 모두에 있는 조건입니다.'}[presence]
+    if absent_note and presence in ('new', 'gone'):
+        status += ' 한쪽 폴더가 없는 case 는 면적 0 으로 셉니다.'
     items.append(f'<b>상태</b>: {status}')
     size = _size_text(diameter)
     if not _changed(cond):
@@ -1305,6 +1307,7 @@ def _conditions_html(doc, cfg2, maps):
     conds, cno = delta['conditions'], delta['cno']
     diameter, top_n = cfg2.report.diameter_um, cfg2.report.top_n
     side_conds = {role: {c['condition_id']: c for c in doc['sides'][role]['conditions']} for role in ROLES}
+    absent_note = any(doc['sides'][role].get('absent_expected_cases') for role in ROLES)
     scales = _score_scales(conds, cno)
     entries = [('c', i, _cond_score(c, scales)) for i, c in enumerate(conds)] + [
         ('n', j, _cond_score(c, scales)) for j, c in enumerate(cno)]
@@ -1327,7 +1330,7 @@ def _conditions_html(doc, cfg2, maps):
         slot = (f'<div class="maps"><div class="mapslot" data-m="{i}"></div></div>' if i in maps
                 else f'<div class="maps muted">{_no_map_slot(c)}</div>')
         sentences = ''.join(f'<li>{s}</li>' for s in _sentences(c, maps[i][0] if i in maps else None, side_conds,
-                                                                  diameter))
+                                                                  diameter, absent_note))
         out.append(f'<div class="story" data-k="c{i}">{slot}<div><div class="rank">{rank}위 · '
                    f'<span class="sw" style="background:var(--{_types(c["class"])[0]})"></span> {_e(c["class"])}</div>'
                    f'<div class="title">{_e(c["layer"])} · {_e(_pair_label(c))}{_presence_badge(c["presence"])}</div>'
@@ -1399,7 +1402,7 @@ def _conditions_html(doc, cfg2, maps):
             c = conds[i]
             slot = f'<div class="mapslot" data-m="{i}"></div>' if i in maps else f'<div class="muted">{_no_map_slot(c)}</div>'
             items = ''.join(f'<li>{s}</li>' for s in _sentences(c, maps[i][0] if i in maps else None, side_conds,
-                                                                 diameter))
+                                                                 diameter, absent_note))
             out.append(f'<div id="dc{i}"><div class="title" style="font-weight:600;margin-bottom:6px">{_e(c["layer"])} · '
                        f'{_e(_pair_label(c))}{_presence_badge(c["presence"])} <span class="chip">{_e(c["class"])}</span></div>'
                        f'{slot}<ol>{items}</ol></div>')
@@ -1415,6 +1418,24 @@ def _conditions_html(doc, cfg2, maps):
             out.append(f'<div id="dn{i}"><div class="title" style="font-weight:600;margin-bottom:6px">'
                        f'{_e(c["electrode_id"] or c["case_name"])} <span class="chip">CNO</span></div><p>{text}</p></div>')
     return body, ''.join(out)
+
+
+def _absent_block(doc):
+    """Information box (not a warning) for expected cases whose folder is absent and that were counted as 0 area.
+
+    Empty text when no side carries absent_expected_cases, so such a report stays byte-identical."""
+    parts = []
+    for role in ROLES:
+        absent = doc['sides'][role].get('absent_expected_cases')
+        if not absent:
+            continue
+        names = absent['names']
+        listing = ', '.join(_e(name) for name in names)
+        detail = (f'<details><summary>case 이름 보기</summary>{listing}</details>' if len(names) > 3
+                  else f' ({listing})')
+        parts.append(f'<div class="banner" id="absent-{role}"><span class="chip">정보</span>{ROLE_TEXT[role]}에 폴더가 없는 '
+                     f'기대 case {absent["count"]}개를 면적 0 으로 셌습니다.{detail}</div>\n')
+    return ''.join(parts)
 
 
 def _render_html(doc, infos, cfg2, maps, warnings, partial, view):
@@ -1444,6 +1465,7 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial, view):
     out.append('<nav class="toc"><a href="#s0">제품 정보</a><a href="#s1">1 요약</a><a href="#s2">2 악화 Top</a>'
                '<a href="#s3">3 개선 Top</a><a href="#s4">4 line 전극/레이어</a><a href="#s5">5 pixel 전극/레이어</a>'
                '<a href="#s6">6 전체 분포</a><a href="#s7">7 결함 조건 상세</a><a href="#s8">참고·입력</a></nav>\n')
+    out.append(_absent_block(doc))
     dl1 = _dl1_block(view)
     product = f'<table id="prod">{_product_table(doc, infos, unit_text)}</table>'
     out.append('<section id="s0"><h2>제품 정보</h2>' + (f'<div class="grid2">{product}{dl1}</div>' if dl1 else product)

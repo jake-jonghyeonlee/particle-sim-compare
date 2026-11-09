@@ -129,7 +129,7 @@ def _absent_sources(group):
         if not reasons <= ABSENT_REASONS or 'expected_case_folder_missing' not in reasons:
             return None
     missing = [source for source in group.source_cases if source.input_status == 'missing']
-    if not missing or len(missing) != coverage.missing:
+    if not missing:
         return None
     return missing
 
@@ -155,7 +155,9 @@ def _extract(areas, absent_zero=False):
         absent = _absent_sources(group) if absent_zero else None
         if absent is not None:
             item['absent'] = True
-            absent_cases.update(source.identity.case_id for source in absent)
+            names = {source.identity.case_id for source in absent}
+            item.setdefault('absent_names', set()).update(names)
+            absent_cases.update(names)
             seen_pids = {source.pair_id for source in group.source_cases if source.input_status != 'missing'}
         else:
             for status, reasons in ((group.line.area.status, group.line.area.reasons),
@@ -206,8 +208,6 @@ def _load_side(cfg, role, top_buckets):
             'same_name_cases_unresolved': bool(dataset.provenance.get('unresolved_same_name_cases'))}
     result = compute_areas(dataset, **detail, condition_stats=True)
     extracted = _extract(result, absent_zero=meta['expected_case_coverage_status'] == 'confirmed')
-    if extracted['absent_cases']:  # not serialized yet (compare2-expected-zero/T2 reports it)
-        meta['absent_expected_cases'] = {'names': extracted['absent_cases'], 'count': len(extracted['absent_cases'])}
     meta['pair_table_version'] = result.pair_table_version
     meta['pair_table_hash'] = result.pair_table_hash
     meta['input_hash'] = result.input_hash
@@ -264,6 +264,10 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
             reasons.add('group_not_available')
             ok['line'] = ok['pixel'] = False
         entries[ck] = {'item': item, 'density': density, 'notes': notes, 'ok': item['ok']}
+
+    # cases counted as 0: only from cells that are ok and inside the selected diameters (entries is already filtered)
+    absent_names = sorted({name for entry in entries.values() if entry['ok']
+                           for name in entry['item'].get('absent_names', ())})
 
     def lam(kind, ck, count):
         entry = entries[ck]
@@ -401,7 +405,7 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
         'x_pixel': x_pixel,
         'caa': {'line': None if total_line is None else _g(total_line),
                 'pixel': None if x_pixel is None or not ok['pixel'] else _g(x_pixel) / crp},
-        'meta': meta, 'observed': observed}
+        'meta': meta, 'observed': observed, 'absent_cases': absent_names}
     side['vi'] = {'line': None if side['caa']['line'] is None else side['caa']['line'] / VI_LINE_DIVISOR,
                   'pixel': None if side['caa']['pixel'] is None else side['caa']['pixel'] / VI_PIXEL_DIVISOR}
     side['conservation'] = _conservation(side)
@@ -614,7 +618,7 @@ def _side_json(side):
     if side['conservation']['status'] == 'failed':
         reasons.append('conservation_check_failed')
     caa, vi, lam = side['caa'], side['vi'], side['lam']
-    return {
+    doc = {
         'status': status, 'reasons': reasons,
         'lambda': {'line': lam['line'], 'pixel': lam['pixel'], 'cno': lam['cno']},
         'caa_line': caa['line'], 'caa_pixel': caa['pixel'], 'vi_line': vi['line'], 'vi_pixel': vi['pixel'],
@@ -624,7 +628,15 @@ def _side_json(side):
         'conditions': conds,
         'shared': {'lambda_line': side['shared']['line'], 'lambda_pixel': side['shared']['pixel']},
         'cno': [side['cno'][name] for name in sorted(side['cno'])],
-        'conservation_check': side['conservation']}, status, reasons
+        'conservation_check': side['conservation']}
+    _put_absent(doc, side)
+    return doc, status, reasons
+
+
+def _put_absent(doc, side):
+    """Expected cases counted as 0 area (folder absent, confirmed inventory); the key exists only when there are any."""
+    if side['absent_cases']:
+        doc['absent_expected_cases'] = {'names': list(side['absent_cases']), 'count': len(side['absent_cases'])}
 
 
 def _full_range_json(side_a, side_b):
@@ -638,6 +650,7 @@ def _full_range_json(side_a, side_b):
             'caa_line_rounded': doc['caa_line_rounded'], 'caa_pixel_rounded': doc['caa_pixel_rounded'],
             'vi_line_rounded': doc['vi_line_rounded'], 'vi_pixel_rounded': doc['vi_pixel_rounded'],
             'status': status, 'reasons': reasons}
+        _put_absent(docs[side['role']], side)
     ind = _delta(side_a, side_b)['indicators']
     delta = {key: ind[key] for key in sorted(ind)}
     pct = {}

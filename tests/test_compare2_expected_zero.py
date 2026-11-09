@@ -165,7 +165,8 @@ def test_absent_case_same_pid_observed_elsewhere(tmp_path, monkeypatch):
 
 def test_missing_png_stays_null(tmp_path, monkeypatch):
     ref, tgt = two_one_sided()
-    # the reference lacks the 2 um images of every case it has; AC (absent on the target) shares the group
+    # the reference lacks the 2 um images of every case it has (a PNG gap); its only absent case (GH, L2) is in
+    # another group, so this checks that the gap alone keeps the side null
     code, out, doc = run_pair_in(tmp_path, monkeypatch, 'gap', ref, tgt, skip_sides={'ref': (2,)})
     assert code != 0
     side = doc['sides']['reference']
@@ -173,6 +174,17 @@ def test_missing_png_stays_null(tmp_path, monkeypatch):
     assert doc['delta']['indicators']['delta_vi_line'] is None
     # the target (no missing image) is unaffected by the reference gap
     assert doc['sides']['target']['vi_line'] is not None
+
+
+def test_missing_png_in_the_same_group_as_an_absent_case_stays_null(tmp_path, monkeypatch):
+    ref, tgt = two_one_sided()
+    # the target lacks the 2 um images of AB and DE; AC (absent on the target) is in the same (L1, 2 um) group
+    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'mixed', ref, tgt, skip_sides={'tgt': (2,)})
+    assert code != 0
+    side = doc['sides']['target']
+    assert side['vi_line'] is None and 'group_not_available' in side['reasons']
+    # the other diameters of the same layer are intact, so the absent case is still listed from those cells
+    assert side['absent_expected_cases']['names'] == [name_of(BASE['AC'])]
 
 
 def test_csv_only_missing_unchanged(tmp_path, monkeypatch):
@@ -289,3 +301,42 @@ def test_cno_mixed(tmp_path, monkeypatch):
     _code, _out, own = run_pair_in(tmp_path, monkeypatch, 'own', ref, tgt, inventory='own', ref_cno=cno, tgt_cno=cno)
     assert_same_numbers(doc, own)
     assert doc['sides']['reference']['lambda']['cno'] is not None
+
+
+# ---- i: absent_expected_cases is recorded per side -------------------------------------------------------------------
+
+def test_absent_expected_cases_recorded(tmp_path, monkeypatch):
+    ref, tgt = two_one_sided()
+    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'absent', ref, tgt)
+    assert doc['sides']['reference']['absent_expected_cases'] == {'names': [name_of(BASE['GH'])], 'count': 1}
+    assert doc['sides']['target']['absent_expected_cases'] == {'names': [name_of(BASE['AC'])], 'count': 1}
+
+
+def test_absent_names_leave_out_a_null_cell(tmp_path, monkeypatch):
+    ref, tgt = two_one_sided()
+    # the target lacks the 2 um images of AB and DE; filtered to 2 um the only selected L1 cell is null
+    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'null', ref, tgt, skip_sides={'tgt': (2,)}, diameters=[2])
+    target = doc['sides']['target']
+    assert target['vi_line'] is None
+    assert 'absent_expected_cases' not in target
+    # the full range (every diameter) still has intact L1 cells
+    assert doc['full_range']['sides']['target']['absent_expected_cases']['names'] == [name_of(BASE['AC'])]
+
+
+def test_absent_names_leave_out_unselected_diameters(tmp_path, monkeypatch):
+    ref, tgt = two_one_sided()
+    # the target keeps its images at 5 um only, so only the 5 um cells are intact; the filter selects 1 um
+    skip = tuple(d for d in DIAMETERS_UM if d != 5)
+    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'unselected', ref, tgt, skip_sides={'tgt': skip}, diameters=[1])
+    assert 'absent_expected_cases' not in doc['sides']['target']
+    full = doc['full_range']['sides']['target']
+    assert full['absent_expected_cases']['names'] == [name_of(BASE['AC'])]
+
+
+def test_no_absent_case_has_no_key(tmp_path, monkeypatch):
+    ref, tgt = tc.two_sides()
+    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'same', ref, tgt, diameters=[1])
+    for role in ('reference', 'target'):
+        assert 'absent_expected_cases' not in doc['sides'][role]
+        assert 'absent_expected_cases' not in doc['full_range']['sides'][role]
+    assert 'absent_expected_cases' not in (out / 'compare2.json').read_text(encoding='utf-8')

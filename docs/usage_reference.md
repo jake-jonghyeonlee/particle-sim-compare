@@ -509,6 +509,7 @@ python -m simcompare compare2 --config compare2.yaml --out data/compare2
 지표 해석:
 
 - 지름 선택(`lambda_diameters_um`): 지름 `d` 가 `diameter_filter_not_observed:<d>`(종료 코드 3)가 되는 때는 두 제품 모두에서 그 지름의 입력 이미지가 하나도 없고(모든 record 가 missing) CNO 행도 없을 때뿐이다. 이미지가 있고 hotspot 이 없으면(면적 0) 관측으로 본다. 선택한 지름 밖의 전체 지름 값(`full_range`)이 available 이 아니면 `inputs.diameter_filter.warnings` 에 `full_range_partial:<reference|target>` 가 들어간다(상태·종료 코드는 그대로).
+- 폴더가 없는 기대 case: 기대 case 목록이 `confirmed` 이면 한쪽 모델에 폴더가 없는 case 를 면적 0 으로 센다(그 case 의 쌍은 `new`/`gone`). 0 으로 센 case 목록은 `compare2.json` 의 `sides.<role>.absent_expected_cases`(없으면 키 자체가 없다)와 07회차 보고서 맨 위 정보 상자에 있다. 01회차 결과는 그대로 두고 02→07회차만 다시 돌리면 된다. 한계: case 폴더 안에 1.png·2.png·hotspot PNG 가 하나도 없으면 01회차가 그 폴더를 발견하지 못하므로 다른 모델 root 에 같은 case 가 있으면 0 으로 센다. 1.png 나 2.png 가 있으면 PNG 누락(missing_input)으로 null 이다. 시뮬레이션을 하지 않은 case 와도 구분하지 못하므로 보고서의 0 처리 목록을 확인한다. 상세는 [데이터 계약](data_contract.md)의 compare2 출력.
 - 값은 비율이며 양품 수율로 읽지 않는다. 설정한 glass 면적과 밀도로 환산한 값이다.
 - 계산: `λ = 밀도(glass 당 개수) × 관측 CA(µm²) × 계수`. 계수에 `/4`(2×2 crop 면적)와 패널 해상도·가중치가 들어 있다. 테두리 복원은 하지 않는다. `caa = 1 − exp(−λ)`, `vi_line = caa ÷ 1.2159`, `vi_pixel = caa ÷ CRP ÷ 1.5462`. CNO는 `λ × π/4`다.
 - 변화 분해: reference→target `Δvi`를 조건(전극쌍×레이어)별 기여로 나눈다. 조건별 몫과 공유 몫, CNO 몫(두 제품군 CRP가 다르면 CRP 차이 몫)을 합치면 100%다. 몫은 부호가 있다(양수 = 증가 기여).
