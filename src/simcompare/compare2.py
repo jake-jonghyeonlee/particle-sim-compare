@@ -108,9 +108,39 @@ def _new_cell():
             'tr': defaultdict(float)}
 
 
-def _extract(areas):
-    """Areas (um^2) per (analysis_layer, density_layer, diameter) and per condition; masks are dropped."""
+ABSENT_REASONS = frozenset(('source_coverage_incomplete', 'expected_case_folder_missing'))
+ABSENT_NOTE = 'absent_expected_case_counted_zero'
+
+
+def _absent_sources(group):
+    """The missing sources of a group whose only gap is expected cases without a folder, else None.
+
+    Such a group counts the absent cases as 0 area (a folder that does not exist has no hotspot). Any other gap
+    (a missing image of an existing case, an unmapped pair, a rejected mask, ...) leaves the group unavailable."""
+    coverage = group.union.coverage
+    if coverage.rejected or coverage.unmapped:
+        return None
+    for metric in (group.line.area, group.union):
+        if metric.status in ('available', 'not_applicable'):
+            continue
+        if metric.status not in ('partial', 'unavailable'):
+            return None
+        reasons = set(metric.reasons or ())
+        if not reasons <= ABSENT_REASONS or 'expected_case_folder_missing' not in reasons:
+            return None
+    missing = [source for source in group.source_cases if source.input_status == 'missing']
+    if not missing or len(missing) != coverage.missing:
+        return None
+    return missing
+
+
+def _extract(areas, absent_zero=False):
+    """Areas (um^2) per (analysis_layer, density_layer, diameter) and per condition; masks are dropped.
+
+    absent_zero: with a confirmed expected-case inventory, a case whose folder is absent counts as 0 area instead of
+    making its group unavailable (see _absent_sources). `absent_cases` lists those case names."""
     cells, classes, electrodes = {}, {}, {}
+    absent_cases = set()
     for key in sorted(areas.groups):
         group = areas.groups[key]
         stats = group.condition_stats
@@ -122,13 +152,19 @@ def _extract(areas):
         coverage = group.union.coverage  # an input image (or a true not-applicable) exists, whatever its area
         if coverage.observed + coverage.not_applicable > 0:
             item['has_input'] = True
-        for status, reasons in ((group.line.area.status, group.line.area.reasons),
-                                (group.union.status, group.union.reasons)):
-            # not_applicable (vertical size below the interlayer distance) is a true 0 contribution
-            if status not in ('available', 'not_applicable'):
-                item['ok'] = False
-                item['reasons'].add('group_status_' + status)
-                item['reasons'].update(reasons or ())
+        absent = _absent_sources(group) if absent_zero else None
+        if absent is not None:
+            item['absent'] = True
+            absent_cases.update(source.identity.case_id for source in absent)
+            seen_pids = {source.pair_id for source in group.source_cases if source.input_status != 'missing'}
+        else:
+            for status, reasons in ((group.line.area.status, group.line.area.reasons),
+                                    (group.union.status, group.union.reasons)):
+                # not_applicable (vertical size below the interlayer distance) is a true 0 contribution
+                if status not in ('available', 'not_applicable'):
+                    item['ok'] = False
+                    item['reasons'].add('group_status_' + status)
+                    item['reasons'].update(reasons or ())
         item['line'] += group.line_packed.count() * pitch_area
         item['peff'] += group.pixel_effective_packed.count() * pitch_area
         item['transfer'] += group.transfer_packed.count() * pitch_area
@@ -143,8 +179,10 @@ def _extract(areas):
         for pid, count in stats['transfer_by_line_pair_cells'].items():
             item['tr'][pid] += count * pitch_area
         for pid, pair in group.pair_membership.items():
+            if absent is not None and pid not in seen_pids:
+                continue  # only absent cases carry this pair here: not a condition of this side (0 area, no row)
             electrodes[(pid, key.analysis_layer)] = list(pair)
-    return {'cells': cells, 'classes': classes, 'electrodes': electrodes}
+    return {'cells': cells, 'classes': classes, 'electrodes': electrodes, 'absent_cases': sorted(absent_cases)}
 
 
 def _load_side(cfg, role, top_buckets):
@@ -167,7 +205,9 @@ def _load_side(cfg, role, top_buckets):
             'expected_case_coverage_status': manifest.get('expected_case_coverage_status'),
             'same_name_cases_unresolved': bool(dataset.provenance.get('unresolved_same_name_cases'))}
     result = compute_areas(dataset, **detail, condition_stats=True)
-    extracted = _extract(result)
+    extracted = _extract(result, absent_zero=meta['expected_case_coverage_status'] == 'confirmed')
+    if extracted['absent_cases']:  # not serialized yet (compare2-expected-zero/T2 reports it)
+        meta['absent_expected_cases'] = {'names': extracted['absent_cases'], 'count': len(extracted['absent_cases'])}
     meta['pair_table_version'] = result.pair_table_version
     meta['pair_table_hash'] = result.pair_table_hash
     meta['input_hash'] = result.input_hash
@@ -217,6 +257,8 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
                 notes.append(why)
                 reasons.add(f'{why}:{kind}:{dlayer}')
                 ok[kind] = False
+        if item.get('absent'):
+            notes.append(ABSENT_NOTE)
         if not item['ok']:
             notes.extend(sorted(item['reasons']))
             reasons.add('group_not_available')
