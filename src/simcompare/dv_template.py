@@ -64,7 +64,8 @@ def _write_csv(path, rows):
 
 def run_dv_template(root, out, timings, impedance_db=None):
     """case 폴더 이름에서 전극을 모아 dv_sheet.csv, new_electrodes.csv, dv_template_manifest.json 을 쓴다. 요약 dict 를 돌려준다."""
-    from .adapters.real_hotspot import _case_name, _discover_cases, _require_existing
+    from .adapters.real_hotspot import _case_name, _discover_cases, _require_existing, is_excluded_case
+    from .adapters.real_hotspot import CASE_EXCLUSION_RULE
     if isinstance(timings, bool) or not isinstance(timings, int) or not 1 <= timings <= MAX_TIMINGS:
         raise NumericContractError('invalid_timings', f'--timings 는 1–{MAX_TIMINGS} 정수입니다: {timings!r}')
     _require_existing(root, '--root', 'dv_template_root_missing')
@@ -78,9 +79,12 @@ def run_dv_template(root, out, timings, impedance_db=None):
         db, sha = _read_impedance_db(impedance_db)
         db_record = {'path': str(impedance_db), 'sha256': sha}
     cases, _ = _discover_cases(root)
-    layers, counts, ignored = {}, {}, []
+    layers, counts, ignored, excluded_vertical = {}, {}, [], 0
     for case in cases:
-        _, electrode_a, layer_a, electrode_b, layer_b = _case_name(case.name)
+        defect, electrode_a, layer_a, electrode_b, layer_b = _case_name(case.name)
+        if is_excluded_case(defect, layer_a, layer_b):
+            excluded_vertical += 1
+            continue
         if electrode_a == electrode_b:
             ignored.append(case.name)
             continue
@@ -97,7 +101,8 @@ def run_dv_template(root, out, timings, impedance_db=None):
     sheet = [header] + [[e, db.get(e, ''), joined[e]] + [''] * (2 * timings) for e in electrodes]
     new = [e for e in electrodes if e not in db]
     manifest = {'schema_version': SCHEMA_VERSION, 'root': root_text, 'case_count': len(cases),
-                'ignored_same_name_cases': ignored, 'timings': timings, 'impedance_db': db_record,
+                'ignored_same_name_cases': ignored, 'excluded_vertical_cases': excluded_vertical,
+                'case_exclusion_rule': CASE_EXCLUSION_RULE, 'timings': timings, 'impedance_db': db_record,
                 'electrode_count': len(electrodes), 'filled_impedance_count': len(electrodes) - len(new),
                 'new_electrode_count': len(new), 'db_only_electrodes': sorted(set(db) - set(electrodes)),
                 'tool_version': __version__}
@@ -125,4 +130,5 @@ def summary_lines(result):
             f"DB 에서 임피던스를 채운 전극 {manifest['filled_impedance_count']}개",
             f"새 전극(DB 에 값 없음) {manifest['new_electrode_count']}개: {NEW_NAME}",
             f"무시한 같은 이름 전극 case {len(manifest['ignored_same_name_cases'])}개",
+            f"제외한 SD2·SD3·PXL 수직 단락 case(excluded_vertical_cases) {manifest['excluded_vertical_cases']}개",
             f"출력: {result['out']}"]

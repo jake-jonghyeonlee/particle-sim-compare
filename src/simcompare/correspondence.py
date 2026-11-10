@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import sys
 
+from .adapters.real_hotspot import CASE_EXCLUSION_RULE, is_excluded_case
 from .numeric_schema import (
     DIAMETERS_UM, Endpoint, Frame, NumericContractError, NumericDataset, finite, text,
 )
@@ -253,6 +254,10 @@ def _bind_side(raw, dataset: NumericDataset, which: str):
     if raw['analysis_layer'] not in layers:
         reasons.append(f'analysis_layer_not_in_source_{which}')
     endpoints = None if raw.get('endpoints') is None else tuple(Endpoint(**e) for e in raw['endpoints'])
+    if endpoints is not None and len(endpoints) == 2 and is_excluded_case(
+            raw.get('failure_type'), endpoints[0].actual_layer, endpoints[1].actual_layer):
+        # the dataset no longer holds this case, but a same-layer neighbour could still satisfy the layer check above
+        reasons.append(f'{CASE_EXCLUSION_RULE}_{which}')
     filters = {k: raw[k] for k in SIDE_FILTERS if raw.get(k) is not None}
     side = BoundSide(raw['product_id'], raw['design_version'], frame, (x, y), raw['analysis_layer'],
                      endpoints, raw.get('failure_type'), raw.get('roi_id'), filters)

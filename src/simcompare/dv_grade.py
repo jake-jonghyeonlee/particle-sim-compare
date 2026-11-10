@@ -174,12 +174,15 @@ def _check_required(sheet, required):
 # ---- 쌍 선정 -----------------------------------------------------------------------------------
 
 def collect_short_pairs(root):
-    """case 폴더 이름만 읽어 short 쌍을 모은다. 같은 이름 전극 case 가 먼저 빠지고, 그다음 open 이 빠진다."""
-    from .adapters.real_hotspot import _case_name, _discover_cases
+    """case 폴더 이름만 읽어 short 쌍을 모은다. SD2·SD3·PXL 수직 단락이 먼저 빠지고, 같은 이름 전극 case, 그다음 open 이 빠진다."""
+    from .adapters.real_hotspot import _case_name, _discover_cases, is_excluded_case
     cases, _ = _discover_cases(Path(root))
-    pairs, ignored, excluded, short_count = {}, [], [], 0
+    pairs, ignored, excluded, short_count, excluded_vertical = {}, [], [], 0, 0
     for case in cases:
         defect, electrode_a, layer_a, electrode_b, layer_b = _case_name(case.name)
+        if is_excluded_case(defect, layer_a, layer_b):
+            excluded_vertical += 1
+            continue
         if electrode_a == electrode_b:
             ignored.append(case.name)
             continue
@@ -193,7 +196,8 @@ def collect_short_pairs(root):
     if not pairs:
         raise NumericContractError('dv_no_short_pairs', 'same-name 과 open 을 뺀 short case 가 없습니다')
     return {'pairs': pairs, 'case_count_found': len(cases), 'short_case_count': short_count,
-            'ignored_same_name_cases': ignored, 'excluded_open_cases': excluded}
+            'ignored_same_name_cases': ignored, 'excluded_open_cases': excluded,
+            'excluded_vertical_cases': excluded_vertical}
 
 
 # ---- 계산 --------------------------------------------------------------------------------------
@@ -300,6 +304,7 @@ def run_dv_grade(sheet_path, root, out, product_id, threshold_text=None):
                     'timings': sheet['timings'], 'threshold_v': threshold_out, 'case_count_found': found['case_count_found'],
                     'short_case_count': found['short_case_count'], 'pair_count': len(grade_rows), 'grade_counts': counts,
                     'ignored_same_name_cases': found['ignored_same_name_cases'], 'excluded_open_cases': found['excluded_open_cases'],
+                    'excluded_vertical_cases': found['excluded_vertical_cases'],
                     'unused_sheet_electrodes': sorted(e for e, row in sheet['rows'].items() if e not in required and not row['broken']),
                     'outputs': {name: _sha256(stage / name) for name in OUTPUT_FILES}, 'tool_version': __version__}
         with open(stage / MANIFEST_NAME, 'w', encoding='utf-8', newline='\n') as handle:
@@ -329,6 +334,7 @@ def summary_lines(result):
              f"등급: High {counts['High']}개, Low {counts['Low']}개, None {counts['None']}개",
              f"low–low 경계: {threshold + ' V' if threshold else '없음(ΔV>0 이면 High)'}",
              f"제외: open case {len(manifest['excluded_open_cases'])}개, 같은 이름 전극 case {len(manifest['ignored_same_name_cases'])}개",
+             f"제외한 SD2·SD3·PXL 수직 단락 case(excluded_vertical_cases) {manifest['excluded_vertical_cases']}개",
              f"쓰지 않은 시트 전극 {len(manifest['unused_sheet_electrodes'])}개"]
     if result['top']:
         lines.append('ΔV 큰 쌍:')

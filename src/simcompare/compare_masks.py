@@ -22,6 +22,7 @@ import zipfile
 
 import numpy as np
 
+from .adapters.real_hotspot import CASE_EXCLUSION_RULE
 from .linepixel import FAILURE_PIECES, AreaMetric, Coverage, FractionMetric, GroupKey, PackedMask, _PieceMasks
 
 SCHEMA = 'compare_masks_v1'
@@ -81,7 +82,8 @@ class MasksWriter:
             groups.append({'key': asdict(key), 'union': asdict(group.union),
                            'failure_pieces': {n: asdict(group.failure_pieces[n]) for n in FAILURE_PIECES},
                            'fractions': {n: asdict(m) for n, m in group.fractions.items()}, 'masks': masks})
-        self._sides[name] = {'input_hash': result.input_hash, 'is_synthetic': bool(result.is_synthetic),
+        self._sides[name] = {'input_hash': result.input_hash, 'case_exclusion_rule': CASE_EXCLUSION_RULE,
+                             'is_synthetic': bool(result.is_synthetic),
                              'frames': frames, 'groups': groups}
 
     def abandon(self):
@@ -152,6 +154,8 @@ def _side_result(archive, name, side, dataset, bytes_limit):
     expected_hash = dataset.provenance.get('input_hash')
     if expected_hash is None or side['input_hash'] != expected_hash:
         raise ValueError('input_hash_mismatch')
+    if side.get('case_exclusion_rule') != CASE_EXCLUSION_RULE:
+        raise ValueError('case_exclusion_rule_mismatch')
     if side['is_synthetic'] != bool(dataset.provenance.get('is_synthetic', False)):
         raise ValueError('synthetic_flag_mismatch')
     frames = {fid: _check_frame(dataset, fid, desc) for fid, desc in side['frames'].items()}

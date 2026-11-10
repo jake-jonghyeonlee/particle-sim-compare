@@ -29,6 +29,14 @@ def baseline_src(tmp_path):
     if archive.returncode != 0:
         pytest.skip(f'{BASELINE} is not available in this checkout')
     subprocess.run(['tar', '-x', '-C', str(folder)], input=archive.stdout, check=True)
+    # legacy-calc-align/T2: the input_hash now carries the case-exclusion rule, and the asset manifests this test builds
+    # with the current code record that hash. The baseline copy gets the same hash term; nothing else of it changes.
+    from simcompare.adapters.real_hotspot import CASE_EXCLUSION_RULE
+    real_hotspot = folder/'src'/'simcompare'/'adapters'/'real_hotspot.py'
+    old_term = "manifest['source_payload_hash']+assignment_hash+(pair_hash or '')"
+    text = real_hotspot.read_text(encoding='utf-8')
+    assert old_term in text
+    real_hotspot.write_text(text.replace(old_term, old_term + f"+'{CASE_EXCLUSION_RULE}'"), encoding='utf-8')
     return folder/'src'
 
 

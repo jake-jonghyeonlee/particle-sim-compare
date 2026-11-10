@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .adapters.real_hotspot import CASE_EXCLUSION_RULE
 from .compare2 import AREA_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _json_text, _publish
 from .compare2_inputs import VI_LINE_DIVISOR, VI_PIXEL_DIVISOR, load_compare2_config
 from .compare2_link import APPROXIMATION_NOTE, APPROXIMATION_NOTE_CNO, build_link, cno_condition_id, compute_locations
@@ -187,6 +188,14 @@ def _read_compare2(compare2_dir, cfg2):
         raise NumericContractError(
             'compare2_stale_area_basis',
             f'compare2.json area_basis is {basis!r}, this code uses {AREA_BASIS!r}: 02(compare2)를 새 번들로 다시 실행')
+    exclusions = (doc.get('inputs') or {}).get('case_exclusions')
+    rules = {role: (exclusions.get(role) or {}).get('rule') if isinstance(exclusions, dict) else None
+             for role in ('reference', 'target')}
+    if any(rule != CASE_EXCLUSION_RULE for rule in rules.values()):
+        raise NumericContractError(
+            'compare2_stale_case_exclusion_rule',
+            f'compare2.json case_exclusions rule is {rules!r}, this code uses {CASE_EXCLUSION_RULE!r}: '
+            '02(compare2)를 새 번들로 다시 실행')
     recorded = ((doc.get('inputs') or {}).get('compare2_config') or {}).get('sha256')
     if recorded != cfg2.config_sha256:
         raise NumericContractError(
@@ -1167,7 +1176,8 @@ def _short_sha(value):
 
 
 def _inputs_table(doc, view):
-    rows = [('compare2 결과', f'compare2.json (sha256 {_short_sha(view["json_sha"])})')]
+    rows = [('compare2 결과', f'compare2.json (sha256 {_short_sha(view["json_sha"])})'),
+            ('제외 규칙', f'SD2·SD3·PXL 이 낀 수직 단락은 기존 계산 방식에 따라 제외 (규칙 {_e(CASE_EXCLUSION_RULE)})')]
     selected = _diameters_text(doc)
     rows.append(('이물 크기 선택', _e(selected) if selected else '필터 없음(모든 이물 크기)'))
     link = view['link']

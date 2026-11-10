@@ -51,9 +51,24 @@ def verify_digests() -> None:
     assert not changed, changed
 
 
+_HASH_TERM = "manifest['source_payload_hash']+assignment_hash+(pair_hash or '')"
+
+
+def with_case_exclusion_rule(text: str, path) -> str:
+    """Second import-time transformation (legacy-calc-align/T2): production's configured input_hash now ends with the
+    case-exclusion rule, so the frozen real_hotspot hashes the same way. Without it the asset manifests production writes
+    would never match the frozen input_hash. The rule itself (which cases are dropped) is NOT applied to the frozen code."""
+    if Path(path).name != 'real_hotspot.py' or Path(path).parent.name != 'adapters':
+        return text
+    from simcompare.adapters.real_hotspot import CASE_EXCLUSION_RULE
+    assert _HASH_TERM in text
+    return text.replace(_HASH_TERM, _HASH_TERM + f"+'{CASE_EXCLUSION_RULE}'")
+
+
 class _Loader(importlib.machinery.SourceFileLoader):
     def source_to_code(self, data, path, *, _optimize=-1):
-        return super().source_to_code(rewire(bytes(data).decode('utf-8')).encode('utf-8'), path, _optimize=_optimize)
+        text = with_case_exclusion_rule(rewire(bytes(data).decode('utf-8')), path)
+        return super().source_to_code(text.encode('utf-8'), path, _optimize=_optimize)
 
     def get_code(self, fullname):
         path = self.get_filename(fullname)

@@ -584,15 +584,16 @@ BASELINE_SHAS = {
         'reference_index_export/review_rois.json': '758c52a9760d530b110d114a1bdeea949c6b779fa4454c028343fe578c52e5d8',
         'target_export/review_rois.json': '592d509f150d766674fd5859959be5a1ed8cf71313d8f5185fea2328569647c8',
         'target_index_export/review_rois.json': '1377962f773494666651b800aeea4b6a3716c80a54771b1daeda1ac3a5abf4bf'},
+    # 2026-11-10 (legacy-calc-align/T2): the input_hash carries the case-exclusion rule, so the real-mode exports changed
     'candidates_real': {
-        'candidate_queries_v1.json': 'faae721dd78107d8cd963c8eabf6c1aa6e2d5b7461d1194873ac72129f88ab55',
+        'candidate_queries_v1.json': 'bccbe6254695e90d5917d95884f68ae2d42bed08e0244505ad48d3c4a7cfbef9',
         'execution.json': '71052d384dde5fe5017c55c4d15bfd341490603f31de1b9a3e28621c0bf3da62',
         'funnel.csv': '176a98c405f36d86b6ae4d7d9db01e52dd97622448683f4280ecb948d2f26528',
         'funnel.json': '69e4706b8f16d229f19817d807f550e28fd7bf994203ebf3e46caf136d1a4c78',
-        'reference_export/review_rois.json': 'cfdc77608d71693c1ae3b82066a675ec1a95ab9e7c912ac0c791f1fb35707a34',
-        'reference_index_export/review_rois.json': 'b6d61f6f9da6c80c7eaf0f7386f0886d6fe09f74a86f9ae8b9dc260264b9ecc6',
-        'target_export/review_rois.json': '6f93edb1aea7683e172b1bafa5322ec625a0bcf5725628e3a69240e34ad1f781',
-        'target_index_export/review_rois.json': 'a992325d6633fcac4f775acda5b4594ad0e9b3c519cb7d76693e073576c8dc92'},
+        'reference_export/review_rois.json': '6b48fd17ce0f4b16d6daac91c40401e161546f1c75d8cdaeb3bc0864902bae21',
+        'reference_index_export/review_rois.json': '9f8b99a0ae9886268d7a5ca4413677973cffe3eb7b470bdbd51ea26f6c2463fc',
+        'target_export/review_rois.json': 'e809422b7745e0858c3e11c97e6df6ebebd52b914f596585ba4bf7e8963b1e32',
+        'target_index_export/review_rois.json': '15759cdf9e1530f6a0270e848d754ca200217229c23e1ed3297c93eb256c7aad'},
     'electrode_map_demo': {
         'electrode_map.html': '8f91946f7c2113e36a943e602c66770e02a989b3954c33a13c349f2fc9d7a20d',
         'electrode_map.json': 'b128ad12c31c5a40d12b97441ba47e15366f69f36799a186a66f97ee9c5e9f65',

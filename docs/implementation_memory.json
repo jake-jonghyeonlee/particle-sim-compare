@@ -635,6 +635,12 @@
       "area_basis = crop_observed_area_legacy_team_factor_user_approved_2026_11_10; compare2.json products.<role>.effective_resolution; compare2-report refuses an older area_basis (compare2_stale_area_basis)",
       "example yaml: mobile/auto/watch glass 1387500 mm2, weights 2.5/2.5; other glass 975000 mm2, weight_line 10/7, weight_pixel 2.0"
     ],
+    "case_exclusion_2026_11_10": [
+      "User decision 2026-11-10 (legacy calculation): vertical_short cases whose endpoint actual_layer is exactly SD2, SD3 or PXL (either end, same layer included, case-sensitive) are excluded in every stage; lateral_short, lateral_open and CNO are kept",
+      "constants in adapters/real_hotspot.py: EXCLUDED_VERTICAL_LAYERS, CASE_EXCLUSION_RULE = vertical_short_sd2_sd3_pxl_excluded_2026_11_10, is_excluded_case / is_excluded_case_name; the filter runs at the end of load_real_manifest (after hash, source_files and inventory checks), also on expected_cases and diagnostics; manifest['case_exclusions'] holds counts only, no names",
+      "the rule is part of configured_dataset input_hash, so older masks zip / candidates / confirm / windows / asset manifests are refused: ETX reruns 02-07 (03 assets included) with a new bundle and new --out; compare_masks records case_exclusion_rule per side; compare2.json inputs.case_exclusions, compare2-report refuses a missing or different rule (compare2_stale_case_exclusion_rule)",
+      "correspondence bind_pairs blocks an excluded endpoint pair (reason <rule>_a|b); dv-template and dv-grade skip the cases and count excluded_vertical_cases; template_export layer check uses the filtered manifest; dl2_model_roles stay pair-table based (Lead decision)"
+    ],
     "cno_integration_decisions_2026_11_07": [
       "CNO is opt-in: import-hotspots --include-cno (ETX 01 and dv 01 examples turn it on); without it every output stays byte-identical",
       "a CNO case has one 1.png: geometry = one electrode shape, crop and origin as the 5-part cases",

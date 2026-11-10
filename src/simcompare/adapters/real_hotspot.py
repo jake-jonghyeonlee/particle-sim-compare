@@ -77,6 +77,26 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# 기존 계산 방식에 맞춰 SD2·SD3·PXL 이 낀 수직 단락(vertical_short)은 모든 단계에서 제외한다(2026-11-10 사용자 확인).
+# 층 이름은 대소문자를 구분한다. lateral_short·lateral_open·CNO 는 층과 무관하게 유지한다.
+EXCLUDED_VERTICAL_LAYERS = frozenset({'SD2', 'SD3', 'PXL'})
+CASE_EXCLUSION_RULE = 'vertical_short_sd2_sd3_pxl_excluded_2026_11_10'
+
+
+def is_excluded_case(defect, layer_a, layer_b):
+    """True for a vertical_short case with SD2/SD3/PXL as the actual layer of either endpoint (same layer included)."""
+    return defect == 'vertical_short' and (layer_a in EXCLUDED_VERTICAL_LAYERS or layer_b in EXCLUDED_VERTICAL_LAYERS)
+
+
+def is_excluded_case_name(name):
+    """is_excluded_case for a bare case name; a name that does not parse is kept (never an error here)."""
+    try:
+        defect, _, layer_a, _, layer_b = _case_name(name)
+    except (NumericContractError, TypeError):
+        return False
+    return is_excluded_case(defect, layer_a, layer_b)
+
+
 def _case_name(name: str):
     match = CASE_RE.fullmatch(name)
     if not match:
@@ -954,6 +974,31 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
         if (status not in ('confirmed', 'unconfirmed') or (status == 'confirmed') != has_inventory
                 or ('expected_case_source' in manifest and has_source != has_inventory)):
             raise NumericContractError('invalid_real_expected_case_coverage_status')
+    return _apply_case_exclusions(manifest)
+
+
+def _apply_case_exclusions(manifest):
+    """Drop the excluded vertical_short cases from the authenticated manifest (hash, source-file and inventory checks
+    already ran on the full import). The names are not kept; only the counts are recorded."""
+    kept, excluded_names = [], set()
+    for case in manifest.get('cases', []):
+        a, b = case['endpoints']
+        if is_excluded_case(case.get('failure_type'), a.get('actual_layer'), b.get('actual_layer')):
+            excluded_names.add(case['case_name'])
+        else:
+            kept.append(case)
+    excluded_expected = 0
+    if manifest.get('expected_cases') is not None:
+        expected_kept = [n for n in manifest['expected_cases'] if n not in excluded_names and not is_excluded_case_name(n)]
+        excluded_expected = len(manifest['expected_cases'])-len(expected_kept)
+        manifest['expected_cases'] = expected_kept
+    manifest['cases'] = kept
+    if 'diagnostics' in manifest:
+        manifest['diagnostics'] = [d for d in manifest['diagnostics']
+                                   if not (isinstance(d, dict) and isinstance(d.get('case'), str)
+                                           and (d['case'] in excluded_names or is_excluded_case_name(d['case'])))]
+    manifest['case_exclusions'] = {'rule': CASE_EXCLUSION_RULE, 'layers': sorted(EXCLUDED_VERTICAL_LAYERS),
+                                   'excluded_cases': len(excluded_names), 'excluded_expected_cases': excluded_expected}
     return manifest
 
 
@@ -1719,7 +1764,9 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     assignment_json = json.dumps(assignment, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
     assignment_hash = hashlib.sha256(assignment_json.encode('utf-8')).hexdigest()
     pair_hash = _sha(table_path) if table_path else None
-    configured_hash = hashlib.sha256((manifest['source_payload_hash']+assignment_hash+(pair_hash or '')).encode('ascii')).hexdigest()
+    # The exclusion rule is part of the hash so artefacts made before the rule (masks zip, exports, windows) are refused.
+    configured_hash = hashlib.sha256((manifest['source_payload_hash']+assignment_hash+(pair_hash or '')
+                                      +CASE_EXCLUSION_RULE).encode('ascii')).hexdigest()
     provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw,
                   'pair_table_version': next(iter(pairs.values())).table_version if pairs else None,
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),

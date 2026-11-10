@@ -1207,7 +1207,9 @@ def test_include_cno_writes_cno_cases_with_records_and_new_hash(tmp_path):
     assert not [d for d in manifest['diagnostics'] if d.get('status') == 'cno_case_skipped']
     assert f'{CNO_GCNT}/images/1.png' in manifest['source_files'] and f'{CNO_GCNT}/result/lateral_open.csv' in manifest['source_files']
     assert _normalized_cno_canonical_hash(manifest) == CNO_ON_CANONICAL_SHA256
-    assert load_real_manifest(tmp_path / 'on') == manifest
+    loaded = load_real_manifest(tmp_path / 'on')
+    assert loaded.pop('case_exclusions')['excluded_cases'] == 0   # added by the loader, not stored in manifest.json
+    assert loaded == manifest
 
 
 def test_flag_off_mixed_root_still_matches_the_cno_free_golden(tmp_path):

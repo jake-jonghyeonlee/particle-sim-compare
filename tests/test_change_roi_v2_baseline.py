@@ -31,20 +31,20 @@ CANDIDATE_DROP_KEYS = ('alignment_report',)
 RAW_FILES = ('funnel.json', 'funnel.csv', 'direct/roi_correspondence.json', 'direct/direct_pairs_sidecar.json')
 RAW_GLOBS = ('*/review_rois.json', '*/mask_derivation.json')
 
-EXPECTED = {   # recorded at 0717947
+EXPECTED = {   # recorded at 0717947; the review_rois/sidecar/queries values re-recorded 2026-11-10 (legacy-calc-align/T2: input_hash carries the case-exclusion rule)
     'funnel.json': '457ca1d93d71e51adca415ee7441ae37794e73078d61986fea78412abf466dec',
     'funnel.csv': 'dc760c1db9ac06d9bb4e0426771fbe0b4f231250c129d37f37ae5f435154dd3c',
     'direct/roi_correspondence.json': '3ff874f13acae437d1221bd23561bf81fb27235c045faf4d589fca026600d107',
-    'direct/direct_pairs_sidecar.json': '2ac712f758f81d8a6d0cd1665cc576331bf5c31b9788b38f4e01eaa26fb13488',
-    'reference_export/review_rois.json': 'b4e0ba95b258f884f4134a9980c8df64df881aac35c909a0b0daf5ca112ce2a7',
-    'reference_index_export/review_rois.json': '69badb1aec4b2868099c4b7fbcd809722f835e9e24313ee331a6d5d3e9cd6c20',
-    'target_export/review_rois.json': '7040ffdd2931962409b20e4ef9c1ec9d18e25e24d59f227540f2e8e427f5c94b',
-    'target_index_export/review_rois.json': 'c28212cc8948d06ee078635cf30dfa20b284bfd48572ec0d97cc4a8895bc631c',
+    'direct/direct_pairs_sidecar.json': '6744e6d45d59f548dfe714e56b9e99a0bd9cc883113ac29340e6dc15d3ecf3d5',
+    'reference_export/review_rois.json': '4d679e9f444a7591ffdc1fb4ef8e5ff137354e75aa5d3ef1c3ad47bf606cd9bf',
+    'reference_index_export/review_rois.json': 'dc48640a3e598bfbed1c5dff9f7b8f6704c3b7fc5a675becf3e603487ba3583e',
+    'target_export/review_rois.json': '240fad582cc4ed47648181a0ed126726ba8234e9a52c95b9731f783483a5eb6a',
+    'target_index_export/review_rois.json': '1f8f5e53cc9cafb355592363e7c12c9efc3f7534d05498016119b3ad75457457',
     'reference_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'reference_index_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'target_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'target_index_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
-    'candidate_queries_v1.json(normalised)': '365b57882e655980f1aa890073f1e4261a305ebd114eb9a0f2f751359b74c373',
+    'candidate_queries_v1.json(normalised)': 'e1210391fb899f68292400589167b5b3afa079bc50691f92119a09e5ea71fb11',
 }
 
 

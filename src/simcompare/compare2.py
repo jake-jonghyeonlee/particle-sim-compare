@@ -27,6 +27,7 @@ from pathlib import Path
 from .compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, CRP_ONE_GROUPS, ROUND_DIGITS, VI_LINE_DIVISOR,
                               VI_PIXEL_DIVISOR, cno_lambda_factor, collect_cno, crp_for_group,
                               effective_resolution, lambda_factor, load_compare2_config, load_density, size_key)
+from .adapters.real_hotspot import CASE_EXCLUSION_RULE
 from .numeric_schema import NumericContractError, has_short_cases
 
 SCHEMA_VERSION = 'compare2_v1'
@@ -201,9 +202,10 @@ def _load_side(cfg, role, top_buckets):
         raise NumericContractError('compare2_condition_assignment_required', f'{role}: condition_assignment needed')
     dataset = configured[1]
     if not has_short_cases(dataset.cases):
-        raise NumericContractError('compare2_side_without_cases', role)
+        raise NumericContractError('compare2_side_without_cases', f'{role}: {CASE_EXCLUSION_RULE}')
     manifest = real[1]
     meta = {'source_payload_hash': manifest['source_payload_hash'],
+            'case_exclusions': manifest.get('case_exclusions'),
             'expected_case_coverage_status': manifest.get('expected_case_coverage_status'),
             'same_name_cases_unresolved': bool(dataset.provenance.get('unresolved_same_name_cases'))}
     result = compute_areas(dataset, **detail, condition_stats=True)
@@ -885,6 +887,7 @@ def build_compare2(config_path):
             'density_dir': str(cfg2.density_dir),
             'manifests': {role: {'source_payload_hash': metas[role]['source_payload_hash'],
                                  'input_hash': metas[role]['input_hash']} for role in ROLES},
+            'case_exclusions': {role: metas[role].get('case_exclusions') for role in ROLES},
             'constants': {'vi_line_divisor': VI_LINE_DIVISOR, 'vi_pixel_divisor': VI_PIXEL_DIVISOR,
                           'cno_factor': CNO_FACTOR, 'crp_default_other': CRP_DEFAULT_OTHER,
                           'crp_one_groups': list(CRP_ONE_GROUPS), 'round_digits': ROUND_DIGITS,

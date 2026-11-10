@@ -163,7 +163,7 @@ def _data_files(folder: Path):
 def _build(config, config_sha, base: Path, config_path: Path, stage: Path, final: Path):
     from simcompare import pipeline
     from simcompare.adapters.electrode_png import import_electrode_assets
-    from simcompare.adapters.real_hotspot import import_hotspots
+    from simcompare.adapters.real_hotspot import _apply_case_exclusions, import_hotspots
     root = _resolve(base, config['data_dir'])
     cnt_root = _resolve(base, config['cnt_from_dl1_root'])
     if not root.is_dir():
@@ -172,7 +172,8 @@ def _build(config, config_sha, base: Path, config_path: Path, stage: Path, final
     work, data, roi_dir = stage / '_work', stage / 'data', stage / 'roi'
     work.mkdir()
     import_hotspots(root, data)
-    manifest = json.loads((data / 'manifest.json').read_text(encoding='utf-8'))
+    # the layer check follows the filtered manifest: a layer used only by an excluded SD2/SD3/PXL vertical case is not required
+    manifest = _apply_case_exclusions(json.loads((data / 'manifest.json').read_text(encoding='utf-8')))
     order = {row['actual_layer']: row['stack_order'] for row in config['layer_stack']}
     _check_layer_stack(manifest, order)
     assignment = {k: config[k] for k in _ID_FIELDS}

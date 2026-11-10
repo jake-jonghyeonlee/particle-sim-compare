@@ -16,6 +16,7 @@ from typing import Iterable, NamedTuple
 
 import numpy as np
 
+from .adapters.real_hotspot import CASE_EXCLUSION_RULE
 from .measurement import check_union_compatible, measure_full_mask
 from .numeric_schema import (
     DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES, DEFAULT_TOP_BUCKETS,
@@ -828,7 +829,7 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
                            i.source_contract_version, i.frame_id, float(diameter))
             grouped.setdefault(key, []).append((case, record))
     if not cases:
-        raise NumericContractError('missing_expected_cases')
+        raise NumericContractError('missing_expected_cases', CASE_EXCLUSION_RULE)
     provenance = dataset.provenance if dataset else {}
     if dataset is not None:
         expected = {CaseIdentity(**{name: raw[name] for name in CaseIdentity.__dataclass_fields__})
