@@ -290,10 +290,15 @@ def read_png(path, relative_path, *, sha256=None):
         raise NumericContractError('png_decode_failed', relative_path) from exc
 
 
-def read_gray_hotspot(path, relative_path, *, sha256=None, return_sha256=False):
+HOTSPOT_GRAY_THRESHOLD = 63
+
+
+def read_gray_hotspot(path, relative_path, *, sha256=None, return_sha256=False, return_low_gray=False):
     """Decode opaque grayscale hotspot occupancy from the same validated bytes.
 
-    Unlike the legacy binary reader, every nonzero gray sample is occupied.
+    A pixel is occupied when its gray value is greater than HOTSPOT_GRAY_THRESHOLD
+    (63), the team's existing rule. Values 1..63 are not occupied; they are
+    counted and returned as the last tuple element when return_low_gray is set.
     RGB is accepted only when all three channels are identical; palette and alpha
     encodings are rejected rather than converted.
     """
@@ -316,9 +321,14 @@ def read_gray_hotspot(path, relative_path, *, sha256=None, return_sha256=False):
                         if not np.array_equal(pixels[..., 0], pixels[..., 1]) or not np.array_equal(pixels[..., 0], pixels[..., 2]):
                             raise _PNGError('png_hotspot_color_rejected', 'RGB channels differ')
                         pixels = pixels[..., 0]
-                    mask = pixels != 0
+                    mask = pixels > HOTSPOT_GRAY_THRESHOLD
                     mask.setflags(write=False)
-                    return (mask, actual_sha256) if return_sha256 else mask
+                    result = (mask,)
+                    if return_sha256:
+                        result += (actual_sha256,)
+                    if return_low_gray:
+                        result += (int(np.count_nonzero((pixels != 0) & ~mask)),)
+                    return result if len(result) > 1 else mask
             except (_PNGError, NumericContractError, Image.DecompressionBombError, Image.DecompressionBombWarning):
                 raise
             except Exception as exc:

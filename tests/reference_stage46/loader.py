@@ -65,9 +65,26 @@ def with_case_exclusion_rule(text: str, path) -> str:
     return text.replace(_HASH_TERM, _HASH_TERM + f"+'{CASE_EXCLUSION_RULE}'")
 
 
+_POLICY_TERM = "'source_policy': {'gray_nonzero_is_occupied': True,"
+
+
+def with_hotspot_occupancy_rule(text: str, path) -> str:
+    """Third import-time transformation (gray63/T1): production's manifests now record ``hotspot_occupancy`` (rule
+    gray_gt_63) and ``source_policy.gray_gt_63_is_occupied``, and production's load_real_manifest refuses manifests
+    without them. The frozen importer/loader are rewired to write/read the same two fields so frozen-written manifests
+    load in production and production-written manifests load in the frozen code. The frozen occupancy computation
+    (``!= 0``) is NOT changed; the equivalence fixtures only use gray values 0 and 255, where both rules agree."""
+    if Path(path).name != 'real_hotspot.py' or Path(path).parent.name != 'adapters':
+        return text
+    assert _POLICY_TERM in text
+    text = text.replace(_POLICY_TERM, "'hotspot_occupancy': {'rule': 'gray_gt_63', 'threshold': 63, "
+                                      "'low_gray_pixels_total': 0}, 'source_policy': {'gray_nonzero_is_occupied': True,")
+    return text.replace('gray_nonzero_is_occupied', 'gray_gt_63_is_occupied')
+
+
 class _Loader(importlib.machinery.SourceFileLoader):
     def source_to_code(self, data, path, *, _optimize=-1):
-        text = with_case_exclusion_rule(rewire(bytes(data).decode('utf-8')), path)
+        text = with_hotspot_occupancy_rule(with_case_exclusion_rule(rewire(bytes(data).decode('utf-8')), path), path)
         return super().source_to_code(text.encode('utf-8'), path, _optimize=_optimize)
 
     def get_code(self, fullname):

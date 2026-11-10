@@ -26,7 +26,9 @@ from PIL import Image
 from ..numeric_schema import (DEFAULT_TOP_BUCKETS, DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES,
                               DIAMETERS_UM, NumericContractError)
 from ..numeric_images import resolve_path
-from ..png_strict import read_gray_hotspot
+from ..png_strict import HOTSPOT_GRAY_THRESHOLD, read_gray_hotspot
+
+HOTSPOT_OCCUPANCY_RULE = 'gray_gt_63'
 
 CONTRACT_VERSION = 'real_hotspot_v1'
 DEFECTS = ('lateral_short', 'vertical_short', 'lateral_open', 'vertical_open')
@@ -200,7 +202,7 @@ def _load_mask(asset: Path, record: dict, mmap: bool = False):
 
 
 def _read_gray(path: Path, relative_path: str):
-    return read_gray_hotspot(path, relative_path, return_sha256=True)
+    return read_gray_hotspot(path, relative_path, return_sha256=True, return_low_gray=True)
 
 
 def _cno_name(name: str):
@@ -359,7 +361,7 @@ def _import_records(root: Path, staging: Path, index: int, image_names: dict, cs
                 raise NumericContractError('png_decode_failed', raw_rel) from exc
             if header_pixels > max_input_pixels:
                 raise NumericContractError('real_hotspot_pixel_limit', raw_rel)
-            mask, source_sha256 = _read_gray(image_path, raw_rel)
+            mask, source_sha256, low_gray = _read_gray(image_path, raw_rel)
             if case_crop_shape is not None and mask.shape != case_crop_shape:
                 raise NumericContractError('hotspot_crop_shape_mismatch', f'{raw_rel}:{mask.shape}!={case_crop_shape}')
             mask_path = Path('assets') / f'{index:05d}_{diameter:02d}.npz'
@@ -370,7 +372,7 @@ def _import_records(root: Path, staging: Path, index: int, image_names: dict, cs
             record.update(input_status='observed', mask_path=mask_path.as_posix(), mask_encoding=MASK_ENCODING,
                           mask_sha256=_sha(staging / mask_path), source_path=raw_rel,
                           source_sha256=source_sha256, occupied_pixels=count, png_area_um2=area,
-                          mask_shape_yx=list(mask.shape),
+                          mask_shape_yx=list(mask.shape), low_gray_pixels=low_gray,
                           reason=None)
             file_index[raw_rel] = {'sha256': record['source_sha256'], 'path': raw_rel}
             if csv_row is None:
@@ -679,13 +681,17 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
         if cno_imported:
             csv_missing_cases += [c['case_name'] for c in cno_imported if c['csv']['status'] == 'missing']
         diagnostics.extend({'case': name, 'status': 'case_local_csv_missing'} for name in csv_missing_cases)
+        low_gray_total = sum(int(r.get('low_gray_pixels') or 0)
+                             for c in list(cases) + list(cno_imported or []) for r in c.get('records', []))
         frames = {'frame_id': 'real_hotspot_crop_v1', 'length_unit': 'um', 'pixel_pitch_um': 0.1,
                   'origin_xy_um': [50.0, 50.0], 'axis_order': 'yx', 'shape_yx': common_crop_shape,
                   'crop_from_electrode_px_yx': [500, 500], 'crop_policy': 'centered_exact_1000px_border',
                   'frame_id_scope': 'shared condition frame; condition assignments required'}
         manifest = {'schema_version': CONTRACT_VERSION, 'source_contract_version': CONTRACT_VERSION,
                     'is_synthetic': False, 'source_root_name': root.name,
-                    'source_policy': {'gray_nonzero_is_occupied': True, 'csv_area_um2_preserved': True,
+                    'hotspot_occupancy': {'rule': HOTSPOT_OCCUPANCY_RULE, 'threshold': HOTSPOT_GRAY_THRESHOLD,
+                                          'low_gray_pixels_total': low_gray_total},
+                    'source_policy': {'gray_gt_63_is_occupied': True, 'csv_area_um2_preserved': True,
                                       'area_formula': 'occupied_pixels * 0.01 um2',
                                       'classification_requires_explicit_pair_table': True,
                                       'electrode_polarity': None, 'max_input_pixels': max_input_pixels,
@@ -711,6 +717,8 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
                 handle.write(_expected_cases_text(expected, expected_source))
         os.replace(staging, out)
         print(f'import-hotspots: wrote {asset_bytes} bytes of compressed mask assets ({MASK_ENCODING})', file=sys.stderr)
+        print(f'hotspot_occupancy: rule={HOTSPOT_OCCUPANCY_RULE} (gray > {HOTSPOT_GRAY_THRESHOLD}); '
+              f'low_gray_pixels_total={low_gray_total} (0 means same result as the old nonzero rule)', file=sys.stderr)
         if expected is None:
             print('expected_cases: none (coverage unconfirmed; stage-4 ROIs will be blocked)', file=sys.stderr)
         else:
@@ -843,6 +851,12 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
         raise NumericContractError('real_manifest_version_mismatch')
     if manifest.get('is_synthetic') is not False:
         raise NumericContractError('invalid_synthetic_marker')
+    occupancy = manifest.get('hotspot_occupancy')
+    if (not isinstance(occupancy, dict) or occupancy.get('rule') != HOTSPOT_OCCUPANCY_RULE
+            or occupancy.get('threshold') != HOTSPOT_GRAY_THRESHOLD):
+        raise NumericContractError('hotspot_occupancy_rule_mismatch',
+                                   f'이 import 는 hotspot 점유 규칙 {HOTSPOT_OCCUPANCY_RULE!r}(gray > {HOTSPOT_GRAY_THRESHOLD})이 '
+                                   f'기록되지 않았습니다. 01(import-hotspots)을 새 번들로 다시 실행하세요.')
     expected_hash = manifest.get('source_payload_hash')
     payload = {k: v for k, v in manifest.items() if k not in ('source_payload_hash', 'manifest_hash_recipe')}
     canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
@@ -857,7 +871,7 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
             or frame.get('crop_policy') != 'centered_exact_1000px_border'):
         raise NumericContractError('real_frame_contract_mismatch')
     policy = manifest.get('source_policy', {})
-    if (policy.get('gray_nonzero_is_occupied') is not True
+    if (policy.get('gray_gt_63_is_occupied') is not True
             or policy.get('csv_area_um2_preserved') is not True
             or policy.get('area_formula') != 'occupied_pixels * 0.01 um2'):
         raise NumericContractError('real_source_policy_mismatch')

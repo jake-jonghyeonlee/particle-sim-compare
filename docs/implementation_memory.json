@@ -650,6 +650,7 @@
       "location formula: delta_lambda = sum_d (rho_B*b_d*F_B - rho_A*a_d*F_A)*pi/4, pixel only, delta_vi_line = 0; a CNO-only diameter without round-6 rows is dropped with a warning",
       "a CNO-enabled run restarts from round 1 (import) because round 4 output must be rebuilt"
     ],
+    "gray63_hotspot_occupancy": "2026-11-10 (gray63/T1): real hotspot PNG occupancy is gray > 63 (png_strict.HOTSPOT_GRAY_THRESHOLD), not != 0. 01 import records manifest hotspot_occupancy {rule gray_gt_63, threshold 63, low_gray_pixels_total} and record low_gray_pixels inside source_payload_hash; load_real_manifest refuses manifests without the rule (hotspot_occupancy_rule_mismatch) so ETX reruns from 01 with a new bundle and a new --out.",
     "condition_breakdown_definition": "Plan section 7. Change breakdown (A to B, totals 100%) uses the existing L / P_eff partition. Removal impact is separate: line = -excl_L, +transfer(l) at the pixel lambda; pixel = -excl_Peff; CNO = -its own lambda. compute_areas(condition_stats=True) supplies the integer cell counts (line/pixel exclusive and shared, transfer by line pair, transfer shared)."
   }
 }

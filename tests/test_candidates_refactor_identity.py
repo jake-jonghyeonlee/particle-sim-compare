@@ -36,7 +36,10 @@ def baseline_src(tmp_path):
     old_term = "manifest['source_payload_hash']+assignment_hash+(pair_hash or '')"
     text = real_hotspot.read_text(encoding='utf-8')
     assert old_term in text
-    real_hotspot.write_text(text.replace(old_term, old_term + f"+'{CASE_EXCLUSION_RULE}'"), encoding='utf-8')
+    text = text.replace(old_term, old_term + f"+'{CASE_EXCLUSION_RULE}'")
+    # gray63/T1: current manifests record source_policy.gray_gt_63_is_occupied (no gray_nonzero_is_occupied); the baseline
+    # loader reads the new key. Only the key name changes; the baseline occupancy code is not used by this test.
+    real_hotspot.write_text(text.replace('gray_nonzero_is_occupied', 'gray_gt_63_is_occupied'), encoding='utf-8')
     return folder/'src'
 
 

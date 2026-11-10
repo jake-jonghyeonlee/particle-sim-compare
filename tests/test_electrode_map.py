@@ -586,14 +586,14 @@ BASELINE_SHAS = {
         'target_index_export/review_rois.json': '1377962f773494666651b800aeea4b6a3716c80a54771b1daeda1ac3a5abf4bf'},
     # 2026-11-10 (legacy-calc-align/T2): the input_hash carries the case-exclusion rule, so the real-mode exports changed
     'candidates_real': {
-        'candidate_queries_v1.json': 'bccbe6254695e90d5917d95884f68ae2d42bed08e0244505ad48d3c4a7cfbef9',
+        'candidate_queries_v1.json': '48d399aa92e331541d20150a195cf46f0a328f53b572b421f30d40d101ecde86',  # gray63/T1 re-record (input_hash)
         'execution.json': '71052d384dde5fe5017c55c4d15bfd341490603f31de1b9a3e28621c0bf3da62',
         'funnel.csv': '176a98c405f36d86b6ae4d7d9db01e52dd97622448683f4280ecb948d2f26528',
         'funnel.json': '69e4706b8f16d229f19817d807f550e28fd7bf994203ebf3e46caf136d1a4c78',
-        'reference_export/review_rois.json': '6b48fd17ce0f4b16d6daac91c40401e161546f1c75d8cdaeb3bc0864902bae21',
-        'reference_index_export/review_rois.json': '9f8b99a0ae9886268d7a5ca4413677973cffe3eb7b470bdbd51ea26f6c2463fc',
-        'target_export/review_rois.json': 'e809422b7745e0858c3e11c97e6df6ebebd52b914f596585ba4bf7e8963b1e32',
-        'target_index_export/review_rois.json': '15759cdf9e1530f6a0270e848d754ca200217229c23e1ed3297c93eb256c7aad'},
+        'reference_export/review_rois.json': '2b53391a614891a8ddfbe284fda79523a753b500a34769fdf3ff15324db7d4ce',
+        'reference_index_export/review_rois.json': 'ce00d3e4af45f0e8a9bb9742853d916957b05eaddd2c365d7c212ebc4ac7de10',
+        'target_export/review_rois.json': '7e2f5e2cfd271c1ba6f79ed0226927fb3e8ac9f1c7514e4f95e9186f3c451ea2',
+        'target_index_export/review_rois.json': 'be9547cec53909214cfddbb7e815c08ccc9c52dd7aa0b2df9ebc47402039e67e'},
     'electrode_map_demo': {
         'electrode_map.html': '8f91946f7c2113e36a943e602c66770e02a989b3954c33a13c349f2fc9d7a20d',
         'electrode_map.json': 'b128ad12c31c5a40d12b97441ba47e15366f69f36799a186a66f97ee9c5e9f65',

@@ -818,8 +818,10 @@ def test_stage1_runner_logs_import_error(tmp_path):
 # src first on PYTHONPATH) and with the current tree, then print both functions' results on the written manifest.json.
 # Both trees gave these values (2026-11-06, T9). What remains zlib/Pillow independent is the manifest structure plus
 # the CSV hashes; the masks themselves are compared by decoded content (sha256 of the bool array bytes, 16 hex).
-NO_CNO_MANIFEST_SHA256 = '3497777e79bc222a047cf17681b003ef8a457d25dbfd5c47931300e770d2c2fe'
-NO_CNO_CANONICAL_SHA256 = 'ea550255719f076713f2e5ac998c406b1b2a7b26cee124999b09cc833bc83c93'
+NO_CNO_MANIFEST_SHA256 = '6546f408739684f944ebcc184ddde18b54fdcb9b8a189ccd1f9d1e51978eb5d8'
+# gray63/T1: the manifest gained hotspot_occupancy, record low_gray_pixels and source_policy.gray_gt_63_is_occupied
+# (replacing gray_nonzero_is_occupied); both goldens were recomputed from the current tree for that reason only.
+NO_CNO_CANONICAL_SHA256 = '49fd892ed321e31126dd70c12004314af7460796ea2cf7ff127c619d422cb100'
 NO_CNO_MASK_DIGESTS = {'assets/00000_01.npz': ((1270, 1270), '040156c78200cbcb'),
                        'assets/00000_02.npz': ((1270, 1270), '11c572f73aac642d')}
 CNO_NAME = 'lateralopen-CNO-gcnt'
@@ -1150,7 +1152,7 @@ def test_import_walks_the_tree_once(tmp_path, monkeypatch):
 # Golden of the mixed root built by _mixed_root (two 5-part cases + lateralopen-CNO-GCNT- and -PCNT-), imported with
 # include_cno=True and normalized by _normalized_cno_canonical_hash (the Pillow/zlib hashes of cases and cno_cases
 # records and of every source_files *.png entry masked, source_payload_hash dropped).
-CNO_ON_CANONICAL_SHA256 = '9f8526aab5021a7b91248b18af6020cb8ad725835751d172b4cd4e21d184bb4d'
+CNO_ON_CANONICAL_SHA256 = '434e35fa3868ec4e033b95b62aee5187686764a926e80ad54efe36eb3b166f40'  # gray63/T1 recompute
 CNO_GCNT, CNO_PCNT = 'lateralopen-CNO-GCNT-', 'lateralopen-CNO-PCNT-'
 
 

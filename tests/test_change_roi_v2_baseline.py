@@ -7,6 +7,7 @@
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,16 +36,17 @@ EXPECTED = {   # recorded at 0717947; the review_rois/sidecar/queries values re-
     'funnel.json': '457ca1d93d71e51adca415ee7441ae37794e73078d61986fea78412abf466dec',
     'funnel.csv': 'dc760c1db9ac06d9bb4e0426771fbe0b4f231250c129d37f37ae5f435154dd3c',
     'direct/roi_correspondence.json': '3ff874f13acae437d1221bd23561bf81fb27235c045faf4d589fca026600d107',
-    'direct/direct_pairs_sidecar.json': '6744e6d45d59f548dfe714e56b9e99a0bd9cc883113ac29340e6dc15d3ecf3d5',
-    'reference_export/review_rois.json': '4d679e9f444a7591ffdc1fb4ef8e5ff137354e75aa5d3ef1c3ad47bf606cd9bf',
-    'reference_index_export/review_rois.json': 'dc48640a3e598bfbed1c5dff9f7b8f6704c3b7fc5a675becf3e603487ba3583e',
-    'target_export/review_rois.json': '240fad582cc4ed47648181a0ed126726ba8234e9a52c95b9731f783483a5eb6a',
-    'target_index_export/review_rois.json': '1f8f5e53cc9cafb355592363e7c12c9efc3f7534d05498016119b3ad75457457',
+    # gray63/T1: re-recorded again (the manifest gained hotspot_occupancy, which changes source_payload_hash / input_hash)
+    'direct/direct_pairs_sidecar.json': '6611aea5a35c175a2a1ce07a193bf9380e5cbadf9c5624449d6623fd98d9c977',
+    'reference_export/review_rois.json': '932a17dde4631182cbaf26e8cf1103ffe596f2de7c0755c420d684b561143e9f',
+    'reference_index_export/review_rois.json': 'cf94dcd4fefd8536f31ced5f2bc26a6b7c590d63a1ae9214cf1b84778b508eb8',
+    'target_export/review_rois.json': '011a1b137688ad14f63fee2ce7f7f99e36921e555fcbf5939493e4e8205527f2',
+    'target_index_export/review_rois.json': 'c6b90e5f2b031a7c7258d0ccb8285324e1595d2821126ddad263ba23e080391e',
     'reference_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'reference_index_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'target_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
     'target_index_export/mask_derivation.json': '15bf297534cb28e7767c0058ade9141b1a645d629273a65c2533261223942d29',
-    'candidate_queries_v1.json(normalised)': 'e1210391fb899f68292400589167b5b3afa079bc50691f92119a09e5ea71fb11',
+    'candidate_queries_v1.json(normalised)': 'd4000c8a04687f795c17ffb1542feb77994f7299e89af110c22f4ab8b73424ac',
 }
 
 
@@ -124,6 +126,8 @@ def test_fixture_has_no_images_skipped_warning(pinned_run):
 
 
 def test_default_run_hashes_are_pinned(pinned_run):
+    if os.environ.get('PRINT_BASELINE'):
+        print('ACTUAL', json.dumps(baseline_hashes(pinned_run.out, pinned_run.roots), indent=1, sort_keys=True))
     assert baseline_hashes(pinned_run.out, pinned_run.roots) == EXPECTED
 
 
