@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from simcompare.adapters.real_hotspot import import_hotspots
@@ -105,8 +106,13 @@ def test_new_runner_stages_carry_the_multiproduct_arguments():
 def test_compare2_example_config_loads_and_stages_are_registered():
     from simcompare.compare2_inputs import load_compare2_config
     cfg = load_compare2_config(ROOT / 'configs/etx/compare2.example.yaml')  # paths are not required to exist
-    assert cfg.model_groups['mobile'].glass_area_um2 is None
-    assert cfg.model_groups['mobile'].glass_area_reason == 'glass_area_pending'
+    assert set(cfg.model_groups) == {'mobile', 'auto', 'watch', 'other'}
+    for name in ('mobile', 'auto', 'watch'):
+        group = cfg.model_groups[name]
+        assert group.glass_area_um2 == 1.3875e12 and (group.weight_line, group.weight_pixel) == (2.5, 2.5)
+        assert group.glass_area_reason is None
+    other = cfg.model_groups['other']
+    assert other.glass_area_um2 == 9.75e11 and other.weight_line == pytest.approx(10 / 7) and other.weight_pixel == 2.0
     assert cfg.report.dl1_root is not None
     stages = _stages()
     assert [c for c, _, _ in stages['02_vi_compute'][1]] == ['compare2']

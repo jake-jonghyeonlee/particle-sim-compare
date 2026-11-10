@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 import sys
 
-from .adapters.real_hotspot import CASE_EXCLUSION_RULE, is_excluded_case
+from .adapters.real_hotspot import is_excluded_case
 from .numeric_schema import (
     DIAMETERS_UM, Endpoint, Frame, NumericContractError, NumericDataset, finite, text,
 )
@@ -140,8 +140,18 @@ def _repeats(raw, where):
     return {'a': raw['a'], 'b': raw['b']}
 
 
+def _side_excluded(side):
+    """True when the side names a vertical_short endpoint pair with SD2/SD3/PXL (the case-exclusion rule)."""
+    endpoints = side.get('endpoints')
+    return (endpoints is not None and len(endpoints) == 2
+            and is_excluded_case(side.get('failure_type'), endpoints[0]['actual_layer'], endpoints[1]['actual_layer']))
+
+
 def validate_correspondence(payload) -> dict:
-    """Return a normalised deep copy; raise NumericContractError on contract violations."""
+    """Return a normalised deep copy; raise NumericContractError on contract violations.
+
+    A pair whose side names a case dropped by the case-exclusion rule is validated like any other pair and then left
+    out of the result (so no consumer binds, computes, lists or converts it); only their count is kept, as one warning."""
     if not isinstance(payload, dict) or payload.get('schema_version') != SCHEMA_VERSION:
         raise NumericContractError('unsupported_correspondence_schema')
     allowed = {'schema_version', 'producer', 'pairs', 'notes', 'warnings'}  # warnings are recomputed
@@ -150,7 +160,7 @@ def validate_correspondence(payload) -> dict:
     producer = payload.get('producer')
     if not isinstance(producer, dict) or producer.get('kind') not in PRODUCER_KINDS:
         raise NumericContractError('invalid_correspondence_producer')
-    pairs, seen, centres, warnings = [], set(), {}, []
+    pairs, seen, centres, warnings, excluded = [], set(), {}, [], 0
     for index, raw in enumerate(payload['pairs']):
         where = f'pairs[{index}]'
         if not isinstance(raw, dict) or set(raw) - PAIR_FIELDS or not {'pair_id', 'a', 'b', 'source', 'status'} <= set(raw):
@@ -168,6 +178,9 @@ def validate_correspondence(payload) -> dict:
         pair = {'pair_id': pair_id, 'a': _side(raw['a'], where + '.a'), 'b': _side(raw['b'], where + '.b'),
                 'repeats_per_frame': _repeats(raw.get('repeats_per_frame'), where),
                 'source': _source(raw['source'], where + '.source'), 'status': status, 'reasons': sorted(set(reasons))}
+        if _side_excluded(pair['a']) or _side_excluded(pair['b']):
+            excluded += 1
+            continue
         key = tuple((pair[s]['product_id'], pair[s]['design_version'], pair[s]['frame_id'], tuple(pair[s]['center_xy_um']),
                      pair[s]['analysis_layer']) for s in ('a', 'b'))
         if key in centres:
@@ -175,6 +188,8 @@ def validate_correspondence(payload) -> dict:
         else:
             centres[key] = pair_id
         pairs.append(pair)
+    if excluded:
+        warnings.append({'warning': 'case_excluded_pairs_dropped', 'count': excluded})
     return {'schema_version': SCHEMA_VERSION, 'producer': copy.deepcopy(producer), 'pairs': pairs,
             'notes': copy.deepcopy(payload.get('notes')), 'warnings': warnings}
 
@@ -254,10 +269,6 @@ def _bind_side(raw, dataset: NumericDataset, which: str):
     if raw['analysis_layer'] not in layers:
         reasons.append(f'analysis_layer_not_in_source_{which}')
     endpoints = None if raw.get('endpoints') is None else tuple(Endpoint(**e) for e in raw['endpoints'])
-    if endpoints is not None and len(endpoints) == 2 and is_excluded_case(
-            raw.get('failure_type'), endpoints[0].actual_layer, endpoints[1].actual_layer):
-        # the dataset no longer holds this case, but a same-layer neighbour could still satisfy the layer check above
-        reasons.append(f'{CASE_EXCLUSION_RULE}_{which}')
     filters = {k: raw[k] for k in SIDE_FILTERS if raw.get(k) is not None}
     side = BoundSide(raw['product_id'], raw['design_version'], frame, (x, y), raw['analysis_layer'],
                      endpoints, raw.get('failure_type'), raw.get('roi_id'), filters)

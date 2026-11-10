@@ -18,7 +18,7 @@ from simcompare.adapters.real_hotspot import (
     CASE_EXCLUSION_RULE, EXCLUDED_VERTICAL_LAYERS, is_excluded_case, is_excluded_case_name, load_real_manifest)
 from simcompare.cli import main
 from simcompare.compare2_report import build_report
-from simcompare.correspondence import bind_pairs
+from simcompare.correspondence import bind_pairs, to_dl1_relations, validate_correspondence
 from simcompare.numeric_schema import NumericContractError
 
 M = {1: {0}, 2: {0, 1}, 3: {0}}
@@ -138,7 +138,7 @@ def test_compare_masks_records_the_rule_and_refuses_files_without_it():
             compare_masks._side_result(None, 'reference', stale, dataset, 1 << 20)
 
 
-def test_correspondence_binds_an_excluded_pair_as_blocked(tmp_path):
+def test_correspondence_drops_an_excluded_pair(tmp_path):
     from simcompare.adapters.numeric import load_dataset
     from simcompare.synthetic import generate_numeric_demo
     generate_numeric_demo(tmp_path / 'demo')
@@ -156,9 +156,39 @@ def test_correspondence_binds_an_excluded_pair_as_blocked(tmp_path):
     ok_pair['a'].update(failure_type='vertical_short', endpoints=eps('M1'))
     ok_pair['b'].update(failure_type='vertical_short', endpoints=eps('M1'))
     ok_pair['pair_id'] = 'PY'
-    bound = {p.pair_id: p for p in bind_pairs(tcor.payload([bad, ok_pair]), reference, target)}
-    assert bound['PX'].status == 'blocked' and f'{CASE_EXCLUSION_RULE}_a' in bound['PX'].reasons
-    assert bound['PY'].status == 'ready'
+    payload = tcor.payload([bad, ok_pair])
+    assert [p['pair_id'] for p in validate_correspondence(payload)['pairs']] == ['PY']
+    assert validate_correspondence(payload)['warnings'] == [{'warning': 'case_excluded_pairs_dropped', 'count': 1}]
+    bound = {p.pair_id: p for p in bind_pairs(payload, reference, target)}
+    assert list(bound) == ['PY'] and bound['PY'].status == 'ready'
+    _rows, report = to_dl1_relations(payload)           # converters validate first: PX is neither converted nor skipped
+    assert 'PX' not in json.dumps(report)
+
+
+def test_compare_windows_has_no_row_for_an_excluded_pair(tmp_path):
+    import test_cno_round6 as r6
+    world = r6.make_world(tmp_path, layer='L1')
+    corr = r6.candidates(world, tmp_path / 'cand')
+    payload = json.loads(corr.read_text(encoding='utf-8'))
+    ready = [p for p in payload['pairs'] if p['status'] == 'ready' and p['a'].get('endpoints') and len(p['a']['endpoints']) == 2]
+    assert ready
+    bad = json.loads(json.dumps(ready[0]))
+    bad['pair_id'] = 'EXCLUDED_PAIR_ID'
+    bad['a'].update(failure_type='vertical_short', endpoints=[{'electrode_id': 'X', 'role': None, 'actual_layer': 'SD2'},
+                                                              {'electrode_id': 'Y', 'role': None, 'actual_layer': 'L1'}])
+    payload['pairs'].append(bad)
+    mixed = tmp_path / 'mixed.json'
+    mixed.write_text(json.dumps(payload), encoding='utf-8')
+    plain = r6.windows(world, corr, tmp_path / 'win_plain')
+    out = r6.windows(world, mixed, tmp_path / 'win_mixed')
+    for path in out.iterdir():
+        if path.is_file() and path.suffix in ('.json', '.csv', '.html'):
+            assert 'EXCLUDED_PAIR_ID' not in path.read_text(encoding='utf-8'), path.name
+    doc = json.loads((out / 'local_delta.json').read_text(encoding='utf-8'))
+    base = json.loads((plain / 'local_delta.json').read_text(encoding='utf-8'))
+    assert doc['status'] == base['status'] and doc['provenance']['correspondence_warnings'] == (
+        base['provenance']['correspondence_warnings'] + [{'warning': 'case_excluded_pairs_dropped', 'count': 1}])
+    assert (out / 'local_delta_rows.csv').read_text(encoding='utf-8') == (plain / 'local_delta_rows.csv').read_text(encoding='utf-8')
 
 
 def test_dv_template_and_dv_grade_skip_the_excluded_cases(tmp_path, capsys):

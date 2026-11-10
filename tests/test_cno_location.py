@@ -268,7 +268,7 @@ def chain(tmp_path_factory):
     write_density(density, 'gb', {'P1': {5: 1.0}, 'P2': {5: 1.0}}, {'P1': {5: 3.0}, 'P2': {5: 1.0}, tcc.CNO_LAYER: {5: 4.0}})
     cfg = {'schema_version': 'compare2_config_v1', 'numeric_config': str(world.config), 'output_dir': str(base / 'c2'),
            'density_dir': str(density), 'lambda_diameters_um': [5], 'report': {'map_window_um': 6, 'diameter_um': 5},
-           'model_groups': {g: {'glass_area': {'value': 50.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}
+           'model_groups': {g: {'glass_area': {'value': 200.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}
                             for g in ('ga', 'gb')},
            'products': {'reference': {'model_group': 'ga', 'resolution': RES, 'hotspot_root': str(base / 'hotspot_reference')},
                         'target': {'model_group': 'gb', 'resolution': RES, 'hotspot_root': str(base / 'hotspot_target')}}}
@@ -333,7 +333,7 @@ def test_c_one_sided_cno_in_the_real_chain_is_computed(tmp_path):
     write_density(density, 'ga', {'P1': {5: 1.0}}, {'P1': {5: 3.0}, 'L1': {5: 2.0}})
     cfg = {'schema_version': 'compare2_config_v1', 'numeric_config': str(world.config), 'output_dir': str(tmp_path / 'c2'),
            'density_dir': str(density), 'lambda_diameters_um': [5], 'report': {'map_window_um': 6, 'diameter_um': 5},
-           'model_groups': {'ga': {'glass_area': {'value': 50.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}},
+           'model_groups': {'ga': {'glass_area': {'value': 200.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}},
            'products': {side: {'model_group': 'ga', 'resolution': RES, 'hotspot_root': str(tmp_path / f'hotspot_{side}')}
                         for side in ROLES}}
     (tmp_path / 'compare2.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')
