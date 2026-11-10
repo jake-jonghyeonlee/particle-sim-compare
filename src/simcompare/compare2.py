@@ -2,8 +2,8 @@
 
 Every value is computed from unrounded floats; `*_rounded` fields (6 digits) are for display only.
 Formulas: docs/implementation_memory.json § compare2_calculation_2026_11_05 and the T3 contract.
-lambda = density(count/glass) * CA(um^2, observed in the 2x2 crop) * factor, where the factor holds /4 and the
-panel scale (compare2_inputs.lambda_factor). A side with a missing input reports null instead of a guess.
+lambda = density(count/glass) * CA(um^2, observed in the 2x2 crop) * factor, where factor = effective_resolution *
+weight / glass (team formula 2026-11-10; effective = int(W*H/4) for the mobile group only; compare2_inputs.lambda_factor). A side with a missing input reports null instead of a guess.
 Null propagation: the line series and the pixel series are independent. A missing line input (glass area, line
 density, group status unavailable/partial) nulls only the line indicators and their deltas; a missing pixel input
 (pixel density, invalid CNO CSV) nulls only the pixel ones. A not_applicable group (vertical size below the
@@ -26,11 +26,11 @@ from pathlib import Path
 
 from .compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, CRP_ONE_GROUPS, ROUND_DIGITS, VI_LINE_DIVISOR,
                               VI_PIXEL_DIVISOR, cno_lambda_factor, collect_cno, crp_for_group,
-                              lambda_factor, load_compare2_config, load_density, size_key)
+                              effective_resolution, lambda_factor, load_compare2_config, load_density, size_key)
 from .numeric_schema import NumericContractError, has_short_cases
 
 SCHEMA_VERSION = 'compare2_v1'
-AREA_BASIS = 'crop_observed_area_div4_user_approved_2026_11_05'
+AREA_BASIS = 'crop_observed_area_legacy_team_factor_user_approved_2026_11_10'
 CONSERVATION_TOL = 1e-12
 SLOPE_LIMIT_EPS = 1e-12
 RATIO_EPS = 1e-15
@@ -667,7 +667,8 @@ def _full_range_json(side_a, side_b):
 def _product_json(side, density_tables):
     product, group = side['product'], side['group']
     return {'role': side['role'], 'model_group': group.name, 'crp': side['crp'],
-            'resolution': list(product.resolution), 'glass_um2': group.glass_area_um2,
+            'resolution': list(product.resolution),
+            'effective_resolution': effective_resolution(product, group), 'glass_um2': group.glass_area_um2,
             'glass_area_reason': group.glass_area_reason,
             'weights': {'line': group.weight_line, 'pixel': group.weight_pixel},
             'F_line': side['factors']['line'], 'F_pixel': side['factors']['pixel'], 'F_cno': side['factors']['cno'],

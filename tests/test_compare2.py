@@ -93,7 +93,7 @@ DENS_PIXEL = {'P1': {1: 3.0, 2: 1.5, 3: 0.75}, 'P2': {1: 6.0, 2: 3.0, 3: 1.5}, '
 
 def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, line=None, pixel=None,
         ref_cno=None, tgt_cno=None, scale=1.0, out_name='out', diameters=None, skip=(),
-        density_transposed=False):
+        density_transposed=False, weights=(1.0, 1.0), res=None):
     """Build both sides, write the configs, run `simcompare compare2`. Returns (exit code, output folder)."""
     ref_root, ref_imp = write_side(tmp, 'ref', *ref, cno=ref_cno, skip=skip)
     tgt_root, tgt_imp = write_side(tmp, 'tgt', *tgt, cno=tgt_cno, skip=skip)
@@ -108,10 +108,11 @@ def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, li
     glass_cfg = {'value': glass, 'unit': 'um2'}
     cfg = {'schema_version': 'compare2_config_v1', 'numeric_config': 'numeric.yaml', 'output_dir': out_name,
            'density_dir': 'density',
-           'model_groups': {group: {'glass_area': glass_cfg, 'weight_line': 1.0, 'weight_pixel': 1.0}
+           'model_groups': {group: {'glass_area': glass_cfg, 'weight_line': weights[0],
+                                     'weight_pixel': weights[1]}
                             for group in {ref_group, tgt_group}},
-           'products': {'reference': {'model_group': ref_group, 'resolution': RES, 'hotspot_root': str(ref_root)},
-                        'target': {'model_group': tgt_group, 'resolution': RES, 'hotspot_root': str(tgt_root)}}}
+           'products': {'reference': {'model_group': ref_group, 'resolution': res or RES, 'hotspot_root': str(ref_root)},
+                        'target': {'model_group': tgt_group, 'resolution': res or RES, 'hotspot_root': str(tgt_root)}}}
     if diameters is not None:
         cfg['lambda_diameters_um'] = diameters
     (tmp / 'compare2.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')
@@ -178,7 +179,7 @@ def oracle(cases, pairs, line_density, pixel_density, factor_line, factor_pixel)
     return result
 
 
-FACTOR = RES[0] * RES[1] / (4 * 50.0)  # weight 1, glass 50 um^2 -> 1.0
+FACTOR = (RES[0] * RES[1] // 4) / 50.0  # mobile group: effective int(W*H/4); weight 1, glass 50 um^2 -> 1.0
 
 
 def vi(lam_line, lam_pixel, crp=1.0):
@@ -214,7 +215,9 @@ def test_hand_calculation_single_pair(tmp_path):
     assert close(row['delta_vi_line'], d_vi) and close(row['share_line'], 1.0)
     assert delta['slopes']['line']['method'] == 'secant'
     assert doc['schema_version'] == 'compare2_v1'
-    assert doc['inputs']['area_basis'] == 'crop_observed_area_div4_user_approved_2026_11_05'
+    assert doc['inputs']['area_basis'] == 'crop_observed_area_legacy_team_factor_user_approved_2026_11_10'
+    for role in ('reference', 'target'):
+        assert doc['products'][role]['effective_resolution'] == RES[0] * RES[1] // 4  # mobile group
     for name in ('compare2_summary.csv', 'compare2_layers.csv', 'compare2_conditions.csv', 'compare2_cno.csv',
                  'execution.json'):
         assert (out / name).is_file()
@@ -585,7 +588,7 @@ def test_usage_reference_lists_delta_check_failed():
 # ---- lambda_diameters_um (diameter subset + full-range indicators) ----------------------------------------------
 
 GOLDEN = {  # masked sha256 of the outputs of the fixture below, taken from the code before lambda_diameters_um existed
-    'compare2.json': '656dcd639ca6512afd7ed6fa75f8ec420f46d1f02d35f8f5664dbad96cfb65b8',
+    'compare2.json': '20a535af992e5d6efdab18b42ad398145559909b764ff2de72f482949d90346e',  # 2026-11-10: area_basis + effective_resolution
     'compare2_summary.csv': '4306ab9e66b91f6fbb1a7a2ef2261966ed0845eebae0b1d139f8b1c392b38c27',
     'compare2_layers.csv': '01cf8566d35d359e9ac38583127eb6987cd9fd5f232e3960ef27ed9c049a30c9',
     'compare2_conditions.csv': '14aaab246c3c1b800375091fe6d5461e2612d969bde5c12650a7547897ea2a60',
@@ -620,6 +623,23 @@ def test_no_key_keeps_default_outputs_byte_identical(tmp_path):
         assert hashlib.sha256(re.sub(r'[0-9a-f]{64}', 'H', text).encode('utf-8')).hexdigest() == digest, name
     doc = load(out)
     assert 'full_range' not in doc and 'formula_basis' not in doc and 'diameter_filter' not in doc['inputs']
+
+
+def test_non_mobile_odd_resolution_uses_team_factor_in_lambda(tmp_path):
+    ref, tgt = two_sides()
+    res, weights, glass = [21, 11], (2.0, 3.0), 100.0
+    code, out = run(tmp_path, ref, tgt, ref_group='auto', tgt_group='mobile', glass=glass, weights=weights, res=res)
+    assert code == 0
+    doc = load(out)
+    products = doc['products']
+    assert products['reference']['effective_resolution'] == 231 and products['target']['effective_resolution'] == 57
+    assert close(products['reference']['F_line'], 231 * 2.0 / 100.0) and close(products['reference']['F_pixel'], 231 * 3.0 / 100.0)
+    assert close(products['reference']['F_cno'], 231 * 3.0 / 100.0 * math.pi / 4)
+    assert close(products['target']['F_line'], 57 * 2.0 / 100.0) and close(products['target']['F_pixel'], 57 * 3.0 / 100.0)
+    # lambda on the reference side scales with the same F: an oracle with these factors reproduces the output
+    expect = oracle(ref[0], PAIRS, DENS_LINE, DENS_PIXEL, 231 * 2.0 / 100.0, 231 * 3.0 / 100.0)
+    assert close(doc['sides']['reference']['lambda']['line'], expect['lam_line'])
+    assert close(doc['sides']['reference']['lambda']['pixel'], expect['lam_pixel'])
 
 
 def test_single_diameter_subset_matches_hand_calculation(tmp_path):

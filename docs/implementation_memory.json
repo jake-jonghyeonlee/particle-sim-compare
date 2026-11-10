@@ -630,6 +630,11 @@
       "CNO uses the CSV only and does not check overlap with pixel short (user, 2026-11-06)",
       "the report comes straight from compare2, without ETX stages 4-6"
     ],
+    "legacy_factor_2026_11_10": [
+      "User decision 2026-11-10 replaces the common /4: F_kind = effective_resolution x M_kind / G; effective = int(W*H/4) only when the model group name lower() is 'mobile', else W*H; CNO = F_pixel x pi/4; CRP, caa and vi divisors unchanged",
+      "area_basis = crop_observed_area_legacy_team_factor_user_approved_2026_11_10; compare2.json products.<role>.effective_resolution; compare2-report refuses an older area_basis (compare2_stale_area_basis)",
+      "example yaml: mobile/auto/watch glass 1387500 mm2, weights 2.5/2.5; other glass 975000 mm2, weight_line 10/7, weight_pixel 2.0"
+    ],
     "cno_integration_decisions_2026_11_07": [
       "CNO is opt-in: import-hotspots --include-cno (ETX 01 and dv 01 examples turn it on); without it every output stays byte-identical",
       "a CNO case has one 1.png: geometry = one electrode shape, crop and origin as the 5-part cases",

@@ -185,7 +185,7 @@ def real_chain(world, tmp_path_factory):    # noqa: F811
     write_density(density, 'grp', {'P1': {5: 1.0}}, {'P1': {5: 1.0}})
     cfg = {'schema_version': 'compare2_config_v1', 'numeric_config': str(world.config), 'output_dir': str(base / 'c2'),
            'density_dir': str(density),
-           'model_groups': {'grp': {'glass_area': {'value': 50.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}},
+           'model_groups': {'grp': {'glass_area': {'value': 200.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}},
            'products': {side: {'model_group': 'grp', 'resolution': RES, 'hotspot_root': str(world.base / f'hotspot_{side}')}
                         for side in ('reference', 'target')}}
     (base / 'compare2.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')

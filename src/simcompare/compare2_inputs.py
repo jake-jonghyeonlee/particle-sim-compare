@@ -21,6 +21,7 @@ VI_PIXEL_DIVISOR = 1.5462
 ROUND_DIGITS = 6
 CRP_DEFAULT_OTHER = 2.92
 CRP_ONE_GROUPS = ('mobile', 'watch')
+RESOLUTION_DIV4_GROUPS = ('mobile',)
 AREA_UNIT_TO_UM2 = {'mm2': 1e6, 'um2': 1.0, 'm2': 1e12}
 KINDS = ('line', 'pixel')
 REPORT_DEFAULTS = {'dl1_root': None, 'map_window_um': 30, 'diameter_um': 3, 'top_n': 4}
@@ -238,18 +239,24 @@ def load_compare2_config(path) -> Compare2Config:
         lambda_diameters_um=_lambda_diameters(cfg.get('lambda_diameters_um')))
 
 
-def lambda_factor(product: ProductConfig, group: GroupConfig, kind: str) -> Optional[float]:
-    """resolution_x * resolution_y * weight_kind / (4 * glass_area_um2); None while the glass area is pending.
+def effective_resolution(product: ProductConfig, group) -> int:
+    """N = width * height; (N // 4) only for the mobile group (any case), N for every other group."""
+    name = group if isinstance(group, str) else group.name
+    total = product.resolution[0] * product.resolution[1]
+    return total // 4 if str(name).lower() in RESOLUTION_DIV4_GROUPS else total
 
-    lambda = sum(density * CA / 4 / A_unit * N * A_unit / A_glass * w): the unit area cancels (PLAN section 7, D3).
-    Use it as: lambda += density(count/glass) * CA(um^2, observed in the 2x2 crop) * factor.
-    The factor already holds the /4; never divide CA by the 2x2 area again.
+
+def lambda_factor(product: ProductConfig, group: GroupConfig, kind: str) -> Optional[float]:
+    """effective_resolution * weight_kind / glass_area_um2; None while the glass area is pending.
+
+    lambda = density(count/glass) * CA(um^2, observed in the 2x2 crop) * factor (team formula, 2026-11-10):
+    the effective resolution is int(W*H/4) for the mobile group only and W*H for every other group.
+    The factor is complete: never divide CA by the 2x2 area again.
     """
     _kind(kind)
     if group.glass_area_um2 is None:
         return None
-    width, height = product.resolution
-    return width * height * group.weight(kind) / (4 * group.glass_area_um2)
+    return effective_resolution(product, group) * group.weight(kind) / group.glass_area_um2
 
 
 def cno_lambda_factor(product: ProductConfig, group: GroupConfig) -> Optional[float]:

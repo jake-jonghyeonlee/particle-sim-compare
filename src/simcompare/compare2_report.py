@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .compare2 import SCHEMA_VERSION as COMPARE2_SCHEMA, _json_text, _publish
+from .compare2 import AREA_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _json_text, _publish
 from .compare2_inputs import VI_LINE_DIVISOR, VI_PIXEL_DIVISOR, load_compare2_config
 from .compare2_link import APPROXIMATION_NOTE, APPROXIMATION_NOTE_CNO, build_link, cno_condition_id, compute_locations
 from .numeric_schema import NumericContractError
@@ -182,6 +182,11 @@ def _read_compare2(compare2_dir, cfg2):
         raise NumericContractError('compare2_json_invalid', f'{path}: {exc}') from exc
     if not isinstance(doc, dict) or doc.get('schema_version') != COMPARE2_SCHEMA:
         raise NumericContractError('unsupported_compare2_json', f'{path}: schema_version must be {COMPARE2_SCHEMA}')
+    basis = (doc.get('inputs') or {}).get('area_basis')
+    if basis != AREA_BASIS:
+        raise NumericContractError(
+            'compare2_stale_area_basis',
+            f'compare2.json area_basis is {basis!r}, this code uses {AREA_BASIS!r}: 02(compare2)를 새 번들로 다시 실행')
     recorded = ((doc.get('inputs') or {}).get('compare2_config') or {}).get('sha256')
     if recorded != cfg2.config_sha256:
         raise NumericContractError(
@@ -574,6 +579,7 @@ def _product_table(doc, infos, unit_text):
     rows.append(('제품', per_role(lambda role: infos[role]['product_id'] or '—')))
     rows.append(('제품군', per_role(lambda role: doc['products'][role]['model_group'])))
     rows.append(('해상도 (unit)', resolution))
+    rows.append(('유효 해상도', per_role(lambda role: str(doc['products'][role]['effective_resolution']))))
     rows.append(('unit 크기', unit_text))
     rows.append(('표시 영역', area))
     rows.append(('분석 레이어', layers))

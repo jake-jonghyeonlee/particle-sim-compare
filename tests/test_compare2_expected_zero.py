@@ -17,7 +17,7 @@ from simcompare.numeric_schema import DIAMETERS_UM
 NOTE = 'absent_expected_case_counted_zero'
 BASE = {case[1] + case[3]: case for case in tc.base_cases()}  # 'AB' -> its lateral_short case tuple
 UNION_SHA = {  # sha256 (masked like test_compare2.GOLDEN) of the outputs at 70ce93f for the union-inventory fixture
-    'compare2.json': '656dcd639ca6512afd7ed6fa75f8ec420f46d1f02d35f8f5664dbad96cfb65b8',
+    'compare2.json': '20a535af992e5d6efdab18b42ad398145559909b764ff2de72f482949d90346e',  # 2026-11-10: area_basis + effective_resolution
     'compare2_summary.csv': '4306ab9e66b91f6fbb1a7a2ef2261966ed0845eebae0b1d139f8b1c392b38c27',
     'compare2_layers.csv': '01cf8566d35d359e9ac38583127eb6987cd9fd5f232e3960ef27ed9c049a30c9',
     'compare2_conditions.csv': '14aaab246c3c1b800375091fe6d5461e2612d969bde5c12650a7547897ea2a60',

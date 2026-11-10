@@ -141,6 +141,26 @@ def test_glass_pending_shows_waiting_tiles(tmp_path):
     assert '합계' in html and html.count('<td>—</td>') >= 1
 
 
+def test_report_shows_effective_resolution_row(tmp_path):
+    code, out = build(tmp_path)
+    assert code == 0
+    exit_code, folder = report(tmp_path, out)
+    assert exit_code in (0, 3)  # 3 = some report input is null in this fixture; the resolution table still renders
+    assert '유효 해상도' in text(folder)
+
+
+def test_report_refuses_a_stale_area_basis(tmp_path):
+    code, out = build(tmp_path)
+    assert code == 0
+    path = out / 'compare2.json'
+    doc = json.loads(path.read_text(encoding='utf-8'))
+    doc['inputs']['area_basis'] = 'crop_observed_area_div4_user_approved_2026_11_05'
+    path.write_text(json.dumps(doc), encoding='utf-8')
+    with pytest.raises(NumericContractError) as info:
+        build_report(out, tmp_path / 'compare2.yaml', tmp_path / 'stale')
+    assert info.value.code == 'compare2_stale_area_basis' and '다시 실행' in str(info.value)
+
+
 def test_missing_diameter_says_input_missing(tmp_path):
     code, _ = build(tmp_path)
     assert code == 0

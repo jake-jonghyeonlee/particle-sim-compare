@@ -17,13 +17,27 @@ density_dir: data/density
 
 # 제품군별 값은 사용자가 채운다. 키 이름 = 제품군 이름(파일 이름에 쓰이므로 / \ .. 금지).
 # 군 이름이 mobile 또는 watch 이면 CRP 1.0, 그 밖은 2.92(설정하지 않는다).
+# 유효 해상도: 군 이름이 mobile(대소문자 무시)일 때만 int(가로×세로/4), 나머지 군은 가로×세로. λ 계수 = 유효 해상도 × 가중치 / glass 면적.
+# 아래 값은 2026-11-10 팀 기존 식 값이다(mobile·auto·watch 1387500 mm2, other 975000 mm2).
 model_groups:
   mobile:
     # glass 면적. value 가 null 이면 '미정'이며 오류가 아니다: vi 는 '대기'로 비고 compare2 는 종료 코드 3이다.
     # 값을 알면 숫자와 unit(mm2, um2, m2)을 함께 적는다(값이 있으면 unit 은 필수).
-    glass_area: {value: null, unit: mm2}
-    weight_line: 1.0                 # line 지표 가중치(양수)
-    weight_pixel: 1.0                # pixel 지표 가중치(양수)
+    glass_area: {value: 1387500, unit: mm2}
+    weight_line: 2.5                 # line 지표 가중치(양수)
+    weight_pixel: 2.5                # pixel 지표 가중치(양수)
+  auto:
+    glass_area: {value: 1387500, unit: mm2}
+    weight_line: 2.5
+    weight_pixel: 2.5
+  watch:
+    glass_area: {value: 1387500, unit: mm2}
+    weight_line: 2.5
+    weight_pixel: 2.5
+  other:
+    glass_area: {value: 975000, unit: mm2}
+    weight_line: 1.4285714285714286  # 10/7
+    weight_pixel: 2.0
 
 products:
   reference:

@@ -7,7 +7,8 @@ import pytest
 import yaml
 
 from simcompare.compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, GroupConfig, ProductConfig, cno_lambda_factor,
-                                        collect_cno, crp_for_group, lambda_factor, load_compare2_config,
+                                        collect_cno, crp_for_group, effective_resolution, lambda_factor,
+                                        load_compare2_config,
                                         load_density)
 from simcompare.numeric_schema import NumericContractError
 
@@ -38,8 +39,12 @@ def test_example_config_loads(tmp_path):
     assert cfg.reference.resolution == (1500, 1850) and cfg.reference.unit_size_um == (45.0, 45.0)
     assert cfg.target.unit_size_um is None
     assert (cfg.report.map_window_um, cfg.report.diameter_um, cfg.report.top_n) == (30.0, 3.0, 4)
-    assert cfg.model_groups['mobile'].glass_area_um2 is None
-    assert cfg.model_groups['mobile'].glass_area_reason == 'glass_area_pending'
+    assert sorted(cfg.model_groups) == ['auto', 'mobile', 'other', 'watch']
+    for name in ('mobile', 'auto', 'watch'):
+        group = cfg.model_groups[name]
+        assert (group.glass_area_um2, group.weight_line, group.weight_pixel) == (1.3875e12, 2.5, 2.5)
+    other = cfg.model_groups['other']
+    assert (other.glass_area_um2, other.weight_line, other.weight_pixel) == (9.75e11, 10 / 7, 2.0)
     assert cfg.config_sha256 == hashlib.sha256(EXAMPLE.read_bytes()).hexdigest()
 
 
@@ -157,17 +162,50 @@ def test_lambda_factor_hand_calculation(tmp_path):
     cfg = _glass_config(tmp_path)
     group = cfg.model_groups['mobile']
     assert group.glass_area_um2 == pytest.approx(2.775e12, rel=1e-12)
-    expected_pixel = 1500 * 1850 * 0.8 / (4 * 2.775e12)
+    assert effective_resolution(cfg.reference, group) == 693750  # mobile: 1500 * 1850 // 4
+    expected_pixel = 693750 * 0.8 / 2.775e12
     assert lambda_factor(cfg.reference, group, 'pixel') == pytest.approx(expected_pixel, rel=1e-12, abs=0)
-    assert lambda_factor(cfg.reference, group, 'line') == pytest.approx(1500 * 1850 * 0.5 / (4 * 2.775e12),
-                                                                        rel=1e-12, abs=0)
+    assert lambda_factor(cfg.reference, group, 'line') == pytest.approx(693750 * 0.5 / 2.775e12, rel=1e-12, abs=0)
     assert cno_lambda_factor(cfg.reference, group) == pytest.approx(expected_pixel * math.pi / 4, rel=1e-12, abs=0)
     assert CNO_FACTOR == math.pi / 4
 
 
+def test_team_values_from_example_config():
+    cfg = load_compare2_config(EXAMPLE)
+    mobile = cfg.model_groups['mobile']
+    assert lambda_factor(cfg.reference, mobile, 'line') == pytest.approx(1.25e-6, rel=1e-12, abs=0)
+    assert lambda_factor(cfg.reference, mobile, 'pixel') == pytest.approx(1.25e-6, rel=1e-12, abs=0)
+    other = cfg.model_groups['other']
+    product = ProductConfig('reference', 'other', (1500, 1850), Path('.'))
+    assert effective_resolution(product, other) == 2775000
+    assert lambda_factor(product, other, 'line') == pytest.approx(2775000 * (10 / 7) / 9.75e11, rel=1e-12, abs=0)
+    f_pixel = lambda_factor(product, other, 'pixel')
+    assert f_pixel == pytest.approx(2775000 * 2 / 9.75e11, rel=1e-12, abs=0)
+    assert cno_lambda_factor(product, other) == pytest.approx(f_pixel * math.pi / 4, rel=1e-12, abs=0)
+
+
+def test_effective_resolution_floors_for_mobile_only():
+    for name in ('mobile', 'Mobile', 'MOBILE'):
+        assert effective_resolution(ProductConfig('reference', name, (1501, 1851), Path('.')), name) == 694587
+    for name in ('auto', 'watch', 'other', 'foo'):
+        assert effective_resolution(ProductConfig('reference', name, (1501, 1851), Path('.')), name) == 2778351
+
+
+def test_lambda_factor_non_mobile_is_four_times_mobile():
+    for name in ('watch', 'auto', 'other'):
+        factors = {}
+        for group_name in ('mobile', name):
+            product = ProductConfig('reference', group_name, (1500, 1850), Path('.'))
+            group = GroupConfig(group_name, 1e12, 2.0, 3.0)
+            factors[group_name] = (lambda_factor(product, group, 'line'), lambda_factor(product, group, 'pixel'),
+                                   cno_lambda_factor(product, group))
+        for non_mobile, mobile in zip(factors[name], factors['mobile']):
+            assert non_mobile == pytest.approx(4 * mobile, rel=1e-15, abs=0)
+
+
 def test_lambda_factor_none_while_glass_pending():
     cfg = load_compare2_config(EXAMPLE)
-    group = cfg.model_groups['mobile']
+    group = GroupConfig('mobile', None, 1.0, 1.0, 'glass_area_pending')
     assert lambda_factor(cfg.reference, group, 'line') is None
     assert cno_lambda_factor(cfg.reference, group) is None
     with pytest.raises(NumericContractError):
@@ -324,6 +362,7 @@ def test_density_accepts_decimal_sizes_and_keeps_canonical_keys(tmp_path):
 def test_lambda_factor_documents_ca_usage():
     doc = lambda_factor.__doc__
     assert 'CA(um^2' in doc and 'never divide CA' in doc
+    assert 'holds the /4' not in doc and 'int(W*H/4)' in doc
 
 
 def test_density_decode_error_hints_utf8(tmp_path):
