@@ -183,6 +183,12 @@ def _base_dir():
 
 
 def _main():
+    # 화면 인코딩(EUC-KR 등)에 없는 글자(µ 등)가 있어도 죽지 않도록, 첫 출력 전에 오류 처리만 바꾼다(인코딩은 그대로).
+    for stream in (sys.__stdout__, sys.__stderr__):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
     # 시작 정보는 BASE_DIR 처리와 로그 파일 열기보다 먼저 stderr로 낸다(그 둘이 실패해도 남는다).
     for line in (f"[simcompare_job] runner {globals().get('__file__')}", f"[simcompare_job] payload_sha256={PAYLOAD_SHA256}",
                  f"[simcompare_job] BASE_DIR requested={BASE_DIR!r}; LOG_FILE requested={LOG_FILE!r}; WORK_DIR requested={WORK_DIR!r}"):

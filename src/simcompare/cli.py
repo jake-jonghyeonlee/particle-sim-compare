@@ -279,8 +279,18 @@ def _remove_reports(folder, command=None):
                 path.unlink()
 
 
+def _tolerate_unencodable_output() -> None:
+    """화면 인코딩(EUC-KR 등)에 없는 글자는 `\\xb5` 처럼 escape 해서 쓴다. 인코딩은 바꾸지 않고, reconfigure 없는 스트림은 건너뛴다."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """완료 0, 부분/blocked 결과 3, 입력 불가 또는 폐기 명령 2."""
+    _tolerate_unencodable_output()
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] in RETIRED:
         print(f"오류: {arguments[0]} 명령은 폐기되었습니다. {RETIRED[arguments[0]]}", file=sys.stderr)
