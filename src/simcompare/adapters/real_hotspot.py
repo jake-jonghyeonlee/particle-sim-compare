@@ -159,6 +159,20 @@ def _csv_compare_area(occupied_pixels, low_gray_pixels):
     return (int(occupied_pixels) + low_gray_pixels) * 0.01
 
 
+def _source_ca_value(record):
+    """Source CA for the gray>63 mask of a consistent record: the CSV value minus the low_gray share.
+
+    The CSV counts every nonzero pixel; the mask keeps only gray>63, so conservation
+    compares the mask with csv_value - low_gray_pixels * 0.01 (not below 0).
+    """
+    low_gray = record.get('low_gray_pixels')
+    if low_gray is None:
+        low_gray = 0
+    if isinstance(low_gray, bool) or not isinstance(low_gray, int) or low_gray < 0:
+        raise NumericContractError('real_low_gray_pixels_invalid')
+    return max(0.0, record['csv_area']['value'] - low_gray * 0.01)
+
+
 def _csv_row_contract(row, diameter, mask_area, tolerance_value=None, difference_value=None):
     """Validate CSV values and all derived measurement fields from preserved text."""
     if row is None:
@@ -1684,7 +1698,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
             if load:
                 csv_area = source_record.get('csv_area')
                 if csv_area is not None and source_record.get('csv_status') == 'consistent':
-                    source_ca = SourceCA(csv_area['value'], frame_id, frame.valid_hash)
+                    source_ca = SourceCA(_source_ca_value(source_record), frame_id, frame.valid_hash)
             reasons = () if source_record['input_status'] == 'observed' else ('missing_input',)
             if source_record.get('csv_status') == 'mismatch':
                 reasons += ('csv_area_mismatch',)
@@ -1769,7 +1783,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
             if load:
                 csv_area = source_record.get('csv_area')
                 if csv_area is not None and source_record.get('csv_status') == 'consistent':
-                    source_ca = SourceCA(csv_area['value'], frame_id, frame.valid_hash)
+                    source_ca = SourceCA(_source_ca_value(source_record), frame_id, frame.valid_hash)
             reasons = () if source_record['input_status'] == 'observed' else ('missing_input',)
             if source_record.get('csv_status') == 'mismatch':
                 reasons += ('csv_area_mismatch',)

@@ -128,3 +128,24 @@ def test_csv_check_still_reports_a_real_mismatch(tmp_path, csv_area):
     assert record['csv_status'] == 'mismatch'
     assert record['area_difference_um2'] == pytest.approx(0.04 - float(csv_area))
     assert load_real_manifest(tmp_path / 'out')['cases'][0]['records'][0]['csv_status'] == 'mismatch'
+
+
+def test_low_gray_record_measures_available_without_conservation_failure(tmp_path):
+    """csv-ne0/T1 (review blk:1): a consistent low_gray record keeps its area in compute_areas.
+
+    SourceCA is csv_value - low_gray * 0.01, so conservation compares like with like (gray>63 mask).
+    """
+    from test_real_hotspot import _assignment, _write_pairs
+    from simcompare.adapters.real_hotspot import configured_dataset
+    from simcompare.linepixel import compute_areas
+    _source(tmp_path / 'src', (0, 30, 63, 64, 255), '0.04')
+    expected = tmp_path / 'expected.txt'
+    expected.write_text('lateral_short-A-L1-B-L1\n')
+    import_hotspots(tmp_path / 'src', tmp_path / 'out', expected_cases=expected)
+    _write_pairs(tmp_path / 'out')
+    dataset = configured_dataset(tmp_path / 'out', load_real_manifest(tmp_path / 'out'), _assignment())
+    group = next(g for k, g in compute_areas(dataset).groups.items() if k.diameter_um == 1)
+    source = group.source_cases[0]
+    assert 'conservation_failed' not in source.measurement.reasons
+    assert source.measurement.status == 'available'
+    assert group.union.status == 'available' and group.union.value == pytest.approx(0.02)

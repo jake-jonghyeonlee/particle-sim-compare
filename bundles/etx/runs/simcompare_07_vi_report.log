@@ -1,0 +1,66 @@
+[simcompare_job] runner /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py
+[simcompare_job] payload_sha256=a657c62e13435f2b569b04b16dc3f5638d0baec427ea8471d24edc2791db777e
+[simcompare_job] BASE_DIR requested=None resolved=/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx; relative paths resolve from /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx (runner file folder); launched in /private/var/folders/kq/z2fb8p996gd1847rj_gkc9q00000gn/T/tmp.7RiKle0DGB
+[simcompare_job] LOG_FILE requested='runs/simcompare_07_vi_report.log'; WORK_DIR requested=None
+Traceback (most recent call last):
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11219, in _main
+    run_jobs(JOBS)
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11152, in run_jobs
+    import numpy
+ModuleNotFoundError: No module named 'numpy'
+Traceback (most recent call last):
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11231, in <module>
+    _main()
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11219, in _main
+    run_jobs(JOBS)
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11152, in run_jobs
+    import numpy
+ModuleNotFoundError: No module named 'numpy'
+[simcompare_job] runner /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py
+[simcompare_job] payload_sha256=a657c62e13435f2b569b04b16dc3f5638d0baec427ea8471d24edc2791db777e
+[simcompare_job] BASE_DIR requested=None resolved=/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx; relative paths resolve from /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx (runner file folder); launched in /private/var/folders/kq/z2fb8p996gd1847rj_gkc9q00000gn/T/tmp.UV2aFfttw4
+[simcompare_job] LOG_FILE requested='runs/simcompare_07_vi_report.log'; WORK_DIR requested=None
+Traceback (most recent call last):
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11219, in _main
+    run_jobs(JOBS)
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11152, in run_jobs
+    import numpy
+ModuleNotFoundError: No module named 'numpy'
+Traceback (most recent call last):
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11231, in <module>
+    _main()
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11219, in _main
+    run_jobs(JOBS)
+  File "/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py", line 11152, in run_jobs
+    import numpy
+ModuleNotFoundError: No module named 'numpy'
+[simcompare_job] runner /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py
+[simcompare_job] payload_sha256=a657c62e13435f2b569b04b16dc3f5638d0baec427ea8471d24edc2791db777e
+[simcompare_job] BASE_DIR requested=None resolved=/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx; relative paths resolve from /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx (runner file folder); launched in /private/var/folders/kq/z2fb8p996gd1847rj_gkc9q00000gn/T/tmp.DSbb4ODR6h
+[simcompare_job] LOG_FILE requested='runs/simcompare_07_vi_report.log'; WORK_DIR requested=None
+[simcompare_job] 2026-11-11 16:44:05 python 3.9.14 | numpy 1.23.5 | Pillow 10.1.0 | simcompare from /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/.simcompare_pkg_a657c62e1343/simcompare/__init__.py
+[simcompare_job] payload_sha256=a657c62e13435f2b569b04b16dc3f5638d0baec427ea8471d24edc2791db777e
+[simcompare_job] WORK_DIR requested=None; package extracted to /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/.simcompare_pkg_a657c62e1343
+[simcompare_job] 2026-11-11 16:44:05 start compare2-report --compare2-dir data/compare2 --config compare2.yaml --candidates data/changes --windows data/local --out data/compare2_report
+[simcompare_job]   --compare2-dir 'data/compare2' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/compare2
+[simcompare_job]   --config 'compare2.yaml' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/compare2.yaml
+[simcompare_job]   --candidates 'data/changes' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/changes
+[simcompare_job]   --windows 'data/local' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/local
+[simcompare_job]   --out 'data/compare2_report' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/compare2_report
+오류: [Errno 2] No such file or directory: '/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/compare2.yaml'
+[simcompare_job] 2026-11-11 16:44:05 compare2-report exit 2 in 0s
+[simcompare_job] runner /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/simcompare_job_07_vi_report.py
+[simcompare_job] payload_sha256=a657c62e13435f2b569b04b16dc3f5638d0baec427ea8471d24edc2791db777e
+[simcompare_job] BASE_DIR requested=None resolved=/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx; relative paths resolve from /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx (runner file folder); launched in /private/var/folders/kq/z2fb8p996gd1847rj_gkc9q00000gn/T/tmp.WHT6vVua7q
+[simcompare_job] LOG_FILE requested='runs/simcompare_07_vi_report.log'; WORK_DIR requested=None
+[simcompare_job] 2026-11-11 16:44:09 python 3.8.20 | numpy 1.23.5 | Pillow 10.1.0 | simcompare from /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/.simcompare_pkg_a657c62e1343/simcompare/__init__.py
+[simcompare_job] payload_sha256=a657c62e13435f2b569b04b16dc3f5638d0baec427ea8471d24edc2791db777e
+[simcompare_job] WORK_DIR requested=None; package extracted to /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/.simcompare_pkg_a657c62e1343
+[simcompare_job] 2026-11-11 16:44:09 start compare2-report --compare2-dir data/compare2 --config compare2.yaml --candidates data/changes --windows data/local --out data/compare2_report
+[simcompare_job]   --compare2-dir 'data/compare2' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/compare2
+[simcompare_job]   --config 'compare2.yaml' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/compare2.yaml
+[simcompare_job]   --candidates 'data/changes' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/changes
+[simcompare_job]   --windows 'data/local' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/local
+[simcompare_job]   --out 'data/compare2_report' -> /Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/data/compare2_report
+오류: [Errno 2] No such file or directory: '/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/compare2.yaml'
+[simcompare_job] 2026-11-11 16:44:09 compare2-report exit 2 in 0s

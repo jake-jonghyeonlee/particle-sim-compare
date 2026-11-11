@@ -1,0 +1,6 @@
+{
+  "command": "compare2-report",
+  "code": "input_or_config_error",
+  "detail": "[Errno 2] No such file or directory: '/Users/jonghyeonlee/worktrees/particle-sim-compare/csv-ne0/bundles/etx/compare2.yaml'",
+  "exit_code": 2
+}
