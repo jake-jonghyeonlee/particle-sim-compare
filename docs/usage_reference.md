@@ -536,16 +536,35 @@ python -m simcompare compare2-report --compare2-dir data/compare2 --config compa
 | `--dl1-search FILE` | (선택, 반복 가능) DL1 검색 결과 파일 |
 | `--top-regions N` | 보이는 악화 위치 수(기본 5) |
 | `--top-improved N` | 보이는 개선 위치 수(기본 3) |
-| `--top-n N` | 4·5절 표 길이(기본 10) |
+| `--top-n N` | 4절 전극 표 길이(상위 top_n × 2 행, 기본 10) |
 | `--max-pairs-per-condition N` | 위치(조건)당 지도로 보이는 쌍 수(기본 3) |
 
 연결 옵션(`--candidates`·`--confirm`·`--windows`·`--dl1-search`) 중 하나라도 주면 `report.json`에 `locations`, `link_inputs`, `roi_figures`, `options`(`top_regions`, `top_improved`, `table_top_n`, `max_pairs_per_condition`)가 더해진다. 연결 입력이 없으면 이 키들은 없고 이전 `report.json` 키·`report.html`은 그대로다. N 이 0 이하이면 종료 코드 2 와 새 `--out` 의 `error.json`(`invalid_compare2_report_argument`)이다. 정수가 아니면 argparse 오류(종료 코드 2, `error.json` 없음)다.
 
-**두 `top_n`**: 설정 `report.top_n`(기본 4)은 7절 조건 지도·설명 문장의 상위 조건 수이고 `report.json` 의 `top_n` 으로 기록된다. 명령줄 `--top-n`(기본 10)은 4·5절 표(위치 순위·전극 표)의 길이이고 `options.table_top_n` 으로만 기록된다. 서로 다른 값이다.
+**두 `top_n`**: 설정 `report.top_n`(기본 4)은 `report.json` 의 `top_n` 으로 기록된다. `--candidates` 같은 링크 결과가 있으면 보고서는 조건 지도를 만들지 않고 변경 위치 카드만 만든다. 링크 결과가 없을 때만 변경된 조건의 지도를 그린다(상한 200개). 명령줄 `--top-n`(기본 10)은 4절 전극 표의 길이(상위 top_n × 2 행)이고 `options.table_top_n` 으로만 기록된다. 서로 다른 값이다.
 
-설정의 `report` 키(모두 선택): `map_window_um`(기본 30), `diameter_um`(기본 3), `top_n`(기본 4), `dl1_root`(기본 없음). 상위 `top_n` 조건마다 reference(A)와 target(B)의 hotspot 지도(3 µm 기본)를 그린다. 지도는 정렬하지 않고 A를 unit 안의 같은 상대 위치에서 자른다. 레이어 overlay는 `report.dl1_root`(DL1 Layer PNG)와 `products.<role>.dl1_model`이 있어야 하며 없으면 overlay 없이 지도만 나온다.
+설정의 `report` 키(모두 선택): `map_window_um`(기본 30), `diameter_um`(기본 3), `top_n`(기본 4), `dl1_root`(기본 없음). 새 설정 키와 CLI 인자는 없다. 지도는 정렬하지 않고 A를 unit 안의 같은 상대 위치에서 자른다. 레이어 overlay는 `report.dl1_root`(DL1 Layer PNG)와 `products.<role>.dl1_model`이 있어야 하며 없으면 overlay 없이 지도만 나온다.
 
-출력: `report.html`(파일 하나), `report.json`(경고·입력 기록). 종료 코드: 0 = 완료, 3 = `compare2.json`이 부분 결과이거나 지도·overlay 경고가 있음(보고서는 씀), 2 = 오류(새 `--out`에 `error.json`).
+**화면 구성**(링크 결과가 있을 때):
+
+| 절 | 내용 |
+|---|---|
+| 1 요약 | 변화 분해 표, line·pixel 상충 산점도(점 = 변경 위치), 변경 종류별 집계(중복 합), 변경 위치 개수 |
+| 2·3 변경 위치 | 위험을 키운 설계 변경(2)과 줄인 설계 변경(3)의 위치 카드 |
+| 4 전극별 영향 | 전극별 line·pixel 표(길이 `--top-n` × 2 행) |
+| 5 전체 분포 | 레이어별 분포 |
+| 6 결함 조건 전체 | 전극 쌍 × 레이어 표(접힘) |
+| 참고 | 용어, 제품 정보, caa 지표, 입력과 설정, 경고 |
+
+**단위**: vi 는 %, 변화 Δ 는 %p 로 보인다. 괄호 안 값은 기준 A 의 같은 지표 vi 대비 변화율이다. 위치별 괄호 값의 합은 1절의 Δ(%)와 같다. 위치 값은 근사이고 "B 제거 시" 값은 위치가 아닌 조건 전체 값이다. 위치 밖 CNO 는 근사로 보인다.
+
+**카드**: 카드는 A·B 미니맵과 두 쪽의 위치 차이를 보인다. 타일 크기는 2배 선택([1×]·[2×])이며 타일 한 변은 `report.map_window_um` 의 2배다. 두 타일은 동기 이동하고 표의 행을 고르면 해당 쌍이 강조된다. 겹침은 line 으로 계산하며 같은 레이어·이물 크기 기준의 근사다. 신규·소멸 전극은 테두리로 구분한다. 한쪽에 위치가 없으면 대응 위치(추정)를 점선으로 보인다.
+
+**전극 형상**: `report.dl1_root` 와 `products.<role>.dl1_model` 아래 `Merged_Layer/<전극>/N-<layer>.png`(또는 legacy 이름)를 읽는다. 쌍 끝점의 전극 이름이 폴더 이름과 같아야 형상이 강조된다. 못 찾거나 frame 이 맞지 않으면 `electrode_shape_missing` 경고만 남기고 보고서는 계속된다.
+
+출력: `report.html`(파일 하나), `report.json`(경고·입력 기록). 종료 코드: 0 = 완료, 3 = `compare2.json`이 부분 결과이거나 지도·overlay·전극 형상 경고가 있음(보고서는 씀), 2 = 오류(새 `--out`에 `error.json`).
+
+`report.json` 의 `roi_figures` 는 위치(ROI)별 기록이다. 새 키 `tile_um` 은 타일 한 변의 길이(µm, `map_window_um` 의 2배)이다. 면(`reference`·`target`)마다 `layers`(레이어 이름 `bg`·`pair`·`line`·`pixel`·`overlap`·`diff`·`ghost` 중 그린 것 → PNG sha256)와 `electrode_shape`(`ok`·`missing`·`not_configured`·`center_missing`)를 적는다. `png_sha256` 은 유지된 키이며 면마다 그 면의 레이어 이름·해시 목록의 지문 하나다. 이제 PNG 한 장이 없다.
 
 ## 종료 코드
 
@@ -557,7 +576,7 @@ python -m simcompare compare2-report --compare2-dir data/compare2 --config compa
 
 `compare2`의 종료 코드 3 원인: (1) 일부 입력이 비어 값이 `null`(밀도 파일의 빈 칸·레이어/크기 없음, CNO CSV 이상 등, 이유는 `reasons`), (2) glass 면적 미정(`glass_area_pending`), (3) 보존 검산 실패(`conservation_check_failed`), (4) 변화 분해 검산(`delta.check`)이 `passed`가 아님(`delta_check_failed`; `not_evaluated` 포함). 설정·입력 오류는 2다.
 
-`compare2-report`의 종료 코드 3 원인: (1) `compare2.json`의 한쪽 제품이라도 `available`이 아님, (2) 변화 분해 검산(`delta.check`)이 `passed`가 아님, (3) 지도·overlay 경고(`overlay_dl1_not_configured`, `overlay_layer_missing`, `map_input_missing`, `maps_capped` 등). 보고서는 쓴다. 경고 목록은 `report.json`에 있다. 오류는 2다.
+`compare2-report`의 종료 코드 3 원인: (1) `compare2.json`의 한쪽 제품이라도 `available`이 아님, (2) 변화 분해 검산(`delta.check`)이 `passed`가 아님, (3) 지도·overlay 경고(`overlay_dl1_not_configured`, `overlay_layer_missing`, `map_input_missing`, `maps_capped`, `electrode_shape_missing` 등). 보고서는 쓴다. 경고 목록은 `report.json`에 있다. 오류는 2다.
 
 `compare-windows`는 모든 ready 쌍의 창 Δ가 available(또는 근거 있는 not_applicable)이면 0, 창 clipping·valid 구멍·원천 누락·blocked 쌍이 있으면 3, 대응 파일·창 크기·제품 불일치 오류는 2다.
 
@@ -705,7 +724,7 @@ DL2 — 위치 매칭(**DL2 경로 전용**: 직접 대응을 쓰면 DL2와 5회
 
 6회차 — 국부 ΔCA(`simcompare_job_06_compare_windows.py`): 기본 `--correspondence`는 4회차의 `data/changes/direct/roi_correspondence.json`이다(DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다). 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
 
-8회차(선택, 2b회차 뒤; 새 이름 `07_vi_report`) — compare2 보고서(`simcompare_job_07_vi_report.py`): `data/compare2/compare2.json`과 같은 BASE_DIR의 `compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report".
+8회차(선택, 2b회차 뒤; 새 이름 `07_vi_report`) — compare2 보고서(`simcompare_job_07_vi_report.py`): `data/compare2/compare2.json`과 같은 BASE_DIR의 `compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report". 이 변경 뒤에는 01~06 결과를 그대로 쓰고 07 만 새 실행기로 다시 돌린다. compare2 설정 파일을 바꾸면 해시가 달라져 07 이 멈춘다.
 
 ```python
 JOBS = [("compare2-report", ["--compare2-dir", "data/compare2", "--config", "compare2.yaml",
