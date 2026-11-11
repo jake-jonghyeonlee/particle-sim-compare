@@ -34,8 +34,12 @@ FIXED_BYTES = 64 * 1024 ** 2
 # Run-length labelling worst case (runs = cells / 2): 52 B/run = 26 B/cell, made of rows/starts/ends/root int32 = 16,
 # roots intp = 8, ends - starts int32 = 4, float64 bincount weights = 8, intp root cast = 8, float64 bincount = 8.
 LABEL_BYTES_PER_CELL = 26
-FRAME_BYTES_PER_CELL = 2 + 1 + LABEL_BYTES_PER_CELL  # two bool masks, one layer PNG, labelling arrays
-WINDOW_BYTES_PER_CELL = 4 * 2 + 3  # two RGBA images and the three cropped bool windows per condition
+# two bool masks, one opposite-class union, one layer PNG, the decoded electrode PNG and its union, labelling arrays
+FRAME_BYTES_PER_CELL = 2 + 1 + 1 + 2 + LABEL_BYTES_PER_CELL
+# per tile cell (the tile is 2 x the window per axis = 4 x the window cells, so callers pass tile cells): one RGBA layer image
+# being drawn, one compositing copy, and the six cropped bool windows of a pair (hotspot, opposite class, layer pattern,
+# electrode shape, the other side's hotspot, ring scratch)
+WINDOW_BYTES_PER_CELL = 4 * 3 + 6
 DEFAULT_MAX_OPERATION_BYTES = 8 * 1024 ** 3
 REMEDY = 'reduce report.map_window_um, report.top_n or the number of conditions, or raise max_operation_bytes'
 ROLES = ('reference', 'target')
@@ -50,6 +54,14 @@ COLOR_NEW = (208, 59, 59)
 COLOR_GONE = (42, 120, 214)
 COLOR_BAR = (122, 121, 114)
 SCALE_BAR_UM = 5.0
+TILE_FACTOR = 2                       # the tile edge is 2 x map_window_um; the ROI window is its centre half
+LINE_RGB = (122, 79, 214)             # = CSS --line
+PIXEL_RGB = (235, 104, 52)            # = CSS --pixel
+PAIR_RGB = (0, 150, 136)
+GHOST_RGB = (110, 110, 104)
+BG_ALPHA = int(round(255 * OVERLAY_ALPHA))
+RING_PX = 2
+TINY_PP = 0.00005                     # |delta x 100| below this prints as 0 with 4 decimals
 
 
 # ---- memory guard ------------------------------------------------------------------------------------------------
@@ -83,15 +95,25 @@ def _pc(value):
     return '—' if value is None else f'{value * 100:.4f}%'
 
 
+def _tiny(value):
+    """True for a delta that prints as 0.0000 in %p; it is treated as 0 everywhere (text, colour, verdict)."""
+    return value is not None and abs(value * 100) < TINY_PP
+
+
 def _pp(value):
-    """Delta of vi in percentage points, signed, 4 decimals; the sign carries the direction, not only the colour."""
-    return '—' if value is None else f'{value * 100:+.4f}%p'
+    """Delta of vi in percentage points, signed, 4 decimals; the sign carries the direction, not only the colour.
+    A value that would print as 0.0000 is written as 0."""
+    if value is None:
+        return '—'
+    return '0' if _tiny(value) else f'{value * 100:+.4f}%p'
 
 
 def _rel(delta, base):
     """Change relative to the reference vi of the same indicator and range, in percent with 1 decimal; a dash without a base."""
     if delta is None or base is None or abs(base) < RATIO_EPS:
         return '—'
+    if _tiny(delta):
+        return '0.0%'
     return f'{delta / base * 100:+.1f}%'
 
 
@@ -101,7 +123,7 @@ def _dv(delta, base):
 
 
 def _sign(value):
-    return 0 if value is None or value == 0 else (1 if value > 0 else -1)
+    return 0 if value is None or value == 0 or _tiny(value) else (1 if value > 0 else -1)
 
 
 def _verdict(line, pixel):
@@ -146,9 +168,8 @@ def _share(value):
 
 
 def _sign_class(value):
-    if value is None or value == 0:
-        return ''
-    return 'up' if value > 0 else 'down'
+    sign = _sign(value)
+    return '' if sign == 0 else ('up' if sign > 0 else 'down')
 
 
 def _num(value, digits=2):
@@ -331,15 +352,19 @@ def _find_diameter(records, diameter):
 
 def _new_state():
     return {'status': 'no_cases', 'cells': 0, 'components': 0, 'center': None, 'origin': None, 'crop': None,
-            'overlay': None, 'overlay_status': None}
+            'overlay': None, 'overlay_status': None, 'kind': None, 'opp': None, 'shape': None, 'shape_status': None,
+            'win_off': None, 'win_size': None}
 
 
-def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states, key_of=None):
+def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states, key_of=None, opposite=False):
     """Open one side, OR the lineage masks of every condition key at diameter and crop the window; then release it.
 
     keys are figure ids. key_of maps a figure id to its lineage key (pair_id, analysis layer), or None for a figure
     that has no condition on this side; by default a figure id is its own lineage key. Figures that share a lineage
-    key share the OR-ed mask and get their own window crop."""
+    key share the OR-ed mask and get their own window crop.
+
+    opposite: also OR the masks of every case on the same analysis layer and diameter whose class is the other one
+    (line <-> pixel) and crop them as state['opp']; state['kind'] is the class of the figure's own cases."""
     from .pipeline import _configured_real
     configured = _configured_real(cfg, info['section'], info['real'],
                                   {'bucket_detail': 'summary', 'top_buckets': top_buckets})
@@ -353,10 +378,14 @@ def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states,
     groups = {}
     for fid in keys:
         groups.setdefault(fid if key_of is None else key_of[fid], []).append(fid)
+    wanted = {}         # (analysis layer, opposite class) -> figure ids that need that union
     for key, group in groups.items():
         for fid in group:
             states[fid] = _new_state()
         cases = [] if key is None else lineage.get(key, [])
+        kind = next((case.classification for case in cases if case.classification in ('line', 'pixel')), None)
+        for fid in group:
+            states[fid]['kind'] = kind
         if cases:
             for fid in group:
                 states[fid]['status'] = 'no_record'
@@ -388,7 +417,30 @@ def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states,
             if origin is not None:
                 state['origin'] = origin
                 state['crop'] = _crop(acc, origin[0], origin[1], size)
+                if opposite and kind is not None:
+                    wanted.setdefault((key[1], 'pixel' if kind == 'line' else 'line'), []).append(fid)
         del acc
+    for (layer, other), group in wanted.items():       # one frame-sized union at a time, cropped for every figure
+        union = None
+        for case in dataset.cases:
+            if case.classification != other or case.analysis_layer != layer:
+                continue
+            found = _find_diameter(case.records, diameter)
+            if found is None:
+                continue
+            record = case.records[found]
+            if record.input_status != 'observed' or record.mask is None:
+                continue
+            if union is None:
+                union = np.array(record.mask, dtype=bool)
+            else:
+                union |= record.mask
+            del record
+        for fid in group:
+            origin = states[fid]['origin']
+            states[fid]['opp'] = (np.zeros((size, size), dtype=bool) if union is None
+                                  else _crop(union, origin[0], origin[1], size))
+        del union
     del configured, dataset, lineage
 
 
@@ -493,7 +545,8 @@ def _build_figures(cfg, cfg2, infos, specs, warnings):
     specs = {fid: {role: {'key': lineage key or None, 'layer': analysis layer or None, 'center_um': (x, y) or None}}}.
     Both guards run before any dataset is opened."""
     diameter, window_um = cfg2.report.diameter_um, cfg2.report.map_window_um
-    size = {role: max(1, int(math.floor(window_um / infos[role]['pitch'] + 0.5))) for role in ROLES}
+    window = {role: max(1, int(math.floor(window_um / infos[role]['pitch'] + 0.5))) for role in ROLES}
+    size = {role: TILE_FACTOR * window[role] for role in ROLES}         # the tile; the ROI window is its centre
     states = {role: {} for role in ROLES}
     from .pipeline import _compare_options
     top = _compare_options(cfg)[1]
@@ -516,7 +569,7 @@ def _build_figures(cfg, cfg2, infos, specs, warnings):
         def origin_for(fid, state, centers=centers, side_size=side_size):
             return _origin(centers[fid], side_size)
         _scan_side(cfg, info, top, fids, diameter, side_size, origin_for, states[role],
-                   key_of={fid: specs[fid][role]['key'] for fid in fids})
+                   key_of={fid: specs[fid][role]['key'] for fid in fids}, opposite=True)
         for fid in fids:
             state = states[role][fid]
             if state['origin'] is None:
@@ -525,10 +578,154 @@ def _build_figures(cfg, cfg2, infos, specs, warnings):
                 state['crop'] = np.zeros((side_size, side_size), dtype=bool)
             if specs[fid][role]['center_um'] is None:       # no centre recorded: an empty window, never the frame middle
                 state['status'] = 'center_missing'
+                state['opp'] = None
+            state['win_size'] = window[role]
+            inner = _origin(centers[fid], window[role])
+            state['win_off'] = (inner[0] - state['origin'][0], inner[1] - state['origin'][1])
         _load_overlays(cfg2, info, fids, states[role], side_size, warnings,
                        layer_of={fid: (None if specs[fid][role]['center_um'] is None else specs[fid][role]['layer'])
                                  for fid in fids})
     return states
+
+
+def _load_pair_shapes(cfg2, infos, specs, states, warnings):
+    """Crop the shapes of each pair's two electrodes (this analysis layer) at every tile: state['shape'], ['shape_status'].
+
+    status: 'ok' | 'missing' (a pair end has no electrode PNG on that layer, or the PNG is unreadable; the pair layer is
+    left out and electrode_shape_missing is warned) | 'not_configured' (no dl1_root / dl1_model: no warning of its own,
+    the overlay warning already says it). A side without a centre has no tile content and stays None."""
+    from .adapters.electrode_png import load_electrode_layer, scan_electrode_shapes
+    for role in ROLES:
+        info, product = infos[role], getattr(cfg2, role)
+        root, model = cfg2.report.dl1_root, product.dl1_model
+        todo = [fid for fid in specs if specs[fid][role]['center_um'] is not None]
+        if not todo:
+            continue
+        if root is None or model is None:
+            for fid in todo:
+                states[role][fid]['shape_status'] = 'not_configured'
+            continue
+        try:
+            available = scan_electrode_shapes(root, model)
+        except (NumericContractError, OSError, ValueError) as exc:
+            for fid in todo:
+                states[role][fid]['shape_status'] = 'missing'
+            warnings.append({'code': 'electrode_scan_failed', 'role': role, 'layer': None, 'detail': str(exc)})
+            continue
+        folded = {}
+        for name in available:
+            folded.setdefault(name.casefold(), name)
+        groups = {}
+        for fid in todo:
+            state, layer = states[role][fid], specs[fid][role]['layer']
+            ends = [e.get('electrode_id') if isinstance(e, dict) else e for e in specs[fid][role].get('endpoints') or []]
+            ends = [e for e in ends if e]
+            paths, absent = [], []
+            for electrode in ends:
+                name = electrode if electrode in available else folded.get(str(electrode).casefold())
+                if name is not None and layer in available[name]:
+                    paths.append(available[name][layer])
+                else:
+                    absent.append(electrode)
+            if not ends or absent or layer is None:
+                state['shape_status'] = 'missing'
+                for electrode in absent:
+                    warnings.append({'code': 'electrode_shape_missing', 'role': role, 'layer': layer,
+                                     'detail': f'{electrode}: no electrode PNG on layer {layer} in {model}'})
+                continue
+            groups.setdefault(tuple(sorted(set(paths))), []).append(fid)
+        for paths, group in groups.items():
+            errors = []
+            union = load_electrode_layer(root, model, info['frame'], paths, errors)
+            for fid in group:
+                state, layer = states[role][fid], specs[fid][role]['layer']
+                if union is None:
+                    state['shape_status'] = 'missing'
+                    warnings.append({'code': 'electrode_shape_missing', 'role': role, 'layer': layer,
+                                     'detail': f'{", ".join(paths)}: unreadable ({", ".join(sorted(set(errors))) or "no file"})'})
+                else:
+                    y0, x0 = state['origin']
+                    state['shape'] = _crop(union, y0, x0, state['crop'].shape[0])
+                    state['shape_status'] = 'ok'
+            del union
+
+
+# ---- tile layers ---------------------------------------------------------------------------------------------------------
+
+def _erode(mask, steps):
+    out = mask
+    for _ in range(steps):
+        padded = np.pad(out, 1, mode='edge')
+        out = (padded[1:-1, 1:-1] & padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:])
+    return out
+
+
+def _ring(mask, width=RING_PX):
+    """The outer border cells of a mask, width cells thick."""
+    return mask & ~_erode(mask, width)
+
+
+def _dotted(mask):
+    """Every other 3-cell run of a ring: a dashed line."""
+    rows, cols = np.indices(mask.shape)
+    return mask & (((rows + cols) // 3) % 2 == 0)
+
+
+def _layer_png(paint):
+    """PNG bytes of a transparent RGBA tile built from [(mask, (r, g, b), alpha)], or None when nothing is painted."""
+    shape = paint[0][0].shape
+    rgba = np.zeros(shape + (4,), dtype=np.uint8)
+    drawn = False
+    for mask, rgb, alpha in paint:
+        if mask.any():
+            rgba[mask] = tuple(rgb) + (alpha,)
+            drawn = True
+    if not drawn:
+        return None
+    buffer = BytesIO()
+    Image.fromarray(rgba).save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
+def _render_tile(states, key, infos):
+    """(figs per role, same): the transparent layer PNGs of one pair on both sides.
+
+    figs[role]['layers'] = {name: png bytes}; names bg / pair / line / pixel / overlap (own side), diff (B only, when
+    the two tiles have the same size and pitch) and ghost (a side without a centre: the other side's hotspot outline).
+    line / pixel hold the pair's hotspot cells outside the opposite class, overlap = hotspot ∩ opposite-class union."""
+    t, r = states['target'][key], states['reference'][key]
+    same = (t['crop'].shape == r['crop'].shape and infos['target']['pitch'] == infos['reference']['pitch'])
+    figs = {}
+    for role, state, other in (('reference', r, t), ('target', t, r)):
+        pitch = infos[role]['pitch']
+        crop, missing = state['crop'], state['status'] == 'center_missing'
+        layers = {}
+        zero = np.zeros(crop.shape, dtype=bool)
+        if not missing:
+            if state['overlay'] is not None:
+                layers['bg'] = _layer_png([(state['overlay'], (OVERLAY_GRAY,) * 3, BG_ALPHA)])
+            if state['shape'] is not None:
+                layers['pair'] = _layer_png([(state['shape'], PAIR_RGB, 150)])
+            opp = zero if state['opp'] is None else state['opp']
+            both = crop & opp
+            own = crop & ~opp
+            if state['kind'] in ('line', 'pixel'):
+                layers[state['kind']] = _layer_png([(own, LINE_RGB if state['kind'] == 'line' else PIXEL_RGB, MASK_ALPHA)])
+            layers['overlap'] = _layer_png([(both, LINE_RGB, MASK_ALPHA), (_ring(both), PIXEL_RGB, 255)])
+            if role == 'target' and same:
+                new, gone = t['crop'] & ~r['crop'], r['crop'] & ~t['crop']
+                layers['diff'] = _layer_png([(_ring(new), COLOR_NEW, 255), (_dotted(_ring(gone)), COLOR_GONE, 255)])
+        elif same and other['status'] != 'center_missing':
+            layers['ghost'] = _layer_png([(_dotted(_ring(other['crop'], 1)), GHOST_RGB, 255)])
+        layers = {name: data for name, data in layers.items() if data is not None}
+        y0, x0 = state['win_off']
+        inner = crop[y0:y0 + state['win_size'], x0:x0 + state['win_size']]
+        cells = int(inner.sum())
+        figs[role] = {'layers': layers, 'cells': cells, 'area_um2': cells * pitch * pitch,
+                      'components': _components(inner)[0] if cells else 0, 'status': state['status'],
+                      'overlay': state['overlay_status'], 'origin_yx': list(state['origin']),
+                      'electrode_shape': state['shape_status'], 'missing': missing}
+    return figs, same
 
 
 # ---- PNG ---------------------------------------------------------------------------------------------------------
@@ -768,12 +965,13 @@ def _mapset(index, figs, same, diameter, window_um, aligned=False, pitch_differs
     return ''.join(out)
 
 
-def _bars(rows, kind):
-    width, row_h = 480, 30
+def _bars(rows, kind, base=None):
+    """Horizontal bars of delta-vi per layer; the label is '%p (change rate vs the reference vi_kind of the selected range)'."""
+    width, row_h = 600, 30
     height = len(rows) * row_h + 28
     values = [abs(v) for _name, v in rows if v is not None]
     peak = (max(values) if values else 0.0) * 1.2 or 1.0
-    cx, scale = width / 2 + 30, (width / 2 - 50) / peak
+    cx, scale = width / 2 + 30, (width / 2 - 130) / peak       # room for the longest label on both sides
     title = f'vi_{kind}'
     out = [f'<b><span class="sw" style="background:var(--{kind})"></span> {title}</b>',
            f'<svg viewBox="0 0 {width + 30} {height}" width="100%" role="img" aria-label="{title} 레이어별 변화">',
@@ -788,14 +986,14 @@ def _bars(rows, kind):
         x = cx if value >= 0 else cx - bw
         color = 'var(--up)' if value >= 0 else 'var(--down)'
         out.append(f'<rect x="{x:.1f}" y="{y + 3}" width="{bw:.1f}" height="16" rx="3" fill="{color}">'
-                   f'<title>{_e(name)} Δ{title} {_pp(value)}</title></rect>')
+                   f'<title>{_e(name)} Δ{title} {_e(_dv(value, base))}</title></rect>')
         anchor, tx = ('start', x + bw + 4) if value >= 0 else ('end', x - 4)
-        out.append(f'<text class="val" x="{tx:.1f}" y="{y + 15}" text-anchor="{anchor}">{_pp(value)}</text>')
+        out.append(f'<text class="val" x="{tx:.1f}" y="{y + 15}" text-anchor="{anchor}">{_e(_dv(value, base))}</text>')
     out.append(f'<text x="{cx}" y="{height - 4}" text-anchor="middle">Δ (%p)</text></svg>')
     return ''.join(out)
 
 
-def _heat(layers, kind, sizes):
+def _heat(layers, kind, sizes, base=None):
     field = f'delta_vi_{kind}'
     cells = {(row['layer'], s['diameter_um']): s.get(field) for row in layers for s in row.get('by_size', [])}
     peak = max([abs(v) for v in cells.values() if v is not None] or [0.0]) or 1.0
@@ -810,7 +1008,7 @@ def _heat(layers, kind, sizes):
             q = min(abs(value) / peak, 1.0)
             color = '208,59,59' if value >= 0 else '42,120,214'
             tds.append(f'<td style="background:color-mix(in srgb, rgb({color}) {round(q * 85)}%, var(--mid))" '
-                       f'title="{_e(row["layer"])} · {_size_text(size)} µm · {kind}: {_pp(value)}">{_pp(value)}</td>')
+                       f'title="{_e(row["layer"])} · {_size_text(size)} µm · {kind}: {_e(_dv(value, base))}">{_e(_dv(value, base))}</td>')
         out.append(f'<tr><td class="l">{_e(row["layer"])}</td>{"".join(tds)}</tr>')
     return ''.join(out)
 
@@ -1019,7 +1217,8 @@ def _scatter(doc, view):
     big = [p for p in points if p[0] in cards]
     small = sorted((p for p in points if p[0] not in cards), key=lambda p: (-(abs(p[1]) + abs(p[2])), p[0]))
     shown_small = small[:MAX_SCATTER_DOTS]
-    width, height, left, right, top, bottom = 380, 260, 46, 372, 10, 230
+    # the plot sits inside the viewBox with room on the right for point names and a band above and below for the axis titles
+    width, height, left, right, top, bottom = 470, 290, 46, 372, 24, 250
     cx, cy = (left + right) / 2, (top + bottom) / 2
     xmax = max(abs(p[1]) for p in points) * 1.15 or 1.0
     ymax = max(abs(p[2]) for p in points) * 1.15 or 1.0
@@ -1033,8 +1232,8 @@ def _scatter(doc, view):
            f'<text x="{right - 2}" y="{bottom - 4}" text-anchor="end">상충: line↑ pixel↓</text>',
            f'<text x="{left + 2}" y="{top + 10}">상충: line↓ pixel↑</text>',
            f'<text x="{left + 2}" y="{bottom - 4}">둘 다 개선</text>',
-           f'<text x="{right - 2}" y="{cy - 3:.1f}" text-anchor="end">Δvi_line → {_pp(xmax)}</text>',
-           f'<text x="{cx + 3:.1f}" y="{height - 6}">↑ Δvi_pixel (위가 +, 끝 {_pp(ymax)})</text>']
+           f'<text x="{right}" y="{height - 6}" text-anchor="end">Δvi_line → (오른쪽이 +, 끝 {_pp(xmax)})</text>',
+           f'<text x="{left}" y="{top - 10}">↑ Δvi_pixel (위가 +, 끝 {_pp(ymax)})</text>']
     for key, line, pixel in shown_small:
         out.append(f'<circle cx="{cx + line * sx:.1f}" cy="{cy - pixel * sy:.1f}" r="3.5" fill="var(--common)" '
                    f'stroke="var(--surface-1)" stroke-width="1"><title>{_e(_roi_name(view, key))} · line {_e(_dv(line, base["line"]))} '
@@ -1042,7 +1241,8 @@ def _scatter(doc, view):
     for key, line, pixel in big:
         x, y = cx + line * sx, cy - pixel * sy
         name = _roi_name(view, key)
-        flip = x > right - 110
+        text_w = sum(11.0 if ord(ch) > 127 else 6.2 for ch in name)         # estimated width of the name
+        flip = x + 10 + text_w > width - 4 and x - 10 - text_w >= 2          # flip only when the right end would be cut
         out.append(f'<a href="#roi{_e(key)}"><circle cx="{x:.1f}" cy="{y:.1f}" r="7" fill="var(--text-primary)" '
                    f'stroke="var(--surface-1)" stroke-width="1.5"><title>{_e(name)} · line {_e(_dv(line, base["line"]))} '
                    f'· pixel {_e(_dv(pixel, base["pixel"]))}</title></circle></a>'
@@ -1219,25 +1419,60 @@ def _unit_position(info, point):
     return [((((point[axis] - origin[axis]) / pitch) + BORDER_PX) % info['unit_px'][axis]) * pitch for axis in (0, 1)]
 
 
-def _unit_map(view, roi_key):
-    info = view['infos']['reference']
-    center = view['link_rois'][roi_key].get('center_xy_um')
+def _unit_map(view, roi_key, role='reference', center=None):
+    """The mini map of one side: the position of the pair centre inside that side's unit; the other locations of the
+    reference side (A coordinates) are grey dots. center defaults to the ROI centre."""
+    info = view['infos'][role]
+    if center is None and role == 'reference':
+        center = view['link_rois'][roi_key].get('center_xy_um')
+    name = ROLE_TEXT[role]
     if not center:
-        return '<figure><figcaption>unit 안 위치 정보 없음</figcaption></figure>'
+        return f'<figure><figcaption>{name} · unit 안 위치 정보 없음</figcaption></figure>'
     ux, uy = info['unit_um']
     sx, sy = 100.0 / ux, 100.0 / uy
     dots = []
-    for key in sorted(view['link_rois'])[:MAX_UNIT_DOTS]:
-        other = view['link_rois'][key].get('center_xy_um')
-        if other and key != roi_key:
-            x, y = _unit_position(info, other)
-            dots.append(f'<circle cx="{5 + x * sx:.1f}" cy="{5 + y * sy:.1f}" r="2" fill="var(--common)"/>')
+    if role == 'reference':
+        for key in sorted(view['link_rois'])[:MAX_UNIT_DOTS]:
+            other = view['link_rois'][key].get('center_xy_um')
+            if other and key != roi_key:
+                x, y = _unit_position(info, other)
+                dots.append(f'<circle cx="{5 + x * sx:.1f}" cy="{5 + y * sy:.1f}" r="2" fill="var(--common)"/>')
     x, y = _unit_position(info, center)
-    return ('<figure><svg class="unit" viewBox="0 0 110 110" role="img" aria-label="unit 안 위치">'
+    return (f'<figure><svg class="unit" viewBox="0 0 110 110" role="img" aria-label="{name} unit 안 위치">'
             '<rect x="5" y="5" width="100" height="100" fill="none" stroke="var(--text-muted)" stroke-dasharray="3 2"/>'
             + ''.join(dots) + f'<circle cx="{5 + x * sx:.1f}" cy="{5 + y * sy:.1f}" r="5" fill="var(--up)" '
             'stroke="var(--surface-1)" stroke-width="1.5"/></svg>'
-            f'<figcaption>unit({ux:g} × {uy:g} µm) 안 위치<br>({x:.1f}, {y:.1f}) µm</figcaption></figure>')
+            f'<figcaption>{name} · unit({ux:g} × {uy:g} µm) 안 위치<br>({x:.1f}, {y:.1f}) µm</figcaption></figure>')
+
+
+def _pair_centers(view, roi_key):
+    """(A centre, B centre) of the ROI's first map pair that has both; else of the first with any; else the ROI centre for A."""
+    found = []
+    for pid in view['rois'][roi_key]['map_pairs']:
+        pair = view['link_pairs'].get(pid) or {}
+        if pair.get('cno_case'):
+            continue
+        found.append(((pair.get('a') or {}).get('center_xy_um'), (pair.get('b') or {}).get('center_xy_um')))
+    for a, b in found:
+        if a and b:
+            return a, b
+    for a, b in found:
+        if a or b:
+            return a, b
+    return view['link_rois'][roi_key].get('center_xy_um'), None
+
+
+def _position_delta(view, a, b):
+    """(dx, dy) µm: B unit position minus A unit position, wrapped into half a unit; None without both centres."""
+    if not a or not b:
+        return None
+    pa, pb = _unit_position(view['infos']['reference'], a), _unit_position(view['infos']['target'], b)
+    out = []
+    for axis in (0, 1):
+        unit = view['infos']['reference']['unit_um'][axis]
+        delta = pb[axis] - pa[axis]
+        out.append(delta - round(delta / unit) * unit if unit else delta)
+    return out
 
 
 def _pair_name(pair):
@@ -1260,10 +1495,19 @@ def _window_area_text(view, link_pair):
                 break
         except (TypeError, ValueError):
             continue
-    if not row or row.get('a_status') != 'available' or row.get('b_status') != 'available' \
-            or row.get('a_value_um2') is None or row.get('b_value_um2') is None:
+    if not row:
         return '—'
-    return f'{_num(row["a_value_um2"])} → {_num(row["b_value_um2"])} µm²'
+    values = []
+    for side in ('a', 'b'):
+        status, value = row.get(f'{side}_status'), row.get(f'{side}_value_um2')
+        if status == 'not_applicable':      # a true 0 contribution, like the location delta-vi (compare2_link.py:760)
+            value = 0.0
+        elif status != 'available':
+            value = None
+        if value is None:
+            return '—'
+        values.append(value)
+    return f'{_num(values[0])} → {_num(values[1])} µm²'
 
 
 def _condition_of(view, cid):
@@ -1293,6 +1537,10 @@ def _change_table(view, roi_key):
         if ids(case) != (None, None):
             cases.setdefault(ids(case), case)
     matched = set()
+    for loc_pair in pairs[MAX_CARD_ROWS:]:      # a pair cut by the row limit still owns its one-sided case: no duplicate row
+        cut = ids(view['link_pairs'][loc_pair['pair_id']])
+        if cut != (None, None):
+            matched.add(cut)
     rows = []
     for loc_pair in pairs[:MAX_CARD_ROWS]:
         link_pair = view['link_pairs'][loc_pair['pair_id']]
@@ -1313,8 +1561,15 @@ def _change_table(view, roi_key):
         for k in KINDS:
             value = loc_pair['delta_vi'][k]
             cells.append(f'<td class="muted" title="{_e(why)}">값 없음</td>' if value is None else _dcell(value, base[k]))
-        change = _kind_text(case.get('change_kind')) if case is not None else '—'
-        rows.append(f'<tr class="pairrow" data-pair="{_e(loc_pair["pair_id"])}"><td class="l">{_e(change)}</td>'
+        if case is None:
+            change = '—'
+        elif case.get('present_in') in ROLES:      # a one-sided case reads as added / removed even when it has a pair
+            change = _present_text(case['present_in'])
+        else:
+            change = _kind_text(case.get('change_kind'))
+        cno_attr = ' data-cno="1"' if cno else ''
+        rows.append(f'<tr class="pairrow" data-pair="{_e(loc_pair["pair_id"])}"{cno_attr}>'
+                    f'<td class="l">{_e(change)}</td>'
                     f'<td class="l">{_e(_pair_name(link_pair))}' + (' <span class="chip">CNO</span>' if cno else '') + '</td>'
                     f'<td class="l">{_type_chip(kind) if kind else "—"}</td><td>{_window_area_text(view, link_pair)}</td>'
                     f'{cells[0]}{cells[1]}'
@@ -1343,6 +1598,68 @@ def _change_table(view, roi_key):
     return f'<table class="chgtable">{head}{"".join(rows)}</table><p class="muted">{notes}</p>'
 
 
+LAYER_ORDER = ('bg', 'pair', 'line', 'pixel', 'overlap', 'diff', 'ghost')      # bottom to top
+CARD_LEGEND = ('<div class="legend"><span><span class="sw" style="background:rgba(128,128,128,.35)"></span>layer 패턴</span>'
+               '<span><span class="sw" style="background:#009688"></span>전극 쌍</span>'
+               '<span><span class="sw" style="background:var(--line)"></span>line hotspot</span>'
+               '<span><span class="sw" style="background:var(--pixel)"></span>pixel hotspot</span>'
+               '<span><span class="sw ovsw"></span>겹침 = line 으로 계산, pixel 에서 제외</span>'
+               '<span>실선 = B 에서 신규 · 점선 = B 에서 소멸</span><span>+ 앵커 · 점선 사각형 = ROI 창</span></div>')
+
+
+def _viewport(view, roi_key, role, pids):
+    """One zoomable view of a card: a group of transparent layer images per map pair (shown one at a time)."""
+    side = 'A' if role == 'reference' else 'B'
+    groups = []
+    for n, pid in enumerate(pids):
+        fig = view['roi_maps'][(roi_key, pid)][0][role]
+        images = []
+        for name in LAYER_ORDER:
+            data = fig['layers'].get(name)
+            if data is not None:
+                sha = hashlib.sha256(data).hexdigest()
+                view['images'][sha] = data
+                images.append(f'<img class="ly {name}" data-sha="{sha}" alt="">')
+        absent = ''
+        if fig['missing']:
+            absent = '<div class="absent">이 쪽에 없음</div>' + ('<div class="gt">대응 위치(추정)</div>' if 'ghost' in fig['layers'] else '')
+        area = '' if fig['missing'] else f'{_num(fig["area_um2"])} µm²'
+        flags = ' data-absent="1"' if fig['missing'] else ''
+        groups.append(f'<div class="pl{" cur" if n == 0 else ""}" data-pair="{_e(pid)}" data-area="{_e(area)}"{flags}>'
+                      + ''.join(images) + absent + '</div>')
+    return (f'<figure><div class="vp" data-side="{side}" role="img" aria-label="{_e(ROLE_TEXT[role])} 확대 그림">'
+            f'<div class="vpin">{"".join(groups)}<span class="win"></span><span class="anc"></span></div></div>'
+            f'<figcaption>{_e(ROLE_TEXT[role])} <span class="cap"></span></figcaption></figure>')
+
+
+def _card_maps(view, roi_key, lr):
+    """Left column of a card: two mini maps, the position difference, the controls, the two views and the legend."""
+    window_um = view['cfg2'].report.map_window_um
+    a_center, b_center = _pair_centers(view, roi_key)
+    delta = _position_delta(view, a_center, b_center)
+    far = delta is not None and max(abs(delta[0]), abs(delta[1])) > window_um / 2.0
+    if delta is None:
+        diff_text = 'A·B 위치 차이를 알 수 없습니다(한쪽 중심 없음).'
+    else:
+        diff_text = f'A·B 위치 차이 Δ ({delta[0]:+.1f}, {delta[1]:+.1f}) µm'
+        if far:
+            diff_text += ' · 창의 절반을 넘습니다. 각 그림은 자기 앵커(+)에 맞췄습니다.'
+    out = ['<div class="views">', _unit_map(view, roi_key, 'reference', a_center),
+           _unit_map(view, roi_key, 'target', b_center), f'</div><div class="muted">{_e(diff_text)}</div>']
+    pids = [pid for pid in lr['map_pairs'] if (roi_key, pid) in view['roi_maps']]
+    if not pids:
+        out.append('<p class="muted">이 위치에는 그림으로 보일 쌍이 없습니다.</p>')
+        return ''.join(out), far
+    out.append('<div class="vctl"><button type="button" data-z="1" aria-pressed="true">1×</button>'
+               '<button type="button" data-z="2" aria-pressed="false">2×</button>'
+               '<label><input type="checkbox" class="sync" checked> 동기 이동</label>'
+               '<label><input type="checkbox" class="dtog"> 신규·소멸 테두리</label></div>')
+    out.append('<div class="views">' + _viewport(view, roi_key, 'reference', pids)
+               + _viewport(view, roi_key, 'target', pids) + '</div>')
+    out.append(CARD_LEGEND)
+    return ''.join(out), far
+
+
 def _roi_card(view, word, rank, roi_key, klass):
     lr, lk = view['rois'][roi_key], view['link_rois'][roi_key]
     cfg2, diameter, base = view['cfg2'], view['cfg2'].report.diameter_um, view['base']
@@ -1352,19 +1669,15 @@ def _roi_card(view, word, rank, roi_key, klass):
     kinds = ', '.join(_kind_text(k) for k in lr['design_change']['change_kinds'])
     line, pixel = lr['delta_vi']['line'], lr['delta_vi']['pixel']
     repeat = f'<span class="badge">반복 ×{lr["replica_factor"]}</span>' if lr['replica_factor'] > 1 else ''
+    maps, far = _card_maps(view, roi_key, lr)
+    far_badge = '<span class="badge b-trade">위치 차이 큼</span>' if far else ''
+    window_um = cfg2.report.map_window_um
     out = [f'<div class="roi" id="roi{_e(roi_key)}"><div class="roi-head"><div class="t">{word} {rank} · '
            f'<span title="{_e(roi_key)}">{_e(_roi_name(view, roi_key))}</span>{" · " + _e(kinds) if kinds else ""} '
-           f'{_verdict_badge(line, pixel)}{repeat}</div>'
-           f'<div class="muted">{center_text}창 {_size_text(cfg2.report.map_window_um)} µm · 지도 {_size_text(diameter)} µm 이물</div></div>'
-           '<div class="roi-body"><div class="maps">', _unit_map(view, roi_key)]
-    for pid in lr['map_pairs']:
-        shown = view['roi_maps'].get((roi_key, pid))
-        if shown is None:
-            continue
-        figs, same = shown
-        out.append(f'<div><div class="muted">{_e(_pair_name(view["link_pairs"][pid]))}</div>'
-                   + _mapset(None, figs, same, diameter, cfg2.report.map_window_um, aligned=True,
-                             pitch_differs=view['infos']['target']['pitch'] != view['infos']['reference']['pitch']) + '</div>')
+           f'{_verdict_badge(line, pixel)}{repeat}{far_badge}</div>'
+           f'<div class="muted">{center_text}창 {_size_text(window_um)} µm · 타일 {_size_text(TILE_FACTOR * window_um)} µm · '
+           f'지도 {_size_text(diameter)} µm 이물</div></div>'
+           '<div class="roi-body"><div class="maps">', maps]
     out.append('</div><div>')
     factor = f' · 대표 위치 값 × {lr["replica_factor"]}' if lr['replica_factor'] > 1 else ''
     out.append('<div class="step"><b>영향</b> Δvi_line ' + _span(_sign_class(line), _dv(line, base['line']))
@@ -1372,7 +1685,8 @@ def _roi_card(view, word, rank, roi_key, klass):
     total = len(view['loc']['rois'])
     out.append(f'<div class="step"><b>순위</b> 전체 {total}개 변경 위치 중 {klass} 순 {pos}위</div>')
     out.append('<div class="step"><b>변경 목록</b></div>' + _change_table(view, roi_key))
-    mapped = [pid for pid in lr['map_pairs'] if not view['link_pairs'][pid].get('cno_case')]     # a CNO pair draws no map
+    out.append('<div class="banner sel-note" style="display:none"></div>')
+    mapped =[pid for pid in lr['map_pairs'] if not view['link_pairs'][pid].get('cno_case')]     # a CNO pair draws no map
     if lr['pairs_total'] > len(mapped):
         out.append(f'<p class="muted">쌍 {lr["pairs_total"]}개 중 영향이 큰 {len(mapped)}개만 지도로 보입니다'
                    '(--max-pairs-per-condition).' + (' CNO 쌍은 지도가 없습니다.' if len(mapped) < len(lr['map_pairs']) else '') + '</p>')
@@ -1426,12 +1740,6 @@ def _roi_section(view, sec_id, title, lead, keys, which, word, klass):
         out.append(f'<p class="lead">{lead}</p>')
         out.append(_roi_rank_table(view, keys, sec_id))
         out.append(_cover(view, keys, which))
-        if sec_id == 's2':
-            out.append('<div class="legend"><span><span class="sw" style="background:var(--common)"></span>A·B 공통 불량 영역</span>'
-                       '<span><span class="sw" style="background:var(--up)"></span>B에서 새로 생김</span>'
-                       '<span><span class="sw" style="background:var(--down)"></span>B에서 사라짐</span>'
-                       '<span><span class="sw" style="background:rgba(128,128,128,.35)"></span>레이어 패턴</span>'
-                       '<span><span class="sw" style="background:var(--up);border-radius:50%"></span>unit 안 위치</span></div>')
         for rank, key in enumerate(keys, start=1):
             out.append(_roi_card(view, word, rank, key, klass))
     out.append('</section>\n')
@@ -1506,12 +1814,13 @@ def _electrode_section(doc, view, top_n):
 def _distribution_section(doc):
     layers = doc['delta']['layers']
     sizes = sorted({s['diameter_um'] for row in layers for s in row.get('by_size', [])})
-    tabs = [('layer', '레이어', '레이어별 Δvi 입니다(선택 범위, %p).',
-             '<div class="grid2">' + f'<div>{_bars([(r["layer"], r["delta_vi_line"]) for r in layers], "line")}</div>'
-             f'<div>{_bars([(r["layer"], r["delta_vi_pixel"]) for r in layers], "pixel")}</div></div>'),
-            ('size', '이물 크기', '레이어 × 이물 크기별 Δvi 입니다(%p, 빨강 증가 +, 파랑 감소 −).',
-             f'<div class="grid2"><div><b>Δvi_line</b><table class="hm">{_heat(layers, "line", sizes)}</table></div>'
-             f'<div><b>Δvi_pixel</b><table class="hm">{_heat(layers, "pixel", sizes)}</table></div></div>')]
+    base = _base_of(doc)        # the same base as every other section: the reference vi of the selected range
+    tabs = [('layer', '레이어', '레이어별 Δvi 입니다(선택 범위, %p, 괄호는 기준 A 전체 vi 대비 변화율).',
+             '<div class="grid2">' + f'<div>{_bars([(r["layer"], r["delta_vi_line"]) for r in layers], "line", base["line"])}</div>'
+             f'<div>{_bars([(r["layer"], r["delta_vi_pixel"]) for r in layers], "pixel", base["pixel"])}</div></div>'),
+            ('size', '이물 크기', '레이어 × 이물 크기별 Δvi 입니다(%p, 괄호는 기준 A 전체 vi 대비 변화율, 빨강 증가 +, 파랑 감소 −).',
+             f'<div class="grid2"><div><b>Δvi_line</b><table class="hm">{_heat(layers, "line", sizes, base["line"])}</table></div>'
+             f'<div><b>Δvi_pixel</b><table class="hm">{_heat(layers, "pixel", sizes, base["pixel"])}</table></div></div>')]
     out = ['<section id="s5"><h2>5. 전체 분포</h2><div class="tabs">']
     out += [f'<input type="radio" name="dist" id="dist-{key}"{" checked" if i == 0 else ""}>' for i, (key, *_rest) in enumerate(tabs)]
     out.append('<div class="tabbar">' + ''.join(f'<label for="dist-{key}">{label}</label>' for key, label, *_rest in tabs) + '</div>')
@@ -1624,11 +1933,36 @@ td.wrap{white-space:normal} tr.picked td{background:var(--sel)} .kpi td.v{font-s
 .roi{border:1px solid var(--border);border-radius:10px;padding:14px;margin:12px 0}
 .roi-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
 .roi-head .t{font-size:16px;font-weight:650}
-.roi-body{display:grid;grid-template-columns:auto 1fr;gap:16px;margin-top:8px}
+.roi-body{display:grid;grid-template-columns:minmax(330px,420px) 1fr;gap:16px;margin-top:8px}
 @media (max-width:900px){.roi-body{grid-template-columns:1fr}}
 .step{margin:6px 0} .step b{display:inline-block;min-width:92px}
-.maps{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+.maps{min-width:330px;max-width:420px}
 .maps figure{margin:0} .maps figcaption{font-size:11px;color:var(--text-muted);text-align:center}
+.views{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.vp{position:relative;width:100%;aspect-ratio:1/1;overflow:hidden;background:var(--surface-0);border:1px solid var(--border);border-radius:6px;cursor:grab;touch-action:none}
+.vpin{position:absolute;left:-50%;top:-50%;width:200%;height:200%}
+.pl{position:absolute;left:0;top:0;width:100%;height:100%;display:none}
+.pl.cur{display:block}
+.ly{position:absolute;left:0;top:0;width:100%;height:100%;display:none;image-rendering:pixelated;pointer-events:none}
+.pl.cur .ly.bg{display:block}
+.vp.sel .pl.cur .ly.bg{opacity:.25}
+.vp.sel .pl.cur .ly{display:block}
+.vp .pl.cur .ly.diff{display:none} .vp.showdiff .pl.cur .ly.diff{display:block}
+.vp.sel .pl.cur .ly.pair,.vp.sel .pl.cur .ly.line,.vp.sel .pl.cur .ly.pixel,.vp.sel .pl.cur .ly.overlap{animation:hotpulse 1.4s ease-in-out infinite}
+@keyframes hotpulse{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.vp.sel .pl.cur .ly{animation:none !important}}
+.absent,.gt{display:none;position:absolute;left:0;right:0;text-align:center;font-size:12px;color:var(--text-muted)}
+.absent{top:48%} .gt{top:56%}
+.vp.sel .pl.cur .absent,.vp.sel .pl.cur .gt{display:block}
+.win{position:absolute;left:25%;top:25%;width:50%;height:50%;border:1px dashed var(--text-muted);pointer-events:none}
+.anc{position:absolute;left:50%;top:50%;width:0;height:0;pointer-events:none}
+.anc:before,.anc:after{content:"";position:absolute;background:var(--text-primary);opacity:.7}
+.anc:before{left:-5px;top:0;width:11px;height:1px} .anc:after{left:0;top:-5px;width:1px;height:11px}
+.vctl{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:8px 0 4px;font-size:12.5px}
+.vctl button{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:6px;padding:2px 10px;cursor:pointer;font:inherit}
+.vctl button[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1)}
+.ovsw{background:var(--line);outline:2px solid var(--pixel);outline-offset:-1px}
+.chgtable tr.on td{background:var(--sel)} .sel-note{margin:6px 0}
 svg.unit{width:110px;height:110px;border:1px solid var(--border);border-radius:4px;background:var(--surface-0)}
 .bar{display:inline-block;height:8px;border-radius:2px;vertical-align:middle;margin-left:6px}
 .countrow{display:flex;gap:10px;margin:12px 0 0;flex-wrap:wrap} .countrow div{border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px}
@@ -1663,6 +1997,36 @@ document.querySelectorAll('.controls[data-sort-for]').forEach(function(box){box.
   rows.forEach(function(r,i){r.__i=i});
   rows.sort(function(x,y){return (parseFloat(y.getAttribute(key))-parseFloat(x.getAttribute(key)))||(x.__i-y.__i)});
   rows.forEach(function(r,i){r.querySelector('.rk').textContent=i+1;r.parentNode.appendChild(r)})})});
+[].slice.call(document.querySelectorAll('img[data-sha]')).forEach(function(im){var s=$('i'+im.getAttribute('data-sha'));if(s)im.src=s.src});
+[].slice.call(document.querySelectorAll('.roi')).forEach(function(el){
+  var vps=[].slice.call(el.querySelectorAll('.vp')),table=el.querySelector('table.chgtable'),note=el.querySelector('.sel-note'),
+      sync=el.querySelector('.sync'),zoom=1,off={A:[0,0],B:[0,0]},cur=null;
+  if(!vps.length||!table)return;
+  function apply(){vps.forEach(function(v){var o=off[v.getAttribute('data-side')],inn=v.querySelector('.vpin');
+    if(zoom===2){inn.style.width='100%';inn.style.height='100%';inn.style.left='0';inn.style.top='0'}
+    else{inn.style.width='200%';inn.style.height='200%';inn.style.left=(-50-o[0])+'%';inn.style.top=(-50-o[1])+'%'}})}
+  function select(tr){var pid=tr.getAttribute('data-pair'),same=cur===pid;cur=same?null:pid;
+    [].slice.call(table.querySelectorAll('tr[data-pair]')).forEach(function(x){x.classList.toggle('on',cur!==null&&x.getAttribute('data-pair')===cur)});
+    vps.forEach(function(v){var groups=[].slice.call(v.querySelectorAll('.pl')),found=null,cap=v.parentNode.querySelector('.cap');
+      groups.forEach(function(g,i){var on=cur===null?i===0:g.getAttribute('data-pair')===cur;if(on&&cur!==null)found=g;g.classList.toggle('cur',on)});
+      v.classList.toggle('sel',!!found);
+      cap.textContent=cur===null?'':found?(found.getAttribute('data-absent')?'· 이 쪽에 없음':'· '+found.getAttribute('data-area')):
+        (tr.getAttribute('data-cno')?'· CNO 는 지도 없음':'· 지도 없음');
+      if(cur!==null&&!found)groups.forEach(function(g){g.classList.remove('cur')})});
+    if(cur===null){note.style.display='none'}
+    else{note.style.display='';note.textContent=tr.cells[0].textContent+' · '+tr.cells[1].textContent}}
+  table.addEventListener('click',function(e){var tr=e.target.closest('tr[data-pair]');if(tr)select(tr)});
+  [].slice.call(el.querySelectorAll('[data-z]')).forEach(function(b){b.addEventListener('click',function(){zoom=+b.getAttribute('data-z');
+    [].slice.call(el.querySelectorAll('[data-z]')).forEach(function(x){x.setAttribute('aria-pressed',x===b)});apply()})});
+  el.querySelector('.dtog').addEventListener('change',function(e){vps.forEach(function(v){v.classList.toggle('showdiff',e.target.checked)})});
+  vps.forEach(function(v){var drag=null;
+    v.addEventListener('pointerdown',function(e){if(zoom!==1)return;drag={x:e.clientX,y:e.clientY,k:100/v.getBoundingClientRect().width,
+      a:off.A.slice(),b:off.B.slice(),side:v.getAttribute('data-side')};v.setPointerCapture(e.pointerId)});
+    v.addEventListener('pointermove',function(e){if(!drag)return;var dx=(drag.x-e.clientX)*drag.k,dy=(drag.y-e.clientY)*drag.k;
+      function cl(n){return Math.max(-50,Math.min(50,n))}
+      if(sync.checked||drag.side==='A')off.A=[cl(drag.a[0]+dx),cl(drag.a[1]+dy)];
+      if(sync.checked||drag.side==='B')off.B=[cl(drag.b[0]+dx),cl(drag.b[1]+dy)];apply()});
+    v.addEventListener('pointerup',function(){drag=null});v.addEventListener('pointercancel',function(){drag=null})})});
 $('themeBtn').addEventListener('click',function(){var r=document.documentElement,
   c=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
   r.setAttribute('data-theme',c==='dark'?'light':'dark')});
@@ -1823,6 +2187,7 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial, view):
     selected = _diameters_text(doc)
     base = _base_of(doc)
     view['base'] = base
+    view.setdefault('images', {})
     loc = view['loc']
     worse = loc['top_worse'] if loc else []
     improved = loc['top_improved'] if loc else []
@@ -1880,7 +2245,8 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial, view):
     out.append('</section>\n')
     out.append(f'<p class="muted">값은 compare2.json 에서 그대로 읽었습니다 (스키마 {_e(doc["schema_version"])}). '
                '생성 시각은 report.json 에 있습니다.</p>\n')
-    out.append(f'</div><div id="store">{store}</div></div>\n<script>\n{SCRIPT}</script>\n</body>\n</html>\n')
+    images = ''.join(f'<img id="i{sha}" alt="" src="{_png_uri(data)}">' for sha, data in sorted(view['images'].items()))
+    out.append(f'</div><div id="store">{store}{images}</div></div>\n<script>\n{SCRIPT}</script>\n</body>\n</html>\n')
     return ''.join(out)
 
 
@@ -1900,24 +2266,33 @@ def _roi_figures(cfg, cfg2, infos, view, warnings):
                 cond = side_cond[role].get((pair['conditions'][role] or {}).get('condition_id'))
                 spec[role] = {'key': None if cond is None else (cond['pair_id'], cond['layer']),
                               'layer': side.get('analysis_layer') if cond is None else cond['layer'],
-                              'center_um': side.get('center_xy_um')}
+                              'center_um': side.get('center_xy_um'),
+                              'endpoints': [e.get('electrode_id') for e in side.get('endpoints') or []]}
             specs[(roi_key, pid)] = spec
             order.append((roi_key, pid))
     if not specs:
         return []
     states = _build_figures(cfg, cfg2, infos, specs, warnings)
+    _load_pair_shapes(cfg2, infos, specs, states, warnings)
     records = []
     for fid in order:
-        figs, same = _render_pair(states, fid, infos, aligned=True)
+        figs, same = _render_tile(states, fid, infos)
         view['roi_maps'][fid] = (figs, same)
         for role in ROLES:
             if figs[role]['status'] == 'no_record':
                 warnings.append({'code': 'map_input_missing', 'role': role, 'layer': specs[fid][role]['layer'],
                                  'detail': f'{fid[1]}: {cfg2.report.diameter_um:g} µm 입력 없음'})
+        shas = {role: {name: hashlib.sha256(data).hexdigest() for name, data in sorted(figs[role]['layers'].items())}
+                for role in ROLES}
         records.append({'roi_key': fid[0], 'pair_id': fid[1], 'diameter_um': cfg2.report.diameter_um,
-                        'window_um': cfg2.report.map_window_um, 'aligned_diff_colours': same,
-                        **{role: {k: v for k, v in figs[role].items() if k != 'png'} for role in ROLES},
-                        'png_sha256': {role: hashlib.sha256(figs[role]['png']).hexdigest() for role in ROLES}})
+                        'window_um': cfg2.report.map_window_um, 'tile_um': TILE_FACTOR * cfg2.report.map_window_um,
+                        'aligned_diff_colours': same,
+                        **{role: {**{k: v for k, v in figs[role].items() if k not in ('layers', 'missing', 'electrode_shape')},
+                                  'layers': shas[role], 'electrode_shape': figs[role]['electrode_shape'] or 'missing'}
+                           for role in ROLES},
+                        # kept key: one fingerprint per side over its layer names and hashes (there is no single PNG any more)
+                        'png_sha256': {role: hashlib.sha256(json.dumps(shas[role], sort_keys=True).encode('utf-8')).hexdigest()
+                                       for role in ROLES}})
     return records
 
 
@@ -1988,7 +2363,7 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
                             **{role: {k: v for k, v in figs[role].items() if k != 'png'} for role in ROLES},
                             'png_sha256': {role: hashlib.sha256(figs[role]['png']).hexdigest() for role in ROLES}})
     view = {'link': link, 'loc': loc, 'json_sha': json_sha, 'cfg2': cfg2, 'infos': infos, 'rois': {}, 'link_rois': {},
-            'link_pairs': {}, 'roi_maps': {}, 'rank': {}, 'cond_by_id': {c['condition_id']: c for c in conds},
+            'link_pairs': {}, 'roi_maps': {}, 'images': {}, 'rank': {}, 'cond_by_id': {c['condition_id']: c for c in conds},
             'cno_by_id': {cno_condition_id(c['electrode_id'], c['density_layer']): c for c in doc['delta']['cno']
                           if isinstance(c.get('electrode_id'), str) and isinstance(c.get('density_layer'), str)},
             'side_cond_by_id': {role: {c['condition_id']: c for c in doc['sides'][role]['conditions']} for role in ROLES},

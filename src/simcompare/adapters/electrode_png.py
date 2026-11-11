@@ -302,6 +302,18 @@ def scan_electrode_layers(root, model):
     return layers
 
 
+def scan_electrode_shapes(root, model):
+    """report-v6/T3: ``{electrode 폴더: {layer: fs_rel}}`` — 전극마다 층별 PNG 경로(이름만, 읽지 않는다). 모델 폴더가 없으면 ``{}``.
+
+    이름 규칙 위반·중복은 ``_scan_dl1_model`` 과 같은 오류다."""
+    root = Path(root)
+    if not (root / model).is_dir():
+        return {}
+    scan = _scan_dl1_model(root, model)
+    return {name: {layer: record['fs_rel'] for layer, record in sorted(slot.items())}
+            for name, slot in sorted(scan['electrodes'].items())}
+
+
 def _caused_by_memory_error(exc):
     seen = set()
     while exc is not None and id(exc) not in seen:

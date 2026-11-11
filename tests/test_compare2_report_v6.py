@@ -135,7 +135,8 @@ def test_d_card_rows_match_the_pairs_and_carry_data_pair(linked, tmp_path):
         assert head in table, head
     assert '추가' in table and '제거' in table
     assert '5 µm 이물' in card and '행을 누르면' in card
-    assert '창 한 변' in card                        # the maps are unchanged (T3 replaces them)
+    assert '창 10 µm · 타일 20 µm' in card           # T3: the tile is twice the window (the old mapset is gone)
+    assert 'class="mapset"' not in card
 
 
 def _card_view(pairs, loc_pairs, cases=(), one_sided=(), conds=None, cno=None, replica=1):

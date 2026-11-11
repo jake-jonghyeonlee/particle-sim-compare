@@ -437,7 +437,8 @@ def test_b_real_chain_report_has_cards_tables_and_locations(linked, tmp_path):
                    'unit 안 위치', '×1</td>', '위험 증가 <b>1</b>곳', '상충 <b>0</b>곳', '추가', '제거'):
         assert needle in html, needle
     assert len(record['roi_figures']) == 2 == len(loc['rois'][0]['map_pairs'])
-    assert html.count('data:image/png;base64,') == 2 * len(record['roi_figures'])      # no condition maps beside the ROI figures
+    layer_shas = {sha for f in record['roi_figures'] for role in ('reference', 'target') for sha in f[role]['layers'].values()}
+    assert html.count('data:image/png;base64,') == len(layer_shas) > 0                  # each distinct layer PNG once, no condition maps
     assert all(len(f['png_sha256']['reference']) == 64 and f['aligned_diff_colours'] for f in record['roi_figures'])
     assert {w['code'] for w in record['warnings']} == {'overlay_dl1_not_configured'} and record['exit_code'] == 3
     for banned in BANNED:
@@ -553,7 +554,7 @@ def test_adv1_missing_centre_gives_an_empty_window_with_center_missing(monkeypat
     import simcompare.pipeline as pipeline
     monkeypatch.setattr(pipeline, '_compare_options', lambda cfg: (None, None))
 
-    def scan(cfg, info, top, fids, diameter, size, origin_for, states, key_of=None):
+    def scan(cfg, info, top, fids, diameter, size, origin_for, states, key_of=None, opposite=False):
         for fid in fids:
             state = cr._new_state()
             state.update(status='ok', crop=np.ones((size, size), dtype=bool))
@@ -576,7 +577,7 @@ def test_t17_a_side_without_centre_gets_no_layer_overlay(monkeypatch):
     import simcompare.pipeline as pipeline
     monkeypatch.setattr(pipeline, '_compare_options', lambda cfg: (None, None))
 
-    def scan(cfg, info, top, fids, diameter, size, origin_for, states, key_of=None):
+    def scan(cfg, info, top, fids, diameter, size, origin_for, states, key_of=None, opposite=False):
         for fid in fids:
             state = cr._new_state()
             state.update(status='ok', crop=np.ones((size, size), dtype=bool))
