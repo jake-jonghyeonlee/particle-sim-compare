@@ -407,3 +407,69 @@ def test_j_no_external_url_and_the_viewer_hooks_exist(linked, tmp_path):
         assert hook in html, hook
     assert 'class="dtog" checked' not in html and 'B에서 새로 생김' not in html
     assert html.count('<svg class="unit"') == 2 * html.count('class="roi" id=')       # an A and a B mini map per card
+
+
+# ---- review fixes (B1, A2-A5) ----------------------------------------------------------------------------------------------------------
+
+def test_b1_a_frame_mismatch_warns_instead_of_stopping(tmp_path):
+    root = tmp_path / 'dl1'
+    folder = root / 'M' / 'Merged_Layer' / 'A'
+    folder.mkdir(parents=True)
+    Image.fromarray(np.full((8 + 1000, 8 + 1000), 255, dtype=np.uint8)).save(folder / '1-L1.png')
+    for pitch, origin in ((0.2, (50.0, 50.0)), (0.1, (0.0, 0.0))):         # pitch and origin mismatch (layout_hotspot_frame_mismatch)
+        frame = SimpleNamespace(pixel_pitch_um=pitch, origin_xy_um=origin, shape_yx=(8, 8), frame_id='f')
+        infos_ = {role: {'frame': frame, 'role': role} for role in ('reference', 'target')}
+        cfg2 = SimpleNamespace(report=SimpleNamespace(dl1_root=str(root)), reference=SimpleNamespace(dl1_model='M'),
+                               target=SimpleNamespace(dl1_model='M'))
+        specs = {'f': {role: {'layer': 'L1', 'center_um': (50.0, 50.0), 'endpoints': ['A']} for role in ('reference', 'target')}}
+        states = {role: {'f': dict(cr._new_state(), crop=np.zeros((8, 8), dtype=bool), origin=(0, 0))} for role in ('reference', 'target')}
+        warnings = []
+        cr._load_pair_shapes(cfg2, infos_, specs, states, warnings)            # must not raise
+        for role in ('reference', 'target'):
+            assert states[role]['f']['shape_status'] == 'missing' and states[role]['f']['shape'] is None
+        assert [w['code'] for w in warnings] == ['electrode_shape_missing'] * 2
+        assert all('layout_hotspot_frame_mismatch' in w['detail'] for w in warnings)
+
+
+def test_a2_opposite_union_takes_only_the_other_class_on_the_same_layer_and_diameter(monkeypatch):
+    import simcompare.pipeline as pipeline
+
+    def case(pair, layer, klass, cells, diameter=5.0):
+        mask = np.zeros((8, 8), dtype=bool)
+        for y, x in cells:
+            mask[y, x] = True
+        return SimpleNamespace(pair_id=pair, analysis_layer=layer, classification=klass,
+                               records={diameter: SimpleNamespace(input_status='observed', mask=mask)})
+    cases = [case('p', 'L1', 'line', [(1, 1)]),            # the figure's own case
+             case('q', 'L1', 'pixel', [(2, 2)]),           # other class, same layer, same diameter: IN
+             case('r', 'L1', 'pixel', [(3, 3)], diameter=7.0),   # other diameter: out
+             case('s', 'L2', 'pixel', [(4, 4)]),           # other layer: out
+             case('t', 'L1', 'line', [(5, 5)])]            # same class: out
+    monkeypatch.setattr(pipeline, '_configured_real', lambda cfg, section, real, opts: (None, SimpleNamespace(cases=cases)))
+    states = {}
+    cr._scan_side({}, {'section': {}, 'real': None, 'role': 'reference'}, None, ['f'], 5.0, 8, lambda fid, st: (0, 0), states,
+                  key_of={'f': ('p', 'L1')}, opposite=True)
+    st = states['f']
+    assert st['kind'] == 'line' and st['crop'].sum() == 1 and st['crop'][1, 1]
+    assert st['opp'].sum() == 1 and st['opp'][2, 2]
+
+
+def test_a3_a5_center_missing_is_recorded_and_has_no_diff():
+    crop = grid(['....', '.##.', '.##.', '....'])
+    missing = state(np.zeros((4, 4), dtype=bool), None, None, status='center_missing', window=2)
+    figs, _ = cr._render_tile({'reference': {'k': missing}, 'target': {'k': state(crop, None, 'line', window=2)}}, 'k', infos())
+    assert 'diff' not in figs['target']['layers'] and 'ghost' in figs['reference']['layers']
+
+
+def test_a3_report_json_marks_a_center_missing_side(monkeypatch):
+    assert "'center_missing' if figs[role]['status'] == 'center_missing'" in open(cr.__file__, encoding='utf-8').read()
+
+
+def test_a4_a_row_without_a_map_keeps_the_first_background_and_says_so():
+    script = cr.SCRIPT
+    assert "groups[0].classList.add('cur')" in script and "CNO 는 지도 없음" in script and "'· 지도 없음'" in script
+    assert "classList.remove('cur')" not in script
+
+
+def test_a1_the_legend_says_the_overlap_is_an_approximation():
+    assert '같은 레이어·이물 크기 기준, 근사' in cr.CARD_LEGEND

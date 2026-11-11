@@ -636,7 +636,13 @@ def _load_pair_shapes(cfg2, infos, specs, states, warnings):
             groups.setdefault(tuple(sorted(set(paths))), []).append(fid)
         for paths, group in groups.items():
             errors = []
-            union = load_electrode_layer(root, model, info['frame'], paths, errors)
+            try:
+                union = load_electrode_layer(root, model, info['frame'], paths, errors)
+            except MemoryError:
+                raise
+            except (NumericContractError, OSError, ValueError) as exc:    # e.g. layout_hotspot_frame_mismatch: warn, never stop
+                union = None
+                errors.append(getattr(exc, 'code', type(exc).__name__))
             for fid in group:
                 state, layer = states[role][fid], specs[fid][role]['layer']
                 if union is None:
@@ -712,7 +718,7 @@ def _render_tile(states, key, infos):
             if state['kind'] in ('line', 'pixel'):
                 layers[state['kind']] = _layer_png([(own, LINE_RGB if state['kind'] == 'line' else PIXEL_RGB, MASK_ALPHA)])
             layers['overlap'] = _layer_png([(both, LINE_RGB, MASK_ALPHA), (_ring(both), PIXEL_RGB, 255)])
-            if role == 'target' and same:
+            if role == 'target' and same and other['status'] != 'center_missing':     # a missing side shows a ghost instead
                 new, gone = t['crop'] & ~r['crop'], r['crop'] & ~t['crop']
                 layers['diff'] = _layer_png([(_ring(new), COLOR_NEW, 255), (_dotted(_ring(gone)), COLOR_GONE, 255)])
         elif same and other['status'] != 'center_missing':
@@ -1603,7 +1609,7 @@ CARD_LEGEND = ('<div class="legend"><span><span class="sw" style="background:rgb
                '<span><span class="sw" style="background:#009688"></span>전극 쌍</span>'
                '<span><span class="sw" style="background:var(--line)"></span>line hotspot</span>'
                '<span><span class="sw" style="background:var(--pixel)"></span>pixel hotspot</span>'
-               '<span><span class="sw ovsw"></span>겹침 = line 으로 계산, pixel 에서 제외</span>'
+               '<span><span class="sw ovsw"></span>겹침 = line 으로 계산, pixel 에서 제외 (같은 레이어·이물 크기 기준, 근사)</span>'
                '<span>실선 = B 에서 신규 · 점선 = B 에서 소멸</span><span>+ 앵커 · 점선 사각형 = ROI 창</span></div>')
 
 
@@ -2012,7 +2018,7 @@ document.querySelectorAll('.controls[data-sort-for]').forEach(function(box){box.
       v.classList.toggle('sel',!!found);
       cap.textContent=cur===null?'':found?(found.getAttribute('data-absent')?'· 이 쪽에 없음':'· '+found.getAttribute('data-area')):
         (tr.getAttribute('data-cno')?'· CNO 는 지도 없음':'· 지도 없음');
-      if(cur!==null&&!found)groups.forEach(function(g){g.classList.remove('cur')})});
+      if(cur!==null&&!found&&groups.length)groups[0].classList.add('cur')});
     if(cur===null){note.style.display='none'}
     else{note.style.display='';note.textContent=tr.cells[0].textContent+' · '+tr.cells[1].textContent}}
   table.addEventListener('click',function(e){var tr=e.target.closest('tr[data-pair]');if(tr)select(tr)});
@@ -2288,7 +2294,8 @@ def _roi_figures(cfg, cfg2, infos, view, warnings):
                         'window_um': cfg2.report.map_window_um, 'tile_um': TILE_FACTOR * cfg2.report.map_window_um,
                         'aligned_diff_colours': same,
                         **{role: {**{k: v for k, v in figs[role].items() if k not in ('layers', 'missing', 'electrode_shape')},
-                                  'layers': shas[role], 'electrode_shape': figs[role]['electrode_shape'] or 'missing'}
+                                  'layers': shas[role], 'electrode_shape': ('center_missing' if figs[role]['status'] == 'center_missing'
+                                                          else figs[role]['electrode_shape'] or 'missing')}
                            for role in ROLES},
                         # kept key: one fingerprint per side over its layer names and hashes (there is no single PNG any more)
                         'png_sha256': {role: hashlib.sha256(json.dumps(shas[role], sort_keys=True).encode('utf-8')).hexdigest()
