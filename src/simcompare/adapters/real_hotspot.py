@@ -145,6 +145,20 @@ def _csv_areas(root: Path, case_dir: Path, defect: str):
     return {'status': 'observed', 'path': path.name, 'sha256': _sha(path), 'rows': rows, 'reason': None}
 
 
+def _csv_compare_area(occupied_pixels, low_gray_pixels):
+    """Area (um2) to compare with the simulator CSV, which counts every nonzero pixel.
+
+    Occupancy uses gray>63, so the CSV check adds back the low_gray (1..63) pixels.
+    png_area_um2 and the masks keep the gray>63 rule. A record without
+    low_gray_pixels (None) counts as 0, like low_gray_pixels_total does.
+    """
+    if low_gray_pixels is None:
+        low_gray_pixels = 0
+    if isinstance(low_gray_pixels, bool) or not isinstance(low_gray_pixels, int) or low_gray_pixels < 0:
+        raise NumericContractError('real_low_gray_pixels_invalid')
+    return (int(occupied_pixels) + low_gray_pixels) * 0.01
+
+
 def _csv_row_contract(row, diameter, mask_area, tolerance_value=None, difference_value=None):
     """Validate CSV values and all derived measurement fields from preserved text."""
     if row is None:
@@ -379,7 +393,9 @@ def _import_records(root: Path, staging: Path, index: int, image_names: dict, cs
                 record['csv_status'] = 'missing_diameter'
             else:
                 tolerance = csv_row['area_rounding_half_unit'] + 0.005
-                difference = area - csv_row['value']
+                # The simulator CSV area counts every nonzero pixel; compare it with
+                # occupied (gray>63) plus low_gray (1..63) pixels, not with png_area_um2.
+                difference = _csv_compare_area(count, low_gray) - csv_row['value']
                 record.update(area_tolerance_um2=tolerance, area_difference_um2=difference,
                               csv_status='consistent' if abs(difference) <= tolerance else 'mismatch')
         elif csv_row is not None:
@@ -744,8 +760,11 @@ def _check_case_records(folder, case, name, image_base, source_files, used_sourc
         indexed_csv_row = case_csv_rows.get(str(record.get('diameter_um')))
         if csv_row != indexed_csv_row:
             raise NumericContractError('real_csv_representation_mismatch', name)
+        png_area = record.get('png_area_um2')
         csv_tolerance, csv_difference, derived_status = _csv_row_contract(
-            csv_row, record['diameter_um'], record.get('png_area_um2'))
+            csv_row, record['diameter_um'],
+            _csv_compare_area(round(png_area * 100), record.get('low_gray_pixels'))
+            if isinstance(png_area, (int, float)) and math.isfinite(png_area) else None)
         if record.get('input_status') == 'observed':
             source_path = record.get('source_path')
             source_rel = PurePosixPath(source_path) if isinstance(source_path, str) else None
@@ -767,13 +786,15 @@ def _check_case_records(folder, case, name, image_base, source_files, used_sourc
                 raise NumericContractError('real_mask_binary_contract_mismatch', record['mask_path'])
             if record.get('mask_shape_yx') != list(mask.shape):
                 raise NumericContractError('real_mask_shape_metadata_mismatch', record['mask_path'])
-            area = int(np.count_nonzero(mask)) * 0.01
+            occupied = int(np.count_nonzero(mask))
+            area = occupied * 0.01
             if not isinstance(record.get('png_area_um2'), (int, float)) or not math.isfinite(record['png_area_um2']) or not math.isclose(area, record['png_area_um2'], rel_tol=0, abs_tol=1e-12):
                 raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
             del mask
             expected_csv_status = 'missing_diameter' if csv_row is None else derived_status
             if csv_row is not None:
-                _csv_row_contract(csv_row, record['diameter_um'], area,
+                _csv_row_contract(csv_row, record['diameter_um'],
+                                  _csv_compare_area(occupied, record.get('low_gray_pixels')),
                                   record.get('area_tolerance_um2'), record.get('area_difference_um2'))
             if record.get('csv_status') != expected_csv_status:
                 raise NumericContractError('real_csv_status_invariant_mismatch', record['mask_path'])

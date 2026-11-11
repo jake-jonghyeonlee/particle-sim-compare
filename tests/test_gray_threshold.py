@@ -49,7 +49,7 @@ def test_rgb_same_channels_follow_the_rule_and_differing_channels_are_rejected(t
     assert caught.value.code == 'png_hotspot_color_rejected'
 
 
-def _source(root, values):
+def _source(root, values, csv_area='0.04'):
     folder = root / 'images' / 'lateral_short-A-L1-B-L1'
     (folder / 'result').mkdir(parents=True)
     for name in ('1.png', '2.png'):
@@ -62,13 +62,13 @@ def _source(root, values):
     with (folder / 'result/lateral_short.csv').open('w', newline='', encoding='utf-8-sig') as handle:
         writer = csv.writer(handle)
         writer.writerow(['defect_size(um)', 'Area(um2)'])
-        writer.writerow(['1', '0.02'])  # two occupied pixels under the new rule
+        writer.writerow(['1', csv_area])  # simulator CSV counts every nonzero pixel (4 here)
         writer.writerow(['2', '0'])
     return folder
 
 
-def _import(tmp_path, values=(0, 30, 63, 64, 255)):
-    _source(tmp_path / 'src', values)
+def _import(tmp_path, values=(0, 30, 63, 64, 255), csv_area='0.04'):
+    _source(tmp_path / 'src', values, csv_area)
     import_hotspots(tmp_path / 'src', tmp_path / 'out')
     return json.loads((tmp_path / 'out/manifest.json').read_text(encoding='utf-8'))
 
@@ -79,7 +79,9 @@ def test_import_records_rule_and_counts_with_new_area_and_csv_status(tmp_path):
     record = {r['diameter_um']: r for r in manifest['cases'][0]['records']}[1]
     assert record['occupied_pixels'] == 2 and record['low_gray_pixels'] == 2
     assert record['png_area_um2'] == pytest.approx(0.02)
-    assert record['csv_status'] == 'consistent'  # would be 'mismatch' (4 pixels = 0.04) under the old nonzero rule
+    # csv-ne0/T1: the CSV check compares (occupied + low_gray) * 0.01 = 0.04 with the nonzero-rule CSV.
+    assert record['csv_status'] == 'consistent'
+    assert record['area_difference_um2'] == pytest.approx(0.0, abs=1e-12)
     assert load_real_manifest(tmp_path / 'out')['hotspot_occupancy']['rule'] == 'gray_gt_63'
 
 
@@ -105,3 +107,24 @@ def test_changing_hotspot_occupancy_breaks_the_source_payload_hash(tmp_path):
     with pytest.raises(NumericContractError) as caught:
         load_real_manifest(tmp_path / 'out')
     assert caught.value.code == 'real_manifest_hash_mismatch'
+
+
+def test_csv_check_counts_low_gray_pixels_and_survives_reload(tmp_path):
+    """csv-ne0/T1 (a): low_gray pixels present, CSV follows the nonzero rule -> consistent, also after load."""
+    manifest = _import(tmp_path, csv_area='0.04')
+    record = {r['diameter_um']: r for r in manifest['cases'][0]['records']}[1]
+    assert record['low_gray_pixels'] == 2 and record['png_area_um2'] == pytest.approx(0.02)
+    assert record['csv_status'] == 'consistent'
+    loaded = load_real_manifest(tmp_path / 'out')
+    reloaded = {r['diameter_um']: r for r in loaded['cases'][0]['records']}[1]
+    assert reloaded['csv_status'] == 'consistent' and reloaded['png_area_um2'] == pytest.approx(0.02)
+
+
+@pytest.mark.parametrize('csv_area', ['0.02', '0.07'])
+def test_csv_check_still_reports_a_real_mismatch(tmp_path, csv_area):
+    """csv-ne0/T1 (b): a CSV that disagrees with the nonzero pixel count stays mismatch (gray>63-only area included)."""
+    manifest = _import(tmp_path, csv_area=csv_area)
+    record = {r['diameter_um']: r for r in manifest['cases'][0]['records']}[1]
+    assert record['csv_status'] == 'mismatch'
+    assert record['area_difference_um2'] == pytest.approx(0.04 - float(csv_area))
+    assert load_real_manifest(tmp_path / 'out')['cases'][0]['records'][0]['csv_status'] == 'mismatch'
