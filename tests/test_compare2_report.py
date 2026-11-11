@@ -95,7 +95,7 @@ def test_full_report_structure(tmp_path):
     assert rows(html) == 6 + 0 + 1 + 1
     n = changed(out)
     assert 0 < n < 6  # DE/EF/IJ do not change vi in this scenario
-    assert html.count('class="story"') == min(4, n)
+    assert 'class="story"' not in html and '주요 결함 조건과 영향' not in html
     assert html.count('data:image/png;base64,') == 2 * n
     assert '변화 없음' in html  # unchanged conditions keep a row and a text-only detail
     assert '<td>100%</td>' in html
@@ -115,10 +115,10 @@ def test_numbers_come_from_compare2_json(tmp_path):
     doc = load(out)
     html = text(folder)
     vi = doc['sides']['target']['vi_line']
-    assert f'{vi:.6f}' in html
+    assert f'{vi * 100:.4f}%' in html
     assert exit_code == 3  # no dl1 root configured -> overlay warning
     delta = doc['delta']['indicators']['delta_vi_line']
-    assert f'{delta:+.6f}' in html
+    assert f'{delta * 100:+.4f}%p' in html
 
 
 def test_crp_row_and_cno_rows(tmp_path):
@@ -209,16 +209,15 @@ def test_zero_conditions_gives_summary_and_empty_table(tmp_path):
     html = text(folder)
     assert exit_code == 0
     assert rows(html) == 2 and html.count('class="story"') == 0 and 'data:image/png' not in html
-    assert '변화가 있는 조건이 없습니다' in html
     assert 'vi_line' in html
 
 
-def test_top_n_limits_the_cards(tmp_path):
+def test_top_n_no_longer_makes_story_cards(tmp_path):
     code, _ = build(tmp_path)
     code, out = with_dl1(tmp_path, top_n=2)
     exit_code, folder = report(tmp_path, out)
     assert exit_code == 0
-    assert text(folder).count('class="story"') == min(2, changed(out))
+    assert 'class="story"' not in text(folder)
 
 
 def test_output_and_config_rules(tmp_path):
@@ -410,10 +409,10 @@ def test_a_without_links_the_report_has_the_v5_sections_and_the_old_json_keys(tm
     exit_code, folder = report(tmp_path, out)
     html = text(folder)
     record = json.loads((folder / 'report.json').read_text(encoding='utf-8'))
-    for section in ('s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'):
+    for section in ('s1', 's2', 's3', 's4', 's5', 's6', 's9'):
         assert f'id="{section}"' in html
     assert html.count('4·6회차 결과 없음') == 3             # the summary counts and the two ROI sections
-    assert '<details><summary>7. 결함 조건별 상세' in html and 'id="dist-layer"' in html
+    assert '<details><summary>6. 결함 조건 전체' in html and 'id="dist-layer"' in html
     assert set(record) == OLD_RECORD_KEYS                    # no linked input: no new key
     _files, built = build_report(out, tmp_path / 'compare2.yaml', tmp_path / 'again')
     skipped = set(TIMES) | {'outputs'}                       # visual/time fields and the --out dependent paths
@@ -434,11 +433,11 @@ def test_b_real_chain_report_has_cards_tables_and_locations(linked, tmp_path):
     assert record['options'] == {'top_regions': 5, 'top_improved': 3, 'table_top_n': 10, 'max_pairs_per_condition': 3}
     assert set(record['link_inputs']) == {'candidates', 'windows'}
     assert html.count('class="roi"') == 1
-    for needle in ('① 설계 변경', '② vi 영향', '③ 순위', '④ 관련 결함 조건', '상위 1곳의 위치 근사합이', '근사합으로 설명되지 않는 잔차',
-                   'unit 안 위치', '×1</td>', '위험 증가 <b>1</b>곳', '추가', '제거'):
+    for needle in ('<b>영향</b>', '<b>순위</b>', '<b>변경 목록</b>', '상위 1곳의 위치 근사합은', '근사합으로 설명되지 않는 잔차',
+                   'unit 안 위치', '×1</td>', '위험 증가 <b>1</b>곳', '상충 <b>0</b>곳', '추가', '제거'):
         assert needle in html, needle
     assert len(record['roi_figures']) == 2 == len(loc['rois'][0]['map_pairs'])
-    assert html.count('data:image/png;base64,') == 2 * changed(linked.c2) + 2 * len(record['roi_figures'])
+    assert html.count('data:image/png;base64,') == 2 * len(record['roi_figures'])      # no condition maps beside the ROI figures
     assert all(len(f['png_sha256']['reference']) == 64 and f['aligned_diff_colours'] for f in record['roi_figures'])
     assert {w['code'] for w in record['warnings']} == {'overlay_dl1_not_configured'} and record['exit_code'] == 3
     for banned in BANNED:
@@ -448,8 +447,12 @@ def test_b_real_chain_report_has_cards_tables_and_locations(linked, tmp_path):
 def test_c_options_change_the_counts_and_bad_values_are_refused(linked, tmp_path):
     html, record = linked_report(linked, tmp_path, max_pairs_per_condition=1)
     assert len(record['roi_figures']) == 1 and '쌍 2개 중 영향이 큰 1개만' in html
-    assert linked_report(linked, tmp_path)[0].count('<td class="l"><b>') == 3        # line electrode rows, top_n 10
-    assert linked_report(linked, tmp_path, top_n=1)[0].count('<td class="l"><b>') == 1
+    def electrode_rows(html):
+        section = html[html.index('<section id="s4">'):html.index('<section id="s5">')]
+        return section.count('<td class="l"><b>')
+    full = electrode_rows(linked_report(linked, tmp_path)[0])
+    assert full == 3                                                                  # (electrode, layer) rows, top_n 10 -> 20 rows
+    assert electrode_rows(linked_report(linked, tmp_path, top_n=1)[0]) == min(2, full)
     assert '(--top-regions 1)' in linked_report(linked, tmp_path, top_regions=1)[0]
     assert '(--top-improved 7)' in linked_report(linked, tmp_path, top_improved=7)[0]
     for name in ('top_regions', 'top_improved', 'top_n', 'max_pairs_per_condition'):
@@ -470,7 +473,7 @@ def test_d_uncomputable_roi_is_explained_and_a_null_ratio_prints_a_dash(linked, 
     assert '한쪽에만' in _reason_sentence('one_sided_pair_no_endpoints')
     assert '3 µm' in _reason_sentence('window_row_missing:3') and '기준 A' in _reason_sentence('condition_unmapped:reference')
     empty = {'ratio_top_worse': None, 'ratio_top_improved': None, 'residual_unexplained_by_location_sum': None}
-    cover = _cover({'loc': {'explained': {'line': empty, 'pixel': empty}}}, ['k'], 'worse')
+    cover = _cover({'loc': {'explained': {'line': empty, 'pixel': empty}}, 'base': {'line': 0.5, 'pixel': 0.5}}, ['k'], 'worse')
     assert cover.count('<b>—</b>') == 2 and 'Δvi_line —' in cover
 
 
@@ -511,10 +514,13 @@ def test_h_unlinked_report_is_byte_stable_and_has_no_script_src(tmp_path):
         assert banned not in first[0][1]
 
 
-def test_i_the_condition_maps_still_use_the_old_path_when_a_link_is_given(linked, tmp_path):
+def test_i_no_condition_maps_are_built_when_the_rois_carry_the_maps(linked, tmp_path):
     html, record = linked_report(linked, tmp_path)
-    assert record['maps'] == changed(linked.c2) and len(record['figures']) == record['maps']
-    assert html.count('class="mapslot"') >= record['maps']
+    assert changed(linked.c2) > 0
+    assert record['maps'] == 0 and record['figures'] == [] and len(record['roi_figures']) == 2
+    assert 'class="mapslot"' not in html and '불량 영역</b>' not in html            # the detail pane is text only
+    plain, plain_record = linked_report(linked, tmp_path, candidates_dir=None, windows_dir=None)
+    assert plain_record['maps'] == changed(linked.c2) and plain.count('class="mapslot"') >= plain_record['maps']
 
 
 # ---- V5: CLI link options and review follow-ups --------------------------------------------------------------------------

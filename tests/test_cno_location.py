@@ -301,7 +301,7 @@ def test_c_real_chain_computes_the_cno_roi_and_the_report_shows_the_chip(chain, 
     assert all(r['delta_vi']['line'] == 0.0 for r in cno_rois)
     expected = {key: loc[key] for key in ('counts', 'top_worse', 'top_improved', 'explained', 'diameters_um', 'approximation_note')}
     assert record['locations'] == json.loads(json.dumps(expected))
-    assert '<span class="chip">CNO</span>' in html and 'CNO(GCNT) lateral open' in html
+    assert '<span class="chip">CNO</span>' in html and '지도 없음' in html and 'data-pair="' in html
     assert 'CNO 는 위치 창 안의 이미지 면적으로 근사' in html
     # T24 adv3: the map count of an ROI card counts the drawn maps only, a CNO pair draws none
     shown = [r for r in cno_rois if r['roi_key'] in loc['top_worse'] + loc['top_improved']]

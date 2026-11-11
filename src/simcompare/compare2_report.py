@@ -78,12 +78,61 @@ def _s6(value):
     return '—' if value is None else f'{value:+.6f}'
 
 
-def _s4(value):
-    """Signed value in 1e-4 units; the sign carries the direction, not only the colour."""
-    if value is None:
+def _pc(value):
+    """vi as a percentage with 4 decimals (value x 100)."""
+    return '—' if value is None else f'{value * 100:.4f}%'
+
+
+def _pp(value):
+    """Delta of vi in percentage points, signed, 4 decimals; the sign carries the direction, not only the colour."""
+    return '—' if value is None else f'{value * 100:+.4f}%p'
+
+
+def _rel(delta, base):
+    """Change relative to the reference vi of the same indicator and range, in percent with 1 decimal; a dash without a base."""
+    if delta is None or base is None or abs(base) < RATIO_EPS:
         return '—'
-    scaled = value * 1e4
-    return '0.00' if abs(scaled) < 0.005 else f'{scaled:+.2f}'
+    return f'{delta / base * 100:+.1f}%'
+
+
+def _dv(delta, base):
+    """'+0.0320%p (+7.8%)': the delta in %p and, in brackets, its change relative to the reference vi."""
+    return '—' if delta is None else f'{_pp(delta)} ({_rel(delta, base)})'
+
+
+def _sign(value):
+    return 0 if value is None or value == 0 else (1 if value > 0 else -1)
+
+
+def _verdict(line, pixel):
+    """(text, css class) from the signs of the line and pixel change, or None when both are 0 or missing."""
+    sl, sp = _sign(line), _sign(pixel)
+    if sl == 0 and sp == 0:
+        return None
+    if sl > 0 and sp > 0:
+        return '둘 다 악화', 'b-bad'
+    if sl < 0 and sp < 0:
+        return '둘 다 개선', 'b-good'
+    if sl * sp < 0:
+        return f'상충 (line{"↑" if sl > 0 else "↓"} pixel{"↑" if sp > 0 else "↓"})', 'b-trade'
+    return ('악화', 'b-bad') if sl + sp > 0 else ('개선', 'b-good')
+
+
+def _verdict_badge(line, pixel):
+    verdict = _verdict(line, pixel)
+    return '' if verdict is None else f'<span class="badge {verdict[1]}">{_e(verdict[0])}</span>'
+
+
+def _is_conflict(line, pixel):
+    return _sign(line) * _sign(pixel) < 0
+
+
+def _dcell(delta, base, kind=None, peak=None):
+    """A table cell with the signed delta, its change rate and (with kind and peak) a bar."""
+    bar = ''
+    if kind is not None and delta is not None and peak:
+        bar = (f'<span class="bar" style="width:{int(round(80 * abs(delta) / peak))}px;background:var(--{kind})"></span>')
+    return f'<td class="{_sign_class(delta)}">{_dv(delta, base)}{bar}</td>'
 
 
 def _pct_change(b, a):
@@ -548,25 +597,58 @@ def _pending_reason(doc, role, kind):
     return '입력 대기: ' + (', '.join(shown[:2]) if shown else '사유 미기록')
 
 
-def _headline(doc, conds):
+def _base_of(doc):
+    """Reference vi of the selected range, per kind: the base of every change rate outside the full-range row."""
+    ref = doc['sides']['reference']
+    return {kind: ref.get(f'vi_{kind}') for kind in KINDS}
+
+
+def _rise_text(delta):
+    return '늘고' if delta > 0 else '줄고'
+
+
+def _headline(doc, view):
+    """One-line conclusion: the change of both indicators, then the largest location and whether line and pixel conflict."""
     ind = doc['delta']['indicators']
-    ref, tgt = doc['sides']['reference'], doc['sides']['target']
-    texts = []
-    for kind in ('line', 'pixel'):
+    base = _base_of(doc)
+    parts = []
+    for n, kind in enumerate(KINDS):
         name = f'vi_{kind}'
-        a, b = ref[name], tgt[name]
-        if a is None or b is None or ind[f'delta_vi_{kind}'] is None:
-            texts.append(f'{name}은 입력 대기 중입니다.')
+        delta = ind[f'delta_vi_{kind}']
+        last = n == len(KINDS) - 1
+        if base[kind] is None or doc['sides']['target'][name] is None or delta is None:
+            parts.append(f'{name} 은 입력 대기 중입니다.' if last else f'{name} 은 입력 대기 중이고,')
+        elif delta == 0:
+            parts.append(f'{kind} 불량은 변하지 않았습니다.' if last else f'{kind} 불량은 변하지 않았고,')
         else:
-            texts.append(f'{name}은 <b class="{_sign_class(ind["delta_vi_" + kind])}">{_pct_change(b, a)}</b> 변했습니다.')
-    for kind in ('line', 'pixel'):
-        field = f'delta_vi_{kind}'
-        ranked = sorted((c for c in conds if c.get(field) is not None), key=lambda c: -abs(c[field]))
-        if ranked and abs(ranked[0][field]) > 0:
-            top = ranked[0]
-            texts.append(f'|Δvi_{kind}| 가 가장 큰 조건은 <b>{_e(top["layer"])} {_e(_pair_label(top))}</b> '
-                         f'(전체 변화의 {_share(top.get("share_" + kind))})입니다.')
-    return ' '.join(texts)
+            rel = f'{abs(delta / base[kind] * 100):.1f}%' if abs(base[kind]) >= RATIO_EPS else '—'
+            ending = ('늘었습니다' if delta > 0 else '줄었습니다') if last else ('늘고,' if delta > 0 else '줄고,')
+            parts.append(f'{kind} 불량이 <b class="{_sign_class(delta)}">{rel} {ending.rstrip(",")}</b>'
+                         + ('.' if last else ','))
+    text = 'B 는 ' + ' '.join(parts)
+    loc = view['loc']
+    if _has_rois(view):
+        keys = loc['top_worse'] or loc['top_improved']
+        if keys:
+            key = keys[0]
+            roi = view['rois'][key]
+            rates = {kind: (None if roi['delta_vi'][kind] is None or not base[kind] or abs(base[kind]) < RATIO_EPS
+                            else roi['delta_vi'][kind] / base[kind] * 100) for kind in KINDS}
+            usable = [kind for kind in KINDS if rates[kind] is not None]
+            if usable:
+                kind = max(usable, key=lambda k: (abs(rates[k]), k == 'line'))
+                other = 'pixel' if kind == 'line' else 'line'
+                total = ind[f'delta_vi_{kind}']
+                total_text = ('' if total is None or abs(base[kind]) < RATIO_EPS
+                              else f'{kind} {"증가" if total > 0 else "감소"} {abs(total / base[kind] * 100):.1f}% 중 ')
+                kinds = ', '.join(_kind_text(k) for k in roi['design_change']['change_kinds'])
+                repeat = f'(반복 ×{roi["replica_factor"]})' if roi['replica_factor'] > 1 else ''
+                text += (f' {total_text}<b class="{_sign_class(rates[kind])}">{rates[kind]:+.1f}%</b>는 '
+                         f'<a href="#roi{_e(key)}">{_e(_roi_name(view, key))}{" " + _e(kinds) if kinds else ""}</a> 한 곳{repeat}에서 나왔습니다.')
+                if _is_conflict(roi['delta_vi']['line'], roi['delta_vi']['pixel']):
+                    moved = roi['delta_vi'][other]
+                    text += f' 이 변경은 {other} 를 {"늘렸" if moved > 0 else "줄였"}으므로 상충 판단이 필요합니다.'
+    return text
 
 
 def _product_table(doc, infos, unit_text):
@@ -598,12 +680,12 @@ def _product_table(doc, infos, unit_text):
                           for name, (a, b) in rows)
 
 
-def _removal_cell(removal, name):
+def _removal_cell(removal, name, base=None):
     value = None if removal is None else removal.get(name)
-    return f'<td class="{_sign_class(value)}">{_s4(value)}</td>'
+    return f'<td class="{_sign_class(value)}">{_dv(value, base)}</td>'
 
 
-def _sentences(cond, fig, side_conds, diameter, absent_note=False):
+def _sentences(cond, fig, side_conds, diameter, absent_note=False, base=None, with_area=True):
     """Report sentences of one condition (HTML strings). fig is the render result or None."""
     items = []
     presence = cond['presence']
@@ -616,7 +698,9 @@ def _sentences(cond, fig, side_conds, diameter, absent_note=False):
     if not _changed(cond):
         items.append('<b>영향</b>: 변화 없음. 이 조건은 vi 를 바꾸지 않아 지도를 만들지 않았습니다.')
         return items
-    if fig is None:
+    if not with_area:
+        pass        # the enlarged ROI figures of sections 2 and 3 carry the areas
+    elif fig is None:
         items.append(f'<b>불량 영역</b>: 지도 생략(상한 {MAX_MAPS}개). 영역 면적은 표시하지 않습니다.')
     else:
         a, b = fig['reference'], fig['target']
@@ -635,7 +719,7 @@ def _sentences(cond, fig, side_conds, diameter, absent_note=False):
             continue
         if kind != 'line' and 'line' in _types(cond['class']) and 'pixel' not in _types(cond['class']) and value == 0:
             continue
-        parts.append(f'vi_{kind} ' + _span(_sign_class(value), f'{_s4(value)}×10⁻⁴')
+        parts.append(f'vi_{kind} ' + _span(_sign_class(value), _dv(value, (base or {}).get(kind)))
                      + f' (전체 변화의 {_share(cond.get("share_" + kind))})')
     items.append('<b>영향</b>: ' + ('; '.join(parts) if parts else '대기 또는 변화 없음') + '.')
     transfer = cond.get('delta_lambda_transfer')
@@ -651,9 +735,9 @@ def _sentences(cond, fig, side_conds, diameter, absent_note=False):
         items.append('<b>B에서 제거하면</b>: 대상 B에 없는 조건이라 해당 없음.')
     else:
         items.append('<b>B에서 이 조건을 제거하면</b>: Δvi_line ' + _span(_sign_class(removal['delta_vi_line']),
-                                                                      f'{_s4(removal["delta_vi_line"])}×10⁻⁴')
+                                                                      _dv(removal['delta_vi_line'], (base or {}).get('line')))
                      + ', Δvi_pixel ' + _span(_sign_class(removal['delta_vi_pixel']),
-                                              f'{_s4(removal["delta_vi_pixel"])}×10⁻⁴') + '.')
+                                              _dv(removal['delta_vi_pixel'], (base or {}).get('pixel'))) + '.')
     return items
 
 
@@ -704,10 +788,10 @@ def _bars(rows, kind):
         x = cx if value >= 0 else cx - bw
         color = 'var(--up)' if value >= 0 else 'var(--down)'
         out.append(f'<rect x="{x:.1f}" y="{y + 3}" width="{bw:.1f}" height="16" rx="3" fill="{color}">'
-                   f'<title>{_e(name)} Δ{title} {_s4(value)}×10⁻⁴</title></rect>')
+                   f'<title>{_e(name)} Δ{title} {_pp(value)}</title></rect>')
         anchor, tx = ('start', x + bw + 4) if value >= 0 else ('end', x - 4)
-        out.append(f'<text class="val" x="{tx:.1f}" y="{y + 15}" text-anchor="{anchor}">{_s4(value)}</text>')
-    out.append(f'<text x="{cx}" y="{height - 4}" text-anchor="middle">Δ (×10⁻⁴)</text></svg>')
+        out.append(f'<text class="val" x="{tx:.1f}" y="{y + 15}" text-anchor="{anchor}">{_pp(value)}</text>')
+    out.append(f'<text x="{cx}" y="{height - 4}" text-anchor="middle">Δ (%p)</text></svg>')
     return ''.join(out)
 
 
@@ -726,7 +810,7 @@ def _heat(layers, kind, sizes):
             q = min(abs(value) / peak, 1.0)
             color = '208,59,59' if value >= 0 else '42,120,214'
             tds.append(f'<td style="background:color-mix(in srgb, rgb({color}) {round(q * 85)}%, var(--mid))" '
-                       f'title="{_e(row["layer"])} · {_size_text(size)} µm · {kind}: {_s4(value)}×10⁻⁴">{_s4(value)}</td>')
+                       f'title="{_e(row["layer"])} · {_size_text(size)} µm · {kind}: {_pp(value)}">{_pp(value)}</td>')
         out.append(f'<tr><td class="l">{_e(row["layer"])}</td>{"".join(tds)}</tr>')
     return ''.join(out)
 
@@ -746,7 +830,8 @@ def _caa_table(doc):
 KINDS = ('line', 'pixel')
 MAX_UNIT_DOTS = 500
 MAX_LISTED_CASES = 10
-MAX_ELECTRODE_BARS = 20
+MAX_SCATTER_DOTS = 300
+MAX_CARD_ROWS = 50
 KIND_TEXT = {'appeared': '추가', 'disappeared': '제거', 'shifted': '위치 이동', 'reshaped': '형상 변경',
              'mixed_undetermined': '판정 불가'}
 REASON_TEXT = {
@@ -820,21 +905,192 @@ def _diameters_text(doc):
     return ', '.join(_size_text(v) for v in values) + ' µm'
 
 
-def _ratio_of(value, whole):
-    return None if value is None or whole is None or abs(whole) < RATIO_EPS else value / whole
+def _roi_name(view, roi_key):
+    """'layer · electrode pair' of the representative (first map) pair of the ROI; the ROI key without a pair."""
+    for pid in view['rois'][roi_key]['map_pairs']:
+        pair = view['link_pairs'].get(pid)
+        if pair is not None:
+            return _pair_name(pair)
+    return roi_key[4:] if roi_key.startswith('roi:') else roi_key
+
+
+def _roi_anchor(view, roi_key, text=None):
+    return f'<a href="#roi{_e(roi_key)}" title="{_e(roi_key)}">{_e(text or _roi_name(view, roi_key))}</a>'
+
+
+def _card_keys(view):
+    loc = view['loc']
+    return list(loc['top_worse']) + list(loc['top_improved']) if loc else []
+
+
+def _card_links(view, keys):
+    """Links to the section 2/3 cards by their label (at most 3, then a count)."""
+    labels = view.get('card_labels') or {}
+    keys = [key for key in keys if key in labels]
+    if not keys:
+        return '—'
+    shown = ' '.join(_roi_anchor(view, key, labels[key]) for key in keys[:3])
+    return shown + (f' 외 {len(keys) - 3}' if len(keys) > 3 else '')
+
+
+def _decomposition(doc, view):
+    """Rows [(label, {kind: value}, accuracy)] of the breakdown of the total delta-vi; the last row is the total.
+
+    The residual is defined as total - the sum of the rows above it, so the rows always add up to the total."""
+    delta = doc['delta']
+    ind = delta['indicators']
+    total = {kind: ind.get(f'delta_vi_{kind}') for kind in KINDS}
+    rows = []
+    if _has_rois(view):
+        loc = view['loc']
+        cards = set(loc['top_worse']) | set(loc['top_improved'])
+        top, rest, rest_n = {k: 0.0 for k in KINDS}, {k: 0.0 for k in KINDS}, 0
+        for roi in loc['rois']:
+            target = top if roi['roi_key'] in cards else rest
+            if roi['roi_key'] not in cards and any(roi['delta_vi'][k] is not None for k in KINDS):
+                rest_n += 1
+            for kind in KINDS:
+                if roi['delta_vi'][kind] is not None:
+                    target[kind] += roi['delta_vi'][kind]
+        rows.append((f'Top 위치 (2·3절 카드 {len(cards)}곳)', top, '근사'))
+        rows.append((f'나머지 위치 {rest_n}곳', rest, '근사'))
+    shared = delta.get('shared') or {}
+    rows.append(('공유 영역', {k: shared.get(f'delta_vi_{k}') for k in KINDS}, '정확'))
+    cno_rows = delta.get('cno') or []
+    cno_value = None
+    if cno_rows:
+        cno_value = sum(c.get('delta_vi_pixel') or 0.0 for c in cno_rows)
+        if _has_rois(view):     # the CNO pairs inside the locations are already in the location rows
+            for pair in view['loc']['pairs']:
+                link_pair = view['link_pairs'].get(pair['pair_id']) or {}
+                roi = view['rois'].get(pair['roi_key'])
+                if link_pair.get('cno_case') and roi is not None and roi['delta_vi']['pixel'] is not None \
+                        and pair['delta_vi']['pixel'] is not None:
+                    cno_value -= pair['delta_vi']['pixel'] * roi['replica_factor']
+    rows.append(('CNO (위치 밖)', {'line': None, 'pixel': cno_value}, '근사'))
+    crp = delta.get('crp_difference')
+    if crp is not None:
+        rows.append(('제품군 보정 차이 (CRP)', {'line': None, 'pixel': crp.get('delta_vi_pixel')}, '정확'))
+    residual = {}
+    for kind in KINDS:
+        residual[kind] = None if total[kind] is None else total[kind] - sum(r[1][kind] or 0.0 for r in rows)
+    rows.append(('기타 잔차', residual, '전체 − 위 합'))
+    rows.append(('전체', total, '정확'))
+    return rows
+
+
+def _decomposition_table(doc, view):
+    rows = _decomposition(doc, view)
+    base = _base_of(doc)
+    peaks = {k: max([abs(r[1][k]) for r in rows[:-1] if r[1][k] is not None] + [0.0]) for k in KINDS}
+    out = ['<table id="decomp"><tr><th class="l">몫</th><th>Δvi_line</th><th>Δvi_pixel</th><th class="l">정확도</th></tr>']
+    if not _has_rois(view):
+        out.append('<tr><td class="l muted" colspan="4">위치 연결 없음 — 4·6회차 결과를 연결하지 않아 위치별 몫을 나누지 않았습니다.</td></tr>')
+    for index, (label, values, accuracy) in enumerate(rows):
+        last = index == len(rows) - 1
+        cells = []
+        for kind in KINDS:
+            value = values[kind]
+            if value is None:
+                cells.append('<td>—</td>')
+            elif last:
+                cells.append(f'<td class="{_sign_class(value)}"><b>{_dv(value, base[kind])}</b></td>')
+            else:
+                cells.append(_dcell(value, base[kind], kind, peaks[kind]))
+        out.append(f'<tr><td class="l">{"<b>" + _e(label) + "</b>" if last else _e(label)}</td>{"".join(cells)}'
+                   f'<td class="l muted">{_e(accuracy)}</td></tr>')
+    out.append('</table>')
+    out.append('<p class="muted">위치 몫은 근사입니다. 공유 영역·CRP 는 compare2 의 분해 값이고 기타 잔차 = 전체 − 위 항목 합입니다.'
+               + (' CNO(위치 밖)는 CNO 전체 합에서 위치 안 CNO 쌍의 몫을 뺀 값입니다. 위치 값은 창 면적 기준이라 CNO 총합과 기준이 다릅니다.'
+                  if _has_rois(view) else '') + '</p>')
+    return ''.join(out)
+
+
+def _scatter(doc, view):
+    """Inline SVG: one dot per location with a delta-vi, x = line, y = pixel (up = +); the two conflict quadrants are shaded."""
+    if not _has_rois(view):
+        return '<p class="muted">위치 연결 없음 — 상충 산점도를 그리지 않았습니다.</p>'
+    loc, base = view['loc'], _base_of(doc)
+    cards = set(_card_keys(view))
+    points = [(r['roi_key'], r['delta_vi']['line'], r['delta_vi']['pixel']) for r in loc['rois']
+              if r['delta_vi']['line'] is not None and r['delta_vi']['pixel'] is not None]
+    if not points:
+        return '<p class="muted">Δvi 가 계산된 위치가 없습니다.</p>'
+    big = [p for p in points if p[0] in cards]
+    small = sorted((p for p in points if p[0] not in cards), key=lambda p: (-(abs(p[1]) + abs(p[2])), p[0]))
+    shown_small = small[:MAX_SCATTER_DOTS]
+    width, height, left, right, top, bottom = 380, 260, 46, 372, 10, 230
+    cx, cy = (left + right) / 2, (top + bottom) / 2
+    xmax = max(abs(p[1]) for p in points) * 1.15 or 1.0
+    ymax = max(abs(p[2]) for p in points) * 1.15 or 1.0
+    sx, sy = (right - left) / 2 / xmax, (bottom - top) / 2 / ymax
+    out = [f'<svg viewBox="0 0 {width} {height}" width="100%" role="img" aria-label="line 과 pixel 의 상충 산점도" id="scatter">',
+           f'<rect x="{cx:.1f}" y="{cy:.1f}" width="{right - cx:.1f}" height="{bottom - cy:.1f}" fill="#d9a93d" opacity=".13"/>',
+           f'<rect x="{left}" y="{top}" width="{cx - left:.1f}" height="{cy - top:.1f}" fill="#d9a93d" opacity=".13"/>',
+           f'<line x1="{left}" x2="{right}" y1="{cy:.1f}" y2="{cy:.1f}" stroke="var(--text-muted)"/>',
+           f'<line x1="{cx:.1f}" x2="{cx:.1f}" y1="{top}" y2="{bottom}" stroke="var(--text-muted)"/>',
+           f'<text x="{right - 2}" y="{top + 10}" text-anchor="end">둘 다 악화</text>',
+           f'<text x="{right - 2}" y="{bottom - 4}" text-anchor="end">상충: line↑ pixel↓</text>',
+           f'<text x="{left + 2}" y="{top + 10}">상충: line↓ pixel↑</text>',
+           f'<text x="{left + 2}" y="{bottom - 4}">둘 다 개선</text>',
+           f'<text x="{right - 2}" y="{cy - 3:.1f}" text-anchor="end">Δvi_line → {_pp(xmax)}</text>',
+           f'<text x="{cx + 3:.1f}" y="{height - 6}">↑ Δvi_pixel (위가 +, 끝 {_pp(ymax)})</text>']
+    for key, line, pixel in shown_small:
+        out.append(f'<circle cx="{cx + line * sx:.1f}" cy="{cy - pixel * sy:.1f}" r="3.5" fill="var(--common)" '
+                   f'stroke="var(--surface-1)" stroke-width="1"><title>{_e(_roi_name(view, key))} · line {_e(_dv(line, base["line"]))} '
+                   f'· pixel {_e(_dv(pixel, base["pixel"]))}</title></circle>')
+    for key, line, pixel in big:
+        x, y = cx + line * sx, cy - pixel * sy
+        name = _roi_name(view, key)
+        flip = x > right - 110
+        out.append(f'<a href="#roi{_e(key)}"><circle cx="{x:.1f}" cy="{y:.1f}" r="7" fill="var(--text-primary)" '
+                   f'stroke="var(--surface-1)" stroke-width="1.5"><title>{_e(name)} · line {_e(_dv(line, base["line"]))} '
+                   f'· pixel {_e(_dv(pixel, base["pixel"]))}</title></circle></a>'
+                   f'<text x="{x + (-10 if flip else 10):.1f}" y="{y + 4:.1f}" text-anchor="{"end" if flip else "start"}">{_e(name)}</text>')
+    note = ''
+    if len(small) > len(shown_small):
+        note = f'<p class="muted">작은 점은 변화가 큰 {len(shown_small)}곳까지 그렸고 나머지 {len(small) - len(shown_small)}곳은 그리지 않았습니다.</p>'
+    return ''.join(out) + '</svg>' + note
+
+
+def _kind_table(doc, view):
+    """Per change kind: the number of locations and the sum of their (replica-included) delta-vi; a location with several kinds counts in each."""
+    if not _has_rois(view):
+        return '<p class="muted">위치 연결 없음 — 변경 종류별로 모으지 않았습니다.</p>'
+    base = _base_of(doc)
+    agg = {}
+    for roi in view['loc']['rois']:
+        values = roi['delta_vi']
+        if all(values[k] is None for k in KINDS):
+            continue
+        for kind in roi['design_change']['change_kinds']:
+            entry = agg.setdefault(kind, {'n': 0, 'line': None, 'pixel': None})
+            entry['n'] += 1
+            for k in KINDS:
+                if values[k] is not None:
+                    entry[k] = (entry[k] or 0.0) + values[k]
+    if not agg:
+        return '<p class="muted">변경 종류가 기록된 위치가 없습니다.</p>'
+    out = ['<table id="kinds"><tr><th class="l">변경 종류</th><th>위치 수</th><th>Δvi_line</th><th>Δvi_pixel</th></tr>']
+    for kind, entry in sorted(agg.items(), key=lambda kv: (-kv[1]['n'], _kind_text(kv[0]))):
+        out.append(f'<tr><td class="l">{_e(_kind_text(kind))}</td><td>{entry["n"]}</td>'
+                   f'{_dcell(entry["line"], base["line"])}{_dcell(entry["pixel"], base["pixel"])}</tr>')
+    out.append('</table><p class="muted">중복 합: 한 위치에 변경 종류가 여럿이면 그 위치 값을 종류마다 셉니다. '
+               '그래서 열 합이 전체보다 클 수 있습니다. 위치 값은 반복 수를 곱한 근사입니다.</p>')
+    return ''.join(out)
 
 
 def _kpi_cells(a, b, d):
     if a is None or b is None or d is None:
         return '<td colspan="3" class="l">대기</td>'
-    return (f'<td>{_f6(a)}</td><td class="v">{_f6(b)}</td>'
-            f'<td class="{_sign_class(d)}">{_s6(d)} ({_pct_change(b, a)})</td>')
+    return (f'<td>{_pc(a)}</td><td class="v">{_pc(b)}</td>'
+            f'<td class="{_sign_class(d)}">{_dv(d, a)}</td>')
 
 
 def _kpi_table(doc):
     ref, tgt, ind = doc['sides']['reference'], doc['sides']['target'], doc['delta']['indicators']
-    head = ('<tr><th class="l">범위</th><th>vi_line A</th><th>vi_line B</th><th>Δ</th>'
-            '<th>vi_pixel A</th><th>vi_pixel B</th><th>Δ</th></tr>')
+    head = ('<tr><th class="l">범위</th><th>vi_line A</th><th>vi_line B</th><th>Δ (A 대비)</th>'
+            '<th>vi_pixel A</th><th>vi_pixel B</th><th>Δ (A 대비)</th></tr>')
 
     def row(label, side_a, side_b, delta):
         cells = ''.join(_kpi_cells(side_a[f'vi_{k}'], side_b[f'vi_{k}'], delta[f'delta_vi_{k}']) for k in KINDS)
@@ -883,28 +1139,32 @@ def _uncomputable_block(view):
 
 
 def _summary_section(doc, view):
-    conds = doc['delta']['conditions']
     out = ['<section id="s1"><h2>1. 요약</h2><p class="lead">vi 지표는 불량 발생 비율입니다. 양품 수율이 아닙니다. '
            '값이 커지면 위험이 커집니다.</p>', _kpi_table(doc)]
+    out.append(f'<div class="headline" id="headline"><b>한 줄 결론.</b> {_headline(doc, view)}</div>')
+    out.append(f'<div class="grid2" style="margin-top:6px"><div><h3>Δvi 가 어디서 왔나 (분해)</h3>{_decomposition_table(doc, view)}</div>'
+               f'<div><h3>line 과 pixel 의 상충 (점 = 변경 위치)</h3>{_scatter(doc, view)}'
+               + ('<p class="muted">점을 누르면 해당 카드로 갑니다. 오른쪽 아래·왼쪽 위 칸이 상충입니다.</p>' if _has_rois(view) else '')
+               + '</div></div>')
     loc = view['loc']
+    counts_html = []
     if _has_rois(view):
         counts = loc['counts']
         total = sum(counts.values())
-        out.append('<div class="countrow" id="counts">'
-                   f'<div>변경 위치 <b>{total}</b>곳</div><div class="up">위험 증가 <b>{counts["worse"]}</b>곳</div>'
-                   f'<div class="down">위험 감소 <b>{counts["improved"]}</b>곳</div>'
-                   f'<div>영향 거의 없음 <b>{counts["negligible"]}</b>곳</div>'
-                   f'<div>계산 불가 <b>{counts["uncomputable"]}</b>곳</div></div>')
-        out.append(_uncomputable_block(view))
+        conflicts = sum(1 for r in loc['rois'] if _is_conflict(r['delta_vi']['line'], r['delta_vi']['pixel']))
+        counts_html.append('<div class="countrow" id="counts">'
+                           f'<div>변경 위치 <b>{total}</b>곳</div><div class="up">위험 증가 <b>{counts["worse"]}</b>곳</div>'
+                           f'<div class="down">위험 감소 <b>{counts["improved"]}</b>곳</div>'
+                           f'<div>상충 <b>{conflicts}</b>곳</div>'
+                           f'<div>영향 거의 없음 <b>{counts["negligible"]}</b>곳</div>'
+                           f'<div>계산 불가 <b>{counts["uncomputable"]}</b>곳</div></div>')
+        counts_html.append('<p class="muted">상충 위치는 net 부호에 따라 위험 증가·감소에도 들어갑니다(중복 표시).</p>')
+        counts_html.append(_uncomputable_block(view))
     else:
-        out.append('<div id="counts">' + _no_rounds_note('후보(4회차)와 창(6회차) 결과를 연결하지 않아 변경 위치 개수를 세지 않았습니다.')
-                   + '</div>')
-    head = _headline(doc, conds)
-    if _has_rois(view) and loc['top_worse']:
-        key = loc['top_worse'][0]
-        head += (f' 위험을 가장 키운 변경 위치는 <b>{_roi_label(key)}</b>'
-                 f'({_e(", ".join(_kind_text(k) for k in view["rois"][key]["design_change"]["change_kinds"]) or "변경 종류 없음")})입니다.')
-    out.append(f'<div class="headline" id="headline">{head}</div></section>\n')
+        counts_html.append('<div id="counts">' + _no_rounds_note('후보(4회차)와 창(6회차) 결과를 연결하지 않아 변경 위치 개수를 세지 않았습니다.')
+                           + '</div>')
+    out.append(f'<div class="grid2"><div><h3>변경 종류별 영향 (중복 합)</h3>{_kind_table(doc, view)}</div>'
+               f'<div><h3>변경 위치 개수</h3>{"".join(counts_html)}</div></div></section>\n')
     return ''.join(out)
 
 
@@ -984,16 +1244,117 @@ def _pair_name(pair):
     endpoints = (pair['a'].get('endpoints') or pair['b'].get('endpoints') or [])
     names = [e.get('electrode_id') for e in endpoints if e.get('electrode_id')]
     layer = pair['a'].get('analysis_layer') or pair['b'].get('analysis_layer') or '—'
-    return f'{layer} · ' + (f'{names[0]}–{names[1]}' if len(names) == 2 else str(pair['pair_id']))
+    return f'{layer} · ' + (f'{names[0]}–{names[1]}' if len(names) == 2 else names[0] if len(names) == 1 else str(pair['pair_id']))
+
+
+def _window_area_text(view, link_pair):
+    if link_pair.get('cno_case'):
+        return '<span class="muted">지도 없음</span>'
+    diameter = float(view['cfg2'].report.diameter_um)
+    named = link_pair.get('named_pair') or {}
+    row = None
+    for key, value in named.items():        # the window rows are keyed by the diameter text ('5'), not by a number
+        try:
+            if float(key) == diameter:
+                row = value
+                break
+        except (TypeError, ValueError):
+            continue
+    if not row or row.get('a_status') != 'available' or row.get('b_status') != 'available' \
+            or row.get('a_value_um2') is None or row.get('b_value_um2') is None:
+        return '—'
+    return f'{_num(row["a_value_um2"])} → {_num(row["b_value_um2"])} µm²'
+
+
+def _condition_of(view, cid):
+    return view['cond_by_id'].get(cid) or view['cno_by_id'].get(cid)
+
+
+def _type_chip(kind):
+    return f'<span class="chip"><span class="sw" style="background:var(--{kind})"></span> {_e(kind)}</span>'
+
+
+def _present_text(present):
+    return '추가 (B에만)' if present == 'target' else '제거 (A에만)'
+
+
+def _change_table(view, roi_key):
+    """The change list of one card: a row per pair of the ROI (largest |delta-vi| first) and per one-sided case without a pair."""
+    base = view['base']
+    lk = view['link_rois'][roi_key]
+    pairs = [p for p in view['loc']['pairs'] if p['roi_key'] == roi_key]
+    pairs.sort(key=lambda p: (any(p['delta_vi'][k] is None for k in KINDS),
+                              -sum(abs(p['delta_vi'][k]) for k in KINDS if p['delta_vi'][k] is not None), p['pair_id']))
+
+    def ids(item):
+        return tuple((item['conditions'][role] or {}).get('condition_id') for role in ROLES)
+    cases = {}
+    for case in lk['contributing_cases'] + lk['one_sided_cases']:
+        if ids(case) != (None, None):
+            cases.setdefault(ids(case), case)
+    matched = set()
+    rows = []
+    for loc_pair in pairs[:MAX_CARD_ROWS]:
+        link_pair = view['link_pairs'][loc_pair['pair_id']]
+        case = cases.get(ids(link_pair)) if ids(link_pair) != (None, None) else None
+        if case is not None:
+            matched.add(ids(link_pair))
+        cno = bool(link_pair.get('cno_case'))
+        cond = None
+        for role in ROLES:
+            cond = cond or _condition_of(view, (link_pair['conditions'][role] or {}).get('condition_id'))
+        kind = 'pixel' if cno else (_types(cond['class'])[0] if cond else None)
+        removal = None
+        target_cond = _condition_of(view, (link_pair['conditions']['target'] or {}).get('condition_id'))
+        if target_cond is not None:
+            removal = target_cond.get('removal_b')
+        cells = []
+        why = ' '.join(_reason_sentence(code) for code in loc_pair['reasons']) or '사유가 기록되지 않았습니다.'
+        for k in KINDS:
+            value = loc_pair['delta_vi'][k]
+            cells.append(f'<td class="muted" title="{_e(why)}">값 없음</td>' if value is None else _dcell(value, base[k]))
+        change = _kind_text(case.get('change_kind')) if case is not None else '—'
+        rows.append(f'<tr class="pairrow" data-pair="{_e(loc_pair["pair_id"])}"><td class="l">{_e(change)}</td>'
+                    f'<td class="l">{_e(_pair_name(link_pair))}' + (' <span class="chip">CNO</span>' if cno else '') + '</td>'
+                    f'<td class="l">{_type_chip(kind) if kind else "—"}</td><td>{_window_area_text(view, link_pair)}</td>'
+                    f'{cells[0]}{cells[1]}'
+                    f'{_removal_cell(removal, "delta_vi_line", base["line"])}{_removal_cell(removal, "delta_vi_pixel", base["pixel"])}</tr>')
+    for case in sorted((c for c in lk['one_sided_cases'] if ids(c) not in matched), key=lambda c: str(c.get('case_key'))):
+        if case.get('present_in') not in ROLES:
+            continue
+        electrodes = case.get('electrodes') or []
+        name = f'{case.get("analysis_layer") or "—"} · ' + (f'{electrodes[0]}–{electrodes[1]}' if len(electrodes) == 2
+                                                       else (electrodes[0] if electrodes else str(case.get('case_key'))))
+        cond = _condition_of(view, (case['conditions'][case['present_in']] or {}).get('condition_id'))
+        kind = None if cond is None else _types(cond['class'])[0]
+        rows.append(f'<tr class="pairrow"><td class="l">{_present_text(case["present_in"])}</td><td class="l">{_e(name)}</td>'
+                    f'<td class="l">{_type_chip(kind) if kind else "—"}</td><td>—</td><td class="muted">값 없음</td>'
+                    '<td class="muted">값 없음</td><td>—</td><td>—</td></tr>')
+    if not rows:
+        return '<p class="muted">이 위치에 연결된 변경 쌍이 없습니다.</p>'
+    head = ('<tr><th class="l">변경</th><th class="l">전극 쌍</th><th class="l">유형</th><th>불량 영역 A→B</th>'
+            '<th>Δvi_line</th><th>Δvi_pixel</th><th>B 제거 시 line</th><th>B 제거 시 pixel</th></tr>')
+    notes = (f'행을 누르면 그림에서 해당 전극 쌍과 hotspot 을 강조합니다. 불량 영역은 창 안 면적({_size_text(view["cfg2"].report.diameter_um)} µm 이물)입니다. '
+             'Δvi 는 이 위치만의 값이고, B 제거 시는 조건 전체의 값입니다.')
+    if view['rois'][roi_key]['replica_factor'] > 1:
+        notes += ' 표의 값은 대표 위치 1곳 값입니다.'
+    if len(pairs) > MAX_CARD_ROWS:
+        notes += f' 쌍 {len(pairs)}개 중 영향이 큰 {MAX_CARD_ROWS}개만 보입니다.'
+    return f'<table class="chgtable">{head}{"".join(rows)}</table><p class="muted">{notes}</p>'
 
 
 def _roi_card(view, word, rank, roi_key, klass):
     lr, lk = view['rois'][roi_key], view['link_rois'][roi_key]
-    cfg2, diameter = view['cfg2'], view['cfg2'].report.diameter_um
-    ex, pos = view['loc']['explained'], view['rank'][roi_key]
+    cfg2, diameter, base = view['cfg2'], view['cfg2'].report.diameter_um, view['base']
+    pos = view['rank'][roi_key]
     center = lk.get('center_xy_um')
     center_text = f'중심 ({center[0]:.1f}, {center[1]:.1f}) µm · ' if center else ''
-    out = [f'<div class="roi" id="roi{_e(roi_key)}"><div class="roi-head"><div class="t">{word} {rank} · {_roi_label(roi_key)}</div>'
+    kinds = ', '.join(_kind_text(k) for k in lr['design_change']['change_kinds'])
+    line, pixel = lr['delta_vi']['line'], lr['delta_vi']['pixel']
+    repeat = f'<span class="badge">반복 ×{lr["replica_factor"]}</span>' if lr['replica_factor'] > 1 else ''
+    out = [f'<div class="roi" id="roi{_e(roi_key)}"><div class="roi-head"><div class="t">{word} {rank} · '
+           f'<span title="{_e(roi_key)}">{_e(_roi_name(view, roi_key))}</span>{" · " + _e(kinds) if kinds else ""} '
+           f'{_verdict_badge(line, pixel)}{repeat}</div>'
            f'<div class="muted">{center_text}창 {_size_text(cfg2.report.map_window_um)} µm · 지도 {_size_text(diameter)} µm 이물</div></div>'
            '<div class="roi-body"><div class="maps">', _unit_map(view, roi_key)]
     for pid in lr['map_pairs']:
@@ -1005,43 +1366,12 @@ def _roi_card(view, word, rank, roi_key, klass):
                    + _mapset(None, figs, same, diameter, cfg2.report.map_window_um, aligned=True,
                              pitch_differs=view['infos']['target']['pitch'] != view['infos']['reference']['pitch']) + '</div>')
     out.append('</div><div>')
-    cases = [(c, False) for c in lk['contributing_cases']] + [(c, True) for c in lk['one_sided_cases']]
-    lines = ''.join(f'<li>{_e(_case_line(c))}</li>' for c, _one in cases[:MAX_LISTED_CASES])
-    more = f'<li class="muted">외 {len(cases) - MAX_LISTED_CASES}건</li>' if len(cases) > MAX_LISTED_CASES else ''
-    out.append(f'<div class="step"><b>① 설계 변경</b><ul class="chg">{lines or "<li>4회차 속성 없음</li>"}{more}</ul></div>')
-    impact = []
-    for kind in KINDS:
-        value = lr['delta_vi'][kind]
-        share = _ratio_of(value, ex[kind]['delta_vi'])
-        impact.append(f'vi_{kind} ' + _span(_sign_class(value), f'{_s4(value)}×10⁻⁴') + f' ({_share(share)})')
-    factor = f' · 반복 위치 ×{lr["replica_factor"]} (대표 위치 값 × 반복 수)' if lr['replica_factor'] > 1 else ''
-    out.append(f'<div class="step"><b>② vi 영향</b> {" · ".join(impact)}{factor} · 근사</div>')
+    factor = f' · 대표 위치 값 × {lr["replica_factor"]}' if lr['replica_factor'] > 1 else ''
+    out.append('<div class="step"><b>영향</b> Δvi_line ' + _span(_sign_class(line), _dv(line, base['line']))
+               + ' · Δvi_pixel ' + _span(_sign_class(pixel), _dv(pixel, base['pixel'])) + f'{factor} · 근사</div>')
     total = len(view['loc']['rois'])
-    out.append(f'<div class="step"><b>③ 순위</b> 전체 {total}개 변경 위치 중 {klass} 순 {pos}위</div>')
-    rows = []
-    for cid in lr['condition_ids']:
-        cond = view['cond_by_id'].get(cid)
-        if cond is None:
-            cno = view['cno_by_id'].get(cid)
-            if cno is not None:       # a CNO condition: the same chip as the CNO row of the condition table
-                rows.append(f'<tr><td class="l">{_e(cno["density_layer"] or "—")} · {_e(cno["electrode_id"] or cno["case_name"])} '
-                            '<span class="chip">CNO</span></td>'
-                            '<td class="l"><span class="sw" style="background:var(--pixel)"></span> pixel</td>'
-                            f'<td class="l">{_presence_badge(cno["presence"]) or "양쪽"}</td><td>—</td>'
-                            f'<td class="{_sign_class(cno["delta_vi_pixel"])}">{_s4(cno["delta_vi_pixel"])}</td></tr>')
-            continue
-        rows.append(f'<tr><td class="l">{_e(cond["layer"])} · {_e(_pair_label(cond))}</td>'
-                    f'<td class="l"><span class="sw" style="background:var(--{_types(cond["class"])[0]})"></span> {_e(cond["class"])}</td>'
-                    f'<td class="l">{_presence_badge(cond["presence"]) or "양쪽"}</td>'
-                    f'<td class="{_sign_class(cond["delta_vi_line"])}">{_s4(cond["delta_vi_line"])}</td>'
-                    f'<td class="{_sign_class(cond["delta_vi_pixel"])}">{_s4(cond["delta_vi_pixel"])}</td></tr>')
-    out.append('<div class="step"><b>④ 관련 결함 조건</b></div>')
-    if rows:
-        out.append('<table><tr><th class="l">결함 조건</th><th class="l">유형</th><th class="l">상태</th>'
-                   '<th>Δvi_line</th><th>Δvi_pixel</th></tr>' + ''.join(rows) + '</table>'
-                   '<p class="muted">조건 전체의 Δvi(×10⁻⁴)이며 이 위치만의 값이 아닙니다.</p>')
-    else:
-        out.append('<p class="muted">연결된 결함 조건이 없습니다.</p>')
+    out.append(f'<div class="step"><b>순위</b> 전체 {total}개 변경 위치 중 {klass} 순 {pos}위</div>')
+    out.append('<div class="step"><b>변경 목록</b></div>' + _change_table(view, roi_key))
     mapped = [pid for pid in lr['map_pairs'] if not view['link_pairs'][pid].get('cno_case')]     # a CNO pair draws no map
     if lr['pairs_total'] > len(mapped):
         out.append(f'<p class="muted">쌍 {lr["pairs_total"]}개 중 영향이 큰 {len(mapped)}개만 지도로 보입니다'
@@ -1050,27 +1380,40 @@ def _roi_card(view, word, rank, roi_key, klass):
     return ''.join(out)
 
 
-def _roi_rank_table(view, keys):
-    head = ('<tr><th>순위</th><th class="l">위치</th><th class="l">설계 변경</th><th>쌍 수</th><th>Δvi_line (근사)</th>'
-            '<th>Δvi_pixel (근사)</th><th>net (근사)</th><th>반복 수</th></tr>')
+def _roi_rank_table(view, keys, sec_id):
+    base = view['base']
+    head = ('<tr><th>순위</th><th class="l">위치</th><th class="l">설계 변경</th><th class="l">판정</th><th>쌍 수</th>'
+            '<th>Δvi_line (근사)</th><th>Δvi_pixel (근사)</th><th>net (근사)</th><th>반복 수</th></tr>')
     rows = []
     for rank, key in enumerate(keys, start=1):
         roi = view['rois'][key]
+        line, pixel = roi['delta_vi']['line'], roi['delta_vi']['pixel']
         kinds = ', '.join(_kind_text(k) for k in roi['design_change']['change_kinds']) or '—'
-        rows.append(f'<tr><td>{rank}</td><td class="l"><a href="#roi{_e(key)}">{_roi_label(key)}</a></td><td class="l wrap">{_e(kinds)}</td>'
-                    f'<td>{roi["pairs_total"]}</td>'
-                    f'<td class="{_sign_class(roi["delta_vi"]["line"])}">{_s4(roi["delta_vi"]["line"])}</td>'
-                    f'<td class="{_sign_class(roi["delta_vi"]["pixel"])}">{_s4(roi["delta_vi"]["pixel"])}</td>'
+        rows.append(f'<tr data-net="{abs(roi["net"] or 0.0)!r}" data-line="{abs(line or 0.0)!r}" data-pixel="{abs(pixel or 0.0)!r}">'
+                    f'<td class="rk">{rank}</td><td class="l">{_roi_anchor(view, key)}</td><td class="l wrap">{_e(kinds)}</td>'
+                    f'<td class="l">{_verdict_badge(line, pixel) or "—"}</td><td>{roi["pairs_total"]}</td>'
+                    f'{_dcell(line, base["line"])}{_dcell(pixel, base["pixel"])}'
                     f'<td>{roi["net"]:+.3f}</td><td>×{roi["replica_factor"]}</td></tr>')
-    return '<table>' + head + ''.join(rows) + '</table>'
+    controls = (f'<div class="controls" data-sort-for="rank-{sec_id}"><span class="muted">정렬 (절댓값 큰 순)</span>'
+                '<button type="button" data-s="net" aria-pressed="true">net</button>'
+                '<button type="button" data-s="line" aria-pressed="false">line</button>'
+                '<button type="button" data-s="pixel" aria-pressed="false">pixel</button></div>')
+    return controls + f'<table id="rank-{sec_id}">' + head + ''.join(rows) + '</table>'
 
 
 def _cover(view, keys, which):
     ex = view['loc']['explained']
-    shares = ', '.join(f'Δvi_{k} 의 <b>{_share(ex[k]["ratio_top_" + which])}</b>' for k in KINDS)
-    residual = ', '.join(f'Δvi_{k} {_s4(ex[k]["residual_unexplained_by_location_sum"])}' for k in KINDS)
-    return (f'<p class="cover">상위 {len(keys)}곳의 위치 근사합이 선택 범위 {shares}에 해당합니다. '
-            f'근사합으로 설명되지 않는 잔차: {residual} (×10⁻⁴). 위치별 값은 근사입니다.</p>')
+    base = view.get('base') or {}
+    tops, totals, residual = [], [], []
+    for kind in KINDS:
+        entry, vi = ex[kind], base.get(kind)
+        ratio, whole = entry['ratio_top_' + which], entry.get('delta_vi')
+        top = None if ratio is None or whole is None else ratio * whole
+        tops.append(f'vi_{kind} 을 A 대비 <b>{_rel(top, vi)}</b>')
+        totals.append(_rel(whole, vi))
+        residual.append(f'Δvi_{kind} {_dv(entry["residual_unexplained_by_location_sum"], vi)}')
+    return (f'<p class="cover">상위 {len(keys)}곳의 위치 근사합은 {", ".join(tops)} 바꿨습니다(전체 {", ".join(totals)}). '
+            f'근사합으로 설명되지 않는 잔차: {", ".join(residual)}. 위치별 값은 근사입니다.</p>')
 
 
 def _roi_section(view, sec_id, title, lead, keys, which, word, klass):
@@ -1081,7 +1424,7 @@ def _roi_section(view, sec_id, title, lead, keys, which, word, klass):
         out.append(f'<p class="lead">{lead}</p><p class="muted">해당하는 변경 위치가 없습니다.</p>')
     else:
         out.append(f'<p class="lead">{lead}</p>')
-        out.append(_roi_rank_table(view, keys))
+        out.append(_roi_rank_table(view, keys, sec_id))
         out.append(_cover(view, keys, which))
         if sec_id == 's2':
             out.append('<div class="legend"><span><span class="sw" style="background:var(--common)"></span>A·B 공통 불량 영역</span>'
@@ -1095,75 +1438,81 @@ def _roi_section(view, sec_id, title, lead, keys, which, word, klass):
     return ''.join(out)
 
 
-def _electrode_table_data(conds, kind):
-    """{(electrode, layer): {'sum', 'n', 'best'}}: the sum of the Δvi of the conditions the electrode takes part in."""
+def _electrode_rows(conds):
+    """{(electrode, layer): {'line', 'pixel', 'n'}}: the sums of the delta-vi of the conditions the electrode takes part in."""
     table = {}
     for cond in conds:
-        value = cond.get(f'delta_vi_{kind}')
-        if value is None or value == 0:
+        values = {kind: cond.get(f'delta_vi_{kind}') for kind in KINDS}
+        if all(value in (None, 0) for value in values.values()):
             continue
         for electrode in cond.get('electrodes') or []:
-            row = table.setdefault((electrode, cond['layer']), {'sum': 0.0, 'n': 0, 'best': None})
-            row['sum'] += value
+            row = table.setdefault((electrode, cond['layer']), {'line': 0.0, 'pixel': 0.0, 'n': 0})
+            for kind in KINDS:
+                if values[kind] is not None:
+                    row[kind] += values[kind]
             row['n'] += 1
-            if row['best'] is None or abs(value) > abs(row['best'][1]):
-                row['best'] = (_pair_label(cond), value)
     return table
 
 
-def _electrode_table(table, kind, direction, top_n, total):
-    sign = 1 if direction == 'up' else -1
-    picked = sorted(((k, v) for k, v in table.items() if sign * v['sum'] > 0), key=lambda kv: (-sign * kv[1]['sum'], kv[0]))[:top_n]
-    head = (f'<tr><th>순위</th><th class="l">전극</th><th class="l">레이어</th><th>Δvi_{kind} (×10⁻⁴)</th><th>전체 대비</th>'
-            '<th>관여 조건 수</th><th class="l">가장 큰 조건</th></tr>')
-    peak = max([abs(v['sum']) for _k, v in picked] + [0.0]) or 1.0
+def _electrode_cards(view):
+    """{(electrode, layer): [roi keys]}: the section 2/3 cards whose pairs end at the electrode on that layer."""
+    cards = set(_card_keys(view))
+    found = {}
+    if not _has_rois(view):
+        return found
+    for pair in view['loc']['pairs']:
+        if pair['roi_key'] not in cards:
+            continue
+        link_pair = view['link_pairs'].get(pair['pair_id']) or {}
+        for side in (link_pair.get('a') or {}, link_pair.get('b') or {}):
+            for endpoint in side.get('endpoints') or []:
+                electrode, layer = endpoint.get('electrode_id'), side.get('analysis_layer')
+                if electrode and layer:
+                    keys = found.setdefault((electrode, layer), [])
+                    if pair['roi_key'] not in keys:
+                        keys.append(pair['roi_key'])
+    return found
+
+
+def _electrode_section(doc, view, top_n):
+    table = _electrode_rows(doc['delta']['conditions'])
+    base = _base_of(doc)
+    links = _electrode_cards(view)
+
+    def score(item):
+        _key, row = item
+        rates = [abs(row[k] / base[k]) for k in KINDS if base[k] is not None and abs(base[k]) >= RATIO_EPS]
+        return (-sum(rates), -(abs(row['line']) + abs(row['pixel'])), item[0])
+    picked = sorted(table.items(), key=score)[:top_n * 2]
+    peaks = {k: max([abs(row[k]) for _key, row in picked] + [0.0]) for k in KINDS}
+    head = ('<tr><th>순위</th><th class="l">전극</th><th class="l">레이어</th><th>Δvi_line</th><th>Δvi_pixel</th>'
+            '<th class="l">판정</th><th>관여 조건 수</th><th class="l">변경 위치</th></tr>')
     rows = []
     for rank, ((electrode, layer), row) in enumerate(picked, start=1):
-        best = row['best']
         rows.append(f'<tr><td>{rank}</td><td class="l"><b>{_e(electrode)}</b></td><td class="l">{_e(layer)}</td>'
-                    f'<td class="{_sign_class(row["sum"])}">{_s4(row["sum"])}<span class="bar" '
-                    f'style="width:{int(round(80 * abs(row["sum"]) / peak))}px;background:var(--{kind})"></span></td>'
-                    f'<td>{_share(_ratio_of(row["sum"], total))}</td><td>{row["n"]}</td>'
-                    f'<td class="l">{_e(best[0])} ({_s4(best[1])})</td></tr>')
+                    f'{_dcell(row["line"], base["line"], "line", peaks["line"])}'
+                    f'{_dcell(row["pixel"], base["pixel"], "pixel", peaks["pixel"])}'
+                    f'<td class="l">{_verdict_badge(row["line"], row["pixel"]) or "—"}</td><td>{row["n"]}</td>'
+                    f'<td class="l">{_card_links(view, links.get((electrode, layer), []))}</td></tr>')
     if not rows:
-        rows.append('<tr><td colspan="7" class="l muted">해당하는 조합이 없습니다.</td></tr>')
-    rows.append('<tr><td colspan="7" class="l muted">관여 합: 한 조건은 두 전극에 모두 들어가므로 이 표의 값을 더하면 전체 Δvi 보다 큽니다.</td></tr>')
-    return '<table>' + head + ''.join(rows) + '</table>'
-
-
-def _electrode_section(doc, kind, sec_id, number, top_n):
-    conds = doc['delta']['conditions']
-    table = _electrode_table_data(conds, kind)
-    total = doc['delta']['indicators'][f'delta_vi_{kind}']
-    return (f'<section id="{sec_id}"><h2>{number}. {kind} 불량 — 전극 / 레이어 Top {top_n}</h2>'
-            f'<p class="lead">(전극, 레이어) 조합별 Δvi_{kind} 입니다. 값은 그 전극이 관여한 결함 조건 Δvi 의 합(관여 합)입니다.'
-            + ('' if kind == 'line' else ' CNO 는 별도 표 없이 결함 조건 표의 배지로만 보입니다.') + '</p>'
-            '<h3>증가 (악화)</h3>' + _electrode_table(table, kind, 'up', top_n, total)
-            + '<h3>감소 (개선)</h3>' + _electrode_table(table, kind, 'down', top_n, total) + '</section>\n')
+        rows.append('<tr><td colspan="8" class="l muted">해당하는 조합이 없습니다.</td></tr>')
+    rows.append('<tr><td colspan="8" class="l muted">관여 합: 한 조건은 두 전극에 모두 들어가므로 이 표의 값을 더하면 전체 Δvi 보다 큽니다.</td></tr>')
+    return ('<section id="s4"><h2>4. 전극별 영향 — line · pixel 나란히</h2>'
+            f'<p class="lead">(전극, 레이어) 조합별 Δvi 입니다. 두 변화율 절댓값의 합이 큰 순서로 상위 {len(picked)}개(--top-n × 2 까지)를 보입니다. '
+            'CNO 는 별도 행 없이 6절 결함 조건 표의 배지로만 보입니다.</p>'
+            '<table>' + head + ''.join(rows) + '</table></section>\n')
 
 
 def _distribution_section(doc):
     layers = doc['delta']['layers']
     sizes = sorted({s['diameter_um'] for row in layers for s in row.get('by_size', [])})
-    conds = doc['delta']['conditions']
-    electrodes = {}
-    for kind in KINDS:
-        for (electrode, _layer), row in _electrode_table_data(conds, kind).items():
-            electrodes.setdefault(electrode, {})[kind] = electrodes.get(electrode, {}).get(kind, 0.0) + row['sum']
-
-    def top(kind):
-        rows = [(name, values.get(kind)) for name, values in electrodes.items() if values.get(kind) is not None]
-        rows = sorted(rows, key=lambda r: (-abs(r[1]), r[0]))[:MAX_ELECTRODE_BARS]
-        return sorted(rows, key=lambda r: (-r[1], r[0]))
-    tabs = [('layer', '레이어', '레이어별 Δvi 입니다(선택 범위).',
+    tabs = [('layer', '레이어', '레이어별 Δvi 입니다(선택 범위, %p).',
              '<div class="grid2">' + f'<div>{_bars([(r["layer"], r["delta_vi_line"]) for r in layers], "line")}</div>'
              f'<div>{_bars([(r["layer"], r["delta_vi_pixel"]) for r in layers], "pixel")}</div></div>'),
-            ('el', '전극', f'전극별 Δvi 입니다(관여 합 — 합이 전체보다 큼). 절댓값이 큰 {MAX_ELECTRODE_BARS}개까지 보입니다.',
-             '<div class="grid2">' + f'<div>{_bars(top("line"), "line")}</div><div>{_bars(top("pixel"), "pixel")}</div></div>'),
-            ('size', '이물 크기', '레이어 × 이물 크기별 Δvi 입니다(×10⁻⁴, 빨강 증가 +, 파랑 감소 −).',
+            ('size', '이물 크기', '레이어 × 이물 크기별 Δvi 입니다(%p, 빨강 증가 +, 파랑 감소 −).',
              f'<div class="grid2"><div><b>Δvi_line</b><table class="hm">{_heat(layers, "line", sizes)}</table></div>'
              f'<div><b>Δvi_pixel</b><table class="hm">{_heat(layers, "pixel", sizes)}</table></div></div>')]
-    out = ['<section id="s6"><h2>6. 전체 분포</h2><div class="tabs">']
+    out = ['<section id="s5"><h2>5. 전체 분포</h2><div class="tabs">']
     out += [f'<input type="radio" name="dist" id="dist-{key}"{" checked" if i == 0 else ""}>' for i, (key, *_rest) in enumerate(tabs)]
     out.append('<div class="tabbar">' + ''.join(f'<label for="dist-{key}">{label}</label>' for key, label, *_rest in tabs) + '</div>')
     out += [f'<div class="tab t-{key}"><p class="lead">{lead}</p>{body}</div>' for key, _label, lead, body in tabs]
@@ -1210,17 +1559,17 @@ def _inputs_table(doc, view):
 CSS = '''.viz-root{color-scheme:light;
   --surface-0:#f4f3f0;--surface-1:#fcfcfb;--border:#e2e0da;--grid:#ebe9e4;
   --text-primary:#0b0b0b;--text-secondary:#52514e;--text-muted:#7a7972;
-  --line:#2a78d6;--pixel:#eb6834;--up:#d03b3b;--down:#2a78d6;--mid:#f0efec;--common:#8d8c85;
+  --line:#7a4fd6;--pixel:#eb6834;--up:#d03b3b;--down:#2a78d6;--mid:#f0efec;--common:#8d8c85;
   --sel:#fff3d6;--badge-new:#fde7e7;--badge-gone:#e3eefc;--badge-both:#ecebe6;}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{color-scheme:dark;
   --surface-0:#121211;--surface-1:#1a1a19;--border:#33332f;--grid:#2a2a27;
   --text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#94938a;
-  --line:#3987e5;--pixel:#d95926;--up:#e66767;--down:#3987e5;--mid:#383835;--common:#77766f;
+  --line:#9a78ea;--pixel:#d95926;--up:#e66767;--down:#3987e5;--mid:#383835;--common:#77766f;
   --sel:#3a3018;--badge-new:#4a2323;--badge-gone:#1d2f4a;--badge-both:#2c2c29;}}
 :root[data-theme="dark"] .viz-root{color-scheme:dark;
   --surface-0:#121211;--surface-1:#1a1a19;--border:#33332f;--grid:#2a2a27;
   --text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#94938a;
-  --line:#3987e5;--pixel:#d95926;--up:#e66767;--down:#3987e5;--mid:#383835;--common:#77766f;
+  --line:#9a78ea;--pixel:#d95926;--up:#e66767;--down:#3987e5;--mid:#383835;--common:#77766f;
   --sel:#3a3018;--badge-new:#4a2323;--badge-gone:#1d2f4a;--badge-both:#2c2c29;}
 *{box-sizing:border-box} body{margin:0}
 .viz-root{background:var(--surface-0);color:var(--text-primary);font:14px/1.55 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;min-height:100vh}
@@ -1247,16 +1596,17 @@ td.l,th.l{text-align:left}
 .up{color:var(--up)} .down{color:var(--down)}
 .badge{font-size:11px;border-radius:4px;padding:1px 6px;margin-left:6px}
 .b-new{background:var(--badge-new)} .b-gone{background:var(--badge-gone)} .b-both{background:var(--badge-both)}
+.b-bad{background:var(--badge-new);border:1px solid var(--up)} .b-good{background:var(--badge-gone);border:1px solid var(--down)}
+.b-trade{background:#fbe9c6;border:1px solid #d9a93d;color:#6b4a00}
+:root[data-theme="dark"] .b-trade{background:#4a3a12;color:#f3d48a}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .b-trade{background:#4a3a12;color:#f3d48a}}
+.chgtable tr.pairrow[data-pair]{cursor:pointer} .terms td{white-space:normal}
 .controls{display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap}
 .controls button,.theme{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;font-size:12px}
 .controls button[aria-pressed="true"]{background:var(--text-primary);color:var(--surface-1)}
 .scroll{max-height:460px;overflow:auto;border:1px solid var(--grid);border-radius:6px}
 svg text{fill:var(--text-secondary);font-size:11px} svg .val{fill:var(--text-primary)}
-.story{display:grid;grid-template-columns:auto 1fr;gap:16px;border:1px solid var(--border);border-radius:10px;padding:14px;margin:12px 0;cursor:pointer}
-.story:hover{border-color:var(--text-muted)}
-.story .rank{font-size:12px;color:var(--text-muted)}
-.story .title{font-size:15px;font-weight:600;margin:2px 0 8px}
-.story ol,#detail ol{margin:0;padding-left:20px} .story li,#detail li{margin:4px 0}
+#detail ol{margin:0;padding-left:20px} #detail li{margin:4px 0}
 .mapset{display:flex;gap:8px;flex-wrap:wrap}
 .mapset figure{margin:0;width:190px} .mapset figcaption{font-size:11px;color:var(--text-muted);text-align:center}
 .mapset img{width:190px;height:190px;border:1px solid var(--border);border-radius:4px;background:var(--surface-0);display:block}
@@ -1289,24 +1639,30 @@ details>summary{cursor:pointer;font-weight:600;font-size:15px}
 .tabbar{display:flex;gap:8px;margin:0 0 10px}
 .tabbar label{border:1px solid var(--border);background:var(--surface-1);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
 .tabs>.tab{display:none}
-#dist-layer:checked~.t-layer,#dist-el:checked~.t-el,#dist-size:checked~.t-size{display:block}
-#dist-layer:checked~.tabbar label[for="dist-layer"],#dist-el:checked~.tabbar label[for="dist-el"],#dist-size:checked~.tabbar label[for="dist-size"]{background:var(--text-primary);color:var(--surface-1)}
+#dist-layer:checked~.t-layer,#dist-size:checked~.t-size{display:block}
+#dist-layer:checked~.tabbar label[for="dist-layer"],#dist-size:checked~.tabbar label[for="dist-size"]{background:var(--text-primary);color:var(--surface-1)}
 '''
 
 SCRIPT = '''(function(){
 var $=function(id){return document.getElementById(id)};
 function fill(scope){scope.querySelectorAll('.mapslot').forEach(function(s){var src=$('m'+s.getAttribute('data-m'));s.innerHTML='';
   if(src){var c=src.cloneNode(true);c.removeAttribute('id');s.appendChild(c)}})}
-fill($('stories'));
 function select(key){document.querySelectorAll('#conds tr[data-k]').forEach(function(tr){tr.classList.toggle('on',tr.getAttribute('data-k')===key)});
   var d=$('d'+key),det=$('detail');det.innerHTML=d?d.innerHTML:'';fill(det)}
-$('conds').addEventListener('click',function(e){var tr=e.target.closest('tr[data-k]');if(tr)select(tr.getAttribute('data-k'))});
-document.querySelectorAll('.story').forEach(function(card){card.addEventListener('click',function(){
-  select(card.getAttribute('data-k'));$('conds').scrollIntoView({behavior:'smooth',block:'center'})})});
-$('cCtl').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;var f=b.getAttribute('data-f');
-  $('cCtl').querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b)});
+var conds=$('conds');
+if(conds){conds.addEventListener('click',function(e){if(e.target.closest('a'))return;var tr=e.target.closest('tr[data-k]');if(tr)select(tr.getAttribute('data-k'))})}
+var cctl=$('cCtl');
+if(cctl){cctl.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;var f=b.getAttribute('data-f');
+  cctl.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b)});
   document.querySelectorAll('#conds tr[data-types]').forEach(function(tr){var t=tr.getAttribute('data-types');
-    tr.style.display=(f==='all'||t==='all'||t.split(' ').indexOf(f)>=0)?'':'none'})});
+    tr.style.display=(f==='all'||t==='all'||t.split(' ').indexOf(f)>=0)?'':'none'})})}
+document.querySelectorAll('.controls[data-sort-for]').forEach(function(box){box.addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;var key='data-'+b.getAttribute('data-s'),table=$(box.getAttribute('data-sort-for'));
+  box.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b)});
+  var rows=[].slice.call(table.querySelectorAll('tr[data-net]'));
+  rows.forEach(function(r,i){r.__i=i});
+  rows.sort(function(x,y){return (parseFloat(y.getAttribute(key))-parseFloat(x.getAttribute(key)))||(x.__i-y.__i)});
+  rows.forEach(function(r,i){r.querySelector('.rk').textContent=i+1;r.parentNode.appendChild(r)})})});
 $('themeBtn').addEventListener('click',function(){var r=document.documentElement,
   c=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
   r.setAttribute('data-theme',c==='dark'?'light':'dark')});
@@ -1315,13 +1671,16 @@ var first=document.querySelector('#conds tr[data-k]');if(first)select(first.getA
 '''
 
 
-def _conditions_html(doc, cfg2, maps):
-    """Section 7 body: the top conditions with their maps and the full condition table (the pre-v5 explorer, unchanged).
+def _conditions_html(doc, cfg2, maps, view):
+    """Section 6 body: the full condition table (new unit, a "변경 위치" column) and its detail pane.
 
-    maps = {condition index: (figs, same)}; condition rows use compare2.json values only."""
+    maps = {condition index: (figs, same)}; it is empty when the location cards carry the maps (round 4/6 linked).
+    Condition rows use compare2.json values only."""
     delta = doc['delta']
     conds, cno = delta['conditions'], delta['cno']
-    diameter, top_n = cfg2.report.diameter_um, cfg2.report.top_n
+    diameter = cfg2.report.diameter_um
+    base = _base_of(doc)
+    with_area = not _has_rois(view)         # the enlarged ROI figures carry the areas when the locations are linked
     side_conds = {role: {c['condition_id']: c for c in doc['sides'][role]['conditions']} for role in ROLES}
     absent_note = any(doc['sides'][role].get('absent_expected_cases') for role in ROLES)
     scales = _score_scales(conds, cno)
@@ -1329,35 +1688,16 @@ def _conditions_html(doc, cfg2, maps):
         ('n', j, _cond_score(c, scales)) for j, c in enumerate(cno)]
     entries.sort(key=lambda e: (-e[2], e[0], (conds[e[1]]['layer'], conds[e[1]]['pair_id']) if e[0] == 'c'
                                 else (cno[e[1]]['density_layer'] or '', cno[e[1]]['case_name'])))
-    cond_rank = _changed_ranking(conds, cno)
     ind = delta['indicators']
-    out = []
-    # top conditions
-    out.append('<h3>주요 결함 조건과 영향</h3>'
-               f'<p class="lead">vi 변화에 가장 크게 기여한 조건입니다. 지도는 {_size_text(diameter)} µm 이물의 불량 영역이며 '
-               '반투명 회색이 해당 레이어 패턴입니다. 기준 A 와 대상 B 는 정렬하지 않았습니다.</p>'
-               '<div class="legend"><span><span class="sw" style="background:var(--common)"></span>불량 영역</span>'
-               '<span><span class="sw" style="background:var(--up)"></span>B 에서 새로 생긴 영역(같은 위치 비교일 때)</span>'
-               '<span><span class="sw" style="background:var(--down)"></span>B 에서 사라진 영역(같은 위치 비교일 때)</span>'
-               '<span><span class="sw" style="background:rgba(128,128,128,.35)"></span>레이어 패턴</span></div>'
-               '<div id="stories">')
-    for rank, i in enumerate(cond_rank[:top_n], start=1):
-        c = conds[i]
-        slot = (f'<div class="maps"><div class="mapslot" data-m="{i}"></div></div>' if i in maps
-                else f'<div class="maps muted">{_no_map_slot(c)}</div>')
-        sentences = ''.join(f'<li>{s}</li>' for s in _sentences(c, maps[i][0] if i in maps else None, side_conds,
-                                                                  diameter, absent_note))
-        out.append(f'<div class="story" data-k="c{i}">{slot}<div><div class="rank">{rank}위 · '
-                   f'<span class="sw" style="background:var(--{_types(c["class"])[0]})"></span> {_e(c["class"])}</div>'
-                   f'<div class="title">{_e(c["layer"])} · {_e(_pair_label(c))}{_presence_badge(c["presence"])}</div>'
-                   f'<ol>{sentences}</ol></div></div>')
-    if not cond_rank:
-        out.append('<p class="muted">변화가 있는 조건이 없습니다.</p>')
-    out.append('</div>')
-    # table
-    head =('<tr><th class="l">전극 쌍</th><th class="l">레이어</th><th class="l">유형</th><th class="l">상태</th>'
+    labels = view.get('card_labels') or {}
+
+    def cards_of(cid):
+        if cid is None or not _has_rois(view):
+            return '—'
+        return _card_links(view, [key for key in labels if cid in view['rois'][key]['condition_ids']])
+    head = ('<tr><th class="l">전극 쌍</th><th class="l">레이어</th><th class="l">유형</th><th class="l">상태</th>'
             '<th>Δvi_line</th><th>비율</th><th>Δvi_pixel</th><th>비율</th>'
-            '<th>B 제거 시 Δvi_line</th><th>B 제거 시 Δvi_pixel</th></tr>')
+            '<th>B 제거 시 Δvi_line</th><th>B 제거 시 Δvi_pixel</th><th class="l">변경 위치</th></tr>')
     rows = []
     for kind, i, _score in entries:
         if kind == 'c':
@@ -1367,48 +1707,53 @@ def _conditions_html(doc, cfg2, maps):
                 f'<tr data-k="c{i}" data-types="{types}"><td class="l">{_e(_pair_label(c))}</td><td class="l">{_e(c["layer"])}</td>'
                 f'<td class="l"><span class="sw" style="background:var(--{_types(c["class"])[0]})"></span> {_e(c["class"])}</td>'
                 f'<td class="l">{_presence_badge(c["presence"])}</td>'
-                f'<td class="{_sign_class(c["delta_vi_line"])}">{_s4(c["delta_vi_line"])}</td><td>{_share(c["share_line"])}</td>'
-                f'<td class="{_sign_class(c["delta_vi_pixel"])}">{_s4(c["delta_vi_pixel"])}</td><td>{_share(c["share_pixel"])}</td>'
-                f'{_removal_cell(c.get("removal_b"), "delta_vi_line")}{_removal_cell(c.get("removal_b"), "delta_vi_pixel")}</tr>')
+                f'<td class="{_sign_class(c["delta_vi_line"])}">{_dv(c["delta_vi_line"], base["line"])}</td><td>{_share(c["share_line"])}</td>'
+                f'<td class="{_sign_class(c["delta_vi_pixel"])}">{_dv(c["delta_vi_pixel"], base["pixel"])}</td><td>{_share(c["share_pixel"])}</td>'
+                f'{_removal_cell(c.get("removal_b"), "delta_vi_line", base["line"])}'
+                f'{_removal_cell(c.get("removal_b"), "delta_vi_pixel", base["pixel"])}'
+                f'<td class="l">{cards_of(c["condition_id"])}</td></tr>')
         else:
             c = cno[i]
+            cid = (cno_condition_id(c['electrode_id'], c['density_layer'])
+                   if isinstance(c.get('electrode_id'), str) and isinstance(c.get('density_layer'), str) else None)
             rows.append(
                 f'<tr data-k="n{i}" data-types="pixel"><td class="l">{_e(c["electrode_id"] or c["case_name"])}'
                 '<span class="badge b-both">CNO</span></td>'
                 f'<td class="l">{_e(c["density_layer"] or "—")}</td><td class="l"><span class="sw" style="background:var(--pixel)"></span> pixel</td>'
                 f'<td class="l">{_presence_badge(c["presence"])}</td><td>—</td><td>—</td>'
-                f'<td class="{_sign_class(c["delta_vi_pixel"])}">{_s4(c["delta_vi_pixel"])}</td><td>{_share(c["share_pixel"])}</td>'
-                f'{_removal_cell(c.get("removal_b"), "delta_vi_line")}{_removal_cell(c.get("removal_b"), "delta_vi_pixel")}</tr>')
+                f'<td class="{_sign_class(c["delta_vi_pixel"])}">{_dv(c["delta_vi_pixel"], base["pixel"])}</td><td>{_share(c["share_pixel"])}</td>'
+                f'{_removal_cell(c.get("removal_b"), "delta_vi_line", base["line"])}'
+                f'{_removal_cell(c.get("removal_b"), "delta_vi_pixel", base["pixel"])}'
+                f'<td class="l">{cards_of(cid)}</td></tr>')
     shared = delta['shared']
     rows.append('<tr data-types="all"><td class="l muted" colspan="4">공유 영역 변화 (여러 조건이 함께 덮는 영역)</td>'
-                f'<td class="{_sign_class(shared["delta_vi_line"])}">{_s4(shared["delta_vi_line"])}</td><td>{_share(shared["share_line"])}</td>'
-                f'<td class="{_sign_class(shared["delta_vi_pixel"])}">{_s4(shared["delta_vi_pixel"])}</td><td>{_share(shared["share_pixel"])}</td>'
-                '<td>—</td><td>—</td></tr>')
+                f'<td class="{_sign_class(shared["delta_vi_line"])}">{_dv(shared["delta_vi_line"], base["line"])}</td><td>{_share(shared["share_line"])}</td>'
+                f'<td class="{_sign_class(shared["delta_vi_pixel"])}">{_dv(shared["delta_vi_pixel"], base["pixel"])}</td><td>{_share(shared["share_pixel"])}</td>'
+                '<td>—</td><td>—</td><td></td></tr>')
     crp = delta.get('crp_difference')
     if crp is not None:
         rows.append('<tr data-types="all"><td class="l muted" colspan="4">제품군 보정 차이 (CRP)</td><td>—</td><td>—</td>'
-                    f'<td class="{_sign_class(crp["delta_vi_pixel"])}">{_s4(crp["delta_vi_pixel"])}</td><td>{_share(crp.get("share_pixel"))}</td>'
-                    '<td>—</td><td>—</td></tr>')
+                    f'<td class="{_sign_class(crp["delta_vi_pixel"])}">{_dv(crp["delta_vi_pixel"], base["pixel"])}</td><td>{_share(crp.get("share_pixel"))}</td>'
+                    '<td>—</td><td>—</td><td></td></tr>')
 
     def total_share(value):
         return '—' if value is None or abs(value) < RATIO_EPS else '100%'
 
     rows.append('<tr data-types="all"><td class="l" colspan="4"><b>합계</b></td>'
-                f'<td class="{_sign_class(ind["delta_vi_line"])}"><b>{_s4(ind["delta_vi_line"])}</b></td><td>{total_share(ind["delta_vi_line"])}</td>'
-                f'<td class="{_sign_class(ind["delta_vi_pixel"])}"><b>{_s4(ind["delta_vi_pixel"])}</b></td><td>{total_share(ind["delta_vi_pixel"])}</td>'
-                '<td></td><td></td></tr>')
-    out.append('<h3>결함 조건별 영향</h3><p class="lead">조건 = 전극 쌍 × 레이어입니다. 행을 누르면 오른쪽에 해당 위치와 설명이 나옵니다. '
-               '비율은 해당 지표 전체 변화 중 이 조건의 몫이며, 음수는 전체 변화와 반대 방향이라는 뜻입니다.</p>'
-               '<div class="controls" id="cCtl"><span class="muted">유형</span>'
-               '<button type="button" data-f="all" aria-pressed="true">전체</button>'
-               '<button type="button" data-f="line" aria-pressed="false">line</button>'
-               '<button type="button" data-f="pixel" aria-pressed="false">pixel</button></div>'
-               '<div class="explorer"><div class="scroll"><table id="conds">' + head + ''.join(rows) + '</table></div>'
-               '<div id="detail"></div></div>'
-               '<p class="muted">Δvi 단위 ×10⁻⁴. 여러 조건이 함께 덮는 영역의 변화는 특정 조건에 나누지 않고 "공유 영역 변화"로 따로 보입니다. '
-               '"B 제거 시" 는 대상 B 에서 그 조건 하나를 없앴을 때의 vi 변화입니다.</p>')
+                f'<td class="{_sign_class(ind["delta_vi_line"])}"><b>{_dv(ind["delta_vi_line"], base["line"])}</b></td><td>{total_share(ind["delta_vi_line"])}</td>'
+                f'<td class="{_sign_class(ind["delta_vi_pixel"])}"><b>{_dv(ind["delta_vi_pixel"], base["pixel"])}</b></td><td>{total_share(ind["delta_vi_pixel"])}</td>'
+                '<td></td><td></td><td></td></tr>')
+    body = ('<p class="lead">조건 = 전극 쌍 × 레이어입니다. 행을 누르면 오른쪽에 설명이 나옵니다. '
+            '비율은 해당 지표 전체 변화 중 이 조건의 몫이며, 음수는 전체 변화와 반대 방향이라는 뜻입니다.</p>'
+            '<div class="controls" id="cCtl"><span class="muted">유형</span>'
+            '<button type="button" data-f="all" aria-pressed="true">전체</button>'
+            '<button type="button" data-f="line" aria-pressed="false">line</button>'
+            '<button type="button" data-f="pixel" aria-pressed="false">pixel</button></div>'
+            '<div class="explorer"><div class="scroll"><table id="conds">' + head + ''.join(rows) + '</table></div>'
+            '<div id="detail"></div></div>'
+            '<p class="muted">Δvi 는 %p, 괄호는 기준 A 대비 변화율입니다. 여러 조건이 함께 덮는 영역의 변화는 특정 조건에 나누지 않고 "공유 영역 변화"로 따로 보입니다. '
+            '"B 제거 시" 는 대상 B 에서 그 조건 하나를 없앴을 때의 vi 변화입니다.</p>')
     # store: every map once, every detail text once
-    body = ''.join(out)
     window_um = cfg2.report.map_window_um
     out = []
     for i, (figs, same) in sorted(maps.items()):
@@ -1416,9 +1761,10 @@ def _conditions_html(doc, cfg2, maps):
     for kind, i, _score in entries:
         if kind == 'c':
             c = conds[i]
-            slot = f'<div class="mapslot" data-m="{i}"></div>' if i in maps else f'<div class="muted">{_no_map_slot(c)}</div>'
+            slot = ('' if not with_area else f'<div class="mapslot" data-m="{i}"></div>' if i in maps
+                    else f'<div class="muted">{_no_map_slot(c)}</div>')
             items = ''.join(f'<li>{s}</li>' for s in _sentences(c, maps[i][0] if i in maps else None, side_conds,
-                                                                 diameter, absent_note))
+                                                                 diameter, absent_note, base, with_area))
             out.append(f'<div id="dc{i}"><div class="title" style="font-weight:600;margin-bottom:6px">{_e(c["layer"])} · '
                        f'{_e(_pair_label(c))}{_presence_badge(c["presence"])} <span class="chip">{_e(c["class"])}</span></div>'
                        f'{slot}<ol>{items}</ol></div>')
@@ -1426,11 +1772,11 @@ def _conditions_html(doc, cfg2, maps):
             c = cno[i]
             removal = c.get('removal_b')
             text = ('CNO(전극 접촉 열림) 항목입니다. 지도는 없습니다. Δvi_pixel '
-                    + _span(_sign_class(c['delta_vi_pixel']), f'{_s4(c["delta_vi_pixel"])}×10⁻⁴')
+                    + _span(_sign_class(c['delta_vi_pixel']), _dv(c['delta_vi_pixel'], base['pixel']))
                     + f' (전체 변화의 {_share(c["share_pixel"])}).')
             if removal is not None:
                 text += (' B 에서 제거하면 Δvi_pixel ' + _span(_sign_class(removal['delta_vi_pixel']),
-                                                           f'{_s4(removal["delta_vi_pixel"])}×10⁻⁴') + '.')
+                                                           _dv(removal['delta_vi_pixel'], base['pixel'])) + '.')
             out.append(f'<div id="dn{i}"><div class="title" style="font-weight:600;margin-bottom:6px">'
                        f'{_e(c["electrode_id"] or c["case_name"])} <span class="chip">CNO</span></div><p>{text}</p></div>')
     return body, ''.join(out)
@@ -1454,42 +1800,58 @@ def _absent_block(doc):
     return ''.join(parts)
 
 
+TERMS = (('vi_line / vi_pixel', 'line 불량, pixel 불량의 발생 비율(보정 후).'),
+         ('겹침', 'line hotspot 과 pixel hotspot 이 겹친 영역. line 으로 계산하고 pixel 에서 뺍니다.'),
+         ('공유 영역', '여러 조건이 함께 덮는 영역. 특정 조건에 나누지 않습니다.'),
+         ('CNO', '전극 접촉 열림. pixel 로 셉니다. 지도가 없습니다.'),
+         ('B 제거 시', 'B 에서 그 조건 하나를 없앴을 때의 vi 변화(조건 전체).'),
+         ('근사', '위치별 값은 창 안 면적으로 계산합니다. 공유 영역과 겹침 이동은 나누지 않습니다.'))
+
+
+def _terms_box():
+    return ('<div><h3>용어</h3><table class="terms">' + ''.join(
+        f'<tr><td class="l"><b>{_e(name)}</b></td><td class="l wrap">{_e(text)}</td></tr>' for name, text in TERMS) + '</table></div>')
+
+
 def _render_html(doc, infos, cfg2, maps, warnings, partial, view):
-    """The whole page in the order of mockup v5. maps = {condition index: (figs, same)}."""
+    """The whole page in the order of mockup v6. maps = {condition index: (figs, same)}."""
     unit_text = []
     for role in ROLES:
         info = infos[role]
         text = f'{info["unit_um"][0]:g} × {info["unit_um"][1]:g} µm'
         unit_text.append(text + (' (유도: (frame+1000 px)/2 × pitch)' if info['unit_derived'] else ''))
     selected = _diameters_text(doc)
+    base = _base_of(doc)
+    view['base'] = base
+    loc = view['loc']
+    worse = loc['top_worse'] if loc else []
+    improved = loc['top_improved'] if loc else []
+    view['card_labels'] = {key: f'악화 {n}' for n, key in enumerate(worse, start=1)}
+    view['card_labels'].update({key: f'개선 {n}' for n, key in enumerate(improved, start=1)})
     out = ['<!doctype html>\n<html lang="ko">\n<head>\n<meta charset="utf-8">\n'
            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
            f'<title>설계 변경 영향 보고서</title>\n<style>\n{CSS}</style>\n</head>\n<body>\n'
            '<div class="viz-root" id="root"><div class="wrap">\n']
     out.append('<header><div><h1>설계 변경 영향 보고서</h1>'
-               f'<p class="sub">기준 {_e(infos["reference"]["product_id"] or "A")} 대비 대상 '
-               f'{_e(infos["target"]["product_id"] or "B")} · compare2 결과 기반</p></div>'
+               f'<p class="sub">기준 A ({_e(infos["reference"]["product_id"] or "A")}) 대비 대상 B '
+               f'({_e(infos["target"]["product_id"] or "B")}) · compare2 결과 기반</p></div>'
                '<button class="theme" id="themeBtn" type="button">테마 전환</button></header>\n')
     if partial:
         reasons = sorted({why for role in ROLES for why in (doc['sides'][role].get('reasons') or [])})
         out.append('<div class="banner"><b>부분 결과</b>: 일부 입력이 비어 있어 값이 "대기"이거나 근거가 부족할 수 있습니다.'
                    + (' 사유: ' + _e(', '.join(reasons[:6])) + ('…' if len(reasons) > 6 else '') if reasons else '')
                    + '</div>\n')
+    out.append('<div class="banner" id="notation"><b>표기.</b> vi 는 %로 씁니다. 변화(Δ)는 %p 이고, 괄호 안은 기준 A 의 같은 지표 '
+               f'vi_line({_pc(base["line"])}) 또는 vi_pixel({_pc(base["pixel"])}) 대비 변화율입니다. '
+               '위치·전극 값은 근사이거나 관여 합이라 더해도 1절 값과 다를 수 있습니다.</div>\n')
     if selected:
         out.append(f'<div class="banner" id="banner"><b>선택 범위: 이물 {_e(selected)}.</b> 1절은 전체 범위와 선택 범위를 함께 보여 줍니다. '
                    '2절 이후는 선택 범위 기준입니다. 위치별 영향은 선택 범위 크기만 쓴 근사입니다.</div>\n')
-    out.append('<nav class="toc"><a href="#s0">제품 정보</a><a href="#s1">1 요약</a><a href="#s2">2 악화 Top</a>'
-               '<a href="#s3">3 개선 Top</a><a href="#s4">4 line 전극/레이어</a><a href="#s5">5 pixel 전극/레이어</a>'
-               '<a href="#s6">6 전체 분포</a><a href="#s7">7 결함 조건 상세</a><a href="#s8">참고·입력</a></nav>\n')
+    out.append('<nav class="toc"><a href="#s1">1 요약</a><a href="#s2">2 위험을 키운 변경</a>'
+               '<a href="#s3">3 위험을 줄인 변경</a><a href="#s4">4 전극별 영향</a>'
+               '<a href="#s5">5 전체 분포</a><a href="#s6">6 결함 조건 전체</a><a href="#s9">참고</a></nav>\n')
     out.append(_absent_block(doc))
-    dl1 = _dl1_block(view)
-    product = f'<table id="prod">{_product_table(doc, infos, unit_text)}</table>'
-    out.append('<section id="s0"><h2>제품 정보</h2>' + (f'<div class="grid2">{product}{dl1}</div>' if dl1 else product)
-               + '</section>\n')
     out.append(_summary_section(doc, view))
-    loc = view['loc']
-    worse = loc['top_worse'] if loc else []
-    improved = loc['top_improved'] if loc else []
     out.append(_roi_section(view, 's2', '2. 위험을 키운 설계 변경',
                             f'B 에서 위험(vi)을 키운 설계 변경 위치 {len(worse)}곳입니다(--top-regions {view["args"]["top_regions"]}). '
                             '위치 = 4회차 변경 ROI 이고 A·B 는 대응으로 맞춘 같은 위치입니다. '
@@ -1498,20 +1860,24 @@ def _render_html(doc, infos, cfg2, maps, warnings, partial, view):
     out.append(_roi_section(view, 's3', '3. 위험을 줄인 설계 변경',
                             f'B 에서 위험을 줄인 설계 변경 위치 {len(improved)}곳입니다(--top-improved {view["args"]["top_improved"]}).',
                             improved, 'improved', '개선', '위험 감소'))
-    out.append(_electrode_section(doc, 'line', 's4', 4, view['args']['top_n']))
-    out.append(_electrode_section(doc, 'pixel', 's5', 5, view['args']['top_n']))
+    out.append(_electrode_section(doc, view, view['args']['top_n']))
     out.append(_distribution_section(doc))
-    body, store = _conditions_html(doc, cfg2, maps)
-    out.append(f'<section id="s7"><details><summary>7. 결함 조건별 상세 (전극 쌍 × 레이어) — 펼치기</summary>{body}</details></section>\n')
-    out.append('<section id="s8"><h2>참고: caa 지표</h2><p class="lead">caa 는 보정 전 불량 발생 비율입니다. '
+    body, store = _conditions_html(doc, cfg2, maps, view)
+    out.append(f'<section id="s6"><details><summary>6. 결함 조건 전체 (전극 쌍 × 레이어) — 펼치기</summary>{body}</details></section>\n')
+    dl1 = _dl1_block(view)
+    product = f'<div><h3>제품 정보</h3><table id="prod">{_product_table(doc, infos, unit_text)}</table></div>'
+    out.append('<section id="s9"><h2>참고</h2>'
+               f'<div class="grid2">{_terms_box()}{product}</div>' + (f'<div style="margin-top:12px">{dl1}</div>' if dl1 else '')
+               + '<h3>caa 지표</h3><p class="lead">caa 는 보정 전 불량 발생 비율입니다. '
                f'vi = caa ÷ 보정 계수(line {VI_LINE_DIVISOR}, pixel {VI_PIXEL_DIVISOR}). '
                f'그래서 증감 방향과 비율은 vi 와 같습니다.</p><table id="caa">{_caa_table(doc)}</table>'
-               f'<h3>입력과 설정</h3><table id="inputs">{_inputs_table(doc, view)}</table></section>\n')
+               f'<h3>입력과 설정</h3><table id="inputs">{_inputs_table(doc, view)}</table>')
     if warnings:
-        out.append('<section><h2>경고</h2><ul>' + ''.join(
+        out.append('<h3>경고</h3><ul>' + ''.join(
             f'<li>{_e(w["code"])}{" · " + _e(ROLE_TEXT[w["role"]]) if w.get("role") else ""}'
             f'{" · " + _e(w["layer"]) if w.get("layer") else ""}: {_e(w["detail"])}</li>' for w in warnings)
-            + '</ul></section>\n')
+            + '</ul>')
+    out.append('</section>\n')
     out.append(f'<p class="muted">값은 compare2.json 에서 그대로 읽었습니다 (스키마 {_e(doc["schema_version"])}). '
                '생성 시각은 report.json 에 있습니다.</p>\n')
     out.append(f'</div><div id="store">{store}</div></div>\n<script>\n{SCRIPT}</script>\n</body>\n</html>\n')
@@ -1599,7 +1965,8 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
                                 max_pairs_per_condition=max_pairs_per_condition)
     conds = doc['delta']['conditions']
     warnings = []
-    ranked = _changed_ranking(conds, doc['delta']['cno'])
+    has_rois = link is not None and 'candidates' in link['inputs']
+    ranked = [] if has_rois else _changed_ranking(conds, doc['delta']['cno'])       # the ROI cards carry the maps
     mapped = ranked[:MAX_MAPS]
     if len(ranked) > MAX_MAPS:
         warnings.append({'code': 'maps_capped', 'role': None, 'layer': None,
