@@ -117,10 +117,32 @@ def expand_slim_exports(files):
     return files
 
 
+def strip_post_freeze_named_pair_candidates(files):
+    """Production (a) tree -> 7bcb07a form: the `candidates` key of each local_delta.json row's `named_pair` is removed.
+
+    vdist-filter/T1 2026-11-12: post-freeze diagnostic field, value not compared. Files without such a key stay
+    byte-identical. A touched file is re-serialised like the production writer: json.dumps(..., ensure_ascii=False,
+    indent=2, allow_nan=False) + '\\n' (src/simcompare/local_delta.py:1015-1016, _write_json)."""
+    files = dict(files)
+    for name, data in sorted(files.items()):
+        if not name.endswith('local_delta.json'):
+            continue
+        payload = json.loads(data.decode('utf-8'))
+        touched = False
+        for row in payload.get('rows') or ():
+            named = row.get('named_pair') if isinstance(row, dict) else None
+            if isinstance(named, dict) and 'candidates' in named:
+                del named['candidates']
+                touched = True
+        if touched:
+            files[name] = (json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
+    return files
+
+
 def compare_trees(a_dir, b_dir, roots_a=(), roots_b=()):
     """List of differences between two output trees (empty = byte-identical after the OUT_DIR/ROOT normalisation and the
     documented review_rois expansion of the production side)."""
-    ta, tb = expand_slim_exports(tree(a_dir)), tree(b_dir)
+    ta, tb = strip_post_freeze_named_pair_candidates(expand_slim_exports(tree(a_dir))), tree(b_dir)
     problems = []
     if set(ta) != set(tb):
         problems.append(f'file sets differ: only production {sorted(set(ta) - set(tb))}, only frozen {sorted(set(tb) - set(ta))}')
@@ -736,6 +758,19 @@ def test_perturbation_in_stage6_union_is_caught(stage46, monkeypatch):
         _, reference, target, pairs = _load_inputs(prefix, cfg, correspondence)
         results[prefix] = module(prefix, 'local_delta').compute_local_delta(pairs, reference, target, window_sizes_um=[0.3, 0.8])
     assert deep_diff(results['simcompare'], results[PKG])
+
+
+def test_candidates_normalisation_hides_only_the_candidates_key():
+    def blob(named):
+        return (json.dumps({'rows': [{'named_pair': named}]}, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode()
+
+    with_candidates = blob({'reasons': ['x'], 'candidates': {'a': ['c1']}})
+    stripped = strip_post_freeze_named_pair_candidates({'local_delta.json': with_candidates})['local_delta.json']
+    assert stripped == blob({'reasons': ['x']})
+    other = blob({'reasons': ['y'], 'candidates': {'a': ['c1']}})
+    assert strip_post_freeze_named_pair_candidates({'local_delta.json': other})['local_delta.json'] != stripped
+    plain = {'local_delta.json': blob({'reasons': ['x']}), 'other.json': with_candidates}
+    assert strip_post_freeze_named_pair_candidates(plain) == plain
 
 
 def test_deep_diff_tolerates_only_none_for_fields_missing_in_frozen():
