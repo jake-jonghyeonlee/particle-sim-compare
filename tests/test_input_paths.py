@@ -54,8 +54,32 @@ def test_both_locations_conflict_even_with_equal_content(tmp_path):
     with pytest.raises(NumericContractError) as caught:
         locate_file(config, data, 'm.json', 'asset_manifest.path')
     assert caught.value.code == 'input_location_conflict'
-    # the config folder being the data folder is one location, not a conflict
-    assert locate_file(config, config, 'm.json', 'k').mode == 'new'
+
+
+def test_data_dir_equal_to_the_config_folder_is_old_mode_with_the_data_dir_png_base(tmp_path):
+    (tmp_path / 'm.json').write_text('{}')
+    (tmp_path / 'r.json').write_text('{}')
+    assert locate_file(tmp_path, tmp_path, 'm.json', 'k').mode == 'old'      # one location, not a conflict
+    found = locate_assets(tmp_path, tmp_path, 'm.json', 'r.json')
+    assert found.mode == 'old' and found.asset_root == tmp_path
+    link = tmp_path.parent / (tmp_path.name + '_link')
+    os.symlink(tmp_path, link)                                               # data_dir reaching the same folder by a link
+    assert locate_file(tmp_path, link, 'm.json', 'k').mode == 'old'
+
+
+def test_only_absence_falls_back_other_os_errors_are_errors(tmp_path, monkeypatch):
+    config, data = _tree(tmp_path)
+    (data / 'm.json').write_text('{}')
+    real_lstat = os.lstat
+
+    def denied(path, *args, **kwargs):
+        if str(path) == str(config / 'm.json'):
+            raise PermissionError(13, 'denied')
+        return real_lstat(path, *args, **kwargs)
+    monkeypatch.setattr('simcompare.numeric_images.os.lstat', denied)
+    with pytest.raises(NumericContractError) as caught:
+        locate_file(config, data, 'm.json', 'k')
+    assert caught.value.code == 'input_unreadable'
 
 
 def test_symlinked_manifest_keeps_the_link_parent_as_png_base(tmp_path):
@@ -292,3 +316,113 @@ def test_models_follow_up_with_new_paths_and_no_sha(world):
     assert entry['status'] == CONFIGURED
     assert entry['asset_manifest_sha256'] == sha(world.base / 'new_model' / 'review_assets.json')
     assert entry['electrode_import_record_sha256'] == sha(world.base / 'new_model' / 'electrode_asset_import_record.json')
+
+
+# ---- pair table in the config folder (the user layout: data/input/pairs.csv shared by both sides) -------------
+
+def user_layout(world, tag):
+    """Config in world.base; data/input/pairs.csv (one file, both sides); the data_dirs hold no pairs.csv."""
+    pairs = world.base / 'data' / 'input' / 'pairs.csv'
+    if not pairs.exists():
+        pairs.parent.mkdir(parents=True, exist_ok=True)
+        text = (world.base / 'data_reference' / 'pairs.csv').read_text(encoding='utf-8')
+        assert text == (world.base / 'data_target' / 'pairs.csv').read_text(encoding='utf-8')     # the same table for both
+        pairs.write_text(text, encoding='utf-8')
+    cfg = yaml.safe_load(world.config.read_text(encoding='utf-8'))
+    for side in ('reference', 'target'):
+        copy_dir = world.base / f'u{tag}_{side}'
+        if not copy_dir.exists():
+            shutil.copytree(world.base / f'data_{side}', copy_dir, ignore=shutil.ignore_patterns(
+                'pairs.csv', 'review_assets.json', 'electrode_asset_import_record.json'))
+        assert not (copy_dir / 'pairs.csv').exists()
+        cfg[side]['data_dir'] = copy_dir.name
+        cfg[side]['condition_assignment']['pair_table_path'] = 'data/input/pairs.csv'
+        cfg[side].pop('asset_manifest'), cfg[side].pop('electrode_import_record')
+    cfg['map']['input'] = cfg['reference']        # validate-data / electrode-map read the reference side
+    path = world.base / f'real_user_{tag}.yaml'
+    path.write_text(yaml.safe_dump(cfg), encoding='utf-8')
+    return path
+
+
+def test_pair_table_in_the_config_folder_runs_03_validate_04_and_the_hashes_match(world):
+    config = user_layout(world, 'a')
+    folders = {}
+    for side in ('reference', 'target'):
+        folders[side] = world.base / f'upair_{side}'
+        assert main(['import-electrode-assets', '--source-kind', 'hotspot_case_electrode', '--root', str(world.base / f'src_{side}'),
+                     '--config', str(config), '--side', side, '--cnt-from-dl1-root', str(world.base / f'cnt_{side}'),
+                     '--source-version', 'layout_v1', '--max-asset-memory-mb', '256', '--out', str(folders[side])]) == 0
+    assert main(['validate-data', '--config', str(config), '--out', str(world.base / 'upair_validate')]) in (0, 3)
+    cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
+    refs = refs_for(world, folders)
+    for side in refs:
+        cfg[side].update(refs[side])
+    final = world.base / 'real_user_a_assets.yaml'
+    final.write_text(yaml.safe_dump(cfg), encoding='utf-8')
+    assert run_with(world, final, 'upair_04') == 0              # the 04 identity check passes: the dataset hashes are equal
+    for side in folders:       # 03's hash is the one 04 computed from the same pair table content and the same strings
+        record = json.loads((folders[side] / 'electrode_asset_import_record.json').read_text(encoding='utf-8'))
+        manifest = json.loads((folders[side] / 'review_assets.json').read_text(encoding='utf-8'))
+        assert record['dataset_input_hash'] == manifest['source_manifest_hash']
+
+
+def test_the_same_pair_table_string_in_both_locations_is_a_conflict_equal_or_different(world):
+    from simcompare import pipeline
+    config = user_layout(world, 'b')
+    cfg = load_numeric_config(config)
+    section = cfg['reference']
+    old = world.base / section['data_dir'] / 'data' / 'input' / 'pairs.csv'
+    old.parent.mkdir(parents=True)
+    real = pipeline._real_source(cfg, section)
+    for content in ((world.base / 'data' / 'input' / 'pairs.csv').read_text(encoding='utf-8'), 'pair_id\nother\n'):
+        old.write_text(content, encoding='utf-8')
+        with pytest.raises(NumericContractError) as caught:
+            pipeline._configured_real(cfg, section, real)
+        assert caught.value.code == 'input_location_conflict'
+    old.unlink()
+    assert pipeline._configured_real(cfg, section, real)[1].cases       # the config-folder table alone: new mode
+
+
+def test_pair_table_old_location_only_is_the_old_mode(world):
+    cfg = yaml.safe_load(world.config.read_text(encoding='utf-8'))
+    assert cfg['reference']['condition_assignment']['pair_table_path'] == 'pairs.csv'
+    assert not (world.base / 'pairs.csv').exists() and (world.base / 'data_reference' / 'pairs.csv').is_file()
+    cfg['map']['input'] = cfg['reference']
+    old_form = world.base / 'real_oldform.yaml'
+    old_form.write_text(yaml.safe_dump(cfg), encoding='utf-8')
+    assert main(['validate-data', '--config', str(old_form), '--out', str(world.base / 'uold_validate')]) in (0, 3)
+
+
+# ---- 03 argument combinations ----------------------------------------------------------------------------------
+
+def _03(world, *extra):
+    return main(['import-electrode-assets', '--source-kind', 'hotspot_case_electrode', '--root', str(world.base / 'src_reference'),
+                 '--source-version', 'v', '--max-asset-memory-mb', '256', '--out', str(world.base / 'never_written'), *extra])
+
+
+def test_03_manifest_path_with_config_is_an_error(world):
+    with pytest.raises(SystemExit) as caught:
+        _03(world, '--config', str(world.config), '--side', 'reference', '--manifest-path', 'manifest.json')
+    assert caught.value.code == 2 and not (world.base / 'never_written').exists()
+
+
+def test_03_side_and_model_combinations(world, capsys):
+    models = world.base / 'models_combo.yaml'
+    section = yaml.safe_load(world.config.read_text(encoding='utf-8'))['target']
+    section['product_id'] = 'PM'
+    models.write_text(yaml.safe_dump({'schema_version': 'compare_models_v1', 'target_product_id': 'PB', 'models': {'PM': section}}),
+                      encoding='utf-8')
+    for args in (('--config', str(world.config), '--model', 'PM'),                          # real.yaml with --model
+                 ('--config', str(world.config), '--side', 'reference', '--model', 'PM'),    # both
+                 ('--config', str(world.config)),                                           # neither
+                 ('--config', str(models), '--side', 'reference'),                          # models.yaml with --side
+                 ('--config', str(models), '--side', 'reference', '--model', 'PM'),          # both
+                 ('--config', str(models)),                                                 # neither
+                 ('--side', 'reference'), ('--model', 'PM')):                               # without --config
+        try:
+            code = _03(world, *args)
+        except SystemExit as exc:
+            code = exc.code
+        assert code == 2, args
+        assert not (world.base / 'never_written').exists(), args
+    capsys.readouterr()

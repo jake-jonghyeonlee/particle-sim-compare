@@ -331,6 +331,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.config is not None:
                 if args.numeric_data_dir is not None or args.condition_assignment is not None:
                     parser.error("--config 는 --numeric-data-dir·--condition-assignment 와 함께 쓸 수 없습니다")
+                if manifest_path is not None:
+                    parser.error("--config 는 --manifest-path 와 함께 쓸 수 없습니다(설정 절의 manifest_path 를 씁니다)")
                 from simcompare.adapters.electrode_png import assignment_from_config
                 numeric_data_dir, section_manifest, assignment, config_dir = assignment_from_config(
                     args.config, side=args.side, model=args.model)

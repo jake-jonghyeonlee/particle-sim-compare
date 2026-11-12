@@ -61,6 +61,17 @@ def _same_file(first, second):
         return False
 
 
+def _present(path):
+    """lstat: only FileNotFoundError (and a non-directory parent) is absence; PermissionError etc. propagate as errors."""
+    try:
+        os.lstat(str(path))
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise NumericContractError('input_unreadable', f'{path}: {exc}') from exc
+    return True
+
+
 def locate_file(config_dir, legacy_root, value, key) -> Located:
     """Find the file `value` (config key `key`): config folder first, the old base (legacy_root) only when it is simply
     absent there. Present in both: input_location_conflict (even with equal content). Escape, broken symlink, directory
@@ -70,8 +81,10 @@ def locate_file(config_dir, legacy_root, value, key) -> Located:
     if legacy_root is None:
         return Located('new', new, resolve_path(Path(config_dir), value))
     old = Path(legacy_root) / rel
-    new_present, old_present = os.path.lexists(new), os.path.lexists(old)
-    if new_present and old_present and not _same_file(new, old):
+    new_present, old_present = _present(new), _present(old)
+    if new_present and old_present:
+        if _same_file(new, old):    # data_dir is the config folder (or links to it): the baseline rule, one location
+            return Located('old', old, resolve_path(Path(legacy_root), value))
         raise NumericContractError('input_location_conflict', f'{key}={value!r}: exists in both {new} and {old}')
     if new_present:
         return Located('new', new, resolve_path(Path(config_dir), value))
