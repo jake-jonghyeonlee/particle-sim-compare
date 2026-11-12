@@ -326,12 +326,28 @@ def delta_of(a: WindowMetric, b: WindowMetric) -> WindowDelta:
 def _case_key(case):
     identity = case.identity
     return (identity.product_id, identity.design_version, identity.frame_id, case.analysis_layer,
-            frozenset(e.electrode_id for e in case.endpoints))
+            frozenset((e.electrode_id, e.actual_layer) for e in case.endpoints))
 
 
 def _side_key(side: BoundSide):
     return (side.product_id, side.design_version, side.frame.frame_id, side.analysis_layer,
-            frozenset(e.electrode_id for e in side.endpoints))
+            frozenset((e.electrode_id, e.actual_layer) for e in side.endpoints))
+
+
+def _electrode_set_key(identity, endpoints):
+    return (identity.product_id, identity.design_version, identity.frame_id, frozenset(e.electrode_id for e in endpoints))
+
+
+def _near_case_ids(cases, side, limit=10):
+    """case_id of cases with the side's product / design / frame and electrode set, ignoring layers (diagnostic only)."""
+    key = (side.product_id, side.design_version, side.frame.frame_id, frozenset(e.electrode_id for e in side.endpoints))
+    found = []
+    for case in cases:
+        if _electrode_set_key(case.identity, case.endpoints) == key:
+            found.append(case.identity.case_id)
+            if len(found) >= limit:
+                break
+    return found
 
 
 def _named_filter(candidates, side: BoundSide):
@@ -709,6 +725,10 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
             reason = f'named_pair_case_not_found_{label}' if not matches else f'named_pair_case_ambiguous_{label}'
             out['reasons'].append(reason)
             metrics[label] = _unavailable(window, (reason,))
+            if matches:
+                out.setdefault('candidates', {})[label] = [c.identity.case_id for c in matches]
+            else:
+                out.setdefault('candidates', {})[label] = _near_case_ids(dataset.cases, side)
             continue
         case = matches[0]
         out['cases'][label] = {'case_id': case.identity.case_id, 'failure_type': case.failure_type,
