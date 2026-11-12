@@ -31,14 +31,14 @@ def _code(info):
 def test_example_config_loads(tmp_path):
     cfg = load_compare2_config(EXAMPLE)
     base = EXAMPLE.parent
-    assert cfg.numeric_config == base / 'real.yaml' and cfg.density_dir == base / 'data/density'
-    assert cfg.reference.hotspot_root == base / 'data/input/hotspot/QA4_R00'
-    assert cfg.target.hotspot_root == base / 'data/input/hotspot/QA4_T00'
+    assert cfg.numeric_config == base / 'real.yaml' and cfg.density_dir == base / 'data/input/density'
+    assert cfg.reference.hotspot_root == base / 'data/input/QA4_R00'
+    assert cfg.target.hotspot_root == base / 'data/input/QA4_T00'
     assert (cfg.reference.dl1_model, cfg.target.dl1_model) == ('QA4_R00', 'QA4_T00')
     assert cfg.report.dl1_root == base / 'data/input/dl1' and cfg.output_dir == base / 'data/compare2'
     assert cfg.reference.resolution == (1500, 1850) and cfg.reference.unit_size_um == (45.0, 45.0)
     assert cfg.target.unit_size_um is None
-    assert (cfg.report.map_window_um, cfg.report.diameter_um, cfg.report.top_n) == (30.0, 3.0, 4)
+    assert (cfg.report.map_window_um, cfg.report.diameter_um, cfg.report.top_n) == (10.0, 3.0, 4)
     assert sorted(cfg.model_groups) == ['auto', 'mobile', 'other', 'watch']
     for name in ('mobile', 'auto', 'watch'):
         group = cfg.model_groups[name]

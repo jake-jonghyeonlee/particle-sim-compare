@@ -163,7 +163,7 @@ endpoints가 없는 쌍의 manual 요청은 export에서 `case_context_required`
 
 ```bat
 .venv-cmd\Scripts\python.exe -m simcompare import-electrode-assets --source-kind dl1_png_folder --root input/dl1 --numeric-data-dir imported/reference --source-version LAYOUT_V1 --max-asset-memory-mb 4096 --out assets/reference
-.venv-cmd\Scripts\python.exe -m simcompare import-electrode-assets --source-kind hotspot_case_electrode --root input/hotspot --numeric-data-dir imported/reference --condition-assignment assignment.json --cnt-from-dl1-root input/dl1 --source-version LAYOUT_V1 --max-asset-memory-mb 4096 --out assets/reference
+.venv-cmd\Scripts\python.exe -m simcompare import-electrode-assets --source-kind hotspot_case_electrode --root input/QA4_R00 --numeric-data-dir imported/reference --condition-assignment assignment.json --cnt-from-dl1-root input/dl1 --source-version LAYOUT_V1 --max-asset-memory-mb 4096 --out assets/reference
 ```
 
 - `--numeric-data-dir`(필수)는 case identity·endpoint·failure_type·frame·valid·input_hash의 유일한 출처다. numeric_v2(합성) 폴더이거나 real_hotspot_v1 폴더 + `--condition-assignment`다. 어댑터는 값을 만들지 않고 endpoint `(product_id, electrode_id, actual_layer)`를 이름이 정확히 같은 PNG에 묶는다. 대소문자만 다른 layer, PNG 없음, case 이름·endpoint 불일치는 그 case만 blocked(변환 기록의 `blocked_cases`, 종료 코드 3)이고 manifest에 넣지 않는다. 변환 가능한 case가 없으면 종료 코드 2다.
@@ -616,24 +616,24 @@ uv run python scripts/build_single_file.py --out bundles/simcompare_job.py --ove
 
 ## ETX(Linux GPU 서버) 실행 순서
 
-ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU 계산이라 GPU를 쓰지 않으며, 큰 RAM 때문에 이 서버를 쓴다. 패키지를 설치하지 않고 위의 `bundles/simcompare_job.py` 하나만 올려 실행한다(서버에 numpy·Pillow 필요, DL1 환경에 있음). 실행기는 명령만 실행하고 파일 복사·config 수정은 하지 않으므로, 아래처럼 회차를 나눠 각 회차 사이에 사람이 준비 작업을 한다. 경로는 실행기 `BASE_DIR`(작업 폴더) 기준 상대 경로 예시다. `/data`처럼 `/`로 시작하면 루트 아래 절대 경로가 되어 권한 오류가 날 수 있으니 `data/...`로 쓴다. 실제 데이터 전체 흐름은 ETX에서 아직 검증되지 않았다.
+ETX는 DL1을 돌리는 Linux 서버다. simcompare 계산은 NumPy/Pillow CPU 계산이라 GPU를 쓰지 않으며, 큰 RAM 때문에 이 서버를 쓴다. 패키지를 설치하지 않고 실행기 `.py` 파일만 올려 실행한다(서버에 numpy·Pillow 필요, DL1 환경에 있음). 기본 흐름(01·03·02·diag·04·05·06·07)은 통합 실행기 `bundles/etx/simcompare_job_etx.py` 하나가 설정 파일(`real.yaml`, `compare2.yaml`)에서 JOBS를 만들어 돌리고, 단계 사이에 파일을 복사하거나 설정을 고치는 수작업이 없다(사용 방법은 [usage.md](usage.md) "ETX (Linux 서버)"). 아래 JOBS 예시는 그 단계가 만드는 명령 인수와 같은 내용이며, `bundles/simcompare_job.py`(JOBS를 직접 적는 범용 실행기)로 단계를 하나씩 돌릴 때도 쓸 수 있다. 경로는 실행기 `BASE_DIR`(작업 폴더) 기준 상대 경로 예시다. `/data`처럼 `/`로 시작하면 루트 아래 절대 경로가 되어 권한 오류가 날 수 있으니 `data/...`로 쓴다. 실제 데이터 전체 흐름은 ETX에서 아직 검증되지 않았다.
 
-회차별 실행 파일은 `bundles/etx/simcompare_job_<회차>_*.py`, 회차별 설정 예시는 `configs/etx/`(`real.stage2.example.yaml`, `real.stage4.example.yaml`, `assignment_<side>.example.json`)에 있다. 대응표는 [`configs/etx/README.md`](../configs/etx/README.md). 소스를 고치면 `uv run python scripts/build_etx_stage_runners.py --overwrite`로 다시 만든다.
+실행 파일은 `bundles/etx/simcompare_job_etx.py`(기본 흐름), `bundles/etx/simcompare_job_models_01~05_*.py`(다제품), `bundles/etx/dv/`(ΔV·위험도)이고, 설정 템플릿은 `configs/etx/templates/{real,compare2}.yaml`, 예시는 `configs/etx/`(`real.stage2.example.yaml`, `real.stage4.example.yaml`, `compare2.example.yaml`, `assignment_<side>.example.json`)에 있다. 대응표는 [`configs/etx/README.md`](../configs/etx/README.md). 소스를 고치면 `uv run python scripts/build_etx_stage_runners.py --overwrite`로 다시 만든다.
 
-준비: hotspot 입력 폴더(모델 폴더 `QA4_R00`, `QA4_T00` 아래 `<case>/images/...`, `<case>/result/<불량명>.csv`)와 DL1 PNG 폴더를 서버에 둔다. `git pull` 후 `bundles/simcompare_job.py`를 복사해 `JOBS`, `LOG_FILE`을 고친다. 회차마다 `JOBS`만 바꿔 다시 실행한다. 출력 폴더(`--out`)는 매번 새 경로여야 한다.
+준비: hotspot 입력 폴더(`data/input/QA4_R00`, `data/input/QA4_T00` 아래 `<case>/images/...`, `<case>/result/<불량명>.csv`), 층간 거리 `data/input/thk_info-<모델>.txt`, 공통 `data/input/pairs.csv`, 밀도 CSV, DL1 PNG 폴더를 서버에 둔다. `git pull` 후 통합 실행기를 복사해 `BASE_DIR`, `STEPS`를 고친다. 범용 실행기(`bundles/simcompare_job.py`)로 단계를 하나씩 돌린다면 회차마다 `JOBS`만 바꾼다. 이때 출력 폴더(`--out`)는 매번 새 경로여야 한다(통합 실행기는 이전 출력을 `data/_runs/<RUN_TAG>/`로 옮긴다).
 
-1회차 — hotspot import (마스크를 한 장씩 처리하므로 메모리 문제 없음):
+01 단계(옛 1회차) — hotspot import (마스크를 한 장씩 처리하므로 메모리 문제 없음):
 
 ```python
 JOBS = [
-    ("import-hotspots", ["--root", "data/input/hotspot/QA4_R00", "--out", "data/imported/reference"]),
-    ("import-hotspots", ["--root", "data/input/hotspot/QA4_T00", "--out", "data/imported/target"]),
+    ("import-hotspots", ["--root", "data/input/QA4_R00", "--out", "data/imported/reference"]),
+    ("import-hotspots", ["--root", "data/input/QA4_T00", "--out", "data/imported/target"]),
 ]
 ```
 
-1회차 `import-hotspots`에는 4회차 ROI를 `ready`로 만들기 위해 `--expected-cases`(case 이름을 줄마다 적은 txt, 아래 `import-hotspots` 설명)를 주어야 한다: 기대 case 목록이 없으면 coverage가 `unconfirmed`라 `source_coverage_status`가 `partial`이 되고 4회차의 **모든 ROI가 `blocked`(`map_coverage_incomplete`)**이며 DL2 쪽 질의가 0개다(T5 py3.8 파이프라인에서 확인; `docs/plan/scale_stage46/T5_benchmark.md`). 목록 없이 이미 import했다면 1회차부터 다시 한다. 다시 실행하려면 먼저 이전 출력 폴더를 옮기거나 이름을 바꾼다(`--out`은 없는 경로여야 하며 3·4·5회차도 기존 출력 폴더를 거부한다): `data/imported/reference`, `data/imported/target`, `data/assets/reference`, `data/assets/target`, `data/changes`, `data/confirmed`(`data/local`은 6회차가 한 세대로 교체하므로 그대로 두어도 된다). 그다음 1회차부터 순서대로 다시 하고, 회차 사이 수작업도 다시 한다: 1회차 뒤 `pairs.csv`를 새 `data/imported/reference`·`target` 안에 다시 복사하고, 3회차 뒤 3회차 안내대로 import 결과를 `data_dir`에 다시 두고 `real.yaml`의 `electrode_import_record.sha256`을 새 파일 값으로 고친다. 예시 실행기 JOBS는 목록 파일 대신 `--expected-cases-from-roots <다른 모델 root>`를 쓴다(기대 case = 두 모델 root에서 발견된 case 이름의 합집합; 두 모델 모두에 없는 case는 탐지할 수 없다).
+1회차 `import-hotspots`에는 4회차 ROI를 `ready`로 만들기 위해 `--expected-cases`(case 이름을 줄마다 적은 txt, 아래 `import-hotspots` 설명)를 주어야 한다: 기대 case 목록이 없으면 coverage가 `unconfirmed`라 `source_coverage_status`가 `partial`이 되고 4회차의 **모든 ROI가 `blocked`(`map_coverage_incomplete`)**이며 DL2 쪽 질의가 0개다(T5 py3.8 파이프라인에서 확인; `docs/plan/scale_stage46/T5_benchmark.md`). 목록 없이 이미 import했다면 01부터 다시 한다. 통합 실행기는 고른 단계의 이전 출력 폴더(`data/imported/*`, `data/assets/*`, `data/changes`, `data/confirmed` 등)를 실행 전에 `data/_runs/<RUN_TAG>/`로 옮긴다([usage.md](usage.md) "다시 실행하기"). 범용 실행기로 돌린다면 `--out`은 없는 경로여야 하므로 먼저 옮기거나 이름을 바꾼다. 단계 사이 수작업(`pairs.csv` 복사, asset 복사, `sha256` 갱신)은 없다. 예시 실행기 JOBS는 목록 파일 대신 `--expected-cases-from-roots <다른 모델 root>`를 쓴다(기대 case = 두 모델 root에서 발견된 case 이름의 합집합; 두 모델 모두에 없는 case는 탐지할 수 없다).
 
-1회차 뒤: `pairs.csv`를 `data/imported/reference/`와 `data/imported/target/` 안에 복사한다. `pair_table_path`는 `data_dir` 기준 상대 경로(`pairs.csv`)만 받는다(절대 경로·`..`·백슬래시 거부). `real.yaml`의 `data_dir`를 서버 절대 경로로 바꾸고, reference·target `condition_assignment`에 큰 자료용 한도를 넣는다:
+`pairs.csv`는 복사하지 않는다. `condition_assignment.pair_table_path`(`data/input/pairs.csv`)와 `interlayer_distance_path`(`data/input/thk_info-<모델>.txt`)는 **설정 파일 폴더** 기준 상대 경로다(절대 경로·`..`·백슬래시 거부). 옛 위치(`data_dir` 기준)에만 있으면 옛 규칙으로 읽고, 두 위치에 모두 있으면 `input_location_conflict`(종료 코드 2)다. reference·target `condition_assignment`에 큰 자료용 한도를 넣는다(`max_operation_bytes`는 입력 해시에 들어가므로 02 전에 정한다):
 
 ```yaml
     max_materialized_source_cells: 20000000000
@@ -652,7 +652,7 @@ JOBS = [
 
 `compare`는 스트리밍이라 `max_operation_bytes` 기본 8 GiB로 충분한 것이 정상이다. 기본값을 넘으면 `oversized_real_operation: estimated N bytes exceed ...`로 멈추며 N이 추정치다. N에 여유를 더한 값(물리 메모리 이하)을 넣고 다시 실행한다. 종료 코드 3은 partial 항목이 있다는 뜻이며 `reasons`를 확인한다.
 
-**스케일 개선 후 재시작(2회차부터)**: 1회차 import 결과(`.npz`·옛 `.npy`)는 그대로 읽히므로 1회차는 다시 하지 않는다. 기본 흐름 실행기(`bundles/etx/simcompare_job_01_*.py`, `03_*`~`06_*`; 옛 1~6회차에 해당)를 모두 새 파일로 교체하고 2회차부터 다시 돈다(`JOBS`·`BASE_DIR`은 새 파일에서 다시 고친다). `real.yaml`의 새 선택 키는 `compare: {full_bucket_detail: false, top_buckets: 20}`(기본 요약, 위 "요약 모드")과 `condition_assignment.max_bucket_output_entries`(기본 1,000,000)와 `max_label_pattern_entries`(기본 24,000,000)다. 모든 bucket 목록(`full_bucket_detail: true`)은 GB 단위 `comparison.json`을 만들 수 있어 필요할 때만 켠다. 4·6회차도 계산 전 admission(위 설명)으로 `oversized_real_operation`이 나올 수 있다. 2회차를 새 실행기로 다시 돌리면 `comparison_masks.zip`이 함께 만들어져 6회차가 `compute_areas` 두 번을 건너뛴다(이미 끝난 2회차 출력은 그대로 유효하며 6회차가 재계산한다).
+**스케일 개선 후 재시작(2회차부터)**: 1회차 import 결과(`.npz`·옛 `.npy`)는 그대로 읽히므로 1회차는 다시 하지 않는다. 통합 실행기(`bundles/etx/simcompare_job_etx.py`)로 교체하고 `STEPS = ['02', 'diag', '04', '06', '07']`로 다시 돈다(`BASE_DIR`은 새 파일에서 다시 고친다; 이번 층간 거리 필터 변경 뒤에는 01부터 전체를 돈다). `real.yaml`의 새 선택 키는 `compare: {full_bucket_detail: false, top_buckets: 20}`(기본 요약, 위 "요약 모드")과 `condition_assignment.max_bucket_output_entries`(기본 1,000,000)와 `max_label_pattern_entries`(기본 24,000,000)다. 모든 bucket 목록(`full_bucket_detail: true`)은 GB 단위 `comparison.json`을 만들 수 있어 필요할 때만 켠다. 4·6회차도 계산 전 admission(위 설명)으로 `oversized_real_operation`이 나올 수 있다. 2회차를 새 실행기로 다시 돌리면 `comparison_masks.zip`이 함께 만들어져 6회차가 `compute_areas` 두 번을 건너뛴다(이미 끝난 2회차 출력은 그대로 유효하며 6회차가 재계산한다).
 
 **4~6회차 재시작**: 6개 실행기를 다시 받아 교체한다(`JOBS`·`BASE_DIR`은 새 파일에서 다시 고친다). 1·3회차 출력과 이미 끝난 2회차 `comparison.json/csv`는 그대로 유효하다(2회차 입력 형식·해시·`ElectrodeMaps.to_dict`는 바뀌지 않았다). 새로 생기거나 달라진 것: (1) **2회차 `compare`**가 `comparison_masks.zip`(그룹별 패킹 마스크, 입력 해시로 묶임)을 `comparison.json/csv`와 한 번에(같은 공개 트랜잭션) 만든다. 6회차가 이 파일이 맞으면 두 모델의 면적 계산을 건너뛰고(결과는 재계산과 같음), 없거나 입력이 다르면 조용히 다시 계산한다. 이미 끝난 2회차에서 이 파일만 얻으려면 2회차 `compare`를 새 실행기로 다시 돌린다(기존 `comparison.*`는 새 세대로 통째로 바뀌며, 실패하면 이전 세대가 그대로 남는다: 공개 트랜잭션을 연 뒤(reference 계산이 끝나고 쓰기를 시작한 뒤)의 오류는 CLI도 `comparison.json/csv/comparison_masks.zip`을 지우지 않고 `error.json`만 쓴다. 그 전의 오류도 `mode: real`이면 이전 세대를 지우지 않는다. 설정 파일을 읽지 못하는 경우와 합성 `compare`만 예외다). (2) **4회차 `review_rois.json`**은 슬림 형식이다: 행마다 coverage 스칼라 필드와 `observed_ref`만 두고 `observed`·`missing`·`not_applicable`·`measurement_errors` 목록은 최상위 `region_coverages`에 영역마다 한 번만 쓴다(같은 `review_roi_v1`; DL2 `psdl2.data.load_export`는 읽기만 확인했고 그대로 받는다). 5회차 `confirm-pairs`는 슬림·옛 형식 모두 읽고, 읽기 전에 파일 크기×해석 배수를 `max_operation_bytes`와 견주어 크면 `json.loads` 전에 멈춘다. 이미 만든 4회차 출력은 그대로 5회차에 쓸 수 있으나 큰 자료의 메모리를 줄이려면 4회차를 다시 돌린다. 이때 `candidates`·`confirm-pairs`는 이미 있는 `--out` 폴더를 거부하므로 예전 출력 폴더(예: `data/candidates_k3`)를 옮기거나 이름을 바꾸거나, 실행기 JOBS의 `--out`을 새 경로로 바꾼다. (3) **6회차**는 출력 폴더를 `local_delta.json`, `local_delta_rows.csv` 외 두 표, `window_sensitivity.*`, `local_delta.html`, `_thumbs.json`, 썸네일·개요 PNG의 한 세대로 공개한다. 죽은 뒤에는 같은 명령을 다시 돌리면 복구한다(`.local_delta.staging.*`는 지워도 되는 임시 폴더). 예전 6회차가 남긴 썸네일 PNG는 새 세대로 바뀐다.
 
@@ -664,57 +664,57 @@ JOBS = [
 
 | 위치 | 기본 흐름 `bundles/etx/` | 다제품 `bundles/etx/` | ΔV·위험도 `bundles/etx/dv/` |
 |---|---|---|---|
-| 순서 | `01_import_hotspots` → `02_vi_compute`(선택) → `03_import_assets` → `04_change_candidates` → `05_confirm_pairs_dl2`(선택, DL2 경로) → `06_compare_windows` → `07_vi_report`(최종 보고서) | `models_01_import` → `models_02_import_assets` → `models_03_confirm_pairs` → `models_04_compare_windows` → `models_05_report` | `01_import_hotspots` → `02_import_assets` → `03_dv_template` → `04_dv_grade` → `05_candidates_dv` → `06_vulnerability_report` |
-| 진단 | `diag_validate_compare`(`validate-data`·`compare`) | | |
+| 순서 | 통합 실행기 `simcompare_job_etx.py` 하나(STEPS 단계 `01` → `03` → `02` → `diag` → `04` → `05`(선택, DL2 경로) → `06` → `07`(최종 보고서); 예전 `01_import_hotspots`…`07_vi_report`·`diag_validate_compare` 파일 8개는 없다) | `models_01_import` → `models_02_import_assets` → `models_03_confirm_pairs` → `models_04_compare_windows` → `models_05_report` | `01_import_hotspots` → `02_import_assets` → `03_dv_template` → `04_dv_grade` → `05_candidates_dv` → `06_vulnerability_report` |
+| 진단 | 통합 실행기의 `diag` 단계(`validate-data`·`compare`) | | |
 
 | 옛 이름 (`simcompare_job_…`) | 새 이름 |
 |---|---|
 | `0_dv_template` | `dv/03_dv_template` |
 | `0b_dv_grade` | `dv/04_dv_grade` |
-| `1_import_hotspots` | `01_import_hotspots` (dv 에도 같은 JOBS 의 `dv/01_import_hotspots`) |
+| `1_import_hotspots` | 통합 실행기 `01` 단계 (dv 에는 같은 인수의 `dv/01_import_hotspots`) |
 | `1m_import_models` | `models_01_import` |
-| `2_validate_compare` | `diag_validate_compare` |
-| `2b_compare2` | `02_vi_compute` |
-| `3_import_electrode_assets` | `03_import_assets` (dv 에도 같은 JOBS 의 `dv/02_import_assets`) |
+| `2_validate_compare` | 통합 실행기 `diag` 단계 |
+| `2b_compare2` | 통합 실행기 `02` 단계 |
+| `3_import_electrode_assets` | 통합 실행기 `03` 단계 (dv 에는 같은 인수의 `dv/02_import_assets`) |
 | `3m_import_model_assets` | `models_02_import_assets` |
-| `4_candidates` | `04_change_candidates` |
+| `4_candidates` | 통합 실행기 `04` 단계 |
 | `4b_candidates_dv` | `dv/05_candidates_dv` |
 | `4c_vulnerability_report` | `dv/06_vulnerability_report` |
-| `5_confirm_pairs` | `05_confirm_pairs_dl2` |
+| `5_confirm_pairs` | 통합 실행기 `05` 단계 |
 | `5m_confirm_pairs_models` | `models_03_confirm_pairs` |
-| `6_compare_windows` | `06_compare_windows` |
+| `6_compare_windows` | 통합 실행기 `06` 단계 |
 | `6m_compare_windows_models` | `models_04_compare_windows` |
 | `7_model_report` | `models_05_report` |
-| `8_compare2_report` | `07_vi_report` |
+| `8_compare2_report` | 통합 실행기 `07` 단계 |
 
 **dv 폴더**: ΔV·위험도 흐름은 기본 흐름과 트리가 달라 `bundles/etx/dv/`에서 따로 진행한다. 공통 단계(import, 전극 asset)는 기본 흐름과 같은 JOBS·설명이고 번호만 dv 순서다. 파일 이름이 같아도(`01_import_hotspots`) 폴더가 다르면 다른 흐름이며, 실행 파일의 `BASE_DIR`·`LOG_FILE`(`runs/simcompare_<이름>.log`) 기준 폴더는 그 파일이 있는 폴더(또는 `BASE_DIR`)다.
 
-`07_vi_report` 의 JOBS 는 `--candidates data/changes --windows data/local` 을 포함한다. 04·06회차를 안 돌렸으면 두 줄을 지우고, DL2(05)를 썼으면 `--confirm data/confirmed` 를, DL1 검색 결과가 있으면 `--dl1-search <파일>` 을 더한다. `06_compare_windows` 는 `--window-sizes 10 20 30`(30 = `compare2.yaml` `report.map_window_um` 기본)이다.
+통합 실행기 `07` 단계의 JOBS 는 04·06이 STEPS 에 있거나 그 출력 폴더가 있으면 `--candidates data/changes --windows data/local` 을 포함하고, 05가 STEPS 에 있으면 `--confirm data/confirmed` 를 더한다. DL1 검색 결과(`--dl1-search <파일>`)를 쓰려면 범용 실행기로 `compare2-report`를 직접 돌린다. `06` 단계는 `--window-sizes`에 `compare2.yaml` 의 `report.map_window_um`(템플릿 10)을 넣고 `EXTRA_WINDOWS_UM`이 있으면 뒤에 더한다.
 
-2b회차(선택, 1회차 뒤; 새 이름 `02_vi_compute`) — line/pixel vi 비교(`simcompare_job_02_vi_compute.py`). 2회차 출력과 4–6회차는 필요 없다. `configs/etx/compare2.example.yaml`을 BASE_DIR의 `compare2.yaml`(`real.yaml` 옆)로 복사해 제품군 glass 면적·가중치·해상도를 채우고(설정 안의 상대 경로는 이 파일 위치 기준이다), 밀도 CSV를 `data/density/<제품군>_line.csv`·`_pixel.csv`로 둔다. 상세는 아래 "compare2 (line/pixel vi 비교)".
+02 단계(옛 2b회차, 선택) — line/pixel vi 비교. 옛 2회차 출력과 04–06 단계는 필요 없다. `configs/etx/templates/compare2.yaml`을 BASE_DIR의 `compare2.yaml`(`real.yaml` 옆)로 복사해 제품군 glass 면적·가중치·해상도를 채우고(설정 안의 상대 경로는 이 파일 위치 기준이다), 밀도 CSV를 `data/input/density/<제품군>_line.csv`·`_pixel.csv`로 둔다. 상세는 아래 "compare2 (line/pixel vi 비교)".
 
 ```python
 JOBS = [("compare2", ["--config", "compare2.yaml", "--out", "data/compare2"])]
 ```
 
-3회차 — 전극 PNG import (`real.yaml`의 `condition_assignment`와 같은 내용의 assignment JSON 필요, `--max-asset-memory-mb`는 기본값 없음). role은 `electrode_role_policy: electrode_id`로 자동이다(pair 표의 모든 전극 = 자기 이름):
+03 단계(옛 3회차) — 전극 PNG import (`--config real.yaml --side reference|target`으로 `real.yaml`의 `data_dir`·`condition_assignment`를 읽는다, `--max-asset-memory-mb`는 기본값 없음). role은 `electrode_role_policy: electrode_id`로 자동이다(pair 표의 모든 전극 = 자기 이름):
 
 ```python
 JOBS = [
-    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "data/input/hotspot/QA4_R00",
-        "--numeric-data-dir", "data/imported/reference", "--condition-assignment", "assignment_reference.json",
+    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "data/input/QA4_R00",
+        "--config", "real.yaml", "--side", "reference",
         "--cnt-from-dl1-root", "data/input/dl1", "--source-version", "LAYOUT_V1",
         "--max-asset-memory-mb", "<MB>", "--out", "data/assets/reference"]),
-    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "data/input/hotspot/QA4_T00",
-        "--numeric-data-dir", "data/imported/target", "--condition-assignment", "assignment_target.json",
+    ("import-electrode-assets", ["--source-kind", "hotspot_case_electrode", "--root", "data/input/QA4_T00",
+        "--config", "real.yaml", "--side", "target",
         "--cnt-from-dl1-root", "data/input/dl1", "--source-version", "LAYOUT_V1",
         "--max-asset-memory-mb", "<MB>", "--out", "data/assets/target"]),
 ]
 ```
 
-3회차 뒤: 각 출력의 `review_assets.json`, `electrode_asset_import_record.json`, `assets/`를 해당 `data_dir`로 복사하고 `real.yaml`의 reference·target에 `asset_manifest`, `electrode_import_record`({path, sha256})를 넣는다(위 "전극 PNG → review_assets_v1" 절).
+03 뒤: 출력(`review_assets.json`, `electrode_asset_import_record.json`, `assets/`)을 복사하지 않는다. `real.yaml`의 reference·target `asset_manifest.path`·`electrode_import_record.path`가 `data/assets/<side>/…`를 가리키면 된다(`sha256` 생략 가능, 위 "전극 PNG → review_assets_v1" 절). 옛 `--numeric-data-dir`·`--condition-assignment <JSON>` 방식도 호환으로 남아 있으며, 이때 JSON 의 경로 문자열은 `real.yaml` 과 같아야 한다(해시에 들어간다).
 
-4회차 — 변경점 ROI(`candidates-change`; 실행기 파일 이름은 `simcompare_job_04_change_candidates.py`):
+04 단계(옛 4회차) — 변경점 ROI(`candidates-change`):
 
 ```python
 JOBS = [("candidates-change", ["--config", "real.yaml", "--cnt-from-dl1-root", "data/input/dl1",
@@ -727,11 +727,11 @@ JOBS = [("candidates-change", ["--config", "real.yaml", "--cnt-from-dl1-root", "
 
 DL2 — 위치 매칭(**DL2 경로 전용**: 직접 대응을 쓰면 DL2와 5회차를 건너뛰고 6회차로 간다. 다른 제품 탐색이 필요할 때만 쓴다. DL2 저장소 `particle-sim-dl2`의 `bundles/etx/psdl2_job_baseline_ncc.py`, 같은 `BASE_DIR`에서 실행): 4회차 결과로 두 방향 `baseline_ncc --all-ready`를 돌려 `data/dl2/ncc_r2t.json`, `ncc_t2r.json`과 검토 시트 `data/dl2/*_sheet/sheet.html`을 만든다. torch는 필요 없다. ETX 실행기로 만든 export에는 `producer_commit`이 없으므로(git checkout이 아님, 사유는 export에 기록) DL2 실행기는 `--allow-unversioned-producer`를 쓴다. 시트를 보고 `data/dl2/decisions.csv`(헤더 `candidate_id,decision,note`, `decision`=`accept`|`reject`)를 쓴다. `candidate_id` 목록은 5회차 첫 작업(`confirm-pairs --list`)이 로그에 찍는다.
 
-5회차 — 확정 쌍 변환(DL2 경로 전용, `simcompare_job_05_confirm_pairs_dl2.py`; `--candidates data/changes`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
+05 단계(옛 5회차) — 확정 쌍 변환(DL2 경로 전용, 통합 실행기 STEPS 의 `'05'`; `--candidates data/changes`): `--list`로 id 목록을 찍은 뒤 `decisions.csv`의 accept 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `--labelled-by`의 `CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다(목록은 이미 로그에 있음).
 
-6회차 — 국부 ΔCA(`simcompare_job_06_compare_windows.py`): 기본 `--correspondence`는 4회차의 `data/changes/direct/roi_correspondence.json`이다(DL2 경로를 썼다면 `data/confirmed/roi_correspondence.json`으로 바꾼다). 창 10/20/30 µm, jitter 0.5, 정렬 지름 5(권장 운용값)로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
+06 단계(옛 6회차) — 국부 ΔCA(통합 실행기 `'06'`): 기본 `--correspondence`는 04의 `data/changes/direct/roi_correspondence.json`이다(05가 STEPS 에 있으면 `data/confirmed/roi_correspondence.json`). 창 `report.map_window_um`(템플릿 10, `EXTRA_WINDOWS_UM`을 더할 수 있다), jitter 0.5(권장 운용값), 정렬 지름 `report.diameter_um`으로 `data/local/`에 `local_delta.json`·`local_delta.html`을 만든다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다.
 
-8회차(선택, 2b회차 뒤; 새 이름 `07_vi_report`) — compare2 보고서(`simcompare_job_07_vi_report.py`): `data/compare2/compare2.json`과 같은 BASE_DIR의 `compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report". 이 변경 뒤에는 01~06 결과를 그대로 쓰고 07 만 새 실행기로 다시 돌린다. compare2 설정 파일을 바꾸면 해시가 달라져 07 이 멈춘다. `report:` 키(`dl1_root`, `map_window_um` 등)도 같은 `compare2.yaml` 에 있다. 이 키만 바꿔도 해시가 달라져 07 이 종료 코드 2(`compare2_config_mismatch`)로 멈춘다. 그때는 02(compare2)부터 다시 돌린다. 전극 강조를 쓰려면 02 를 돌리기 전에 `report.dl1_root` 와 `dl1_model` 을 넣어 둔다.
+07 단계(옛 8회차, 선택, 02 뒤) — compare2 보고서(통합 실행기 `'07'`): `data/compare2/compare2.json`과 같은 BASE_DIR의 `compare2.yaml`로 `data/compare2_report/report.html`을 만든다. `--out`은 새 경로다. 지도 3 µm와 레이어 overlay는 DL1 root(Layer PNG)가 필요하며 `report.dl1_root`와 `products.<role>.dl1_model`로 준다. 없으면 지도만 나온다. 상세는 아래 "compare2-report". 이 변경 뒤에는 01~06 결과를 그대로 쓰고 07 만 새 실행기로 다시 돌린다. compare2 설정 파일을 바꾸면 해시가 달라져 07 이 멈춘다. `report:` 키(`dl1_root`, `map_window_um` 등)도 같은 `compare2.yaml` 에 있다. 이 키만 바꿔도 해시가 달라져 07 이 종료 코드 2(`compare2_config_mismatch`)로 멈춘다. 그때는 02(compare2)부터 다시 돌린다. 전극 강조를 쓰려면 02 를 돌리기 전에 `report.dl1_root` 와 `dl1_model` 을 넣어 둔다.
 
 ```python
 JOBS = [("compare2-report", ["--compare2-dir", "data/compare2", "--config", "compare2.yaml",
@@ -769,7 +769,7 @@ v1로 되돌리는 규칙: `schema_version`을 `real_hotspot_comparison_v1`로 �
 확인된 실제 폴더 구조는 먼저 별도 `real_hotspot_v1` 관측 manifest로 변환한다. 출력 디렉터리는 새 경로여야 한다.
 
 ```bat
-.venv-cmd\Scripts\python.exe -m simcompare import-hotspots --root input/hotspot --out imported/reference --expected-cases expected_cases.txt
+.venv-cmd\Scripts\python.exe -m simcompare import-hotspots --root input/QA4_R00 --out imported/reference --expected-cases expected_cases.txt
 ```
 
 폴더 배치는 `--root`(모델 폴더, 예: `QA4_R00`) 아래 `<case>/images/{1.png,2.png,hotspot_lateral_short01.png...}`와 `<case>/result/lateral_short.csv`다(PNG를 case 폴더 바로 아래에 둬도 된다). case 폴더 이름의 불량명은 `lateralshort`처럼 붙여 써도 된다. reference/target 모델 폴더는 각각 따로 실행한다.

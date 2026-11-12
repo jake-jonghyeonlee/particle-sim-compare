@@ -781,7 +781,7 @@ def test_enospc_after_partial_second_asset_cleans_staging(tmp_path, monkeypatch)
 
 
 def test_stage1_runner_logs_import_error(tmp_path):
-    runner_src = Path(__file__).resolve().parents[1]/'bundles/etx/simcompare_job_01_import_hotspots.py'
+    runner_src = Path(__file__).resolve().parents[1]/'bundles/etx/dv/simcompare_job_01_import_hotspots.py'   # the base-flow 01 runner is the integrated runner now
     text = runner_src.read_text(encoding='utf-8')
     root = tmp_path/'work'/'src'
     _source(root, shape=(1002, 1002))

@@ -41,7 +41,10 @@ FRAME_BYTES_PER_CELL = 2 + 1 + 1 + 2 + LABEL_BYTES_PER_CELL
 # electrode shape, the other side's hotspot, ring scratch)
 WINDOW_BYTES_PER_CELL = 4 * 3 + 6
 DEFAULT_MAX_OPERATION_BYTES = 8 * 1024 ** 3
-REMEDY = 'reduce report.map_window_um, report.top_n or the number of conditions, or raise max_operation_bytes'
+REMEDY = ('reduce report.map_window_um, report.top_n or the number of conditions, or raise max_operation_bytes; '
+          'changing a condition_assignment value of real.yaml (max_operation_bytes included) or the thk/pair files changes '
+          'the input hash, so run 02 (compare2) again before 07 (real.yaml 의 condition_assignment 값(max_operation_bytes 포함)이나 '
+          'thk·pair 파일을 바꾸면 02 부터 다시 실행)')
 ROLES = ('reference', 'target')
 ROLE_TEXT = {'reference': '기준 A', 'target': '대상 B'}
 BORDER_PX = 500
@@ -377,7 +380,8 @@ def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states,
         raise NumericContractError(
             'compare2_input_hash_mismatch',
             f'{info["role"]}: compare2.json used input_hash {recorded}, the data and settings now give {current} '
-            '(for example the thk_info file changed): 02(compare2)를 다시 실행')
+            '(for example the thk_info file changed): real.yaml 의 condition_assignment 값(max_operation_bytes 포함)이나 '
+            'thk·pair 파일을 바꾸면 02 부터 다시 실행')
     lineage = {}
     for case in dataset.cases:
         if case.pair_id is not None:
@@ -2442,7 +2446,8 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
             raise NumericContractError(
                 'compare2_input_hash_mismatch',
                 f'{role}: compare2.json used input_hash {recorded}, the data and settings now give {current} '
-                '(for example the thk_info file changed): 02(compare2)를 다시 실행')
+                '(for example the thk_info file changed): real.yaml 의 condition_assignment 값(max_operation_bytes 포함)이나 '
+                'thk·pair 파일을 바꾸면 02 부터 다시 실행')
     unique, seen = [], set()
     for warning in warnings:        # the condition maps and the ROI figures may both skip the same overlay layer
         marker = json.dumps(warning, sort_keys=True, ensure_ascii=False)

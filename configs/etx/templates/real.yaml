@@ -1,0 +1,79 @@
+# ETX real.yaml 템플릿 (새 입력 구조, 2026-11-12, Run 20261112-vdist-filter)
+#
+# !! 이 템플릿은 vdist-filter 이후의 번들(통합 실행기 bundles/etx/simcompare_job_etx.py)에서 동작한다.
+#    fa9f263 이하 번들은 interlayer_distance_path 를 모르고, pair_table_path·asset 경로를 data_dir 기준으로 찾는다.
+#
+# 사용법: 이 파일을 BASE_DIR 에 real.yaml 로 복사한 뒤 [모델] 표시 줄만 바꾼다.
+#   [모델]  = 비교하는 모델(제품)이 바뀌면 고친다. 기준 A 는 reference, 대상 B 는 target 절.
+#   [공통]  = 공정 구조가 같으면 그대로 둔다(층 순서가 다른 제품이면 고친다).
+#   표시 없음 = 고치지 않는다.
+#
+# 경로 규칙(새 번들): 상대 경로는 모두 이 파일(BASE_DIR) 기준이다. 절대 경로·..·백슬래시는 거부된다.
+# 폴더 구조:
+#   data/input/<모델>/                  hotspot 모델 폴더(통합 실행기 01 단계 입력)
+#   data/input/thk_info-<모델>.txt      층간 거리(탭 구분, 모델별)
+#   data/input/pairs.csv                전극 쌍 표(두 모델 공통)
+#   data/imported/reference|target/     01 단계 출력(실행기가 만든다)
+#   data/assets/reference|target/       03 단계 출력(실행기가 만든다, 복사하지 않는다)
+schema_version: numeric_config_v1
+mode: real
+output_dir: outputs/numeric_real
+reference: &reference_side
+  product_id: QA4_R00                                   # [모델] 기준 A 모델 이름 = data/input 아래 폴더 이름
+  data_dir: data/imported/reference
+  # 03 출력을 그대로 가리킨다. sha256 은 생략한다(03 이 남긴 기록으로 확인). 적으면 그 값과 엄격 비교한다.
+  asset_manifest: {path: data/assets/reference/review_assets.json}
+  electrode_import_record: {path: data/assets/reference/electrode_asset_import_record.json}
+  condition_assignment:
+    product_id: QA4_R00                                 # [모델] 위 product_id 와 같게
+    design_version: UNSPECIFIED
+    source_id: QA4_R00_hotspot                          # [모델] <모델 이름>_hotspot
+    process_step_id: UNSPECIFIED
+    exposure_id: UNSPECIFIED
+    unit_id: UNSPECIFIED
+    # [공통] 층 쌓는 순서. stack_order 가 클수록 위층(PXL 최상단). vertical_short 는 큰 쪽 층에 귀속된다.
+    # 대상 B 의 층 구성이 다르면 target 절의 layer_stack 을 별칭(*layer_stack) 대신 직접 적는다.
+    layer_stack: &layer_stack
+      - {actual_layer: BML,  stack_order: 1,  density_process_layer: BML}
+      - {actual_layer: ACT,  stack_order: 2,  density_process_layer: ACT}
+      - {actual_layer: GAT1, stack_order: 3,  density_process_layer: GAT1}
+      - {actual_layer: GATC, stack_order: 4,  density_process_layer: GATC}
+      - {actual_layer: GAT2, stack_order: 5,  density_process_layer: GAT2}
+      - {actual_layer: OACT, stack_order: 6,  density_process_layer: OACT}
+      - {actual_layer: GAT3, stack_order: 7,  density_process_layer: GAT3}
+      - {actual_layer: SD1,  stack_order: 8,  density_process_layer: SD1}
+      - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
+      - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
+      - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
+    pair_table_path: data/input/pairs.csv               # 두 모델 공통 파일
+    interlayer_distance_path: data/input/thk_info-QA4_R00.txt   # [모델] thk_info-<기준 A 모델>.txt
+    electrode_role_policy: electrode_id
+    max_materialized_source_cells: 20000000000
+    max_group_mask_cells: 5000000000
+    # max_operation_bytes: 34359738368   # 예: 32 GiB. 물리 메모리를 넘기면 거부된다
+    # (고치려면 02 단계 전에: 이 값은 입력 해시에 들어가므로 02 뒤에 바꾸면 07 이 compare2_input_hash_mismatch 로 멈춘다)
+target:
+  product_id: QA4_T00                                   # [모델] 대상 B 모델 이름 = data/input 아래 폴더 이름
+  data_dir: data/imported/target
+  asset_manifest: {path: data/assets/target/review_assets.json}
+  electrode_import_record: {path: data/assets/target/electrode_asset_import_record.json}
+  condition_assignment:
+    product_id: QA4_T00                                 # [모델] 위 product_id 와 같게
+    design_version: UNSPECIFIED
+    source_id: QA4_T00_hotspot                          # [모델] <모델 이름>_hotspot
+    process_step_id: UNSPECIFIED
+    exposure_id: UNSPECIFIED
+    unit_id: UNSPECIFIED
+    layer_stack: *layer_stack                           # [공통] 기준 A 와 같은 층 순서. 다르면 직접 적는다
+    pair_table_path: data/input/pairs.csv
+    interlayer_distance_path: data/input/thk_info-QA4_T00.txt   # [모델] thk_info-<대상 B 모델>.txt
+    electrode_role_policy: electrode_id
+    max_materialized_source_cells: 20000000000
+    max_group_mask_cells: 5000000000
+    # max_operation_bytes: 34359738368
+map:
+  input: *reference_side   # 전극 수 지도는 제품 하나(reference)
+  diameter_um: 5           # 04 --diameter-um 을 주면 그 값이 우선한다
+review_rois:
+  map_region_ids: []
+  manual: []

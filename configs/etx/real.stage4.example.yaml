@@ -1,7 +1,7 @@
-# ETX 4회차(candidates)용 예시. 2회차 config에 3회차 전극 PNG import 결과(asset_manifest, electrode_import_record)와
-# electrode_roles를 더한 것이다. 3회차 출력 파일을 각 data_dir로 복사한 상태를 가정한다.
-# 이 파일을 실행기 BASE_DIR(작업 폴더)에 real.yaml로 둔다고 가정한다. data_dir·output_dir 상대 경로는 이 파일 위치 기준이다.
-# pair_table_path·asset_manifest.path·electrode_import_record.path는 data_dir 기준 상대 경로여야 한다(절대 경로·..·백슬래시 거부).
+# ETX real.yaml 예시 — 03 단계 뒤(asset 키 포함) 형태. configs/etx/templates/real.yaml 과 같은 내용이다(테스트가 같음을 확인한다).
+# real.stage2.example.yaml 에 asset_manifest·electrode_import_record 두 키만 더한 것이다.
+# 03 출력(data/assets/<side>/)은 복사하지 않고 그 위치를 가리킨다. sha256 은 생략하면 03 이 남긴 기록으로 확인하고, 적으면 그 값과 엄격 비교한다.
+# 이 파일을 실행기 BASE_DIR(작업 폴더)에 real.yaml로 둔다고 가정한다. 모든 상대 경로는 이 파일 위치(BASE_DIR) 기준이다(절대 경로·..·백슬래시 거부).
 # product_id/source_id 외의 UNSPECIFIED는 "정해지지 않음" 이름표다. 실제 값을 알면 바꾼다(비워 두면 오류).
 schema_version: numeric_config_v1
 mode: real
@@ -9,10 +9,8 @@ output_dir: outputs/numeric_real
 reference: &reference_side
   product_id: QA4_R00
   data_dir: data/imported/reference
-  # 3회차 출력(review_assets.json, electrode_asset_import_record.json, assets/)을 data_dir로 복사한 뒤 sha256을 적는다.
-  # sha256 확인: sha256sum data/imported/reference/review_assets.json
-  asset_manifest: {path: review_assets.json, sha256: <SHA256_OF_REVIEW_ASSETS_JSON>}
-  electrode_import_record: {path: electrode_asset_import_record.json, sha256: <SHA256_OF_IMPORT_RECORD_JSON>}
+  asset_manifest: {path: data/assets/reference/review_assets.json}
+  electrode_import_record: {path: data/assets/reference/electrode_asset_import_record.json}
   condition_assignment:
     product_id: QA4_R00
     design_version: UNSPECIFIED
@@ -33,22 +31,18 @@ reference: &reference_side
       - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
       - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
       - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
-    pair_table_path: pairs.csv
+    pair_table_path: data/input/pairs.csv
+    interlayer_distance_path: data/input/thk_info-QA4_R00.txt
     # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
     electrode_role_policy: electrode_id
-    # 큰 자료용 한도. 2·4·6회차 모두 마스크를 한 장씩 읽는 스트리밍이다(4회차는 대표 지름 마스크를 비트 패킹으로 보관하고, 6회차는
-    # 제한된 캐시를 쓰며 결과를 조각으로 쓴다). 계산 전 추정치가 max_operation_bytes를 넘으면 계산 전에 oversized_real_operation으로
-    # 멈춘다(케이스를 나누거나 영역·쌍을 줄이거나 값을 물리 메모리 이하로 올린다). 물리 메모리는 호스트 RAM 기준이며 cgroup/job 한도가 아니다.
     max_materialized_source_cells: 20000000000
     max_group_mask_cells: 5000000000
-    # max_operation_bytes: 34359738368   # 예: 32 GiB. 물리 메모리를 넘기면 거부된다
+    # max_operation_bytes: 34359738368   # 예: 32 GiB. 물리 메모리를 넘기면 거부된다. 02 단계 전에 정한다(입력 해시에 들어간다)
 target:
   product_id: QA4_T00
   data_dir: data/imported/target
-  # 3회차 출력(review_assets.json, electrode_asset_import_record.json, assets/)을 data_dir로 복사한 뒤 sha256을 적는다.
-  # sha256 확인: sha256sum data/imported/target/review_assets.json
-  asset_manifest: {path: review_assets.json, sha256: <SHA256_OF_REVIEW_ASSETS_JSON>}
-  electrode_import_record: {path: electrode_asset_import_record.json, sha256: <SHA256_OF_IMPORT_RECORD_JSON>}
+  asset_manifest: {path: data/assets/target/review_assets.json}
+  electrode_import_record: {path: data/assets/target/electrode_asset_import_record.json}
   condition_assignment:
     product_id: QA4_T00
     design_version: UNSPECIFIED
@@ -57,7 +51,8 @@ target:
     exposure_id: UNSPECIFIED
     unit_id: UNSPECIFIED
     layer_stack: *layer_stack
-    pair_table_path: pairs.csv
+    pair_table_path: data/input/pairs.csv
+    interlayer_distance_path: data/input/thk_info-QA4_T00.txt
     # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
     electrode_role_policy: electrode_id
     max_materialized_source_cells: 20000000000

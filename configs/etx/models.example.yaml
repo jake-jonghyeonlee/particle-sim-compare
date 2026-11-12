@@ -2,20 +2,21 @@
 # 모델 절의 키와 규칙은 real.yaml 의 reference/target 절과 같다. 상대 경로는 이 파일(= real.yaml) 위치 기준이다.
 # 모델 키 = product_id = DL2 봉투 candidates[].product_id. 영문·숫자·. _ - 만, 64자 이내, 대소문자만 다른 중복 불가.
 # target_product_id 는 real.yaml 의 target.product_id 와 같아야 한다. reference/target 제품은 models 에 넣지 않는다.
-# 모델 폴더 data/models/<product_id>/ 는 reference 와 같은 1·3회차 산출물이다:
-#   import-hotspots --root <모델 hotspot> --expected-cases-from-roots <target hotspot> --out data/models/<product_id> (+ pairs.csv 복사)
+# 모델 폴더 data/models/<product_id>/ 는 reference 와 같은 hotspot import 산출물이다(입력은 data/input/<product_id>/):
+#   import-hotspots --root data/input/<product_id> --expected-cases-from-roots data/input/<target> --out data/models/<product_id>
 # manifest.json 이 아직 없으면 그 모델은 assets_pending 이다(후보는 보이고, accept 하면 deferred.json 에 남고 종료 3).
-# 실행기 경로와 맞춤(bundles/etx/): 1m 은 data/models/<product_id> 로 import, 3m 은 data/assets/models/<product_id> 에 쓴 뒤 data/models/<product_id>/ 로 복사,
-# 5m/6m 은 이 파일을 BASE_DIR 의 models.yaml 로 읽는다. 3m 의 assignment_<product_id>.json 은 아래 condition_assignment 와 같은 내용이다.
+# 실행기 경로와 맞춤(bundles/etx/): models_01 은 data/models/<product_id> 로 import, models_02 는 --config models.yaml --model <product_id> 로 data/assets/models/<product_id> 에 쓴다(복사하지 않는다),
+# models_03~05 는 이 파일을 BASE_DIR 의 models.yaml 로 읽는다. 경로는 모두 이 파일(= real.yaml) 위치 기준이다.
+# pairs.csv 는 두 모델 공통 파일(data/input/pairs.csv)이다. 복사하지 않는다.
 schema_version: compare_models_v1
 target_product_id: QA4_T00
 models:
   QA4_C00:
     product_id: QA4_C00
     data_dir: data/models/QA4_C00
-    # 3회차 출력을 data_dir 로 복사한 뒤 sha256 을 적는다. 없으면 생략한다.
-    asset_manifest: {path: review_assets.json, sha256: <SHA256_OF_REVIEW_ASSETS_JSON>}
-    electrode_import_record: {path: electrode_asset_import_record.json, sha256: <SHA256_OF_IMPORT_RECORD_JSON>}
+    # models_02 출력을 그대로 가리킨다. sha256 은 생략하면 import 기록으로 확인하고, 적으면 그 값과 엄격 비교한다. asset 없이 후보만 볼 때는 두 줄을 뺀다.
+    asset_manifest: {path: data/assets/models/QA4_C00/review_assets.json}
+    electrode_import_record: {path: data/assets/models/QA4_C00/electrode_asset_import_record.json}
     condition_assignment:
       product_id: QA4_C00
       design_version: UNSPECIFIED
@@ -35,7 +36,8 @@ models:
         - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
         - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
         - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
-      pair_table_path: pairs.csv
+      pair_table_path: data/input/pairs.csv
+      interlayer_distance_path: data/input/thk_info-QA4_C00.txt
       electrode_role_policy: electrode_id
   QA4_D00:
     # 폴더가 아직 없거나 manifest.json 이 없으면 assets_pending.
@@ -60,5 +62,6 @@ models:
         - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
         - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
         - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
-      pair_table_path: pairs.csv
+      pair_table_path: data/input/pairs.csv
+      interlayer_distance_path: data/input/thk_info-QA4_D00.txt
       electrode_role_policy: electrode_id

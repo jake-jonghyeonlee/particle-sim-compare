@@ -141,7 +141,7 @@ def test_unwritable_work_dir_falls_back_and_says_so(tmp_path, python):
 def test_missing_expected_cases_root_stops_with_code_2_and_names_the_argument(tmp_path, python):
     ref, _ = _roots(tmp_path)
     log = tmp_path / 'job.log'
-    missing = 'data/input/hotspot/NOPE'
+    missing = 'data/input/NOPE'
     script = _make_runner(tmp_path / 'runner',
                           [('import-hotspots', ['--root', str(ref), '--expected-cases-from-roots', missing, '--out', str(tmp_path / 'o')])],
                           log_file=str(log), base_dir=str(tmp_path))
@@ -155,8 +155,8 @@ def test_missing_expected_cases_root_stops_with_code_2_and_names_the_argument(tm
     # C1: a missing input path leaves no --out folder, error.json or execution.json behind
     assert not (tmp_path / 'o').exists()
     # fixing the path and running again with the same --out succeeds
-    (tmp_path / 'data' / 'input' / 'hotspot').mkdir(parents=True)
-    (tmp_path / 'tgt').rename(tmp_path / 'data' / 'input' / 'hotspot' / 'NOPE')
+    (tmp_path / 'data' / 'input').mkdir(parents=True)
+    (tmp_path / 'tgt').rename(tmp_path / 'data' / 'input' / 'NOPE')
     rerun = _run(python, script, tmp_path)
     assert rerun.returncode in (0, 3), rerun.stderr
     assert (tmp_path / 'o' / 'manifest.json').is_file()

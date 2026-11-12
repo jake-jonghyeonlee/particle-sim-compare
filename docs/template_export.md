@@ -19,7 +19,7 @@ hotspot 이미지·CSV·CA 배열은 열지 않는다. 기존 `import-hotspots` 
 
 ```yaml
 schema_version: template_export_config_v1
-data_dir: input/hotspot/MODEL          # 1.png/2.png만 있는 트리
+data_dir: input/MODEL                  # 1.png/2.png만 있는 트리 (ETX 의 data/input/<모델> 과 같은 구조)
 cnt_from_dl1_root: input/dl1           # <root>/<product_id>/cno/*.png
 product_id: PRODUCT
 design_version: DESIGN

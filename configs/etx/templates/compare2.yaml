@@ -1,0 +1,59 @@
+# ETX compare2.yaml 템플릿 (새 입력 구조, 2026-11-12, Run 20261112-vdist-filter)
+#
+# 통합 실행기(bundles/etx/simcompare_job_etx.py)의 02(compare2)·07(보고서) 단계가 읽는다. 이 파일을 BASE_DIR 에 real.yaml 옆 compare2.yaml 로 복사한 뒤
+# [모델] 표시 줄만 바꾼다. 통합 실행기는 04·06 단계의 지름·창과 모든 단계의 hotspot·DL1 root 도 이 파일에서 읽는다.
+#   [모델]  = 비교하는 모델(제품)이 바뀌면 고친다. 기준 A 는 reference, 대상 B 는 target.
+#   [공통]  = 팀 기준값. 값이 바뀔 때만 고친다.
+#   표시 없음 = 고치지 않는다.
+#
+# 이 파일의 sha256 은 02 결과(compare2.json)에 기록된다. 02 를 돌린 뒤 한 글자라도 고치면 07 이 compare2_config_mismatch(종료 코드 2)로
+# 멈춘다. 고쳤다면 02 부터 다시 돌린다. 모델을 바꿀 때는 이 파일과 real.yaml 을 함께 고치고 01 부터 다시 돌린다.
+#
+# 경로는 모두 이 파일이 있는 폴더(= BASE_DIR) 기준 상대 경로다.
+schema_version: compare2_config_v1
+numeric_config: real.yaml
+output_dir: data/compare2
+
+# 밀도 CSV 폴더. 제품군마다 파일 두 개: <제품군>_line.csv, <제품군>_pixel.csv (제품군 = 아래 model_groups 의 키).
+# 형식: 첫 줄 = 빈칸 + 레이어 이름, 이후 한 줄 = 크기(1, 2, 3 …) + 레이어별 glass 당 개수(또는 그 전치). Excel 은 'CSV UTF-8' 로 저장.
+density_dir: data/input/density
+
+# [공통] 제품군별 glass 면적과 가중치(2026-11-10 팀 기존 식). 군 이름이 mobile·watch 이면 CRP 1.0, 그 밖은 2.92.
+model_groups:
+  mobile:
+    glass_area: {value: 1387500, unit: mm2}
+    weight_line: 2.5
+    weight_pixel: 2.5
+  auto:
+    glass_area: {value: 1387500, unit: mm2}
+    weight_line: 2.5
+    weight_pixel: 2.5
+  watch:
+    glass_area: {value: 1387500, unit: mm2}
+    weight_line: 2.5
+    weight_pixel: 2.5
+  other:
+    glass_area: {value: 975000, unit: mm2}
+    weight_line: 1.4285714285714286  # 10/7
+    weight_pixel: 2.0
+
+products:
+  reference:
+    model_group: mobile                  # [모델] 기준 A 제품군(model_groups 의 키). 밀도 파일 <제품군>_line/_pixel.csv 를 고른다
+    resolution: [1500, 1850]             # [모델] 기준 A 패널 해상도(가로, 세로 unit 픽셀 수)
+    hotspot_root: data/input/QA4_R00     # [모델] data/input/<기준 A 모델>. CNO 폴더(lateralopen-CNO-<층>)도 여기서 읽는다
+    unit_size_um: [45, 45]               # [모델] 선택. unit 한 변 µm. 생략하면 hotspot frame 크기에서 계산
+    dl1_model: QA4_R00                   # [모델] data/input/dl1 아래 기준 A 모델 폴더 이름
+  target:
+    model_group: mobile                  # [모델] 대상 B 제품군
+    resolution: [1500, 1850]             # [모델] 대상 B 패널 해상도
+    hotspot_root: data/input/QA4_T00     # [모델] data/input/<대상 B 모델>
+    # unit_size_um: [45, 45]             # [모델] 선택
+    dl1_model: QA4_T00                   # [모델] data/input/dl1 아래 대상 B 모델 폴더 이름
+
+# 07(보고서) 단계 전용 값 외에, 통합 실행기가 04·06 단계의 --window-um·--window-sizes·--diameter-um·--sort-diameter-um 과 DL1 root 에도 쓴다.
+report:
+  dl1_root: data/input/dl1               # DL1 입력(Layer PNG, Merged_Layer 전극 PNG). 지도 layer 패턴과 전극 강조에 쓴다
+  map_window_um: 10                      # 지도·위치 창 한 변 µm. 04 --window-um, 06 --window-sizes 로 같은 값이 간다
+  diameter_um: 3                         # 지도에 그리는 hotspot 지름 µm. 04 --diameter-um, 06 --sort-diameter-um 로 같은 값이 간다
+  top_n: 4

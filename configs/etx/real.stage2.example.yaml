@@ -1,6 +1,7 @@
-# ETX 2회차(validate-data, compare)용 예시. 1회차 import 뒤 pairs.csv를 각 data_dir 안에 복사한 상태를 가정한다.
-# 이 파일을 실행기 BASE_DIR(작업 폴더)에 real.yaml로 둔다고 가정한다. data_dir·output_dir 상대 경로는 이 파일 위치 기준이다.
-# pair_table_path·asset_manifest.path·electrode_import_record.path는 data_dir 기준 상대 경로여야 한다(절대 경로·..·백슬래시 거부).
+# ETX real.yaml 예시 — asset 키가 없는 형태(03 단계 전). configs/etx/templates/real.yaml 에서 asset_manifest·electrode_import_record 두 키만 뺀 것과 같다.
+# 통합 실행기를 쓰면 이 파일 대신 templates/real.yaml 을 real.yaml 로 복사한다(03 단계가 asset 폴더 위치를 이 키들에서 읽는다).
+# 이 파일을 실행기 BASE_DIR(작업 폴더)에 real.yaml로 둔다고 가정한다. 모든 상대 경로는 이 파일 위치(BASE_DIR) 기준이다(절대 경로·..·백슬래시 거부).
+# 입력은 data/input/<모델>/(hotspot), data/input/thk_info-<모델>.txt(층간 거리), data/input/pairs.csv(두 모델 공통). pairs.csv 를 data_dir 로 복사하지 않는다.
 # product_id/source_id 외의 UNSPECIFIED는 "정해지지 않음" 이름표다. 실제 값을 알면 바꾼다(비워 두면 오류).
 schema_version: numeric_config_v1
 mode: real
@@ -31,11 +32,14 @@ reference: &reference_side
       - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
       - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
       - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
-    pair_table_path: pairs.csv
+    pair_table_path: data/input/pairs.csv
+    # 층간 거리(thk_info-<모델>.txt). 이 키가 없으면 거리 필터는 꺼진다(02 는 남은 vertical short 가 있으면 이 키가 필수).
+    interlayer_distance_path: data/input/thk_info-QA4_R00.txt
     # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
     electrode_role_policy: electrode_id
-    # 큰 자료용 한도. 2회차 compare는 마스크를 한 장씩 읽으므로 max_operation_bytes는 기본(8 GiB)이면 된다.
+    # 큰 자료용 한도. diag compare는 마스크를 한 장씩 읽으므로 max_operation_bytes는 기본(8 GiB)이면 된다.
     # oversized_real_operation이 나오면 메시지의 추정치에 여유를 더해 넣는다. 물리 메모리는 호스트 RAM 기준이며 cgroup/job 한도가 아니다.
+    # max_operation_bytes 는 입력 해시에 들어간다: 02 단계 전에 넉넉히 정한다(02 뒤에 바꾸면 07 이 compare2_input_hash_mismatch 로 멈추고 02 부터 다시 해야 한다).
     # max_bucket_output_entries: 한 layer×지름 그룹의 bucket 출력 항목 상한(기본 1000000). 넘으면 oversized_real_bucket_output.
     #   요약 모드에서는 상위 top_buckets개만 쓰므로 실제로는 거의 닿지 않는다. 메모리 추정에는 32개 그룹이 모두 보관하는 양으로 들어간다.
     # max_label_pattern_entries: 정확한 영역 분할(label)이 한 layer×지름 그룹에서 보관하는 겹침 패턴의 상한(기본 24000000,
@@ -54,7 +58,8 @@ target:
     exposure_id: UNSPECIFIED
     unit_id: UNSPECIFIED
     layer_stack: *layer_stack
-    pair_table_path: pairs.csv
+    pair_table_path: data/input/pairs.csv
+    interlayer_distance_path: data/input/thk_info-QA4_T00.txt
     # role = 전극 이름. pair 표의 모든 전극이 자기 이름을 role로 받는다(electrode_roles와 함께 쓰지 않는다).
     electrode_role_policy: electrode_id
     max_materialized_source_cells: 20000000000

@@ -1,10 +1,11 @@
-"""change-roi/T9: the whole ETX flow, stage by stage, with the generated single-file runners.
+"""change-roi/T9, vdist-filter/T4: the whole ETX flow with the generated integrated runner (bundles/etx/simcompare_job_etx.py).
 
 A synthetic two-model world (the one of test_change_candidates: known layout offset, one planted hotspot change) is laid out
-the way the ETX server has it (``data/input/hotspot/QA4_R00|QA4_T00``, ``data/input/dl1``, ``assignment_<side>.json``,
-``real.yaml``) and the runners of stages 1, 2, 3, 4 and 6 run one after the other, as a user would: BASE_DIR set, relative
-paths, new ``--out`` paths. The manual steps between the stages (pairs.csv copy, stage-3 result placement, the sha256 update in
-real.yaml) are done by this test. Stage 5 (the DL2 path) runs ``confirm-pairs --list`` on a synthetic NCC JSON.
+the way the ETX server has it (``data/input/QA4_R00|QA4_T00``, ``data/input/dl1``, ``data/input/pairs.csv``,
+``data/input/thk_info-<model>.txt``, ``data/input/density``, ``real.yaml``, ``compare2.yaml``) and the integrated runner runs
+01, 03, 02, diag, 04, 06 and 07 in one go, as a user would: BASE_DIR set, relative paths, no file copied between the steps.
+Step 05 (the DL2 path) runs ``confirm-pairs --list`` on a synthetic NCC JSON. The multi-product stages (models_01..05) keep
+their own runners.
 
 Interpreters: the current one and, when ``SIMCOMPARE_ETX_PY`` is set, the ETX Python 3.9. With
 ``SIMCOMPARE_REQUIRE_ETX_PY=1`` a missing ``SIMCOMPARE_ETX_PY`` is a failure, not a skip (the final gate).
@@ -28,12 +29,16 @@ import yaml
 import stage46_generators as gen
 from test_change_candidates import (CASE_AB, CASE_AC, OFFSET, PITCH, PRODUCTS, ROLES, SHAPE, cnt_world, hotspot_masks, pattern,
                                     rect, save_black, shifted, sha)
+from test_compare2 import RES, write_density
+from test_etx_flow import edit_settings, flow_runner
 from test_etx_stage1_expected_cases import _make_runner
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = {'reference': 'QA4_R00', 'target': 'QA4_T00'}
 STAGE_ARGS = {'--align-search-um': '3', '--align-min-dice': '0.3', '--align-layer-tolerance-um': '0.5',
-              '--change-tolerance-um': '0.2', '--window-um': '10', '--top-k': '3'}   # small synthetic world (40 x 42 um)
+              '--change-tolerance-um': '0.2', '--top-k': '3'}   # small synthetic world (40 x 42 um); --window-um comes from compare2.yaml
+FLOW_COMMANDS = ['import-hotspots', 'import-hotspots', 'import-electrode-assets', 'import-electrode-assets', 'compare2',
+                 'validate-data', 'compare', 'candidates-change', 'compare-windows', 'compare2-report']
 
 
 def _stages():
@@ -46,13 +51,21 @@ def _stages():
 
 
 def _jobs(stage, overrides=None, only=None):
-    """The (command, args) list of the stage exactly as the runner generator defines it; `overrides` replaces the value of a flag."""
+    """The (command, args) list of a model stage exactly as the runner generator defines it; `overrides` replaces the value of a flag."""
     jobs = [(name, list(args)) for name, args, *_ in _stages()[stage][1]]
     for _, args in jobs:
         for flag, value in (overrides or {}).items():
             if flag in args:
                 args[args.index(flag) + 1] = value
     return jobs if only is None else jobs[:only]
+
+
+def _align_args():
+    """The runner's ALIGN_ARGS with the values the small synthetic world needs."""
+    args = list(edit_settings()['align_args'])
+    for flag, value in STAGE_ARGS.items():
+        args[args.index(flag) + 1] = value
+    return args
 
 
 def _python_params():
@@ -129,9 +142,17 @@ def _write_model_tree(root):
         writer.writerow(['5', f'{int(mask.sum()) * PITCH * PITCH:.2f}'])
 
 
+def _assignment(model_folder, product):
+    """The condition_assignment of a real.yaml / models.yaml section: input files under data/input, paths relative to the config folder."""
+    return {'product_id': product, 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
+            'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'data/input/pairs.csv',
+            'interlayer_distance_path': f'data/input/thk_info-{model_folder}.txt', 'electrode_roles': dict(ROLES),
+            'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
+
+
 def _write_models_yaml(base, with_assets):
     section = {'product_id': MODEL_PRODUCT, 'data_dir': f'data/models/{MODEL_FOLDER}',
-               'condition_assignment': _assignment('target', MODEL_PRODUCT)}
+               'condition_assignment': _assignment(MODEL_FOLDER, MODEL_PRODUCT)}
     if with_assets:     # the 03 output where it was written (not copied); sha256 omitted: checked through the record
         out = f'data/assets/models/{MODEL_FOLDER}'
         section['asset_manifest'] = {'path': f'{out}/review_assets.json'}
@@ -168,32 +189,63 @@ def _write_search_batch(base):
         writer.writerows([[cid, 'accept', ''] for cid in candidate_ids])
 
 
-def _assignment(side, product=None):
-    return {'product_id': product or PRODUCTS[side], 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
-            'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'pairs.csv', 'electrode_roles': dict(ROLES),
-            'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
-
-
-def _config(base, with_assets):
-    cfg = {'schema_version': 'numeric_config_v1', 'mode': 'real', 'output_dir': 'outputs/numeric_real',
-           'map': {'diameter_um': 5}}
-    for side in ('reference', 'target'):
-        data_dir = f'data/imported/{side}'
-        section = {'product_id': PRODUCTS[side], 'data_dir': data_dir, 'condition_assignment': _assignment(side)}
-        if with_assets:     # the 03 output where it was written (not copied); sha256 omitted: checked through the record
-            section['asset_manifest'] = {'path': f'data/assets/{side}/review_assets.json'}
-            section['electrode_import_record'] = {'path': f'data/assets/{side}/electrode_asset_import_record.json'}
-        cfg[side] = section
-    cfg['map']['input'] = cfg['reference']      # the electrode-count map reads the reference side (as configs/etx/*.example.yaml)
+def _write_real_yaml(base):
+    """real.yaml as the template has it: asset paths without sha256 (the 03 output is read where 03 wrote it), pairs and thk under data/input."""
+    cfg = {'schema_version': 'numeric_config_v1', 'mode': 'real', 'output_dir': 'outputs/numeric_real', 'map': {'diameter_um': 5}}
+    for side, model in MODELS.items():
+        cfg[side] = {'product_id': PRODUCTS[side], 'data_dir': f'data/imported/{side}',
+                     'asset_manifest': {'path': f'data/assets/{side}/review_assets.json'},
+                     'electrode_import_record': {'path': f'data/assets/{side}/electrode_asset_import_record.json'},
+                     'condition_assignment': _assignment(model, PRODUCTS[side])}
+    cfg['map']['input'] = cfg['reference']      # the electrode-count map reads the reference side (as configs/etx/templates/real.yaml)
     (base / 'real.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')
 
 
+def _write_compare2_yaml(base, name='compare2.yaml', dl1_root='data/input/dl1'):
+    cfg = {'schema_version': 'compare2_config_v1', 'numeric_config': 'real.yaml', 'output_dir': 'data/compare2',
+           'density_dir': 'data/input/density',
+           'model_groups': {'grp': {'glass_area': {'value': 200.0, 'unit': 'um2'}, 'weight_line': 1.0, 'weight_pixel': 1.0}},
+           'products': {side: {'model_group': 'grp', 'resolution': RES, 'hotspot_root': f'data/input/{model}',
+                               'dl1_model': PRODUCTS[side]} for side, model in MODELS.items()},
+           'report': {'dl1_root': dl1_root, 'map_window_um': 10, 'diameter_um': 5, 'top_n': 4}}
+    (base / name).write_text(yaml.safe_dump(cfg), encoding='utf-8')
+
+
+def _write_inputs(base, with_models):
+    """data/input/: the hotspot model folders, DL1, pairs.csv (one file for both models), thk_info-<model>.txt, density."""
+    names = dict(MODELS)
+    for side, model in MODELS.items():
+        _write_hotspot_tree(base / 'data/input' / model, side)
+        _write_dl1(base / 'data/input/dl1', side)
+        _write_new_structure(base / 'data/input/dl1', side)      # the real data has the new structure from the start
+    if with_models:
+        _write_model_tree(base / 'data/input' / MODEL_FOLDER)
+        _write_dl1(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
+        _write_new_structure(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
+        names['model'] = MODEL_FOLDER
+    for model in names.values():
+        (base / f'data/input/thk_info-{model}.txt').write_text('layers\tdistance\nL1L1\t0\n', encoding='utf-8')
+    (base / 'data/input/pairs.csv').write_text(
+        'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n', encoding='utf-8')
+    write_density(base / 'data/input/density', 'grp', {'P1': {5: 1.0}}, {'P1': {5: 1.0}})
+    _write_real_yaml(base)
+    _write_compare2_yaml(base)
+
+
 def _run_stage(python, base, tmp, stage, jobs, label=None):
-    """One runner copy for `jobs`, executed from a folder other than BASE_DIR (so BASE_DIR is what matters). Returns (log text, result)."""
+    """One runner copy for `jobs` (a model stage), executed from a folder other than BASE_DIR (so BASE_DIR is what matters). Returns (log text, result)."""
     log_file = f'runs/simcompare_{label or stage}.log'
     script = _make_runner(tmp / 'runners' / (label or stage), jobs, log_file=log_file, base_dir=str(base))
     result = subprocess.run([python, '-I', str(script)], capture_output=True, text=True, cwd=tmp)
     return (base / log_file).read_text(encoding='utf-8'), result
+
+
+def _run_flow(python, base, tmp, label, **constants):
+    """The integrated runner with the given EDIT-block constants; its own log file `runs/etx_<label>.log`. Returns (log text, result)."""
+    constants = {'ALIGN_ARGS': _align_args(), 'LOG_FILE': f'runs/etx_{label}.log', **constants}
+    script = flow_runner(tmp / 'runners' / f'etx_{label}', base, constants)
+    result = subprocess.run([python, '-I', str(script)], capture_output=True, text=True, cwd=tmp)
+    return (base / constants['LOG_FILE']).read_text(encoding='utf-8'), result
 
 
 def _exit_codes(text):
@@ -204,58 +256,46 @@ def _build_chain(python, tmp, with_models=False):
     started = time.time()
     base = tmp / 'work'
     logs, results = {}, {}
-    for side, model in MODELS.items():
-        _write_hotspot_tree(base / 'data/input/hotspot' / model, side)
-        _write_dl1(base / 'data/input/dl1', side)
-        _write_new_structure(base / 'data/input/dl1', side)      # the real data has the new structure from the start
-        (base / f'assignment_{side}.json').write_text(json.dumps(_assignment(side)), encoding='utf-8')
-    if with_models:
-        _write_model_tree(base / 'data/input/hotspot' / MODEL_FOLDER)
-        _write_dl1(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
-        _write_new_structure(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
-        (base / f'assignment_{MODEL_FOLDER}.json').write_text(json.dumps(_assignment('target', MODEL_PRODUCT)), encoding='utf-8')
+    _write_inputs(base, with_models)
+
+    def flow(label, **constants):
+        logs[label], results[label] = _run_flow(python, base, tmp, label, **constants)
 
     def stage(name, jobs, label=None):
         logs[label or name], results[label or name] = _run_stage(python, base, tmp, name, jobs, label)
 
-    stage('01_import_hotspots', _jobs('01_import_hotspots'))
-    if with_models:
+    if not with_models:
+        flow('main')            # 01, 03, 02, diag, 04, 06, 07 of one runner: no file is copied or edited between the steps
+    else:
+        flow('01', STEPS=['01'])
+        _write_models_yaml(base, with_assets=False)
         stage('models_01_import', _jobs('models_01_import'))
-        (base / f'data/models/{MODEL_FOLDER}/pairs.csv').write_text(
-            'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
-            encoding='utf-8')
-    pairs_text = 'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n'
-    for side in MODELS:     # the current 03 runner passes assignment_<side>.json; the same string 'pairs.csv' keeps the 03/04 hashes equal
-        (base / f'data/imported/{side}/pairs.csv').write_text(pairs_text, encoding='utf-8')
-    _config(base, with_assets=False)                         # manual step: real.yaml (stage 2 form)
-    stage('diag_validate_compare', _jobs('diag_validate_compare'))
-    stage('03_import_assets', _jobs('03_import_assets'))
-    if with_models:     # the stage-3 results stay where 03 wrote them: real.yaml / models.yaml point at them, no copy, no sha256
         stage('models_02_import_assets', _jobs('models_02_import_assets'))
-        _write_models_yaml(base, with_assets=True)
-    _config(base, with_assets=True)
-    stage('04_change_candidates', _jobs('04_change_candidates', STAGE_ARGS))
-    # the DL2 path: a synthetic NCC JSON, then confirm-pairs --list only (decisions need the human)
+        _write_models_yaml(base, with_assets=True)      # the 03 output stays where models_02 wrote it: no copy, no sha256
+        flow('rest', STEPS=['03', '02', 'diag', '04', '06', '07'])
+    # the DL2 path: a synthetic NCC JSON, then confirm-pairs --list only (decisions need the human: the second job stops with exit 2)
     models = {side: SimpleNamespace(spec=SimpleNamespace(shape=SHAPE, product_id=PRODUCTS[side])) for side in MODELS}
     (base / 'data/dl2').mkdir()
     if (base / 'data/changes/candidate_queries_v1.json').is_file():
         matches = gen.fake_matches(base / 'data/changes', models, base / 'data/dl2', seed=3)
         shutil.move(str(matches['reference_to_target']), base / 'data/dl2/ncc_r2t.json')
         shutil.move(str(matches['target_to_reference']), base / 'data/dl2/ncc_t2r.json')
-        stage('05_confirm_pairs_dl2', _jobs('05_confirm_pairs_dl2', only=1))
-    stage('06_compare_windows', _jobs('06_compare_windows'))
-    if with_models:     # the multi-product flow: 5m instead of 5, 6 again on the DL2 correspondence (reference pairs), 6m, 7
+        flow('05', STEPS=['05'], DL2_DECISION_ARGS=['--decisions', 'data/dl2/no_decisions_yet.csv', '--labelled-by', 'TEST',
+                                                    '--mutual-tolerance-um', '5'])
+    if with_models:     # the multi-product flow: models_03, models_04 (reference pairs on the DL2 correspondence first), models_05
         _write_search_batch(base)
         stage('models_03_confirm_pairs', _jobs('models_03_confirm_pairs'))
-        stage('06_compare_windows', _jobs('06_compare_windows', {'--correspondence': 'data/confirmed/roi_correspondence.json'}),
-              label='06_compare_windows_dl2')
         stage('models_04_compare_windows', _jobs('models_04_compare_windows'))
         seven = [(name, [arg.replace('QA4_R00=', f'{PRODUCTS["reference"]}=') for arg in args]) for name, args in _jobs('models_05_report')]
         stage('models_05_report', seven)      # the synthetic world names its reference PROD_R, the runner example QA4_R00
-    # a wrong DL1 root: the stage-4 log alone must say which argument and which path is wrong
-    wrong = _jobs('04_change_candidates', {**STAGE_ARGS, '--cnt-from-dl1-root': 'data/input/dl1_TYPO', '--out': 'data/changes_typo'})
-    # a later stage's job is appended to show that the runner stops at exit 2 and never starts it
-    stage('04_change_candidates', wrong + _jobs('06_compare_windows'), label='04_change_candidates_wrong_root')
+    else:
+        # re-run only 02: the previous data/compare2 is moved to data/_runs/AGAIN/, not deleted, and a new one is written
+        flow('again', STEPS=['02'], RUN_TAG='AGAIN')
+    # a wrong DL1 root in compare2.yaml: the 04 log alone must say which argument and which path is wrong
+    _write_compare2_yaml(base, 'compare2_typo.yaml', dl1_root='data/input/dl1_TYPO')
+    # a later step (06) is chosen to show that the runner stops at exit 2 and never starts it; it writes to its own folders
+    flow('wrong_root', STEPS=['04', '06'], COMPARE2_CONFIG='compare2_typo.yaml', CHANGES_DIR='data/changes_typo',
+         LOCAL_DIR='data/local_typo')
     return SimpleNamespace(base=base, logs=logs, results=results, seconds=time.time() - started, python=python)
 
 
@@ -268,7 +308,7 @@ def chain(request, tmp_path_factory):
 
 @pytest.fixture(scope='module', params=_python_params())
 def model_chain(request, tmp_path_factory):
-    """The same world plus the multi-product stages 1m, 3m, 5m, 6 (DL2 correspondence), 6m and 7."""
+    """The same world plus the multi-product stages models_01..05 (models_04 also runs the reference pairs on the DL2 correspondence)."""
     if request.param is None:
         pytest.fail('SIMCOMPARE_REQUIRE_ETX_PY=1 but SIMCOMPARE_ETX_PY is not set')
     return _build_chain(request.param, tmp_path_factory.mktemp('etx_chain_models'), with_models=True)
@@ -276,27 +316,18 @@ def model_chain(request, tmp_path_factory):
 
 # ---- the checks -------------------------------------------------------------------------------------------------------
 
-EXPECTED_COMMANDS = {
-    '01_import_hotspots': ['import-hotspots', 'import-hotspots'],
-    'diag_validate_compare': ['validate-data', 'compare'],
-    '03_import_assets': ['import-electrode-assets', 'import-electrode-assets'],
-    '04_change_candidates': ['candidates-change'],
-    '05_confirm_pairs_dl2': ['confirm-pairs'],
-    '06_compare_windows': ['compare-windows']}
-
-
-def test_every_stage_log_identifies_the_run_and_every_command_exits_zero_or_three(chain):
-    for stage, commands in EXPECTED_COMMANDS.items():
-        text = chain.logs[stage]
-        assert re.search(r'payload_sha256=[0-9a-f]{64}', text), stage
-        assert re.search(r'python \d+\.\d+\.\d+ \| numpy \S+ \| Pillow \S+ \| simcompare from ', text), stage     # versions
-        assert f'BASE_DIR requested={str(chain.base)!r} resolved={chain.base.resolve()}' in text, stage
-        codes = _exit_codes(text)
-        assert [name for name, _ in codes] == commands, (stage, codes, text[-1500:])
-        assert all(int(code) in (0, 3) for _, code in codes), (stage, codes, text[-1500:])
-        assert chain.results[stage].returncode in (0, 3), (stage, chain.results[stage].stderr[-1500:])
+def test_the_integrated_log_identifies_the_run_and_every_command_exits_zero_or_three(chain):
+    text = chain.logs['main']
+    assert re.search(r'payload_sha256=[0-9a-f]{64}', text)
+    assert re.search(r'python \d+\.\d+\.\d+ \| numpy \S+ \| Pillow \S+ \| simcompare from ', text)     # versions
+    assert f'BASE_DIR requested={str(chain.base)!r} resolved={chain.base.resolve()}' in text
+    codes = _exit_codes(text)
+    assert [name for name, _ in codes] == FLOW_COMMANDS, (codes, text[-2500:])
+    assert all(int(code) in (0, 3) for _, code in codes), (codes, text[-2500:])
+    assert chain.results['main'].returncode in (0, 3), chain.results['main'].stderr[-2500:]
+    assert 'flow: 10 job(s):' in text and 'flow: no previous output folder to move' in text      # a first run has nothing to move
     if chain.python != sys.executable:
-        assert 'python 3.9.' in chain.logs['04_change_candidates']
+        assert 'python 3.9.' in text
 
 
 def test_stage_one_to_three_wrote_the_expected_folders(chain):
@@ -305,7 +336,19 @@ def test_stage_one_to_three_wrote_the_expected_folders(chain):
         assert (base / f'data/imported/{side}/manifest.json').is_file()
         assert (base / f'data/imported/{side}/expected_cases.txt').is_file()
         assert (base / f'data/assets/{side}/review_assets.json').is_file()
+        assert not (base / f'data/imported/{side}/pairs.csv').exists()           # nothing is copied into data_dir
+        assert not (base / f'data/imported/{side}/review_assets.json').exists()
     assert (base / 'outputs/numeric_real/comparison.json').is_file()
+
+
+def test_stage_two_and_seven_write_the_vi_comparison_and_the_report(chain):
+    base = chain.base
+    assert (base / 'data/compare2/compare2.json').is_file()
+    doc = json.loads((base / 'data/compare2/compare2.json').read_text(encoding='utf-8'))
+    assert doc['sides']['reference'] and doc['sides']['target']
+    assert (base / 'data/compare2_report/report.html').is_file() and (base / 'data/compare2_report/report.json').is_file()
+    text = chain.logs['main']
+    assert "--candidates 'data/changes'" in text and "--windows 'data/local'" in text      # 07 links the 04 and 06 outputs
 
 
 def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(chain):
@@ -315,7 +358,7 @@ def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(
                  'target_export/review_rois.json', 'reference_index_export/review_rois.json', 'target_index_export/review_rois.json',
                  'reference_export/mask_derivation.json', 'target_export/mask_derivation.json',
                  'reference_index_export/mask_derivation.json', 'target_index_export/mask_derivation.json',
-                 'roi_local_alignment.json'):          # the stage-4 example passes --local-align-um 1
+                 'roi_local_alignment.json'):          # the runner's ALIGN_ARGS pass --local-align-um 1
         assert (changes / name).is_file(), name
     assert json.loads((changes / 'roi_local_alignment.json').read_text(encoding='utf-8'))['search_um'] == 1.0
     payload = json.loads((changes / 'candidate_queries_v1.json').read_text(encoding='utf-8'))
@@ -325,7 +368,9 @@ def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(
     assert payload['change_args']['apply_align'] == 'local' and len(alignment['unit_offsets']) == 4     # the example applies the alignment
     corr = json.loads((changes / 'direct/roi_correspondence.json').read_text(encoding='utf-8'))
     assert corr['schema_version'] == 'roi_correspondence_v1' and corr['pairs']
-    assert 'candidates-change exit 0' in chain.logs['04_change_candidates'] or 'candidates-change exit 3' in chain.logs['04_change_candidates']
+    text = chain.logs['main']
+    assert 'candidates-change exit 0' in text or 'candidates-change exit 3' in text
+    assert ' --window-um 10 ' in text and ' --diameter-um 5 ' in text       # the window and the diameter come from compare2.yaml
 
 
 def test_stage_six_reads_the_direct_file_and_writes_local_delta_rows(chain):
@@ -335,41 +380,54 @@ def test_stage_six_reads_the_direct_file_and_writes_local_delta_rows(chain):
         encoding='utf-8'))['pairs'] if p['status'] == 'ready'}
     assert ready and delta['rows'] and {r['pair_id'] for r in delta['rows']} == ready
     assert (local / 'local_delta.html').is_file()
-    assert "--correspondence 'data/changes/direct/roi_correspondence.json'" in chain.logs['06_compare_windows']
+    assert "--correspondence 'data/changes/direct/roi_correspondence.json'" in chain.logs['main']
+    assert {row['window_size_um'] for row in delta['rows']} == {10.0}       # the one window of compare2.yaml report.map_window_um
 
 
 def test_stage_five_lists_the_dl2_candidates_of_the_change_folder(chain):
-    text = chain.logs['05_confirm_pairs_dl2']
+    text = chain.logs['05']
     assert "--candidates 'data/changes'" in text and 'confirm-pairs exit 0' in text
-    assert 'n_candidates' in chain.results['05_confirm_pairs_dl2'].stdout or 'n_candidates' in text
+    assert 'n_candidates' in chain.results['05'].stdout or 'n_candidates' in text
+    assert [name for name, _ in _exit_codes(text)] == ['confirm-pairs', 'confirm-pairs']
+    assert _exit_codes(text)[1][1] == '2' and chain.results['05'].returncode == 2      # no decisions.csv yet: the second job stops
+    assert not (chain.base / 'data/confirmed').exists()
+
+
+def test_a_second_run_of_one_step_moves_the_old_output_and_keeps_it(chain):
+    text = chain.logs['again']
+    base = chain.base
+    assert [name for name, _ in _exit_codes(text)] == ['compare2'] and chain.results['again'].returncode in (0, 3)
+    assert 'data/_runs/AGAIN' in text
+    assert (base / 'data/_runs/AGAIN/data/compare2/compare2.json').is_file()           # the previous result, moved
+    assert (base / 'data/compare2/compare2.json').is_file()                            # the new result
+    assert (base / 'data/changes/candidate_queries_v1.json').is_file()                 # the other steps' folders stayed
+    assert (base / 'data/compare2_report/report.html').is_file()
 
 
 def test_wrong_dl1_root_is_visible_in_the_stage_four_log_alone(chain):
-    """A DL1 root that does not exist is an input error: exit 2 before anything is written, the runner stops (the next stage's
+    """A DL1 root that does not exist is an input error: exit 2 before anything is written, the runner stops (the next step's
     job is never started) and no `--out` folder exists. The log alone shows the argument with its resolved path and the code."""
-    label = '04_change_candidates_wrong_root'
-    text = chain.logs[label]
+    text = chain.logs['wrong_root']
     resolved = chain.base.resolve() / 'data/input/dl1_TYPO'
     assert f"--cnt-from-dl1-root 'data/input/dl1_TYPO' -> {resolved}" in text      # the argument and its resolved path
     assert 'cnt_dl1_root_missing: --cnt-from-dl1-root 경로가 없습니다: data/input/dl1_TYPO' in text
     assert f'(resolved: {resolved})' in text
-    assert 'candidates-change exit 2' in text and chain.results[label].returncode == 2
+    assert 'candidates-change exit 2' in text and chain.results['wrong_root'].returncode == 2
     assert 'compare-windows' not in ''.join(line for line in text.splitlines() if ' exit ' in line or ' start ' in line)
-    assert not (chain.base / 'data/changes_typo').exists()
+    assert not (chain.base / 'data/changes_typo').exists() and not (chain.base / 'data/local_typo').exists()
 
 
 MODEL_COMMANDS = {
     'models_01_import': ['import-hotspots'],
     'models_02_import_assets': ['import-electrode-assets'],
     'models_03_confirm_pairs': ['confirm-pairs', 'confirm-pairs'],
-    '06_compare_windows_dl2': ['compare-windows'],
-    'models_04_compare_windows': ['compare-windows'],
+    'models_04_compare_windows': ['compare-windows', 'compare-windows'],
     'models_05_report': ['model-report']}
 
 
 def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_pairs(model_chain):
-    """1m, 3m, 5m, 6 (DL2 correspondence), 6m and 7 as runners: the model report puts the reference pair and the model pair of one
-    target ROI in one row group, from the runner files alone."""
+    """models_01..05 as runners: the model report puts the reference pair and the model pair of one target ROI in one row group,
+    from the runner files alone (the integrated runner made the base outputs)."""
     chain = model_chain
     for stage, commands in MODEL_COMMANDS.items():
         text = chain.logs[stage]
@@ -377,12 +435,14 @@ def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_p
         codes = _exit_codes(text)
         assert [name for name, _ in codes] == commands, (stage, codes, text[-1500:])
         assert all(int(code) in (0, 3) for _, code in codes), (stage, codes, text[-1500:])
+    assert [name for name, _ in _exit_codes(chain.logs['01'])] == ['import-hotspots'] * 2
+    assert [name for name, _ in _exit_codes(chain.logs['rest'])] == FLOW_COMMANDS[2:]
     base = chain.base
     assert (base / f'data/models/{MODEL_FOLDER}/manifest.json').is_file() and (base / f'data/assets/models/{MODEL_FOLDER}/review_assets.json').is_file()
     assert (base / f'data/confirmed/models/{MODEL_PRODUCT}/roi_correspondence.json').is_file()
     model_local = base / f'data/local/models/{MODEL_FOLDER}'
     assert (model_local / 'window_cases.json').is_file() and (model_local / 'local_delta.json').is_file()
-    assert (base / 'data/local/local_delta.json').is_file()       # the stage-6 generation did not remove the model folder
+    assert (base / 'data/local/local_delta.json').is_file()       # the reference-pair generation did not remove the model folder
     report = base / 'data/model_report'
     assert sorted(p.name for p in report.iterdir()) == ['execution.json', 'model_report.csv', 'model_report.html', 'model_report.json']
     with (report / 'model_report.csv').open(encoding='utf-8-sig', newline='') as handle:

@@ -26,8 +26,8 @@ TEMPLATE = '''#!/usr/bin/env python3
 # 복사해 실행하면 "이 .py가 있는 폴더"가 달라지므로, 상대 경로를 쓸 때는 BASE_DIR를 절대 경로로 적는 것이 안전하다.
 # 작업은 위에서부터 차례로 실행된다. 종료 코드 0(완료)과 3(부분 결과)은 다음 작업으로 넘어가고, 그 밖의 코드는 멈춘다.
 JOBS = [
-    ("import-hotspots", ["--root", "data/input/hotspot/QA4_R00", "--out", "data/imported/reference"]),
-    ("import-hotspots", ["--root", "data/input/hotspot/QA4_T00", "--out", "data/imported/target"]),
+    ("import-hotspots", ["--root", "data/input/QA4_R00", "--out", "data/imported/reference"]),
+    ("import-hotspots", ["--root", "data/input/QA4_T00", "--out", "data/imported/target"]),
     # ("validate-data", ["--config", "real.yaml"]),
     # ("compare", ["--config", "real.yaml"]),
 ]
@@ -155,6 +155,8 @@ def run_jobs(jobs):
         print(f"[simcompare_job] cannot extract into {fallback_base}: {reason}; trying the next folder",
               file=sys.stderr, flush=True)
     print(f"[simcompare_job] WORK_DIR requested={WORK_DIR!r}; package extracted to {root}", file=sys.stderr, flush=True)
+    if callable(jobs):      # 통합 실행기: 패키지를 푼 뒤 설정 파일에서 JOBS 를 만든다
+        jobs = jobs()
     for name, args in jobs:
         argv = [str(name), *(str(a) for a in args)]
         print(f"[simcompare_job] {stamp()} start {' '.join(argv)}", file=sys.stderr, flush=True)
@@ -260,7 +262,9 @@ def _jobs_block(jobs):
     return "\n".join(lines) + "\n"
 
 
-def build(out, *, overwrite=False, jobs=None, log_file=None, header=None):
+def build(out, *, overwrite=False, jobs=None, log_file=None, header=None, flow=None):
+    """flow = (EDIT 블록 본문, 함수 본문): 통합 실행기. EDIT 블록 본문이 JOBS·LOG_FILE·WORK_DIR·BASE_DIR 자리를 대신하고,
+    함수 본문(`_flow_jobs`)이 run_jobs 에 넘겨져 패키지를 푼 뒤 JOBS 를 만든다."""
     out = Path(out)
     if out.exists() and not overwrite:
         raise FileExistsError(f"refusing to overwrite {out}; pass --overwrite or choose a new path")
@@ -273,6 +277,14 @@ def build(out, *, overwrite=False, jobs=None, log_file=None, header=None):
     sha = hashlib.sha256(json.dumps({n: e["sha256"] for n, e in files.items()}, sort_keys=True).encode()).hexdigest()
     lines = "\n".join(f'    "{packed[i:i + 100]}"' for i in range(0, len(packed), 100))
     text = TEMPLATE.replace("@@SHA@@", sha).replace("@@PAYLOAD@@", lines)
+    if flow is not None:
+        edit_text, func_text = flow
+        start = text.index("# ============================== EDIT BELOW")
+        start = text.index("\n", start) + 1
+        end = text.index("# ============================== EDIT ABOVE")
+        text = text[:start] + edit_text + text[end:]
+        text = text.replace("        run_jobs(JOBS)\n", "        run_jobs(_flow_jobs)\n", 1)
+        text = text.replace("def _main():", func_text + "\n\ndef _main():", 1)
     if jobs is not None:
         start, end = text.index("JOBS = ["), text.index("LOG_FILE = ")
         text = text[:start] + _jobs_block(jobs) + text[end:]

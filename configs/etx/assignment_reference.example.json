@@ -62,7 +62,8 @@
       "density_process_layer": "PXL"
     }
   ],
-  "pair_table_path": "pairs.csv",
+  "pair_table_path": "data/input/pairs.csv",
+  "interlayer_distance_path": "data/input/thk_info-QA4_R00.txt",
   "electrode_role_policy": "electrode_id",
   "max_materialized_source_cells": 20000000000,
   "max_group_mask_cells": 5000000000

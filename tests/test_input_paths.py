@@ -344,6 +344,15 @@ def user_layout(world, tag):
     return path
 
 
+def assert_validate_clean(out, config):
+    """T5 A-1: validate-data exits 0 or 3, and its validation.json has no invalid_configured_input reason and no diagnostics
+    (an unreadable configured input would otherwise hide behind exit 3)."""
+    assert main(['validate-data', '--config', str(config), '--out', str(out)]) in (0, 3)
+    payload = json.loads((Path(out) / 'validation.json').read_text(encoding='utf-8'))
+    assert 'invalid_configured_input' not in payload['reasons'], payload['diagnostics']
+    assert payload['diagnostics'] == []
+
+
 def test_pair_table_in_the_config_folder_runs_03_validate_04_and_the_hashes_match(world):
     config = user_layout(world, 'a')
     folders = {}
@@ -352,7 +361,7 @@ def test_pair_table_in_the_config_folder_runs_03_validate_04_and_the_hashes_matc
         assert main(['import-electrode-assets', '--source-kind', 'hotspot_case_electrode', '--root', str(world.base / f'src_{side}'),
                      '--config', str(config), '--side', side, '--cnt-from-dl1-root', str(world.base / f'cnt_{side}'),
                      '--source-version', 'layout_v1', '--max-asset-memory-mb', '256', '--out', str(folders[side])]) == 0
-    assert main(['validate-data', '--config', str(config), '--out', str(world.base / 'upair_validate')]) in (0, 3)
+    assert_validate_clean(world.base / 'upair_validate', config)
     cfg = yaml.safe_load(config.read_text(encoding='utf-8'))
     refs = refs_for(world, folders)
     for side in refs:
@@ -390,7 +399,7 @@ def test_pair_table_old_location_only_is_the_old_mode(world):
     cfg['map']['input'] = cfg['reference']
     old_form = world.base / 'real_oldform.yaml'
     old_form.write_text(yaml.safe_dump(cfg), encoding='utf-8')
-    assert main(['validate-data', '--config', str(old_form), '--out', str(world.base / 'uold_validate')]) in (0, 3)
+    assert_validate_clean(world.base / 'uold_validate', old_form)
 
 
 # ---- 03 argument combinations ----------------------------------------------------------------------------------
