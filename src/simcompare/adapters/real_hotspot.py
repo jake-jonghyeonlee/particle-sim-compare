@@ -1617,7 +1617,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     frame_id = frame_spec['frame_id']
     cases, unresolved = [], []
     filtered_records = filtered_cases = 0
-    max_group_cells =assignment.get('max_group_mask_cells', 5_000_000_000)
+    max_group_cells = assignment.get('max_group_mask_cells', 5_000_000_000)
     max_source_cells = assignment.get('max_materialized_source_cells', 6_000_000_000)
     max_operation_bytes = assignment.get('max_operation_bytes', 8 * 1024**3)
     max_bucket_entries = assignment.get('max_bucket_output_entries', DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES)
@@ -1648,11 +1648,15 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     for raw_case in manifest['cases']:
         if raw_case['failure_type'] == 'vertical_short':
             ends = [ep['actual_layer'] for ep in raw_case['endpoints']]
+            if any(layer not in stack for layer in ends):   # the layer check comes before the distance check
+                raise NumericContractError('real_actual_layer_unassigned', raw_case['case_name'])
             if ends[0] != ends[1]:
                 vertical_pairs.add(tuple(sorted(ends)))
     for missing_name in sorted(set(manifest.get('expected_cases') or ()) - {c['case_name'] for c in manifest['cases']}):
         defect, _, layer_a, _, layer_b = _case_name(missing_name)
         if defect == 'vertical_short' and layer_a != layer_b:
+            if layer_a not in stack or layer_b not in stack:
+                raise NumericContractError('real_actual_layer_unassigned', missing_name)
             vertical_pairs.add(tuple(sorted((layer_a, layer_b))))
     if distance_table is None and config_dir is not None and require_distance and vertical_pairs:
         raise NumericContractError('interlayer_distance_path_required',

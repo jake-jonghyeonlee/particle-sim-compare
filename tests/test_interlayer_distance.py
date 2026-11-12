@@ -213,6 +213,73 @@ def test_key_from_the_config_folder_is_read_and_its_path_is_not_hashed(tmp_path)
     assert caught.value.code == 'interlayer_distance_config_folder_required'
 
 
+def _with_expected_vertical(tmp_path, distance):
+    """base cases + a vertical case + an expected vertical case (M-N, L1/L2) that has no folder."""
+    imported = build(tmp_path, tc.base_cases() + [VERT], PAIRS + [('MN', 'M', 'N', 'line')])
+    manifest = load_real_manifest(imported)
+    manifest['expected_cases'] = list(manifest['expected_cases']) + ['vertical_short-M-L1-N-L2']
+    manifest['expected_case_coverage_status'] = 'confirmed'
+    t = None if distance is None else table(HEAD + f'L1L2\t{distance}\n')
+    return configured_dataset(imported, manifest, tc.assignment(), distance_table=t)
+
+
+def _layer_map(ds, diameter):
+    from simcompare.electrode_map import compute_electrode_maps
+    return next(m for m in compute_electrode_maps(ds, diameter_um=diameter).layers if m.key.layer == 'L2')
+
+
+def _case_ids(entries):
+    return {e.get('identity', e)['case_id'] for e in entries}    # 'missing' entries wrap the identity
+
+
+def test_04_map_coverage_of_dropped_diameters_and_06_window_areas(tmp_path):
+    from simcompare.measurement import measure_full_mask
+    ds = _with_expected_vertical(tmp_path, 3)
+    (tmp_path / 'plain').mkdir()
+    plain = _with_expected_vertical(tmp_path / 'plain', None)
+    # 04 electrode-map, diameter 3 (dropped): both vertical cases are observed, nothing is missing
+    layer = _layer_map(ds, 3)
+    assert {'vertical_short-X-L1-Y-L2', 'vertical_short-M-L1-N-L2'} <= _case_ids(layer.coverage['observed'])
+    assert 'vertical_short-M-L1-N-L2' not in _case_ids(layer.coverage['missing'])
+    assert 'source_case_missing' not in layer.reasons and 'expected_case_folder_missing' not in layer.reasons
+    # diameter 4 keeps its old state: the case with a folder is observed, the expected one is missing
+    layer4 = _layer_map(ds, 4)
+    assert 'vertical_short-X-L1-Y-L2' in _case_ids(layer4.coverage['observed'])
+    assert 'vertical_short-M-L1-N-L2' in _case_ids(layer4.coverage['missing'])
+    assert 'source_case_missing' in layer4.reasons and 'expected_case_folder_missing' in layer4.reasons
+    # without the key diameter 3 is as before: the expected case is missing
+    assert 'vertical_short-M-L1-N-L2' in _case_ids(_layer_map(plain, 3).coverage['missing'])
+    # 06 window area (full frame window) of the dropped diameters is 0; diameter 4 is the original area
+    vertical = vertical_case(ds)
+    expected_case = next(c for c in ds.cases if c.identity.case_id == 'vertical_short-M-L1-N-L2')
+    for case in (vertical, expected_case):
+        for d in (1.0, 2.0, 3.0):
+            assert measure_full_mask(case.records[d]).observed_ca_um2 == 0.0
+    original = measure_full_mask(vertical_case(plain).records[4.0])
+    kept = measure_full_mask(vertical.records[4.0])
+    assert kept.observed_ca_um2 == original.observed_ca_um2 > 0 and kept.status == original.status
+    assert expected_case.records[4.0].input_status == 'missing'
+
+
+def test_dataset_level_inventory_reason_survives_for_a_dropped_diameter(tmp_path):
+    imported = build(tmp_path, tc.base_cases() + [VERT])
+    manifest = load_real_manifest(imported)
+    manifest['expected_case_coverage_status'] = 'unconfirmed'
+    ds = configured_dataset(imported, manifest, tc.assignment(), distance_table=table(HEAD + 'L1L2\t3\n'))
+    group = next(g for k, g in compute_areas(ds).groups.items() if k.analysis_layer == 'L2' and k.diameter_um == 3.0)
+    assert 'expected_case_inventory_unprovided' in group.union.reasons
+    assert 'source_coverage_incomplete' not in group.union.reasons
+
+
+def test_layer_assignment_error_comes_before_the_missing_distance_error(tmp_path):
+    imported = build(tmp_path, tc.base_cases() + [('vertical_short', 'X', 'L1', 'Y', 'L9', {1: {12}})],
+                     PAIRS)
+    with pytest.raises(NumericContractError) as caught:
+        configured_dataset(imported, load_real_manifest(imported), tc.assignment(),
+                           distance_table=table(HEAD + 'XXYY\t1\n'))
+    assert caught.value.code == 'real_actual_layer_unassigned'
+
+
 # ---- chain: compare2 (02), 03 -> 04, 06 --------------------------------------------------------------------------------
 
 def test_compare2_requires_the_key_when_a_vertical_short_remains(tmp_path, capsys):

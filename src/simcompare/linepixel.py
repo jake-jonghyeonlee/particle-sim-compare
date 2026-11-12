@@ -17,6 +17,7 @@ from typing import Iterable, NamedTuple
 import numpy as np
 
 from .adapters.real_hotspot import CASE_EXCLUSION_RULE
+from .interlayer_distance import KEPT_CASE_REASONS
 from .measurement import check_union_compatible, measure_full_mask
 from .numeric_schema import (
     DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES, DEFAULT_TOP_BUCKETS,
@@ -587,10 +588,8 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
                 raise NumericContractError('pair_id_collision')
             electrodes[pid] = pair
             lineage.setdefault(pid, []).append(source_key)
-        if dropped is None:     # the case-level missing / geometry / csv reasons do not hold for a dropped diameter
-            reasons.update(case.reasons)
-        elif case.classification is None:
-            reasons.update(r for r in case.reasons if r in ('unmapped_pair', 'same_electrode_name_both_endpoints_short_unresolved'))
+        # the case-level missing / geometry / csv reasons do not hold for a dropped diameter; pair and inventory facts do
+        reasons.update(case.reasons if dropped is None else (r for r in case.reasons if r in KEPT_CASE_REASONS))
         if record.input_status == 'observed':
             reasons.update(measured.reasons)
             if measured.status == 'unavailable':

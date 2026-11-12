@@ -13,6 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
+from .interlayer_distance import KEPT_CASE_REASONS
 from .linepixel import PackedMask
 from .measurement import measure_full_mask, measure_union
 from .numeric_schema import (CaseIdentity, Frame, MaskRecord, Measurement, NumericCase, NumericDataset,
@@ -585,8 +586,11 @@ def _compute(inputs, *, diameter_um, min_count, reserved_bytes, grade_of_case=No
         reasons = set()
         area_cache = {}   # the full-frame window is the same for every case of the layer
         for case in sorted(entries, key=lambda c: c.identity.case_id):
-            if not (case.metadata.get('distance_filter') or {}).get(diameter_key(diameter)):
-                reasons.update(case.reasons)    # (a diameter dropped by the distance rule is not missing for its case)
+            if (case.metadata.get('distance_filter') or {}).get(diameter_key(diameter)):
+                # a diameter dropped by the distance rule is not missing for its case: keep pair / inventory facts only
+                reasons.update(r for r in case.reasons if r in KEPT_CASE_REASONS)
+            else:
+                reasons.update(case.reasons)
             representative = next((d for d in case.records if diameter_key(d) == diameter_key(diameter)), None)
             head = None if representative is None else _header(case.records, representative)
             identity = asdict(case.identity)

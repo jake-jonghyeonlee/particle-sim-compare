@@ -20,6 +20,9 @@ from .numeric_schema import NumericContractError
 DISTANCE_FILTER_RULE = 'vertical_short_diameter_le_layer_distance_2026_11_12'
 COMPARISON = 'diameter_um <= distance_um'
 HEADER = ('layers', 'distance')
+# Case reasons that still hold for a diameter the rule dropped (pair / inventory facts, not "this diameter is missing").
+KEPT_CASE_REASONS = frozenset({'unmapped_pair', 'same_electrode_name_both_endpoints_short_unresolved',
+                               'expected_case_inventory_unprovided'})
 
 
 class DistanceTable(NamedTuple):
