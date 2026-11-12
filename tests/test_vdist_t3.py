@@ -237,11 +237,83 @@ def test_r1_compare_windows_cli_keeps_the_filtered_case_available_with_zero_area
     assert code in (0, 3)
     local = json.loads((windows / 'local_delta.json').read_text(encoding='utf-8'))
     assert set(local['provenance']['distance_filter']['reference']) == BLOCK_KEYS
+    # A6: with a layer pair that was really looked up, the 06 block equals the 02 block of the same settings
+    compare2 = tc.load(out)['inputs']['manifests']
+    for role in ('reference', 'target'):
+        assert compare2[role]['distance_filter']['layer_pair_distances'] == {'L1+L2': '3'}
+        assert local['provenance']['distance_filter'][role] == compare2[role]['distance_filter']
     rows = {row['diameter_um']: row for row in local['rows'] if row['pair_id'] == 'v1'}
     for diameter in (1.0, 2.0, 3.0):      # dropped: area 0, but observed (not missing)
         named = rows[diameter]['named_pair']
         assert named['a']['status'] != 'missing' and named['a']['value'] == 0.0
     assert rows[4.0]['named_pair']['a']['value'] > 0
+
+
+# ---- B1: the input_hash check does not depend on a map being drawn ---------------------------------------------------------
+
+def test_configured_input_hash_equals_the_dataset_input_hash_with_and_without_the_key(tmp_path):
+    from simcompare.adapters.real_hotspot import configured_input_hash
+    from test_interlayer_distance import build, dataset
+    imported = build(tmp_path, tc.base_cases() + [VERT])
+    manifest = load_real_manifest(imported)
+    plain = dataset(imported)
+    assert configured_input_hash(imported, manifest, tc.assignment()) == plain.provenance['input_hash']
+    assert configured_input_hash(imported, manifest, tc.assignment(), config_dir=tmp_path) == plain.provenance['input_hash']
+    cfg = tmp_path / 'cfg'
+    cfg.mkdir()
+    (cfg / 'thk_info.txt').write_text(HEAD + 'L1L2\t3\n', encoding='utf-8')
+    keyed_assignment = {**tc.assignment(), 'interlayer_distance_path': 'thk_info.txt'}
+    keyed_ds = dataset(imported, assignment=keyed_assignment, config_dir=cfg)
+    got = configured_input_hash(imported, manifest, keyed_assignment, config_dir=cfg)
+    assert got == keyed_ds.provenance['input_hash'] != plain.provenance['input_hash']
+    (cfg / 'thk_info.txt').write_text(HEAD + 'L1L2\t4\n', encoding='utf-8')
+    assert configured_input_hash(imported, manifest, keyed_assignment, config_dir=cfg) != got
+
+
+def test_07_without_links_and_without_changed_conditions_still_refuses_a_thk_change(tmp_path, monkeypatch):
+    import simcompare.compare2_report as report_module
+    opened = []
+    original = report_module._scan_side
+    monkeypatch.setattr(report_module, '_scan_side', lambda *a, **k: opened.append(1) or original(*a, **k))
+    same = (tc.base_cases() + [VERT], PAIRS)
+    code, out = tc.run(tmp_path, same, same, thk=HEAD + 'L1L2\t3\n')
+    assert report(tmp_path, out, name='ok')[0] in (0, 3)
+    assert not opened, 'no condition changed: no map, no dataset is opened'
+    (tmp_path / 'thk_info.txt').write_text(HEAD + 'L1L2\t0.5\n', encoding='utf-8')
+    exit_code, folder = report(tmp_path, out, name='bad')
+    assert exit_code == 2 and not opened
+    assert json.loads((folder / 'error.json').read_text(encoding='utf-8'))['code'] == 'compare2_input_hash_mismatch'
+    assert not (folder / 'report.html').exists()
+
+
+def test_07_with_links_and_no_roi_figure_still_refuses_a_thk_content_change(keyed, tmp_path, monkeypatch):
+    """A3/B1: thk key and 02, 04, 06 all present; only the content of the thk file changes (no unit_id edit)."""
+    import simcompare.compare2_report as report_module
+    opened = []
+    original = report_module._scan_side
+    monkeypatch.setattr(report_module, '_scan_side', lambda *a, **k: opened.append(1) or original(*a, **k))
+    kwargs = {'candidates_dir': keyed.cand, 'windows_dir': keyed.windows}
+    files, record = build_report(keyed.c2, keyed.compare2_config, tmp_path / 'ok', **kwargs)
+    assert 'candidates' in record['link_inputs'] and not record['roi_figures'] and not opened
+    keyed.thk.write_text(HEAD + 'L1GCNT\t4\n', encoding='utf-8')
+    try:
+        with pytest.raises(Exception) as caught:
+            build_report(keyed.c2, keyed.compare2_config, tmp_path / 'bad', **kwargs)
+        assert getattr(caught.value, 'code', None) == 'compare2_input_hash_mismatch' and not opened
+        assert not (tmp_path / 'bad').exists()
+    finally:
+        keyed.thk.write_text(HEAD + 'L1GCNT\t3\n', encoding='utf-8')
+
+
+def test_07_compare2_json_without_a_recorded_input_hash_is_refused(tmp_path):
+    code, out = tc.run(tmp_path, (tc.base_cases(), PAIRS), (TGT_CASES, PAIRS))
+    path = out / 'compare2.json'
+    doc = json.loads(path.read_text(encoding='utf-8'))
+    del doc['inputs']['manifests']['reference']['input_hash']
+    path.write_text(json.dumps(doc), encoding='utf-8')
+    exit_code, folder = report(tmp_path, out)
+    assert exit_code == 2
+    assert json.loads((folder / 'error.json').read_text(encoding='utf-8'))['code'] == 'compare2_input_hash_missing'
 
 
 # ---- A1 / A2: _near_case_ids ----------------------------------------------------------------------------------------------
@@ -257,12 +329,16 @@ def test_a1_near_index_is_built_once_per_case_list_and_gives_the_same_ids(monkey
     calls = []
     original = local_delta._electrode_set_key
     monkeypatch.setattr(local_delta, '_electrode_set_key', lambda *a: calls.append(1) or original(*a))
-    first = _near_case_ids(cases, bound)
+    plain = _near_case_ids(cases, bound)
+    assert plain == (['c00', 'c01', 'c02', 'c03'], False)
+    run = local_delta._Run(_as_dataset(cases), _as_dataset(near_cases(2)))
+    calls.clear()
+    first = run.near_case_ids('a', bound)
     built = len(calls)
-    assert _near_case_ids(cases, bound) == first and len(calls) == built      # cached: no new key computation
-    assert first == (['c00', 'c01', 'c02', 'c03'], False)
-    other = near_cases(2)
-    assert _near_case_ids(other, bound) == (['c00', 'c01'], False) and len(calls) > built    # a new list rebuilds
+    assert first == plain and built == 4
+    assert run.near_case_ids('a', bound) == first and len(calls) == built      # cached per run and side
+    assert run.near_case_ids('b', bound) == (['c00', 'c01'], False) and len(calls) == built + 2   # own slot for b
+    assert not hasattr(local_delta, '_NEAR_INDEX')                           # nothing process-wide holds a case list
 
 
 def test_a2_candidates_are_sorted_capped_and_marked_truncated():

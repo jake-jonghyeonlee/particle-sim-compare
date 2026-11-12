@@ -2357,11 +2357,9 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
     for role in ROLES:
         manifest = ((doc.get('inputs') or {}).get('manifests') or {}).get(role) or {}
         info = infos[role]
-        # B2: the hash 07 computes when it opens the data for the maps is compared in _scan_side (the one place that
-        # builds the configured dataset); the stale-rule check needs no dataset
         info['recorded_input_hash'] = manifest.get('input_hash')
-        key_set = ((info['section'].get('condition_assignment') if isinstance(info['section'], dict) else None) or {}
-                   ).get('interlayer_distance_path') is not None
+        assignment = (info['section'].get('condition_assignment') if isinstance(info['section'], dict) else None) or {}
+        key_set = assignment.get('interlayer_distance_path') is not None
         recorded_rule = (manifest.get('distance_filter') or {}).get('rule')
         if key_set and recorded_rule != DISTANCE_FILTER_RULE:
             raise NumericContractError(
@@ -2426,6 +2424,25 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
                 codes = sorted(set(roi['reasons']) | pair_reasons.get(roi['roi_key'], set()))
                 warnings.append({'code': 'location_uncomputable', 'role': None, 'layer': None,
                                  'detail': f'{roi["roi_key"]}: {", ".join(codes) or "no reason recorded"}'})
+    # B1: the input_hash the data and settings give now, compared with compare2.json whether or not a map was drawn
+    # (a drawn map checked it in _scan_side already, after the memory guard). configured_input_hash reads no mask and
+    # allocates no array. Nothing is written before this point.
+    from .adapters.real_hotspot import configured_input_hash
+    for role in ROLES:
+        info = infos[role]
+        assignment = info['section'].get('condition_assignment') if isinstance(info['section'], dict) else None
+        if not isinstance(assignment, dict) or not assignment.get('layer_stack'):
+            continue        # no condition assignment: nothing to hash (the map step reports it as before)
+        recorded = info['recorded_input_hash']
+        if not isinstance(recorded, str) or not recorded:
+            raise NumericContractError('compare2_input_hash_missing',
+                                       f'{role}: compare2.json has no inputs.manifests.{role}.input_hash')
+        current = configured_input_hash(info['real'][0], info['real'][1], assignment, config_dir=cfg.get('_config_dir'))
+        if current != recorded:
+            raise NumericContractError(
+                'compare2_input_hash_mismatch',
+                f'{role}: compare2.json used input_hash {recorded}, the data and settings now give {current} '
+                '(for example the thk_info file changed): 02(compare2)를 다시 실행')
     unique, seen = [], set()
     for warning in warnings:        # the condition maps and the ROI figures may both skip the same overlay layer
         marker = json.dumps(warning, sort_keys=True, ensure_ascii=False)

@@ -338,29 +338,23 @@ def _electrode_set_key(identity, endpoints):
     return (identity.product_id, identity.design_version, identity.frame_id, frozenset(e.electrode_id for e in endpoints))
 
 
-_NEAR_INDEX = {'cases': None, 'size': -1, 'index': None}
-
-
 def _near_index(cases):
-    """electrode-set key -> [(sort key, case_id)] for one case list, built once and reused for every pair (A1).
-
-    The cache holds the last list it indexed; a different list object, or one whose length changed, rebuilds it."""
-    if _NEAR_INDEX['cases'] is not cases or _NEAR_INDEX['size'] != len(cases):
-        index = {}
-        for case in cases:
-            order = (tuple(sorted((e.electrode_id, e.actual_layer or '') for e in case.endpoints)), case.identity.case_id)
-            index.setdefault(_electrode_set_key(case.identity, case.endpoints), []).append(order)
-        for rows in index.values():
-            rows.sort()
-        _NEAR_INDEX.update(cases=cases, size=len(cases), index=index)
-    return _NEAR_INDEX['index']
+    """electrode-set key -> sorted [(sort key, case_id)] for one case list (A1: a _Run builds it once per side)."""
+    index = {}
+    for case in cases:
+        order = (tuple(sorted((e.electrode_id, e.actual_layer or '') for e in case.endpoints)), case.identity.case_id)
+        index.setdefault(_electrode_set_key(case.identity, case.endpoints), []).append(order)
+    for rows in index.values():
+        rows.sort()
+    return index
 
 
-def _near_case_ids(cases, side, limit=10):
+def _near_case_ids(cases, side, limit=10, index=None):
     """(case_ids, truncated): cases with the side's product / design / frame and electrode set, ignoring layers
-    (diagnostic only). Sorted by (electrodes, layers, case_id); at most `limit`, truncated=True when more matched (A2)."""
+    (diagnostic only). Sorted by (electrodes, layers, case_id); at most `limit`, truncated=True when more matched (A2).
+    `index` is a _near_index of `cases` (a _Run keeps one per side); without it the index is built for this call only."""
     key = (side.product_id, side.design_version, side.frame.frame_id, frozenset(e.electrode_id for e in side.endpoints))
-    rows = _near_index(cases).get(key, [])
+    rows = (_near_index(cases) if index is None else index).get(key, [])
     return [case_id for _, case_id in rows[:limit]], len(rows) > limit
 
 
@@ -405,6 +399,7 @@ class _Run:
         self.masks = MaskCache()
         self._datasets = {'a': reference, 'b': target}
         self._indexes = {}
+        self._near = {}
         self._cno = {}
         self._empty = {}
         self._records = {}
@@ -414,6 +409,12 @@ class _Run:
         if index is None:
             index = self._indexes[label] = NamedCaseIndex(self._datasets[label].cases)
         return index.matches(side)
+
+    def near_case_ids(self, label, side):
+        index = self._near.get(label)
+        if index is None:
+            index = self._near[label] = _near_index(self._datasets[label].cases)
+        return _near_case_ids(None, side, index=index)
 
     def cno_matches(self, label, side):
         """CNO cases of the side's (product, design, frame, layer) with the side's failure_type and filters."""
@@ -742,7 +743,8 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
             if matches:
                 out.setdefault('candidates', {})[label] = [c.identity.case_id for c in matches]
             else:
-                near, truncated = _near_case_ids(dataset.cases, side)
+                near, truncated = (_near_case_ids(dataset.cases, side) if run is None
+                                   else run.near_case_ids(label, side))
                 out.setdefault('candidates', {})[label] = near
                 if truncated:
                     out['candidates_truncated'] = True

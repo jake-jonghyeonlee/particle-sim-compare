@@ -771,7 +771,7 @@ def test_candidates_normalisation_hides_only_the_candidates_key():
     assert stripped == blob({'reasons': ['x']})
     truncated = blob({'reasons': ['x'], 'candidates': {'a': ['c1']}, 'candidates_truncated': True})
     assert strip_post_freeze_named_pair_candidates({'local_delta.json': truncated})['local_delta.json'] == stripped
-    other =blob({'reasons': ['y'], 'candidates': {'a': ['c1']}})
+    other = blob({'reasons': ['y'], 'candidates': {'a': ['c1']}})
     assert strip_post_freeze_named_pair_candidates({'local_delta.json': other})['local_delta.json'] != stripped
     plain = {'local_delta.json': blob({'reasons': ['x']}), 'other.json': with_candidates}
     assert strip_post_freeze_named_pair_candidates(plain) == plain

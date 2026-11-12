@@ -1517,6 +1517,60 @@ class LazyRecords(Mapping):
 
 
 
+def _resolve_input_files(folder, assignment, config_dir, distance_table):
+    """(layer stack, pair table path or None, distance table or None) of an assignment; no mask is read."""
+    stack_rows = assignment['layer_stack']
+    if not isinstance(stack_rows, list) or not stack_rows:
+        raise NumericContractError('real_layer_stack_required')
+    stack, orders = {}, set()
+    for row in stack_rows:
+        layer, order = row.get('actual_layer'), row.get('stack_order')
+        process = row.get('density_process_layer')
+        if not isinstance(layer, str) or not layer or type(order) not in (int, float) or order in orders:
+            raise NumericContractError('invalid_real_layer_assignment')
+        stack[layer] = (order, process)
+        orders.add(order)
+    if config_dir is None:      # direct API / 03 with a JSON assignment: paths are relative to the data folder (old rule)
+        table_path = resolve_path(folder, assignment['pair_table_path']) if assignment.get('pair_table_path') else None
+    else:                       # config flow: paths are relative to the folder of the config file
+        from ..numeric_images import locate_file
+        table_path = (locate_file(config_dir, folder, assignment['pair_table_path'], 'pair_table_path').path
+                      if assignment.get('pair_table_path') else None)
+        if assignment.get('interlayer_distance_path') is not None:
+            # the file lies in the config folder (no fallback); it is read here, against the layer stack
+            if distance_table is None:
+                from ..interlayer_distance import load_table
+                distance_table = load_table(
+                    locate_file(config_dir, None, assignment['interlayer_distance_path'],
+                                'interlayer_distance_path').path, stack)
+    if assignment.get('interlayer_distance_path') is not None and config_dir is None and distance_table is None:
+        raise NumericContractError('interlayer_distance_config_folder_required',
+                                   'interlayer_distance_path is relative to the folder of the config file; '
+                                   'use --config (or pass the parsed table)')
+    return stack, table_path, distance_table
+
+
+def _input_hash_parts(manifest, assignment, table_path, distance_table):
+    """(assignment hash, pair table hash, input_hash). The path of the distance file is not part of the hash (the same
+    table content gives the same hash from any place); the rule and the normalised table are."""
+    hashed_assignment = {k: v for k, v in assignment.items() if k != 'interlayer_distance_path'}
+    assignment_json = json.dumps(hashed_assignment, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+    assignment_hash = hashlib.sha256(assignment_json.encode('utf-8')).hexdigest()
+    pair_hash = _sha(table_path) if table_path else None
+    # The exclusion rule is part of the hash so artefacts made before the rule (masks zip, exports, windows) are refused.
+    configured_hash = hashlib.sha256((manifest['source_payload_hash']+assignment_hash+(pair_hash or '')
+                                      +CASE_EXCLUSION_RULE
+                                      +('' if distance_table is None else
+                                        DISTANCE_FILTER_RULE+distance_table.table_sha256)).encode('ascii')).hexdigest()
+    return assignment_hash, pair_hash, configured_hash
+
+
+def configured_input_hash(folder, manifest, assignment, config_dir=None, distance_table=None):
+    """The `input_hash` configured_dataset would put into its provenance, without reading a mask or allocating an array."""
+    _, table_path, distance_table = _resolve_input_files(folder, assignment, config_dir, distance_table)
+    return _input_hash_parts(manifest, assignment, table_path, distance_table)[2]
+
+
 def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_buckets=DEFAULT_TOP_BUCKETS,
                        config_dir=None, distance_table=None, require_distance=False):
     """Bind explicit analysis assignments and pair table to real observations.
@@ -1553,34 +1607,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     if (not isinstance(role_map, dict) or
             any(not isinstance(k, str) or not isinstance(v, str) or not v.strip() for k, v in role_map.items())):
         raise NumericContractError('invalid_real_electrode_roles')
-    stack_rows = assignment['layer_stack']
-    if not isinstance(stack_rows, list) or not stack_rows:
-        raise NumericContractError('real_layer_stack_required')
-    stack, orders = {}, set()
-    for row in stack_rows:
-        layer, order = row.get('actual_layer'), row.get('stack_order')
-        process = row.get('density_process_layer')
-        if not isinstance(layer, str) or not layer or type(order) not in (int, float) or order in orders:
-            raise NumericContractError('invalid_real_layer_assignment')
-        stack[layer] = (order, process)
-        orders.add(order)
-    if config_dir is None:      # direct API / 03 with a JSON assignment: paths are relative to the data folder (old rule)
-        table_path = resolve_path(folder, assignment['pair_table_path']) if assignment.get('pair_table_path') else None
-    else:                       # config flow: paths are relative to the folder of the config file
-        from ..numeric_images import locate_file
-        table_path = (locate_file(config_dir, folder, assignment['pair_table_path'], 'pair_table_path').path
-                      if assignment.get('pair_table_path') else None)
-        if assignment.get('interlayer_distance_path') is not None:
-            # the file lies in the config folder (no fallback); it is read here, against the layer stack
-            if distance_table is None:
-                from ..interlayer_distance import load_table
-                distance_table = load_table(
-                    locate_file(config_dir, None, assignment['interlayer_distance_path'],
-                                'interlayer_distance_path').path, stack)
-    if assignment.get('interlayer_distance_path') is not None and config_dir is None and distance_table is None:
-        raise NumericContractError('interlayer_distance_config_folder_required',
-                                   'interlayer_distance_path is relative to the folder of the config file; '
-                                   'use --config (or pass the parsed table)')
+    stack, table_path, distance_table = _resolve_input_files(folder, assignment, config_dir, distance_table)
     pairs, ids = {}, set()
     if table_path is not None:
         with table_path.open(encoding='utf-8-sig', newline='') as handle:
@@ -1898,15 +1925,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                     for c in cases]
     # The distance file path is not part of the hash (the same table content gives the same hash from any place);
     # the rule and the normalised table are, below.
-    hashed_assignment = {k: v for k, v in assignment.items() if k != 'interlayer_distance_path'}
-    assignment_json = json.dumps(hashed_assignment, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
-    assignment_hash = hashlib.sha256(assignment_json.encode('utf-8')).hexdigest()
-    pair_hash = _sha(table_path) if table_path else None
-    # The exclusion rule is part of the hash so artefacts made before the rule (masks zip, exports, windows) are refused.
-    configured_hash = hashlib.sha256((manifest['source_payload_hash']+assignment_hash+(pair_hash or '')
-                                      +CASE_EXCLUSION_RULE
-                                      +('' if distance_table is None else
-                                        DISTANCE_FILTER_RULE+distance_table.table_sha256)).encode('ascii')).hexdigest()
+    assignment_hash, pair_hash, configured_hash = _input_hash_parts(manifest, assignment, table_path, distance_table)
     distance_provenance = ({} if distance_table is None else
                            {'distance_filter': {**distance_table.summary(), 'filtered_records': filtered_records,
                                                 'filtered_cases': filtered_cases,
