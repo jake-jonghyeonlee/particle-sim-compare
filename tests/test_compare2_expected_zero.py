@@ -269,10 +269,11 @@ def test_vertical_absent_with_not_applicable(tmp_path, monkeypatch):
     pairs = tc.PAIRS + [('XY', 'X', 'Y', 'line')]
     ref = (pick('AB', 'DE', 'GH'), pairs)
     tgt = (pick('AB', 'DE', 'GH') + [vertical], pairs)  # the 1 um record of the vertical case is not_applicable
-    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'vertical', ref, tgt)
+    thk = 'layers\tdistance\nL1L2\t0.5\n'     # the vertical short needs a distance (02); 0.5 is below every size
+    code, out, doc = run_pair_in(tmp_path, monkeypatch, 'vertical', ref, tgt, thk=thk)
     assert code == 0, (doc['sides']['reference']['reasons'], doc['sides']['target']['reasons'])
     assert doc['delta']['check']['status'] == 'passed'
-    _code, _out, own = run_pair_in(tmp_path, monkeypatch, 'own', ref, tgt, inventory='own')
+    _code, _out, own = run_pair_in(tmp_path, monkeypatch, 'own', ref, tgt, inventory='own', thk=thk)
     assert_same_numbers(doc, own)
     assert tc.cond_by_id(doc['delta']['conditions'])['XY@L2']['presence'] == 'new'
 

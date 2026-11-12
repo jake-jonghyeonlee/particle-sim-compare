@@ -24,8 +24,9 @@ import numpy as np
 from PIL import Image
 
 from ..numeric_schema import (DEFAULT_TOP_BUCKETS, DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES, DEFAULT_MAX_LABEL_PATTERN_ENTRIES,
-                              DIAMETERS_UM, NumericContractError)
+                              DIAMETERS_UM, NumericContractError, diameter_key as _dkey)
 from ..numeric_images import resolve_path
+from ..interlayer_distance import DISTANCE_FILTER_RULE, is_filtered as _is_filtered
 from ..png_strict import HOTSPOT_GRAY_THRESHOLD, read_gray_hotspot
 
 HOTSPOT_OCCUPANCY_RULE = 'gray_gt_63'
@@ -1464,6 +1465,13 @@ def guard_stage_compare_windows(stage, reference, target, *, layouts_cfg=None, p
             f"{len(DIAMETERS_UM)} diameters{', compare masks reused' if reuse else ''}); {STAGE6_REMEDY}")
 
 
+def _distance_evidence(table, endpoints, diameter_um):
+    """applicability evidence when the vertical-short diameter is dropped by the interlayer-distance rule, else None."""
+    if table is None or endpoints[0].actual_layer == endpoints[1].actual_layer:
+        return None
+    return _is_filtered(table, endpoints[0].actual_layer, endpoints[1].actual_layer, _dkey(diameter_um))
+
+
 class LazyRecords(Mapping):
     """Per-diameter MaskRecords of one real case; a mask is read from disk only on item access (no cache).
 
@@ -1495,7 +1503,10 @@ class LazyRecords(Mapping):
         from ..numeric_schema import MaskRecord
         source_record, status, reasons, source_ca, tolerance, load = self._entries[diameter]
         mask = None
-        if load:
+        if load == 'empty':     # dropped by the interlayer-distance rule: observed, contributes nothing, no file is read
+            mask = np.zeros(self._shape, dtype=bool)
+            mask.setflags(write=False)
+        elif load:
             mask = _load_mask(resolve_path(self._folder, source_record['mask_path']), source_record)
             if mask.dtype != np.dtype(bool) or mask.shape != self._shape:
                 raise NumericContractError('real_mask_shape_mismatch', self._case_name)
@@ -1507,7 +1518,7 @@ class LazyRecords(Mapping):
 
 
 def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_buckets=DEFAULT_TOP_BUCKETS,
-                       config_dir=None):
+                       config_dir=None, distance_table=None, require_distance=False):
     """Bind explicit analysis assignments and pair table to real observations.
 
     top_buckets prices the compare admission estimate: an int N = summary mode (the default, like the compare
@@ -1560,8 +1571,16 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
         table_path = (locate_file(config_dir, folder, assignment['pair_table_path'], 'pair_table_path').path
                       if assignment.get('pair_table_path') else None)
         if assignment.get('interlayer_distance_path') is not None:
-            # T5: only the form (a file inside the config folder) is checked; the content is read by a later step.
-            locate_file(config_dir, None, assignment['interlayer_distance_path'], 'interlayer_distance_path')
+            # the file lies in the config folder (no fallback); it is read here, against the layer stack
+            if distance_table is None:
+                from ..interlayer_distance import load_table
+                distance_table = load_table(
+                    locate_file(config_dir, None, assignment['interlayer_distance_path'],
+                                'interlayer_distance_path').path, stack)
+    if assignment.get('interlayer_distance_path') is not None and config_dir is None and distance_table is None:
+        raise NumericContractError('interlayer_distance_config_folder_required',
+                                   'interlayer_distance_path is relative to the folder of the config file; '
+                                   'use --config (or pass the parsed table)')
     pairs, ids = {}, set()
     if table_path is not None:
         with table_path.open(encoding='utf-8-sig', newline='') as handle:
@@ -1597,7 +1616,8 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
         raise NumericContractError('real_common_frame_shape_required')
     frame_id = frame_spec['frame_id']
     cases, unresolved = [], []
-    max_group_cells = assignment.get('max_group_mask_cells', 5_000_000_000)
+    filtered_records = filtered_cases = 0
+    max_group_cells =assignment.get('max_group_mask_cells', 5_000_000_000)
     max_source_cells = assignment.get('max_materialized_source_cells', 6_000_000_000)
     max_operation_bytes = assignment.get('max_operation_bytes', 8 * 1024**3)
     max_bucket_entries = assignment.get('max_bucket_output_entries', DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES)
@@ -1622,6 +1642,28 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                    or not isinstance(raw['endpoints'][0], dict) or not isinstance(raw.get('records'), list)
                    for raw in raw_cno_cases)):
         raise NumericContractError('invalid_real_cno_cases')
+    # Interlayer-distance rule (after the SD2/SD3/PXL exclusion of the loader): the layer pairs of the vertical shorts
+    # that remain, discovered and expected, must all have a distance before anything is computed.
+    vertical_pairs = set()
+    for raw_case in manifest['cases']:
+        if raw_case['failure_type'] == 'vertical_short':
+            ends = [ep['actual_layer'] for ep in raw_case['endpoints']]
+            if ends[0] != ends[1]:
+                vertical_pairs.add(tuple(sorted(ends)))
+    for missing_name in sorted(set(manifest.get('expected_cases') or ()) - {c['case_name'] for c in manifest['cases']}):
+        defect, _, layer_a, _, layer_b = _case_name(missing_name)
+        if defect == 'vertical_short' and layer_a != layer_b:
+            vertical_pairs.add(tuple(sorted((layer_a, layer_b))))
+    if distance_table is None and config_dir is not None and require_distance and vertical_pairs:
+        raise NumericContractError('interlayer_distance_path_required',
+                                   'condition_assignment.interlayer_distance_path is required: the input has vertical '
+                                   f'short cases ({len(vertical_pairs)} layer pairs)')
+    if distance_table is not None:
+        absent = sorted(pair for pair in vertical_pairs if pair not in distance_table.pairs)
+        if absent:
+            raise NumericContractError('interlayer_distance_missing_pairs',
+                                       f'{len(absent)} layer pairs without a distance: '
+                                       + ', '.join('+'.join(pair) for pair in absent))
     group_counts, observed_count = {}, 0
     for raw_case in manifest['cases']:
         a, b = raw_case['endpoints']
@@ -1702,7 +1744,17 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
         pair = None if same_name else pairs.get(frozenset((a['electrode_id'], b['electrode_id'])))
         entries = {}
         geometry_confirmed = raw_case.get('geometry_status') == 'confirmed'
+        dropped = {}
         for source_record in raw_case['records']:
+            evidence = (None if raw_case['failure_type'] != 'vertical_short' else
+                        _distance_evidence(distance_table, endpoints, source_record['diameter_um']))
+            if evidence is not None:
+                # the diameter is not larger than the layer distance: observed, empty, no file read; the missing /
+                # geometry / csv reasons of the case do not apply to this diameter
+                dropped[_dkey(source_record['diameter_um'])] = evidence
+                entries[float(source_record['diameter_um'])] = (source_record, 'observed', (), None,
+                                                                source_record.get('area_tolerance_um2') or 1e-9, 'empty')
+                continue
             source_ca = None
             load = source_record['input_status'] == 'observed' and geometry_confirmed
             if load:
@@ -1736,8 +1788,12 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                   'geometry_status': raw_case.get('geometry_status'),
                                   'source_relative_path': raw_case.get('source_relative_path')},
                                  {'unit_id': assignment['unit_id'], 'height_um': None, 'height_evidence': None,
-                                  'source_case_metadata': raw_case, 'max_group_mask_cells': max_group_cells},
+                                  'source_case_metadata': raw_case, 'max_group_mask_cells': max_group_cells,
+                                  **({'distance_filter': dropped} if dropped else {})},
                                  tuple(sorted(set(case_reasons)))))
+        if dropped:
+            filtered_records += len(dropped)
+            filtered_cases += 1
     for missing_name in sorted(expected_names - discovered_names):
         defect, ea, la, eb, lb = _case_name(missing_name)
         if la not in stack or lb not in stack:
@@ -1758,15 +1814,31 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                 assignment['process_step_id'], assignment['exposure_id'], missing_name,
                                 frame_id, manifest['schema_version'])
         pair = pairs.get(frozenset((ea, eb)))
-        missing_records = {float(d): MaskRecord(float(d), frame, None, 'missing',
-                           ('expected_case_folder_missing',), None, identity, analysis_layer)
-                           for d in DIAMETERS_UM}
+        dropped = {}
+        if defect == 'vertical_short':
+            for d in DIAMETERS_UM:
+                evidence = _distance_evidence(distance_table, endpoints, d)
+                if evidence is not None:
+                    dropped[_dkey(d)] = evidence
+        if dropped:
+            # some diameters are dropped by the distance rule (observed, empty); the others stay missing
+            lazy = {float(d): ({'diameter_um': d}, 'observed', (), None, 1e-9, 'empty') if _dkey(d) in dropped else
+                    ({'diameter_um': d}, 'missing', ('expected_case_folder_missing',), None, 1e-9, False)
+                    for d in DIAMETERS_UM}
+            missing_records = LazyRecords(missing_name, frame, shape, folder, identity, analysis_layer, lazy)
+            filtered_records += len(dropped)
+            filtered_cases += 1
+        else:
+            missing_records = {float(d): MaskRecord(float(d), frame, None, 'missing',
+                               ('expected_case_folder_missing',), None, identity, analysis_layer)
+                               for d in DIAMETERS_UM}
         cases.append(NumericCase(identity, endpoints, defect, pair.pair_id if pair else None,
                                  pair.classification if pair else None, analysis_layer, density_layer,
                                  missing_records, {'case_id': missing_name, 'ordered_endpoints': None},
                                  {'unit_id': assignment['unit_id'], 'height_um': None,
                                   'source_case_metadata': {'case_name': missing_name,
-                                                           'geometry_status': 'missing_expected_case'}},
+                                                           'geometry_status': 'missing_expected_case'},
+                                  **({'distance_filter': dropped} if dropped else {})},
                                  ('expected_case_folder_missing',) if pair else
                                  ('expected_case_folder_missing', 'unmapped_pair')))
     # CNO (lateral_open, one electrode) cases follow the others in case_name order. They have no pair, so they never
@@ -1820,13 +1892,21 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                      'exposure_id': c.identity.exposure_id, 'case_id': c.identity.case_id,
                      'frame_id': c.identity.frame_id, 'source_contract_version': c.identity.source_contract_version}
                     for c in cases]
-    assignment_json = json.dumps(assignment, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+    # The distance file path is not part of the hash (the same table content gives the same hash from any place);
+    # the rule and the normalised table are, below.
+    hashed_assignment = {k: v for k, v in assignment.items() if k != 'interlayer_distance_path'}
+    assignment_json = json.dumps(hashed_assignment, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
     assignment_hash = hashlib.sha256(assignment_json.encode('utf-8')).hexdigest()
     pair_hash = _sha(table_path) if table_path else None
     # The exclusion rule is part of the hash so artefacts made before the rule (masks zip, exports, windows) are refused.
     configured_hash = hashlib.sha256((manifest['source_payload_hash']+assignment_hash+(pair_hash or '')
-                                      +CASE_EXCLUSION_RULE).encode('ascii')).hexdigest()
-    provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw,
+                                      +CASE_EXCLUSION_RULE
+                                      +('' if distance_table is None else
+                                        DISTANCE_FILTER_RULE+distance_table.table_sha256)).encode('ascii')).hexdigest()
+    distance_provenance = ({} if distance_table is None else
+                           {'distance_filter': {**distance_table.summary(), 'filtered_records': filtered_records,
+                                                'filtered_cases': filtered_cases}})
+    provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw, **distance_provenance,
                   'pair_table_version': next(iter(pairs.values())).table_version if pairs else None,
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),
                   'configured_assignment_hash': assignment_hash, 'input_hash': configured_hash,

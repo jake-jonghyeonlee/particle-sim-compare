@@ -93,13 +93,18 @@ DENS_PIXEL = {'P1': {1: 3.0, 2: 1.5, 3: 0.75}, 'P2': {1: 6.0, 2: 3.0, 3: 1.5}, '
 
 def run(tmp, ref, tgt, *, ref_group='mobile', tgt_group='mobile', glass=50.0, line=None, pixel=None,
         ref_cno=None, tgt_cno=None, scale=1.0, out_name='out', diameters=None, skip=(),
-        density_transposed=False, weights=(1.0, 1.0), res=None):
-    """Build both sides, write the configs, run `simcompare compare2`. Returns (exit code, output folder)."""
+        density_transposed=False, weights=(1.0, 1.0), res=None, thk=None):
+    """Build both sides, write the configs, run `simcompare compare2`. Returns (exit code, output folder).
+    thk = text of thk_info.txt: written next to the config and set as condition_assignment.interlayer_distance_path."""
     ref_root, ref_imp = write_side(tmp, 'ref', *ref, cno=ref_cno, skip=skip)
     tgt_root, tgt_imp = write_side(tmp, 'tgt', *tgt, cno=tgt_cno, skip=skip)
+    extra = {}
+    if thk is not None:
+        (tmp / 'thk_info.txt').write_text(thk, encoding='utf-8')
+        extra = {'interlayer_distance_path': 'thk_info.txt'}
     numeric = {'schema_version': 'numeric_config_v1', 'mode': 'real', 'output_dir': 'unused',
-               'reference': {'data_dir': str(ref_imp), 'condition_assignment': assignment()},
-               'target': {'data_dir': str(tgt_imp), 'condition_assignment': assignment()}}
+               'reference': {'data_dir': str(ref_imp), 'condition_assignment': {**assignment(), **extra}},
+               'target': {'data_dir': str(tgt_imp), 'condition_assignment': {**assignment(), **extra}}}
     (tmp / 'numeric.yaml').write_text(yaml.safe_dump(numeric), encoding='utf-8')
     scaled = lambda table: {layer: {d: v * scale for d, v in values.items()} for layer, values in table.items()}
     for group in {ref_group, tgt_group}:
@@ -313,7 +318,8 @@ def test_presence_new_and_gone(tmp_path):
 def test_vertical_sizes_follow_the_layer_distance(tmp_path):
     vertical = ('vertical_short', 'X', 'L1', 'Y', 'L2', {1: set(), 2: {3, 4}, 3: {3, 4, 5}})
     pairs = PAIRS + [('XY', 'X', 'Y', 'line')]
-    code, out = run(tmp_path, (base_cases() + [vertical], pairs), (base_cases() + [vertical], pairs))
+    thk = 'layers\tdistance\nL1L2\t0.5\n'     # below every size: nothing is dropped
+    code, out = run(tmp_path, (base_cases() + [vertical], pairs), (base_cases() + [vertical], pairs), thk=thk)
     assert code == 0
     doc = load(out)
     row = cond_by_id(doc['sides']['reference']['conditions'])['XY@L2']  # analysis layer = upper layer

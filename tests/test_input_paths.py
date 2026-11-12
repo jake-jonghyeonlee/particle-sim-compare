@@ -272,7 +272,7 @@ def test_escape_in_an_asset_path_is_refused(world):
 
 
 def test_interlayer_distance_path_is_allowed_and_must_stay_in_the_config_folder(world):
-    (world.base / 'thk_info.txt').write_text('unused here\n')
+    (world.base / 'thk_info.txt').write_text('layers\tdistance\nL1L2\t3\n')     # no vertical short here: the rows are unused
     # the key is part of the assignment (and its hash), so 03 reads the same config to make matching assets
     plain = {side: {} for side in ('reference', 'target')}
     config03 = new_config(world, 'real_thk03.yaml', plain, interlayer='thk_info.txt')

@@ -585,7 +585,8 @@ def _compute(inputs, *, diameter_um, min_count, reserved_bytes, grade_of_case=No
         reasons = set()
         area_cache = {}   # the full-frame window is the same for every case of the layer
         for case in sorted(entries, key=lambda c: c.identity.case_id):
-            reasons.update(case.reasons)
+            if not (case.metadata.get('distance_filter') or {}).get(diameter_key(diameter)):
+                reasons.update(case.reasons)    # (a diameter dropped by the distance rule is not missing for its case)
             representative = next((d for d in case.records if diameter_key(d) == diameter_key(diameter)), None)
             head = None if representative is None else _header(case.records, representative)
             identity = asdict(case.identity)

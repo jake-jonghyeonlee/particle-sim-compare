@@ -479,6 +479,12 @@ def _raw_record(case: NumericCase, diameter: float) -> dict:
     return {}
 
 
+def distance_filter_evidence(case: NumericCase, diameter):
+    """The evidence when the interlayer-distance rule dropped this diameter of this case (observed, empty), else None."""
+    dropped = case.metadata.get('distance_filter')
+    return dropped.get(diameter_key(diameter)) if dropped else None
+
+
 def _record_heads(case: NumericCase):
     """(diameter, record-or-header) pairs; lazy records (LazyRecords) are read by header, never loaded."""
     header = getattr(case.records, 'header', None)
@@ -560,10 +566,11 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
         measured = measure_full_mask(record, area_cache=area_cache)
         source_key = _key('source_case_v1', {'identity': asdict(case.identity), 'diameter_um': key.diameter_um})
         raw_record = _raw_record(case, key.diameter_um)
+        dropped = distance_filter_evidence(case, key.diameter_um)
         raw = copy.deepcopy(case.raw) if raw_copies is None else raw_copies[id(case)]
         sources.append(SourceCaseArea(source_key, case.identity, case.endpoints, case.failure_type,
                                       case.pair_id, case.classification, key.diameter_um, record.input_status,
-                                      measured, raw, copy.deepcopy(raw_record.get('applicability_evidence')),
+                                      measured, raw, copy.deepcopy(dropped or raw_record.get('applicability_evidence')),
                                       case.metadata.get('height_evidence')))
         observed += record.input_status == 'observed'
         missing += record.input_status == 'missing'
@@ -580,7 +587,10 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
                 raise NumericContractError('pair_id_collision')
             electrodes[pid] = pair
             lineage.setdefault(pid, []).append(source_key)
-        reasons.update(case.reasons)
+        if dropped is None:     # the case-level missing / geometry / csv reasons do not hold for a dropped diameter
+            reasons.update(case.reasons)
+        elif case.classification is None:
+            reasons.update(r for r in case.reasons if r in ('unmapped_pair', 'same_electrode_name_both_endpoints_short_unresolved'))
         if record.input_status == 'observed':
             reasons.update(measured.reasons)
             if measured.status == 'unavailable':

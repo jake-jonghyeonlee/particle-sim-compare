@@ -30,14 +30,16 @@ def _real_source(cfg, section):
     return root, load_real_manifest(root, manifest_path)
 
 
-def _configured_real(cfg, section, real, detail=None):
+def _configured_real(cfg, section, real, detail=None, require_distance=False):
     from simcompare.adapters.real_hotspot import configured_dataset
     root, manifest = real
     assignment = section.get('condition_assignment') if isinstance(section, dict) else None
     if assignment is None:
         return None
     # detail is the compare bucket detail: {} = full (admission charges every group's output), else summary
+    # require_distance: only compare2 (02) refuses a missing key; every other command runs unfiltered without it
     dataset = configured_dataset(root, manifest, assignment, config_dir=cfg.get('_config_dir'),
+                                 require_distance=require_distance,
                                  **({} if detail is None else {'top_buckets': detail.get('top_buckets')}))
     return root, dataset
 

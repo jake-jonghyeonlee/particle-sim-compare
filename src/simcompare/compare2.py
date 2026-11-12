@@ -197,7 +197,7 @@ def _load_side(cfg, role, top_buckets):
     if real is None:
         raise NumericContractError('compare2_real_source_required', f'{role}: real_hotspot_v1 data_dir needed')
     detail = {'bucket_detail': 'summary', 'top_buckets': top_buckets}
-    configured = _configured_real(cfg, section, real, detail)
+    configured = _configured_real(cfg, section, real, detail, require_distance=True)
     if configured is None:
         raise NumericContractError('compare2_condition_assignment_required', f'{role}: condition_assignment needed')
     dataset = configured[1]
