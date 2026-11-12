@@ -1505,7 +1505,9 @@ class LazyRecords(Mapping):
 
 
 
-def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_buckets=DEFAULT_TOP_BUCKETS):
+
+def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_buckets=DEFAULT_TOP_BUCKETS,
+                       config_dir=None):
     """Bind explicit analysis assignments and pair table to real observations.
 
     top_buckets prices the compare admission estimate: an int N = summary mode (the default, like the compare
@@ -1522,7 +1524,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                 'layer_stack')
     if not isinstance(assignment, dict) or any(not assignment.get(k) for k in required):
         raise NumericContractError('real_grouping_assignment_required')
-    allowed = set(required) | {'pair_table_path', 'electrode_roles', 'electrode_role_policy', 'max_group_mask_cells',
+    allowed = set(required) | {'pair_table_path', 'interlayer_distance_path', 'electrode_roles', 'electrode_role_policy', 'max_group_mask_cells',
                                'max_materialized_source_cells', 'max_operation_bytes',
                                'max_bucket_output_entries', 'max_label_pattern_entries'}
     if set(assignment) - allowed:
@@ -1551,7 +1553,15 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
             raise NumericContractError('invalid_real_layer_assignment')
         stack[layer] = (order, process)
         orders.add(order)
-    table_path = resolve_path(folder, assignment['pair_table_path']) if assignment.get('pair_table_path') else None
+    if config_dir is None:      # direct API / 03 with a JSON assignment: paths are relative to the data folder (old rule)
+        table_path = resolve_path(folder, assignment['pair_table_path']) if assignment.get('pair_table_path') else None
+    else:                       # config flow: paths are relative to the folder of the config file
+        from ..numeric_images import locate_file
+        table_path = (locate_file(config_dir, folder, assignment['pair_table_path'], 'pair_table_path').path
+                      if assignment.get('pair_table_path') else None)
+        if assignment.get('interlayer_distance_path') is not None:
+            # T5: only the form (a file inside the config folder) is checked; the content is read by a later step.
+            locate_file(config_dir, None, assignment['interlayer_distance_path'], 'interlayer_distance_path')
     pairs, ids = {}, set()
     if table_path is not None:
         with table_path.open(encoding='utf-8-sig', newline='') as handle:

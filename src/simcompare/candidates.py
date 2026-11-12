@@ -204,12 +204,24 @@ def prepare_side(cfg, name, diameter_um, reserved_bytes=0):
     if real is not None:
         if side.section.get('condition_assignment') is None:
             raise NumericContractError('explicit_condition_assignments_required', name)
-        side.evidence = pipeline._electrode_evidence(real[0], side.section)
+        side.evidence = pipeline._electrode_evidence(real[0], side.section, cfg['_config_dir'])
         side.root, side.dataset = pipeline._configured_real(cfg, side.section, real)
         side.input_record['condition_assignment_sha256'] = _canonical_sha(side.section['condition_assignment'])
+        verified = {}
+        if side.evidence is not None and side.evidence[0] == 'accepted':
+            (record_file, record_sha), (manifest_file, manifest_sha) = side.evidence[2]
+            verified = {'asset_manifest': (manifest_file, manifest_sha), 'electrode_import_record': (record_file, record_sha)}
         for key in ('asset_manifest', 'electrode_import_record'):
             ref = side.section.get(key)
             side.input_record[key] = dict(ref) if isinstance(ref, dict) else None
+            if key in verified and side.input_record[key] is not None:
+                # the sha256 actually checked, recorded only where the config omits it (runs that state sha256 and old-mode
+                # runs keep the baseline record bytes); the new mode adds where the files are (no baseline exists for it)
+                if 'sha256' not in side.input_record[key]:
+                    side.input_record[key]['sha256'] = verified[key][1]
+                if side.evidence[3].mode == 'new':
+                    side.input_record[key].update(resolved_path=str(verified[key][0]),
+                                                  asset_root=str(side.evidence[3].asset_root))
         if not has_short_cases(side.dataset.cases):
             side.status = 'unavailable'
             side.reasons = ['same_name_endpoints_unresolved']

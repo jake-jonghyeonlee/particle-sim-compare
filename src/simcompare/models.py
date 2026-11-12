@@ -46,10 +46,16 @@ def check_product_keys(keys):
         seen[folded] = key
 
 
-def _file_sha(root, relative, label):
+def _file_sha(root, relative, label, config_dir=None, location=None):
+    """sha256 of an asset file: the file of the side's asset location (real sources, one mode for manifest and record)
+    or, without it, relative to the data folder (numeric_v2)."""
     from .numeric_images import resolve_path
     try:
-        return _sha256_bytes(resolve_path(Path(root), relative).read_bytes())
+        if location is not None:
+            path = location[0] if label.endswith('asset_manifest') else location[1]
+        else:
+            path = resolve_path(Path(root), relative)
+        return _sha256_bytes(path.read_bytes())
     except (OSError, NumericContractError) as exc:
         raise NumericContractError('models_asset_file_unreadable', f'{label}: {relative}: {exc}') from exc
 
@@ -140,9 +146,20 @@ def load_models(models_path, cfg, config_real=None, config_products=None):
         entry.update(status=CONFIGURED, dataset=dataset, root=root, manifest_path=manifest_path, product=product,
                      real=real_source is not None, manifest_sha256=_sha256_bytes(manifest_file.read_bytes()))
         relative = _reference_path(section, 'asset_manifest')
-        entry['asset_manifest_sha256'] = None if relative is None else _file_sha(root, relative, f'{key}.asset_manifest')
-        relative = _reference_path(section, 'electrode_import_record')
-        entry['electrode_import_record_sha256'] = None if relative is None else _file_sha(root, relative, f'{key}.electrode_import_record')
+        record_relative = _reference_path(section, 'electrode_import_record')
+        location = None
+        if real_source is not None and relative is not None:
+            from .numeric_images import locate_assets
+            try:
+                found = locate_assets(config_dir, root, relative, record_relative)
+            except NumericContractError as exc:
+                if exc.code == 'input_location_conflict':
+                    raise
+                raise NumericContractError('models_asset_file_unreadable', f'{key}.asset_manifest: {relative}: {exc}') from exc
+            location = (found.manifest_path, found.record_path)
+        entry['asset_manifest_sha256'] = None if relative is None else _file_sha(root, relative, f'{key}.asset_manifest', None, location)
+        entry['electrode_import_record_sha256'] = (None if record_relative is None else
+                                                   _file_sha(root, record_relative, f'{key}.electrode_import_record', None, location))
         models[key] = entry
     return {'path': str(path), 'sha256': _sha256_bytes(raw), 'target_product_id': data['target_product_id'], 'models': models}
 

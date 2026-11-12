@@ -370,6 +370,9 @@ class _Layouts:
             return
         self.root = Path(data_dir)
         path = self.root / ref['path']
+        if ref.get('resolved_path'):      # config-folder flow: the manifest sits anywhere under the config folder
+            path = Path(ref['resolved_path'])
+            self.root = Path(ref.get('asset_root') or path.parent)    # base folder of the PNG paths (new mode)
         if not path.is_file():
             warn('layout_asset_manifest_missing', side, f'{path} 파일이 없습니다')
             return
@@ -727,7 +730,7 @@ def _source_rows(folder, queries, hashes):
         record = queries['inputs'][side]
         dv = record.get('dv_grades') or {}
         rows += [(f'dv-grade ({side}) manifest', dv.get('dir'), dv.get('manifest_sha256')), (f'전압 시트 ({side})', '(dv-grade manifest 의 sheet)', dv.get('sheet_sha256')),
-                 (f'asset manifest ({side})', f'{record.get("data_dir")}/{(record.get("asset_manifest") or {}).get("path")}', (record.get('asset_manifest') or {}).get('sha256')),
+                 (f'asset manifest ({side})', (record.get('asset_manifest') or {}).get('resolved_path') or f'{record.get("data_dir")}/{(record.get("asset_manifest") or {}).get("path")}', (record.get('asset_manifest') or {}).get('sha256')),
                  (f'dataset manifest ({side})', f'{record.get("data_dir")}/{record.get("manifest_path")}', record.get('manifest_sha256')),
                  (f'export ({side})', f'{side}_export/review_rois.json', record.get('export_sha256'))]
     rows.append(('config', '(candidates-dv 실행 설정)', queries['inputs'].get('config_sha256')))

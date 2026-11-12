@@ -37,7 +37,7 @@ def _configured_real(cfg, section, real, detail=None):
     if assignment is None:
         return None
     # detail is the compare bucket detail: {} = full (admission charges every group's output), else summary
-    dataset = configured_dataset(root, manifest, assignment,
+    dataset = configured_dataset(root, manifest, assignment, config_dir=cfg.get('_config_dir'),
                                  **({} if detail is None else {'top_buckets': detail.get('top_buckets')}))
     return root, dataset
 
@@ -831,7 +831,8 @@ def run_numeric_validate(cfg, out=None):
                 if assignment is not None:
                     # validate-data admits what the following compare would admit (same bucket detail)
                     full_detail, top = _compare_options(cfg)
-                    configured_dataset(root, manifest, assignment, top_buckets=None if full_detail else top)
+                    configured_dataset(root, manifest, assignment, top_buckets=None if full_detail else top,
+                                       config_dir=cfg.get('_config_dir'))
                 source_key = str(root.resolve()) + '::' + str(section.get('manifest_path', 'manifest.json'))
                 input_aliases.setdefault(source_key, []).append(label)
                 if source_key not in seen:
@@ -938,29 +939,64 @@ def _assert_evidence_unchanged(snapshot):
             raise NumericContractError('evidence_changed_during_read', Path(path).name)
 
 
-def _electrode_evidence(root, section):
+def _asset_location(config_dir, root, asset_ref, record_ref=None):
+    """한 side 의 asset 위치(모드 한 번 결정): 설정 폴더 기준 파일이 있으면 새 모드, 단순 부재면 옛 모드(data_dir 기준).
+    config_dir 이 None 이면 항상 옛 규칙."""
+    from simcompare.numeric_images import AssetLocation, locate_assets, resolve_path
+    if config_dir is None:
+        return AssetLocation('old', resolve_path(root, asset_ref['path']),
+                             resolve_path(root, record_ref['path']) if record_ref is not None else None, Path(root))
+    return locate_assets(config_dir, root, asset_ref['path'], record_ref['path'] if record_ref is not None else None)
+
+
+def _read_json_checked(path, expected):
+    """expected 가 문자열이면 sha256 을 엄격 비교하고, None 이면 비교 없이 읽는다. (파싱 결과, 실제 sha256)."""
+    from simcompare.numeric_schema import NumericContractError
+    if expected is not None:
+        return _read_verified(path, expected)
+    data = Path(path).read_bytes()
+    return _json_bytes_unique(data), hashlib.sha256(data).hexdigest()
+
+
+def _asset_ref_object(ref, name, config_dir):
+    from simcompare.numeric_schema import NumericContractError
+    keys = {'path', 'sha256'} if config_dir is None else {'path'}
+    if (not isinstance(ref, dict) or not keys <= set(ref) or set(ref) - {'path', 'sha256'}
+            or not all(isinstance(ref[k], str) and ref[k] for k in ref)):
+        raise NumericContractError('invalid_numeric_config', name + (
+            '는 {path, sha256} 객체여야 합니다' if config_dir is None else '는 {path} 또는 {path, sha256} 객체여야 합니다'))
+
+
+def _electrode_evidence(root, section, config_dir=None):
     """real_hotspot_v1 전극 asset 수용 증거를 검사한다. 극성은 추측하지 않는다.
 
-    반환: None(증거 없음 → 기존 unavailable 단락), ('blocked', reasons), 또는 ('accepted', manifest).
+    config_dir: 설정 파일의 폴더. 주면 asset_manifest·electrode_import_record 의 path 를 그 폴더 기준으로 풀고 sha256 은
+    생략할 수 있다(생략하면 record 파일을 읽고 그 manifest_sha256 으로 manifest 를 확인한다). 적으면 엄격 비교한다.
+    None 이면 옛 규칙(path 는 root=data_dir 기준, sha256 필수).
+
+    반환: None(증거 없음 → 기존 unavailable 단락), ('blocked', reasons), 또는 ('accepted', manifest, 확인한 파일 목록).
     hash·binding 불일치는 NumericContractError(이름 있는 오류)다.
     """
     from simcompare.adapters.electrode_png import SOURCE_KIND_CONTRACT
-    from simcompare.numeric_images import resolve_path
     from simcompare.numeric_schema import NumericContractError
     asset_ref, record_ref = section.get('asset_manifest'), section.get('electrode_import_record')
     if asset_ref is None or record_ref is None or section.get('condition_assignment') is None:
         return None
     for name, ref in (('asset_manifest', asset_ref), ('electrode_import_record', record_ref)):
-        if (not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}
-                or not all(isinstance(ref[k], str) and ref[k] for k in ref)):
-            raise NumericContractError('invalid_numeric_config', name + '는 {path, sha256} 객체여야 합니다')
-    record_path = resolve_path(root, record_ref['path'])
-    manifest_path = resolve_path(root, asset_ref['path'])
+        _asset_ref_object(ref, name, config_dir)
+    location = _asset_location(config_dir, root, asset_ref, record_ref)
+    record_path, manifest_path = location.record_path, location.manifest_path
     try:
-        record, record_digest = _read_verified(record_path, record_ref['sha256'])
-        manifest, manifest_digest = _read_verified(manifest_path, asset_ref['sha256'])
+        record, record_digest = _read_json_checked(record_path, record_ref.get('sha256'))
+        # sha256 을 적지 않으면 03 이 record 에 남긴 manifest_sha256 이 manifest 의 기준이다(체인 확인).
+        manifest_expected = asset_ref.get('sha256')
+        if manifest_expected is None:
+            manifest_expected = record.get('manifest_sha256') if isinstance(record, dict) else None
+            if not isinstance(manifest_expected, str):
+                raise NumericContractError('electrode_import_record_invalid', 'manifest_sha256')
+        manifest, manifest_digest = _read_json_checked(manifest_path, manifest_expected)
     except (OSError, ValueError) as exc:
-        if getattr(exc, 'code', None) == 'input_hash_mismatch':
+        if getattr(exc, 'code', None) in ('input_hash_mismatch', 'electrode_import_record_invalid'):
             raise
         raise NumericContractError('malformed_asset_manifest', str(exc)) from exc
     if (not isinstance(record, dict) or record.get('schema_version') != 'electrode_asset_import_record_v1'
@@ -971,7 +1007,7 @@ def _electrode_evidence(root, section):
         return None
     if record.get('polarity_basis') is None or import_info.get('polarity_basis') is None:
         return None
-    if (record.get('manifest_sha256') != asset_ref['sha256'] or import_info.get('record') != record_path.name
+    if (record.get('manifest_sha256') != manifest_digest or import_info.get('record') != record_path.name
             or record.get('dataset_input_hash') != manifest.get('source_manifest_hash')
             or record.get('source_kind') != import_info.get('source_kind')):
         raise NumericContractError('electrode_import_record_mismatch')
@@ -988,7 +1024,7 @@ def _electrode_evidence(root, section):
         raise NumericContractError('source_asset_manifest_invalid') from None
     if not refs or any(not isinstance(r, dict) or r.get('value_semantics') not in _ELECTRODE_SEMANTICS for r in refs):
         return 'blocked', ['electrode_polarity_unspecified']
-    return 'accepted', manifest, ((record_path, record_digest), (manifest_path, manifest_digest))
+    return 'accepted', manifest, ((record_path, record_digest), (manifest_path, manifest_digest)), location
 
 
 def _real_roi_export(cfg, out, real, spec, prepared=None):
@@ -999,7 +1035,7 @@ def _real_roi_export(cfg, out, real, spec, prepared=None):
     from simcompare.electrode_map import compute_electrode_maps
     from simcompare.numeric_schema import NumericContractError
     from simcompare.roi_export import export_review_rois
-    evidence = _electrode_evidence(real[0], spec['input'])
+    evidence = _electrode_evidence(real[0], spec['input'], cfg.get('_config_dir'))
     if evidence is None:
         return None
     if evidence[0] == 'blocked':
@@ -1028,7 +1064,7 @@ def _real_roi_export(cfg, out, real, spec, prepared=None):
     # export_review_rois는 manifest를 경로로 다시 읽는다. 검증한 bytes와 같은지 읽기 전후로 확인한다.
     _assert_evidence_unchanged(evidence[2])
     result = export_review_rois(dataset, root, out, maps=maps, selections=cfg.get('review_rois', {}),
-                                asset_manifest=spec['input'].get('asset_manifest'))
+                                asset_manifest=spec['input'].get('asset_manifest'), asset_location=evidence[3])
     _assert_evidence_unchanged(evidence[2])
     return result
 

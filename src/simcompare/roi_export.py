@@ -109,19 +109,28 @@ def _asset(root, ref, frame, *, valid=False, memo=None):
     return {k:ref[k] for k in ('path','sha256','value_semantics','observed')}
 
 
-def check_asset_manifest(dataset, root, reference, memo=None):
+def check_asset_manifest(dataset, root, reference, memo=None, asset_location=None):
     """최소 합성 원본 asset manifest 검증; 실제 source 형식 승인이 아니다.
 
     반환 mapping에는 원본 identity/frame/binding과 검증한 asset만 있다.
     한 case의 누락/불일치는 그 case의 blocked 사유로 보존한다.
+
+    asset_location(numeric_images.AssetLocation, 실자료 설정 흐름)를 주면 manifest 파일과 asset 기준 폴더는 그 값을 쓴다.
+    sha256 은 생략할 수 있다(체인 확인은 pipeline._electrode_evidence 가 한다). 주지 않으면 옛 규칙:
+    manifest·asset 모두 root 기준, sha256 필수.
     """
     if reference is None:
         return {}, ['source_asset_manifest_required']
     try:
-        if not isinstance(reference,dict) or not {'path','sha256'} <= set(reference):
+        if not isinstance(reference,dict) or 'path' not in reference or (asset_location is None and 'sha256' not in reference):
             raise NumericContractError('source_asset_manifest_reference_required')
-        path = resolve_path(root,reference['path'])
-        check_hash(path,reference['sha256'])
+        if asset_location is None:
+            path = resolve_path(root,reference['path'])
+        else:
+            path = asset_location.manifest_path
+            root = asset_location.asset_root
+        if reference.get('sha256') is not None or asset_location is None:
+            check_hash(path,reference['sha256'])
         manifest = _json_load(path)
         if manifest.get('schema_version') != 'review_assets_v1':
             raise NumericContractError('unsupported_asset_manifest')
@@ -288,7 +297,7 @@ def expand_region_coverages(payload):
 
 
 def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
-                       asset_manifest=None, producer_commit=None):
+                       asset_manifest=None, producer_commit=None, asset_location=None):
     """설정에 명시한 layer region 및 manual 위치만 내보낸다. 학습/검색 호출 없음.
 
     region 행의 provenance.coverage는 case 식별 목록(observed/missing/not_applicable/measurement_errors) 대신
@@ -299,7 +308,10 @@ def export_review_rois(dataset, source_root, out, *, maps=None, selections=None,
     selections = {} if selections is None else selections
     if not isinstance(selections,dict) or set(selections)-{'map_region_ids','manual'}:
         raise NumericContractError('invalid_roi_selection')
-    assets, manifest_reasons = check_asset_manifest(dataset,root,asset_manifest,memo=hooks.get('asset_memo'))
+    assets, manifest_reasons = check_asset_manifest(dataset,root,asset_manifest,memo=hooks.get('asset_memo'),
+                                                    asset_location=asset_location)
+    if asset_location is not None and not manifest_reasons:
+        root = asset_location.asset_root    # assets_root = the base folder of the PNG paths
     rows, excluded = [], []
     shared_coverages, coverage_refs, slim_coverages = {}, {}, {}
 

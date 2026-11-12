@@ -163,14 +163,22 @@ class _Assets:
             return
         try:
             from .numeric_images import read_binary
-            from .pipeline import _numeric_path
+            from .pipeline import _numeric_path, _real_source
+            from .numeric_images import locate_assets
             from .roi_export import _identity, check_asset_manifest
             from dataclasses import asdict
             root = _numeric_path(cfg, cfg[side_name]['data_dir'])
-            assets, reasons = check_asset_manifest(dataset, root, cfg[side_name].get('asset_manifest'))
+            ref = cfg[side_name].get('asset_manifest')
+            # real sources: the manifest is relative to the config folder and its assets to the manifest folder
+            location = None
+            if _real_source(cfg, cfg[side_name]) is not None and isinstance(ref, dict) and 'path' in ref:
+                location = locate_assets(cfg['_config_dir'], root, ref['path'])
+            assets, reasons = check_asset_manifest(dataset, root, ref, asset_location=location)
             if reasons:
                 self.reason = ','.join(reasons)
                 return
+            if location is not None:
+                root = location.asset_root
             self._root = root
             for case in dataset.cases:
                 entry = assets.get(_identity(asdict(case.identity)))

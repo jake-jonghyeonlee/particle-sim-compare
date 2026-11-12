@@ -445,7 +445,40 @@ def load_cnt_layers(root, model, frame):
     return result
 
 
-def _load_dataset(numeric_data_dir, manifest_path, condition_assignment):
+def assignment_from_config(config_path, side=None, model=None):
+    """03 `--config`: (numeric_data_dir, manifest_path, condition_assignment dict, config_dir) from a config section.
+
+    numeric_config_v1 (real.yaml) + side reference|target, or compare_models_v1 (models.yaml) + model <product id>.
+    The paths in the section are relative to the folder of the config file, as in every other command."""
+    import yaml
+    path = Path(config_path).resolve(strict=True)
+    try:
+        data = yaml.safe_load(path.read_bytes().decode('utf-8'))
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
+        raise _error('invalid_numeric_config', str(exc)) from exc
+    schema = data.get('schema_version') if isinstance(data, dict) else None
+    if schema == 'numeric_config_v1':
+        if side not in ('reference', 'target') or model is not None:
+            raise _error('config_side_required', '--config real.yaml needs --side reference|target (not --model)')
+        section = data.get(side)
+    elif schema == 'compare_models_v1':
+        if not isinstance(model, str) or side is not None:
+            raise _error('config_model_required', '--config models.yaml needs --model <product id> (not --side)')
+        models = data.get('models')
+        section = models.get(model) if isinstance(models, dict) else None
+        if section is None:
+            raise _error('model_not_in_models', model)
+    else:
+        raise _error('unsupported_numeric_config', 'schema_version must be numeric_config_v1 or compare_models_v1')
+    if (not isinstance(section, dict) or not isinstance(section.get('data_dir'), str)
+            or not isinstance(section.get('condition_assignment'), dict)):
+        raise _error('numeric_input_required', 'the section needs data_dir and condition_assignment')
+    value = Path(section['data_dir'])
+    return (value if value.is_absolute() else path.parent / value, section.get('manifest_path', 'manifest.json'),
+            section['condition_assignment'], path.parent)
+
+
+def _load_dataset(numeric_data_dir, manifest_path, condition_assignment, config_dir=None):
     root = Path(numeric_data_dir)
     try:
         header = json.loads(resolve_path(root, manifest_path).read_text(encoding='utf-8'))
@@ -454,8 +487,11 @@ def _load_dataset(numeric_data_dir, manifest_path, condition_assignment):
     if header.get('schema_version') == REAL_CONTRACT_VERSION:
         if condition_assignment is None:
             raise _error('condition_assignment_required', 'real_hotspot_v1 needs explicit --condition-assignment')
-        assignment = json.loads(Path(condition_assignment).read_text(encoding='utf-8'))
-        return configured_dataset(root, load_real_manifest(root, manifest_path), assignment)
+        if isinstance(condition_assignment, dict):      # from --config (paths relative to the config folder)
+            assignment = condition_assignment
+        else:
+            assignment = json.loads(Path(condition_assignment).read_text(encoding='utf-8'))
+        return configured_dataset(root, load_real_manifest(root, manifest_path), assignment, config_dir=config_dir)
     if condition_assignment is not None:
         raise _error('condition_assignment_not_applicable', 'only real_hotspot_v1 takes an assignment')
     from .numeric import load_dataset
@@ -525,7 +561,7 @@ def _estimate_mb(headers, frame_px, dataset_bytes=0):
 
 def import_electrode_assets(source_kind, root, out, *, numeric_data_dir, source_version, max_asset_memory_mb,
                             manifest_path='manifest.json', condition_assignment=None, stack_order=None,
-                            cnt_from_dl1_root=None):
+                            cnt_from_dl1_root=None, config_dir=None):
     """전극 PNG를 review_assets_v1 manifest + asset 파일로 변환한다. 입력은 수정하지 않는다."""
     if source_kind not in SOURCE_KIND_CONTRACT:
         return {'status': 'blocked', 'reasons': ['electrode_polarity_unspecified'], 'outputs': [], 'exit_code': 3,
@@ -547,7 +583,7 @@ def import_electrode_assets(source_kind, root, out, *, numeric_data_dir, source_
     if stack_order is not None and source_kind == 'hotspot_case_electrode' and cnt_root is None:
         raise _error('stack_order_not_applicable', 'no DL1 folder is read')
     order = _load_stack_order(stack_order)
-    dataset = _load_dataset(numeric_data_dir, manifest_path, condition_assignment)
+    dataset = _load_dataset(numeric_data_dir, manifest_path, condition_assignment, config_dir)
     # CNO (one electrode, lateral_open) cases have no electrode asset: skipped, not blocked (exit code unchanged)
     cno_skipped = [{'case_id': c.identity.case_id, 'product_id': c.identity.product_id,
                     'reasons': ['cno_case_no_electrode_asset']}

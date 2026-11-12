@@ -132,11 +132,10 @@ def _write_model_tree(root):
 def _write_models_yaml(base, with_assets):
     section = {'product_id': MODEL_PRODUCT, 'data_dir': f'data/models/{MODEL_FOLDER}',
                'condition_assignment': _assignment('target', MODEL_PRODUCT)}
-    if with_assets:
-        data = base / 'data/models' / MODEL_FOLDER
-        section['asset_manifest'] = {'path': 'review_assets.json', 'sha256': sha(data / 'review_assets.json')}
-        section['electrode_import_record'] = {'path': 'electrode_asset_import_record.json',
-                                              'sha256': sha(data / 'electrode_asset_import_record.json')}
+    if with_assets:     # the 03 output where it was written (not copied); sha256 omitted: checked through the record
+        out = f'data/assets/models/{MODEL_FOLDER}'
+        section['asset_manifest'] = {'path': f'{out}/review_assets.json'}
+        section['electrode_import_record'] = {'path': f'{out}/electrode_asset_import_record.json'}
     (base / 'models.yaml').write_text(yaml.safe_dump({'schema_version': 'compare_models_v1', 'target_product_id': PRODUCTS['target'],
                                                       'models': {MODEL_PRODUCT: section}}), encoding='utf-8')
 
@@ -181,10 +180,9 @@ def _config(base, with_assets):
     for side in ('reference', 'target'):
         data_dir = f'data/imported/{side}'
         section = {'product_id': PRODUCTS[side], 'data_dir': data_dir, 'condition_assignment': _assignment(side)}
-        if with_assets:
-            section['asset_manifest'] = {'path': 'review_assets.json', 'sha256': sha(base / data_dir / 'review_assets.json')}
-            section['electrode_import_record'] = {'path': 'electrode_asset_import_record.json',
-                                                  'sha256': sha(base / data_dir / 'electrode_asset_import_record.json')}
+        if with_assets:     # the 03 output where it was written (not copied); sha256 omitted: checked through the record
+            section['asset_manifest'] = {'path': f'data/assets/{side}/review_assets.json'}
+            section['electrode_import_record'] = {'path': f'data/assets/{side}/electrode_asset_import_record.json'}
         cfg[side] = section
     cfg['map']['input'] = cfg['reference']      # the electrode-count map reads the reference side (as configs/etx/*.example.yaml)
     (base / 'real.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')
@@ -226,28 +224,14 @@ def _build_chain(python, tmp, with_models=False):
         (base / f'data/models/{MODEL_FOLDER}/pairs.csv').write_text(
             'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
             encoding='utf-8')
-    for side in MODELS:                                      # manual step: pairs.csv next to each import
-        (base / f'data/imported/{side}/pairs.csv').write_text(
-            'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n',
-            encoding='utf-8')
+    pairs_text = 'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n'
+    for side in MODELS:     # the current 03 runner passes assignment_<side>.json; the same string 'pairs.csv' keeps the 03/04 hashes equal
+        (base / f'data/imported/{side}/pairs.csv').write_text(pairs_text, encoding='utf-8')
     _config(base, with_assets=False)                         # manual step: real.yaml (stage 2 form)
     stage('diag_validate_compare', _jobs('diag_validate_compare'))
     stage('03_import_assets', _jobs('03_import_assets'))
-    for side in MODELS:                                      # manual step: place the stage-3 result, then the sha256 update
-        out, data = base / f'data/assets/{side}', base / f'data/imported/{side}'
-        for name in ('review_assets.json', 'electrode_asset_import_record.json'):
-            shutil.copyfile(out / name, data / name)
-        (data / 'assets').mkdir(exist_ok=True)
-        for path in (out / 'assets').iterdir():
-            shutil.copyfile(path, data / 'assets' / path.name)
-    if with_models:
+    if with_models:     # the stage-3 results stay where 03 wrote them: real.yaml / models.yaml point at them, no copy, no sha256
         stage('models_02_import_assets', _jobs('models_02_import_assets'))
-        out, data = base / f'data/assets/models/{MODEL_FOLDER}', base / f'data/models/{MODEL_FOLDER}'
-        for name in ('review_assets.json', 'electrode_asset_import_record.json'):
-            shutil.copyfile(out / name, data / name)
-        (data / 'assets').mkdir(exist_ok=True)
-        for path in (out / 'assets').iterdir():
-            shutil.copyfile(path, data / 'assets' / path.name)
         _write_models_yaml(base, with_assets=True)
     _config(base, with_assets=True)
     stage('04_change_candidates', _jobs('04_change_candidates', STAGE_ARGS))

@@ -54,10 +54,14 @@ def _parser() -> argparse.ArgumentParser:
     electrode.add_argument("--source-kind", required=True,
                            help="출처 종류: dl1_png_folder 또는 hotspot_case_electrode (극성 계약 표에 있어야 함)")
     electrode.add_argument("--root", required=True, help="입력 전극 PNG root")
-    electrode.add_argument("--numeric-data-dir", required=True,
-                           help="case·frame·valid·input_hash를 가져올 numeric_v2(합성) 또는 real_hotspot_v1 폴더")
-    electrode.add_argument("--manifest-path", default="manifest.json", help="numeric-data-dir 안의 manifest (기본 manifest.json)")
-    electrode.add_argument("--condition-assignment", help="real_hotspot_v1일 때 명시 조건 할당 JSON")
+    electrode.add_argument("--numeric-data-dir",
+                           help="case·frame·valid·input_hash를 가져올 numeric_v2(합성) 또는 real_hotspot_v1 폴더 (--config 를 주지 않을 때 필수)")
+    electrode.add_argument("--manifest-path", default=None, help="numeric-data-dir 안의 manifest (기본 manifest.json, --config 이면 설정 절의 값)")
+    electrode.add_argument("--condition-assignment", help="real_hotspot_v1일 때 명시 조건 할당 JSON (--config 와 함께 쓸 수 없음)")
+    electrode.add_argument("--config", help="real.yaml(numeric_config_v1) 또는 models.yaml(compare_models_v1): 해당 절의 data_dir·condition_assignment 를 쓴다. "
+                                            "--numeric-data-dir·--condition-assignment 와 함께 쓸 수 없음")
+    electrode.add_argument("--side", choices=("reference", "target"), help="--config real.yaml 일 때 쓸 절")
+    electrode.add_argument("--model", help="--config models.yaml 일 때 쓸 모델 키")
     electrode.add_argument("--stack-order", help="dl1_png_stack_order_v1 JSON (layer 순서는 이 파일에서만 옴)")
     electrode.add_argument("--cnt-from-dl1-root", help="hotspot_case_electrode의 CNT를 가져올 DL1 PNG root (없으면 CNT 없는 case는 blocked)")
     electrode.add_argument("--source-version", required=True, help="원본 layout 버전 문자열 (기본값 없음)")
@@ -322,9 +326,24 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result['status'] == 'available' else 3
         if args.command == "import-electrode-assets":
             from simcompare.adapters.electrode_png import import_electrode_assets
+            numeric_data_dir, manifest_path = args.numeric_data_dir, args.manifest_path
+            assignment, config_dir = args.condition_assignment, None
+            if args.config is not None:
+                if args.numeric_data_dir is not None or args.condition_assignment is not None:
+                    parser.error("--config 는 --numeric-data-dir·--condition-assignment 와 함께 쓸 수 없습니다")
+                from simcompare.adapters.electrode_png import assignment_from_config
+                numeric_data_dir, section_manifest, assignment, config_dir = assignment_from_config(
+                    args.config, side=args.side, model=args.model)
+                manifest_path = manifest_path if manifest_path is not None else section_manifest
+            else:
+                if args.side is not None or args.model is not None:
+                    parser.error("--side·--model 은 --config 와 함께만 쓸 수 있습니다")
+                if numeric_data_dir is None:
+                    parser.error("--numeric-data-dir 또는 --config 가 필요합니다")
+                manifest_path = manifest_path if manifest_path is not None else "manifest.json"
             result = import_electrode_assets(
-                args.source_kind, Path(args.root), Path(args.out), numeric_data_dir=Path(args.numeric_data_dir),
-                manifest_path=args.manifest_path, condition_assignment=args.condition_assignment,
+                args.source_kind, Path(args.root), Path(args.out), numeric_data_dir=Path(numeric_data_dir),
+                manifest_path=manifest_path, condition_assignment=assignment, config_dir=config_dir,
                 stack_order=args.stack_order, cnt_from_dl1_root=args.cnt_from_dl1_root,
                 source_version=args.source_version, max_asset_memory_mb=args.max_asset_memory_mb)
             _print(result)

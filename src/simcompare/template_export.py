@@ -204,7 +204,7 @@ def _build(config, config_sha, base: Path, config_path: Path, stage: Path, final
     requests = [{**{k: config[k] for k in ('product_id', 'design_version', 'source_id', 'process_step_id', 'exposure_id')},
                  'frame_id': frame_id, 'case_id': roi['case_id'], 'center_xy_um': roi['center_xy_um']}
                 for roi in config['rois']]
-    cfg = {'schema_version': 'numeric_config_v1', 'mode': 'real', 'output_dir': 'unused', '_config_dir': base,
+    cfg = {'schema_version': 'numeric_config_v1', 'mode': 'real', 'output_dir': 'unused', '_config_dir': data,   # staged data folder = config folder: every path here is data-relative
            'map': {'diameter_um': 1, 'input': {
                'data_dir': str(data), 'condition_assignment': assignment,
                'asset_manifest': {'path': 'review_assets.json', 'sha256': _sha((data / 'review_assets.json').read_bytes())},
