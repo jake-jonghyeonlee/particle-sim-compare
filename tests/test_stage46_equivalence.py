@@ -131,9 +131,11 @@ def strip_post_freeze_named_pair_candidates(files):
         touched = False
         for row in payload.get('rows') or ():
             named = row.get('named_pair') if isinstance(row, dict) else None
-            if isinstance(named, dict) and 'candidates' in named:
-                del named['candidates']
-                touched = True
+            if isinstance(named, dict):
+                for field in ('candidates', 'candidates_truncated'):   # T3 A2 adds candidates_truncated (post-freeze too)
+                    if field in named:
+                        del named[field]
+                        touched = True
         if touched:
             files[name] = (json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
     return files
@@ -767,7 +769,9 @@ def test_candidates_normalisation_hides_only_the_candidates_key():
     with_candidates = blob({'reasons': ['x'], 'candidates': {'a': ['c1']}})
     stripped = strip_post_freeze_named_pair_candidates({'local_delta.json': with_candidates})['local_delta.json']
     assert stripped == blob({'reasons': ['x']})
-    other = blob({'reasons': ['y'], 'candidates': {'a': ['c1']}})
+    truncated = blob({'reasons': ['x'], 'candidates': {'a': ['c1']}, 'candidates_truncated': True})
+    assert strip_post_freeze_named_pair_candidates({'local_delta.json': truncated})['local_delta.json'] == stripped
+    other =blob({'reasons': ['y'], 'candidates': {'a': ['c1']}})
     assert strip_post_freeze_named_pair_candidates({'local_delta.json': other})['local_delta.json'] != stripped
     plain = {'local_delta.json': blob({'reasons': ['x']}), 'other.json': with_candidates}
     assert strip_post_freeze_named_pair_candidates(plain) == plain

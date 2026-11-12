@@ -28,6 +28,7 @@ from .compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, CRP_ONE_GROUPS, ROU
                               VI_PIXEL_DIVISOR, cno_lambda_factor, collect_cno, crp_for_group,
                               effective_resolution, lambda_factor, load_compare2_config, load_density, size_key)
 from .adapters.real_hotspot import CASE_EXCLUSION_RULE
+from .interlayer_distance import record_block
 from .numeric_schema import NumericContractError, has_short_cases
 
 SCHEMA_VERSION = 'compare2_v1'
@@ -213,6 +214,9 @@ def _load_side(cfg, role, top_buckets):
     meta['pair_table_version'] = result.pair_table_version
     meta['pair_table_hash'] = result.pair_table_hash
     meta['input_hash'] = result.input_hash
+    block = record_block(dataset.provenance)
+    if block is not None:       # key absent = filter off = nothing written (the output bytes stay the baseline's)
+        meta['distance_filter'] = block
     del result, dataset, configured, real
     return extracted, meta
 
@@ -886,7 +890,9 @@ def build_compare2(config_path):
             'numeric_config': {'path': str(cfg['_config_path']), 'sha256': cfg['_config_sha256']},
             'density_dir': str(cfg2.density_dir),
             'manifests': {role: {'source_payload_hash': metas[role]['source_payload_hash'],
-                                 'input_hash': metas[role]['input_hash']} for role in ROLES},
+                                 'input_hash': metas[role]['input_hash'],
+                                 **({'distance_filter': metas[role]['distance_filter']}
+                                    if 'distance_filter' in metas[role] else {})} for role in ROLES},
             'case_exclusions': {role: metas[role].get('case_exclusions') for role in ROLES},
             'constants': {'vi_line_divisor': VI_LINE_DIVISOR, 'vi_pixel_divisor': VI_PIXEL_DIVISOR,
                           'cno_factor': CNO_FACTOR, 'crp_default_other': CRP_DEFAULT_OTHER,

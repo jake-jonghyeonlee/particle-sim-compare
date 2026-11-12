@@ -371,6 +371,13 @@ def _scan_side(cfg, info, top_buckets, keys, diameter, size, origin_for, states,
     if configured is None:
         raise NumericContractError('compare2_condition_assignment_required', f'{info["role"]}: condition_assignment needed')
     dataset = configured[1]
+    recorded = info.get('recorded_input_hash')
+    current = (getattr(dataset, 'provenance', None) or {}).get('input_hash')
+    if recorded is not None and current is not None and current != recorded:
+        raise NumericContractError(
+            'compare2_input_hash_mismatch',
+            f'{info["role"]}: compare2.json used input_hash {recorded}, the data and settings now give {current} '
+            '(for example the thk_info file changed): 02(compare2)를 다시 실행')
     lineage = {}
     for case in dataset.cases:
         if case.pair_id is not None:
@@ -1842,6 +1849,14 @@ def _short_sha(value):
 def _inputs_table(doc, view):
     rows = [('compare2 결과', f'compare2.json (sha256 {_short_sha(view["json_sha"])})'),
             ('제외 규칙', f'SD2·SD3·PXL 이 낀 수직 단락은 기존 계산 방식에 따라 제외 (규칙 {_e(CASE_EXCLUSION_RULE)})')]
+    parts = []
+    for role, word in (('reference', 'A'), ('target', 'B')):
+        block = ((((doc.get('inputs') or {}).get('manifests') or {}).get(role)) or {}).get('distance_filter')
+        if isinstance(block, dict):
+            parts.append(f'{word}: 켜짐 · {_e(block.get("file_name"))} · 필터된 case {_e(block.get("filtered_cases"))}개')
+        else:
+            parts.append(f'{word}: 꺼짐')
+    rows.append(('층간 거리 필터', '<br>'.join(parts)))
     selected = _diameters_text(doc)
     rows.append(('이물 크기 선택', _e(selected) if selected else '필터 없음(모든 이물 크기)'))
     link = view['link']
@@ -2338,6 +2353,21 @@ def build_report(compare2_dir, config_path, out, *, candidates_dir=None, confirm
             raise NumericContractError(
                 'compare2_input_mismatch',
                 f'{role}: compare2.json used source_payload_hash {recorded}, the data now has {loaded}')
+    from .interlayer_distance import DISTANCE_FILTER_RULE
+    for role in ROLES:
+        manifest = ((doc.get('inputs') or {}).get('manifests') or {}).get(role) or {}
+        info = infos[role]
+        # B2: the hash 07 computes when it opens the data for the maps is compared in _scan_side (the one place that
+        # builds the configured dataset); the stale-rule check needs no dataset
+        info['recorded_input_hash'] = manifest.get('input_hash')
+        key_set = ((info['section'].get('condition_assignment') if isinstance(info['section'], dict) else None) or {}
+                   ).get('interlayer_distance_path') is not None
+        recorded_rule = (manifest.get('distance_filter') or {}).get('rule')
+        if key_set and recorded_rule != DISTANCE_FILTER_RULE:
+            raise NumericContractError(
+                'compare2_stale_distance_filter_rule',
+                f'{role}: compare2.json distance filter rule is {recorded_rule!r}, this code uses '
+                f'{DISTANCE_FILTER_RULE!r}: 02(compare2)를 새 번들로 다시 실행')
     dl1_search = list(dl1_search or ())
     link = loc = None
     if any(value is not None for value in (candidates_dir, confirm_dir, windows_dir)) or dl1_search:

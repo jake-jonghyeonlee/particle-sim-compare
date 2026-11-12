@@ -338,16 +338,30 @@ def _electrode_set_key(identity, endpoints):
     return (identity.product_id, identity.design_version, identity.frame_id, frozenset(e.electrode_id for e in endpoints))
 
 
+_NEAR_INDEX = {'cases': None, 'size': -1, 'index': None}
+
+
+def _near_index(cases):
+    """electrode-set key -> [(sort key, case_id)] for one case list, built once and reused for every pair (A1).
+
+    The cache holds the last list it indexed; a different list object, or one whose length changed, rebuilds it."""
+    if _NEAR_INDEX['cases'] is not cases or _NEAR_INDEX['size'] != len(cases):
+        index = {}
+        for case in cases:
+            order = (tuple(sorted((e.electrode_id, e.actual_layer or '') for e in case.endpoints)), case.identity.case_id)
+            index.setdefault(_electrode_set_key(case.identity, case.endpoints), []).append(order)
+        for rows in index.values():
+            rows.sort()
+        _NEAR_INDEX.update(cases=cases, size=len(cases), index=index)
+    return _NEAR_INDEX['index']
+
+
 def _near_case_ids(cases, side, limit=10):
-    """case_id of cases with the side's product / design / frame and electrode set, ignoring layers (diagnostic only)."""
+    """(case_ids, truncated): cases with the side's product / design / frame and electrode set, ignoring layers
+    (diagnostic only). Sorted by (electrodes, layers, case_id); at most `limit`, truncated=True when more matched (A2)."""
     key = (side.product_id, side.design_version, side.frame.frame_id, frozenset(e.electrode_id for e in side.endpoints))
-    found = []
-    for case in cases:
-        if _electrode_set_key(case.identity, case.endpoints) == key:
-            found.append(case.identity.case_id)
-            if len(found) >= limit:
-                break
-    return found
+    rows = _near_index(cases).get(key, [])
+    return [case_id for _, case_id in rows[:limit]], len(rows) > limit
 
 
 def _named_filter(candidates, side: BoundSide):
@@ -728,7 +742,10 @@ def _named_pair(reference, target, pair, diameter, window_a, window_b, union_a=N
             if matches:
                 out.setdefault('candidates', {})[label] = [c.identity.case_id for c in matches]
             else:
-                out.setdefault('candidates', {})[label] = _near_case_ids(dataset.cases, side)
+                near, truncated = _near_case_ids(dataset.cases, side)
+                out.setdefault('candidates', {})[label] = near
+                if truncated:
+                    out['candidates_truncated'] = True
             continue
         case = matches[0]
         out['cases'][label] = {'case_id': case.identity.case_id, 'failure_type': case.failure_type,

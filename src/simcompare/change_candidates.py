@@ -21,6 +21,7 @@ import sys
 import numpy as np
 
 from . import alignment_report, candidates, change_map, layer_align, local_align, template_export
+from .interlayer_distance import record_block
 from .numeric_schema import DIAMETERS_UM, NumericContractError, diameter_key, is_cno_case
 
 DIAMETER_UM = 5
@@ -2130,6 +2131,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
               'cnt': {name: {'product_id': products[name].product_id, 'files_sha256': _sha_json(cnt[name]['files']),
                              'n_files': len(cnt[name]['files'])} for name in products}}
     for name, side in sides.items():
+        block = record_block(getattr(side.dataset, 'provenance', None))
+        if block is not None:       # filter off = no key = the baseline's bytes
+            inputs[name]['distance_filter'] = block
         if side.export_path is not None:
             inputs[name]['export_sha256'] = candidates._sha256_file(side.export_path)
         if side.index is not None and side.index['path'] is not None:

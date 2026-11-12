@@ -42,6 +42,22 @@ class DistanceTable(NamedTuple):
                 'distances_um': {'+'.join(pair): canonical(value) for pair, value in sorted(self.pairs.items())}}
 
 
+def record_block(provenance) -> Optional[dict]:
+    """The `distance_filter` block written into compare2.json / candidates / local_delta from a dataset provenance.
+
+    None when the filter is off (no key): the caller then writes nothing, so the output bytes stay those of the
+    baseline. Nothing is recomputed: every value is the one configured_dataset put into the provenance."""
+    raw = (provenance or {}).get('distance_filter')
+    if not raw:
+        return None
+    distances = raw.get('distances_um') or {}
+    looked_up = sorted(raw.get('looked_up_pairs') or ())
+    return {'rule': raw.get('rule'), 'file_name': raw.get('file_name'), 'source_sha256': raw.get('file_sha256'),
+            'table_sha256': raw.get('table_sha256'), 'unit_assumption': 'um',
+            'filtered_records': raw.get('filtered_records'), 'filtered_cases': raw.get('filtered_cases'),
+            'layer_pair_distances': {name: distances.get(name) for name in looked_up}}
+
+
 def canonical(value: Decimal) -> str:
     """One spelling per value: 3, 3.0 and 3e0 are all '3'."""
     if value == 0:

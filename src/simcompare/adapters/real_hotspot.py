@@ -1909,7 +1909,8 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                         DISTANCE_FILTER_RULE+distance_table.table_sha256)).encode('ascii')).hexdigest()
     distance_provenance = ({} if distance_table is None else
                            {'distance_filter': {**distance_table.summary(), 'filtered_records': filtered_records,
-                                                'filtered_cases': filtered_cases}})
+                                                'filtered_cases': filtered_cases,
+                                                'looked_up_pairs': sorted('+'.join(pair) for pair in vertical_pairs)}})
     provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw, **distance_provenance,
                   'pair_table_version': next(iter(pairs.values())).table_version if pairs else None,
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),
