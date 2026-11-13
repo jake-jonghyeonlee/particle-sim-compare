@@ -212,3 +212,60 @@ def test_h_copied_row_and_omitted_row_differ_only_in_presence_and_conditions(tmp
 def tc_numbers(doc, role):
     side = doc['sides'][role]
     return side['lambda']['line'], side['lambda']['pixel'], side['vi_line'], side['vi_pixel']
+
+
+# ---- T2 (i) A4: an expected-only case without a distance row behaves in 04 / 06 / 02 as it does without the key ------------
+
+def _layer_coverage(ds, diameter):
+    from simcompare.electrode_map import compute_electrode_maps
+    layer = next(m for m in compute_electrode_maps(ds, diameter_um=diameter).layers if m.key.layer == 'L2')
+    return layer, {e.get('identity', e)['case_id'] for e in layer.coverage['missing']}
+
+
+def test_i_04_and_06_see_the_unfiltered_expected_case_as_without_the_key(tmp_path):
+    from simcompare.linepixel import compute_areas
+    from simcompare.measurement import measure_full_mask
+    cases = tc.base_cases()
+    expected = [ONLY_L1L2]
+    # the table has no L1+L2 row (only the same-layer row): the expected case is unfiltered; the baseline has no table
+    keyed = make(tmp_path / 'keyed', 'L1L1\t1\n', expected, cases)
+    (tmp_path / 'plain').mkdir()
+    plain = make(tmp_path / 'plain', None, expected, cases)
+    assert keyed.provenance['distance_filter']['unfiltered_expected_cases'] == 1
+    for d in (1.0, 2.0, 3.0, 4.0):
+        layer_k, missing_k = _layer_coverage(keyed, d)
+        layer_p, missing_p = _layer_coverage(plain, d)
+        assert ONLY_L1L2 in missing_k and missing_k == missing_p                 # every diameter: coverage missing
+        assert 'source_case_missing' in layer_k.reasons and layer_k.reasons == layer_p.reasons
+        assert measure_full_mask(case_of(keyed, ONLY_L1L2).records[d]).status == \
+               measure_full_mask(case_of(plain, ONLY_L1L2).records[d]).status
+    groups_k = {(k.analysis_layer, k.diameter_um): (g.union.status, g.union.reasons) for k, g in compute_areas(keyed).groups.items()}
+    groups_p = {(k.analysis_layer, k.diameter_um): (g.union.status, g.union.reasons) for k, g in compute_areas(plain).groups.items()}
+    assert groups_k == groups_p
+    group = groups_k[('L2', 3.0)]
+    assert group[0] in ('partial', 'unavailable') and 'expected_case_folder_missing' in group[1]
+
+
+def test_i_02_counts_the_unfiltered_expected_case_as_absent_and_07_ends_with_the_flagged_line(tmp_path, monkeypatch):
+    code, out = run_02(tmp_path, monkeypatch, HEAD + 'L1L1\t1\n')
+    doc = tc.load(out)
+    assert code == 0 and doc['sides']['target']['absent_expected_cases'] == {'names': ['vertical_short-X-L1-Y-L2'], 'count': 1}
+    assert report(tmp_path, out)[0] in (0, 3)
+
+
+# ---- T2 (j) A5: deleting the copied row changes the input hash ------------------------------------------------------------
+
+def test_j_deleting_the_copied_row_is_refused_by_07_until_02_is_rerun(tmp_path, monkeypatch):
+    import json
+    code, out = run_02(tmp_path, monkeypatch, HEAD + 'L1L2\t3\n')       # the row is copied: the expected case is filtered
+    assert code == 0
+    assert report(tmp_path, out, name='same')[0] in (0, 3)             # an unchanged thk is accepted
+    (tmp_path / 'thk_target.txt').write_text(HEAD + 'L1L1\t1\n', encoding='utf-8')       # the copied row is deleted
+    exit_code, folder = report(tmp_path, out, name='changed')
+    assert exit_code == 2 and not (folder / 'report.html').exists()
+    assert json.loads((folder / 'error.json').read_text(encoding='utf-8'))['code'] == 'compare2_input_hash_mismatch'
+    assert main(['compare2', '--config', str(tmp_path / 'compare2.yaml')]) == 0       # 02 again with the new thk
+    exit_code, folder = report(tmp_path, out, name='fresh')
+    assert exit_code in (0, 3)
+    html = (folder / 'report.html').read_text(encoding='utf-8')
+    assert 'B: 켜짐 · thk_target.txt · 필터된 case 0개 · 거리 없는 기대 case 1개' in html

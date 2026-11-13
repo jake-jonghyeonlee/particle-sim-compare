@@ -35,6 +35,7 @@ from test_etx_stage1_expected_cases import _make_runner
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = {'reference': 'QA4_R00', 'target': 'QA4_T00'}
+VERTICAL_CASE = 'vertical_short-A-L1-C-L2'     # only in the target's (and the model's) hotspot tree; the reference thk has no L1+L2 row
 STAGE_ARGS = {'--align-search-um': '3', '--align-min-dice': '0.3', '--align-layer-tolerance-um': '0.5',
               '--change-tolerance-um': '0.2', '--top-k': '3'}   # small synthetic world (40 x 42 um); --window-um comes from compare2.yaml
 FLOW_COMMANDS = ['import-hotspots', 'import-hotspots', 'import-electrode-assets', 'import-electrode-assets', 'compare2',
@@ -100,6 +101,17 @@ def _write_hotspot_tree(root, side):
             writer = csv.writer(handle)
             writer.writerow(['defect_size(um)', 'Area(um2)'])
             writer.writerow(['5', f'{int(mask.sum()) * PITCH * PITCH:.2f}'])
+    if side == 'target':    # vdist-expected: a vertical case only the target has; the reference only expects it (--expected-cases-from-roots)
+        folder = root / 'images' / VERTICAL_CASE
+        (folder / 'result').mkdir(parents=True)
+        save_black(folder / '1.png', pattern(1))
+        save_black(folder / '2.png', pattern(3))
+        mask = rect(60, 300, 10, 10)
+        Image.fromarray(mask.astype(np.uint8) * 255).save(folder / 'hotspot_vertical_short05.png')
+        with (folder / 'result/vertical_short.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+            writer = csv.writer(handle)
+            writer.writerow(['defect_size(um)', 'Area(um2)'])
+            writer.writerow(['5', f'{int(mask.sum()) * PITCH * PITCH:.2f}'])
 
 
 def _write_dl1(dl1, side, product=None):
@@ -147,7 +159,8 @@ def _assignment(model_folder, product):
     return {'product_id': product, 'design_version': 'DESIGN', 'source_id': 'SOURCE', 'process_step_id': 'STEP',
             'exposure_id': 'EXPOSURE', 'unit_id': 'UNIT', 'pair_table_path': 'data/input/pairs.csv',
             'interlayer_distance_path': f'data/input/thk_info-{model_folder}.txt', 'electrode_roles': dict(ROLES),
-            'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'}]}
+            'layer_stack': [{'actual_layer': 'L1', 'stack_order': 1, 'density_process_layer': 'P1'},
+                            {'actual_layer': 'L2', 'stack_order': 2, 'density_process_layer': 'P2'}]}
 
 
 def _write_models_yaml(base, with_assets):
@@ -224,10 +237,12 @@ def _write_inputs(base, with_models):
         _write_new_structure(base / 'data/input/dl1', 'target', MODEL_PRODUCT)
         names['model'] = MODEL_FOLDER
     for model in names.values():
-        (base / f'data/input/thk_info-{model}.txt').write_text('layers\tdistance\nL1L1\t0\n', encoding='utf-8')
+        # the reference thk has no L1+L2 row: its only vertical case is expected-only (the target and the model have the folder)
+        rows = 'L1L1\t0\n' if model == MODELS['reference'] else 'L1L1\t0\nL1L2\t1\n'
+        (base / f'data/input/thk_info-{model}.txt').write_text('layers\tdistance\n' + rows, encoding='utf-8')
     (base / 'data/input/pairs.csv').write_text(
         'pair_id,electrode_a_id,electrode_b_id,class,pair_table_version\nAB,A,B,line,pair-v1\nAC,A,C,line,pair-v1\n', encoding='utf-8')
-    write_density(base / 'data/input/density', 'grp', {'P1': {5: 1.0}}, {'P1': {5: 1.0}})
+    write_density(base / 'data/input/density', 'grp', {'P1': {5: 1.0}, 'P2': {5: 1.0}}, {'P1': {5: 1.0}, 'P2': {5: 1.0}})
     _write_real_yaml(base)
     _write_compare2_yaml(base)
 
@@ -349,6 +364,21 @@ def test_stage_two_and_seven_write_the_vi_comparison_and_the_report(chain):
     assert (base / 'data/compare2_report/report.html').is_file() and (base / 'data/compare2_report/report.json').is_file()
     text = chain.logs['main']
     assert "--candidates 'data/changes'" in text and "--windows 'data/local'" in text      # 07 links the 04 and 06 outputs
+
+
+def test_a_target_only_vertical_case_without_a_reference_thk_row_runs_through_the_chain(chain):
+    """vdist-expected: the reference expects the target's vertical case, its thk has no L1+L2 row; the chain still exits 0 / 3."""
+    base = chain.base
+    doc = json.loads((base / 'data/compare2/compare2.json').read_text(encoding='utf-8'))
+    reference = doc['inputs']['manifests']['reference']['distance_filter']
+    target = doc['inputs']['manifests']['target']['distance_filter']
+    assert reference['unfiltered_expected_cases'] == 1 and reference['unfiltered_expected_pairs'] == ['L1+L2']
+    assert 'unfiltered_expected_cases' not in target and target['layer_pair_distances'] == {'L1+L2': '1'}
+    assert doc['sides']['reference']['absent_expected_cases']['names'] == [VERTICAL_CASE]
+    html = (base / 'data/compare2_report/report.html').read_text(encoding='utf-8')
+    assert 'A: 켜짐 · thk_info-QA4_R00.txt · 필터된 case 0개 · 거리 없는 기대 case 1개' in html
+    assert 'B: 켜짐 · thk_info-QA4_T00.txt' in html and html.count('거리 없는 기대 case') == 1     # only the reference side says it
+    assert 'compare2-report exit 0' in chain.logs['main'] or 'compare2-report exit 3' in chain.logs['main']
 
 
 def test_stage_four_writes_the_change_roi_outputs_and_the_direct_correspondence(chain):
