@@ -1857,7 +1857,9 @@ def _inputs_table(doc, view):
     for role, word in (('reference', 'A'), ('target', 'B')):
         block = ((((doc.get('inputs') or {}).get('manifests') or {}).get(role)) or {}).get('distance_filter')
         if isinstance(block, dict):
-            parts.append(f'{word}: 켜짐 · {_e(block.get("file_name"))} · 필터된 case {_e(block.get("filtered_cases"))}개')
+            unfiltered = block.get('unfiltered_expected_cases')
+            extra = f' · 거리 없는 기대 case {_e(unfiltered)}개' if unfiltered else ''
+            parts.append(f'{word}: 켜짐 · {_e(block.get("file_name"))} · 필터된 case {_e(block.get("filtered_cases"))}개{extra}')
         else:
             parts.append(f'{word}: 꺼짐')
     rows.append(('층간 거리 필터', '<br>'.join(parts)))

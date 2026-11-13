@@ -1643,7 +1643,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
         raise NumericContractError('real_common_frame_shape_required')
     frame_id = frame_spec['frame_id']
     cases, unresolved = [], []
-    filtered_records = filtered_cases = 0
+    filtered_records = filtered_cases = unfiltered_cases = 0
     max_group_cells = assignment.get('max_group_mask_cells', 5_000_000_000)
     max_source_cells = assignment.get('max_materialized_source_cells', 6_000_000_000)
     max_operation_bytes = assignment.get('max_operation_bytes', 8 * 1024**3)
@@ -1671,30 +1671,35 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
         raise NumericContractError('invalid_real_cno_cases')
     # Interlayer-distance rule (after the SD2/SD3/PXL exclusion of the loader): the layer pairs of the vertical shorts
     # that remain, discovered and expected, must all have a distance before anything is computed.
-    vertical_pairs = set()
+    discovered_pairs, expected_pairs = set(), set()
     for raw_case in manifest['cases']:
         if raw_case['failure_type'] == 'vertical_short':
             ends = [ep['actual_layer'] for ep in raw_case['endpoints']]
             if any(layer not in stack for layer in ends):   # the layer check comes before the distance check
                 raise NumericContractError('real_actual_layer_unassigned', raw_case['case_name'])
             if ends[0] != ends[1]:
-                vertical_pairs.add(tuple(sorted(ends)))
+                discovered_pairs.add(tuple(sorted(ends)))
     for missing_name in sorted(set(manifest.get('expected_cases') or ()) - {c['case_name'] for c in manifest['cases']}):
         defect, _, layer_a, _, layer_b = _case_name(missing_name)
         if defect == 'vertical_short' and layer_a != layer_b:
             if layer_a not in stack or layer_b not in stack:
                 raise NumericContractError('real_actual_layer_unassigned', missing_name)
-            vertical_pairs.add(tuple(sorted((layer_a, layer_b))))
+            expected_pairs.add(tuple(sorted((layer_a, layer_b))))
+    vertical_pairs = discovered_pairs | expected_pairs
     if distance_table is None and config_dir is not None and require_distance and vertical_pairs:
         raise NumericContractError('interlayer_distance_path_required',
                                    'condition_assignment.interlayer_distance_path is required: the input has vertical '
                                    f'short cases ({len(vertical_pairs)} layer pairs)')
+    unfiltered_pairs = set()   # layer pairs of expected-only cases (no folder) that the table has no row for
     if distance_table is not None:
-        absent = sorted(pair for pair in vertical_pairs if pair not in distance_table.pairs)
+        # Only pairs of discovered cases need a distance. An expected case without a folder may lack one: it has no
+        # geometry to filter, so it stays missing for every diameter (recorded as unfiltered_expected_*).
+        absent = sorted(pair for pair in discovered_pairs if pair not in distance_table.pairs)
         if absent:
             raise NumericContractError('interlayer_distance_missing_pairs',
                                        f'{len(absent)} layer pairs without a distance: '
                                        + ', '.join('+'.join(pair) for pair in absent))
+        unfiltered_pairs = {pair for pair in expected_pairs if pair not in distance_table.pairs}
     group_counts, observed_count = {}, 0
     for raw_case in manifest['cases']:
         a, b = raw_case['endpoints']
@@ -1851,6 +1856,8 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                 evidence = _distance_evidence(distance_table, endpoints, d)
                 if evidence is not None:
                     dropped[_dkey(d)] = evidence
+            if distance_table is not None and tuple(sorted((la, lb))) in unfiltered_pairs:
+                unfiltered_cases += 1   # no distance row: nothing to filter, every diameter stays missing
         if dropped:
             # some diameters are dropped by the distance rule (observed, empty); the others stay missing
             lazy = {float(d): ({'diameter_um': d}, 'observed', (), None, 1e-9, 'empty') if _dkey(d) in dropped else
@@ -1926,10 +1933,14 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
     # The distance file path is not part of the hash (the same table content gives the same hash from any place);
     # the rule and the normalised table are, below.
     assignment_hash, pair_hash, configured_hash = _input_hash_parts(manifest, assignment, table_path, distance_table)
+    looked_up_pairs = vertical_pairs - unfiltered_pairs
     distance_provenance = ({} if distance_table is None else
                            {'distance_filter': {**distance_table.summary(), 'filtered_records': filtered_records,
                                                 'filtered_cases': filtered_cases,
-                                                'looked_up_pairs': sorted('+'.join(pair) for pair in vertical_pairs)}})
+                                                'looked_up_pairs': sorted('+'.join(pair) for pair in looked_up_pairs),
+                                                **({'unfiltered_expected_pairs': sorted('+'.join(pair) for pair in unfiltered_pairs),
+                                                    'unfiltered_expected_cases': unfiltered_cases}
+                                                   if unfiltered_cases else {})}})
     provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw, **distance_provenance,
                   'pair_table_version': next(iter(pairs.values())).table_version if pairs else None,
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),

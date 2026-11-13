@@ -52,10 +52,14 @@ def record_block(provenance) -> Optional[dict]:
         return None
     distances = raw.get('distances_um') or {}
     looked_up = sorted(raw.get('looked_up_pairs') or ())
-    return {'rule': raw.get('rule'), 'file_name': raw.get('file_name'), 'source_sha256': raw.get('file_sha256'),
-            'table_sha256': raw.get('table_sha256'), 'unit_assumption': 'um',
-            'filtered_records': raw.get('filtered_records'), 'filtered_cases': raw.get('filtered_cases'),
-            'layer_pair_distances': {name: distances.get(name) for name in looked_up}}
+    block = {'rule': raw.get('rule'), 'file_name': raw.get('file_name'), 'source_sha256': raw.get('file_sha256'),
+             'table_sha256': raw.get('table_sha256'), 'unit_assumption': 'um',
+             'filtered_records': raw.get('filtered_records'), 'filtered_cases': raw.get('filtered_cases'),
+             'layer_pair_distances': {name: distances.get(name) for name in looked_up}}
+    if raw.get('unfiltered_expected_cases'):   # only when > 0: expected cases without a folder and without a distance row
+        block['unfiltered_expected_pairs'] = list(raw.get('unfiltered_expected_pairs') or ())
+        block['unfiltered_expected_cases'] = raw['unfiltered_expected_cases']
+    return block
 
 
 def canonical(value: Decimal) -> str:
