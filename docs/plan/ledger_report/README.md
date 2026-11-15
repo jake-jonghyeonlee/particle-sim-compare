@@ -371,9 +371,9 @@ CNO (종류 CNO, 목업에서 K6):
 | 항목 | 위치 | 근거 |
 |---|---|---|
 | 전역 offset | `alignment.json` `offset_xy_px`(`[dx, dy]`, int), `pitch_um` | `change_candidates.py:1643-1644, 1657` |
-| unit offset | `alignment.json` `unit_offsets[]`(`unit_align_um` 를 줬을 때만): 각 항목 `region_px = [y0, y1, x0, x1]`(reference px, **끝 미포함**), `offset_xy_px = [dx, dy]`(**x 먼저**), `applied`(bool), `offset_xy_um`, `delta_xy_px`, `unit_index_xy = [x, y]` | `change_candidates.py:1150-1163`. 정렬 `order`·`regions` 는 `UnitGeometry.unit_regions()`(`layer_align.py:63-69`), `alignment_doc.update(unit['doc'])` 는 `change_candidates.py:1700`. `unit_offsets` 키 자체는 `unit['doc']` 안에 있다(키 이름을 이 절에서 직접 읽지 못함 → T3 가 `change_candidates.py:1164` 이후 doc 조립부에서 재확인) |
+| unit offset | `alignment.json` `unit_offsets[]`(`unit_align_um` 를 줬을 때만): 각 항목 `region_px = [y0, y1, x0, x1]`(reference px, **끝 미포함**), `offset_xy_px = [dx, dy]`(**x 먼저**), `applied`(bool), `offset_xy_um`, `delta_xy_px`, `unit_index_xy = [x, y]` | `change_candidates.py:1150-1163`. 정렬 `order`·`regions` 는 `UnitGeometry.unit_regions()`(`layer_align.py:63-69`), `alignment_doc.update(unit['doc'])` 는 `change_candidates.py:1700`. **T4 확정**: `unit_offsets` 는 `unit['doc']` 의 키다(`change_candidates.py:1165` `doc = {'layer_global_check': global_doc, 'unit_offsets': units, ...}`)이고, `alignment.json` 최상위로 합쳐진다(`:1700`). 항목 키 `region_px`·`offset_xy_px`·`unit_index_xy`·`applied` 는 `:1159` `record.update(...)` 와 같다. offset 은 적용 안 된 unit 도 전역 offset 이다(`:1153`) |
 | stretch | `alignment.json` `stretch.path = 'stretch_map.json'`(요약), 본문은 `stretch_map.json` | `change_candidates.py:1244-1254, 1704, 1752` |
-| stretch 타일 | `stretch_map.json` `tiles[]`: 레코드마다 `applied`, `offset_source`, offset 은 `field` 튜플 `(y0, y1, x0, x1, dx, dy)` 와 같은 값. 조회 `lookup(y, x)` 가 `((dx, dy), offset_source, 타일 색인)` | `change_candidates.py:1238-1243`. 레코드의 정확한 키 이름은 `records` 조립부(`:1200-1237`)에서 T3 가 확인 |
+| stretch 타일 | `stretch_map.json` `tiles[]`: 레코드마다 `applied`, `offset_source`, offset 은 `field` 튜플 `(y0, y1, x0, x1, dx, dy)` 와 같은 값. 조회 `lookup(y, x)` 가 `((dx, dy), offset_source, 타일 색인)` | `change_candidates.py:1238-1243`. **T4 확정**: `stretch_map.json` 의 키는 `tiles`(`change_candidates.py:1254` `'units': unit_docs, 'tiles': records`)이고 파일은 `:1752` 가 쓴다. 레코드 키는 `layer_align.py:516-521`(`unit_index_xy`, `tile_index_xy`, `region_px = [y0, y1, x0, x1]`, `applied`)와 `:563-566`(`offset_xy_px = [dx, dy]`, `offset_source`)이다. 적용 안 된 타일도 `offset_xy_px` 는 시작 offset 이라 field 칸으로 쓴다 |
 | frame 크기 | `alignment.json` `frame_shape_reference_yx`, `frame_shape_target_yx`, `frame_anchor = 'top_left_index'` | `change_candidates.py:1602-1613, 1741` |
 | 입력 지문 | `candidate_queries_v1.json` `inputs.config_sha256`, `inputs.reference/target`(`condition_assignment_sha256`, `asset_manifest`, `electrode_import_record` 등 `input_record` 와 `product_ids`), `inputs.cnt.<reference|target>.product_id` | `change_candidates.py:2128-2132`, `candidates.py:200-224` |
 | 적용 모드 | `candidate_queries_v1.json` `change_args.apply_align` ∈ {`diagnostic`, `unit`, `local`, `stretch`}. 키가 없으면 모드 없음 | `change_candidates.py:66, 759-760, 2175-2180, 2189` |
@@ -403,7 +403,15 @@ CNO (종류 CNO, 목업에서 K6):
 - 대응 조건: (1) offset 출처 상태 ok, (2) 위 spread 통과, (3) `T_i` 가 B frame 안, (4) 그 쌍의 A membership(이동 후)과 B membership 이 `--coord-tolerance-um` 허용으로 겹치는 비율 ≥ `--coord-min-overlap`. 충돌 처리는 18.4 의 G1 3단계다.
 - 비교는 change_kind 가 같은 쌍 변화·변화 없음이고 item 이 양쪽에 있는 쌍만 한다. 그 밖(B-only·A-only·레이어 변경 쌍)은 "있는 쪽 값만" 표에 side 를 밝혀 넣는다. 레이어 변경 쌍은 양쪽 위치·값을 각각 보인다.
 - 04 없음·진단 모드·stale 이면 모든 줄이 제품별 "있는 쪽 값만" 이다(A 사각형을 B 에 그대로 쓰지 않는다).
-- 띠 코드: `coords_not_applied`, `coords_stale`, `coords_unavailable`, `coords_resolution_too_coarse`.
+- 띠 코드: `coords_not_applied`, `coords_stale`, `coords_unavailable`, `coords_resolution_too_coarse`, 그리고 `--candidates` 를 주지 않았을 때의 `coords_no_candidates`(T4 가 더함, D4 의 "맨 위 띠 1줄"). `doc['bands']` 는 `{code, detail}` 목록이다. 카드 `match.reason` 은 대응을 못 한 이유를 같은 코드로 적는다.
+- T4 가 정한 세부(계획에 없던 부분):
+  - **spread**: field 칸 offset 의 서로 차이는 축별 최댓값(체비쇼프, `max(|Δdx|, |Δdy|)` × pitch)이 `--coord-offset-spread-um` 이내여야 한다. 초과 → 줄 사유 `offset_spread`. 겹치는 칸이 없으면 `no_field_cell`.
+  - **범위로 쓰는 박스**: 줄의 최종 사각형(`fbox`, 타일 단위)을 reference px 로 바꿔 field 칸과 겹침 면적을 센다.
+  - **지문 비교**: `inputs.config_sha256` = 현재 numeric config 파일의 sha256, `inputs.<role>.condition_assignment_sha256` = `candidates._canonical_sha(condition_assignment)`, `inputs.cnt.<role>.product_id` = `condition_assignment.product_id`, `alignment.json` `frame_shape_reference_yx`·`frame_shape_target_yx`·`pitch_um`. 값이 다르면 `coords_stale`, 키가 없으면 `coords_unavailable`.
+  - **대응 줄 거부 사유**: `b_conflict`(앞 줄 T 와 겹침), `outside_b_frame`, `low_membership_overlap`(대응 비율 < `--coord-min-overlap`), `offset_spread`, `no_field_cell`.
+  - 대응 membership 비율 = 이동한 A membership(그 줄 소유 타일 안) 중 B membership 이 `ceil(tol/tile)` 타일(체비쇼프) 안에 있는 비율.
+  - `unit`·`local`(unit 있음) 은 `unit_offsets[]`, `stretch` 는 `stretch_map.json.tiles[]`, `local` 에 unit 정렬이 없으면 `alignment.json.offset_xy_px` 하나를 frame 전체 칸으로 쓴다.
+  - **가장자리 한계(남은 의문)**: 창은 frame 중앙의 U 크기 영역이고 frame = U + 2m 이므로, 창 안 성분의 범위가 frame 밖으로 나가면(r > m) ±U 복사본은 항상 반대편 가장자리를 넘는다(오른쪽 끝 = 성분 위치 + 상자 폭 + U > U + 2m). 그래서 실제 자료에서 `repeat_used` 는 거의 나오지 않고 `excluded`(`edge_no_repeat_position`)가 된다. 코드는 계약대로 두었고 `repeat_used` 경로는 합성 전극 격자 단위 테스트로만 확인했다.
 
 ## 20. 보고서 2절·5절 표시 규칙
 
@@ -468,6 +476,12 @@ CNO (종류 CNO, 목업에서 K6):
 | `sides.<role>.items[]` | `item_id`(ledger 와 같음), `pair_id`, `kind`, `layers`, `number`(번호 PNG 의 번호), `value`(`ledger.json` 의 그 side 값), `tile_sum`(타일 합), `diameter_um` 영역 유무, `hidden_px`, `status`(`ok`, `no_map_area`, `pending`) | item 값은 `ledger.json` 값과 같다 |
 | `sides.<role>.maps[]` | `file`(`map_<role>_<nnn>_<el|it>.png`), `layer`, `kind`(el/it), `px_um`, `shape`, `numbers`(번호별 픽셀 수) | 자기 검사에 쓴다 |
 | `cards[]` | `kind`, `pair_id`, `rank`, `delta`, `rows`(줄 목록: `type`(선형/점형), `rect`, `edge`(`none`/`repeat_used`/`excluded`), `side`, `pair`(이 쌍 값), `others`(상위 3 + `others_n`), `range_total`, `tiles_lost`), `match`(`matched`/`a_only`/`b_only`/`not_compared` 와 사유 띠), `observed`(`O_A`, `O_B` 값), `section4_ref`(4절 쌍 값), `rounding_error` | 5절 카드 자료 |
+
+**`cards[]` 세부 키(T4 확정)**: 카드 `kind`, `pair_id`, `rank`(종류별 |Δ| 순위), `delta`, `a`, `b`(쌍 값), `change_kind`, `rows`, `match`, `observed`, `section4_ref`, `rows_sum`, `rounding_error_um`.
+- `rows[]`: 제품마다 줄 하나가 항목 하나다(대응 줄은 A 줄과 B 줄 둘이 서로 `match.counterpart` 로 가리킨다). 키 `id`(`A1`…, `B1`…), `side`(`reference`/`target`), `type`(`linear`/`point`), `rect`(frame 물리 µm `[x0, y0, x1, y1]`, 세는 상자), `rect_tiles`(타일 단위), `edge`(`none`/`repeat_used`/`excluded`), `edge_reason`(`coords_resolution_too_coarse`, `edge_no_dl1`, `edge_no_repeat_position`, `edge_mismatch`), `shift_tiles`, `tiles`(최종 집합 타일 수), `tiles_lost`(앞 줄이 가져간 타일 수), `pair`(이 쌍 값, `excluded` 면 null), `others`(`top`[`pair_id`, `value`] 상위 3 + `others_n`·`others_value`), `range_total`, `match`(`status` `matched`/`only`, `reason`, `counterpart`, `offset_px`, `shift_tiles`, `overlap`, `rounding_error_um`, 부분 대응이면 `partial_matched`).
+- `match`: `status`(`matched`/`a_only`/`b_only`/`not_compared`), `reason`(띠 코드·`layer_change` 등), `matched_rows`, `absorbed_b_rows`(B 줄이 대응 줄에 모두 포함된 경우 그 B 줄 번호), `not_listed`(`reference`/`target` 별 최대 줄 수에 못 든 점형 "그 밖 k 곳": `n`, `value`).
+- `observed`·`rows_sum`: 제품별(`reference`/`target`) 관찰 영역 이 쌍 값, 줄 이 쌍 값 합.
+- `checks.range_sum`/`pair_bound`/`partition`: `{status, checked, failed[], failed_count}`. 확인할 줄이 없으면 `not_evaluated`.
 
 세부 키 이름은 T3·T4 가 확정하고 이 표를 고친다. 이 표의 최상위 키와 `sides.<role>.items[]`, `maps[]`, `cards[]`, `checks` 구성은 고정이다.
 

@@ -139,7 +139,11 @@ def test_basic_run_passes_checks_and_records_window_tiles_and_files(tmp_path):
         assert window['unit_source'] == 'config' and window['unit_um'] == [0.2, 0.2]
         assert window['tile_origin_um'] == [50.0, 50.0]
         assert window['origin_um'] == pytest.approx([50.1, 50.1])
-    assert doc['cards'] == [] and doc['checks']['range_sum'] is None
+    # lmap/T4: the cards and checks 3-5 exist now (their details are in test_ledger_maps_cards.py)
+    assert doc['cards']
+    for name in ('range_sum', 'pair_bound', 'partition'):
+        # a one-tile frame: every range leaves the frame (edge: excluded), so nothing is left to check
+        assert doc['checks'][name]['status'] in ('passed', 'not_evaluated'), doc['checks'][name]
     assert doc['options']['tile_um'] == 1.0 and doc['report']['diameter_um'] == 3.0
     execution = json.loads((out / 'execution.json').read_text())
     assert execution['command'] == 'ledger-maps' and execution['exit_code'] == 0

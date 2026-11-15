@@ -28,6 +28,7 @@ from PIL import Image
 from .compare2 import SCHEMA_VERSION as COMPARE2_SCHEMA, _item_id, _json_text, _load_side, stale_reason
 from .compare2_inputs import lambda_factor, load_compare2_config, load_density, size_key
 from .compare2_report import _side_info
+from .electrode_map import _label_runs, _run_counts
 from .numeric_schema import NumericContractError
 
 SCHEMA_VERSION = 'ledger_maps_v1'
@@ -326,6 +327,9 @@ class _SideContext(object):
         self.total_px = {}               # item_id -> display pixels inside the region
         self.sparse = {}                 # item_id -> {'tiles', 'values', 'member'} after finalize
         self.sparse_bytes = 0
+        self.run = None                  # the shared card state (set by run_ledger_maps, None = no cards)
+        self.tile_el = {}                # layer -> tile-resolution DL1 electrode numbers (edge repeat only)
+        self.el_bytes = 0
 
 
 def _tile_index(ctx, flat):
@@ -425,12 +429,827 @@ def _merge_sparse(chunks, budget, what):
     return tiles, values, member
 
 
+# ---- cards (lmap/T4): lines, tile ownership, edge repeat, A-B correspondence, checks 3-5 --------------------------------
+# README 17 (checks 3-5), 18.3-18.4 (window, tile grid, lines, final tile set), 19 (correspondence). Everything below works
+# on tile indices: id = ty * ntx + tx, boxes are (tx0, ty0, tx1, ty1) with the end excluded.
+
+MIN_ROW_TILES = 1
+TOP_OTHERS = 3
+CAND_FILE, ALIGN_FILE, STRETCH_FILE = 'candidate_queries_v1.json', 'alignment.json', 'stretch_map.json'
+APPLIED_MODES = ('unit', 'local', 'stretch')
+COMPARABLE_CHANGE_KINDS = ('same_pair_change', 'no_change')
+_NO_IDS = np.zeros(0, dtype=np.int64)
+
+
+def _ceil_tiles(um, tile_um):
+    return max(1, int(math.ceil(um / tile_um - 1e-9)))
+
+
+def _box_ids(box, ntx, nty):
+    """Sorted ids of the tiles of a box inside the frame."""
+    x0, y0, x1, y1 = max(0, box[0]), max(0, box[1]), min(ntx, box[2]), min(nty, box[3])
+    if x1 <= x0 or y1 <= y0:
+        return _NO_IDS
+    ys = np.arange(y0, y1, dtype=np.int64)
+    xs = np.arange(x0, x1, dtype=np.int64)
+    return (ys[:, None] * ntx + xs[None, :]).ravel()
+
+
+def _box_in_frame(box, ntx, nty):
+    return box[0] >= 0 and box[1] >= 0 and box[2] <= ntx and box[3] <= nty and box[2] > box[0] and box[3] > box[1]
+
+
+def _boxes_overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _clip_box(box, ntx, nty):
+    return (max(0, box[0]), max(0, box[1]), min(ntx, box[2]), min(nty, box[3]))
+
+
+def _shift_box(box, sx, sy):
+    return (box[0] + sx, box[1] + sy, box[2] + sx, box[3] + sy)
+
+
+def _box_value(vt, vv, box, ntx):
+    """Sum of the sparse values (tile ids vt, values vv) inside a box."""
+    if not len(vt):
+        return 0.0
+    ty, tx = vt // ntx, vt % ntx
+    keep = (tx >= box[0]) & (tx < box[2]) & (ty >= box[1]) & (ty < box[3])
+    return math.fsum(vv[keep].tolist())
+
+
+def member_components(member, ntx, win_box):
+    """4-neighbour components of the membership tiles cut to the window box (README 18.4).
+
+    Returns [{'tiles': sorted ids, 'bbox': (tx0, ty0, tx1, ty1)}] in the row-major order of the first tile."""
+    x0, y0, x1, y1 = win_box
+    width, height = x1 - x0, y1 - y0
+    if width <= 0 or height <= 0 or not len(member):
+        return []
+    ty, tx = member // ntx, member % ntx
+    keep = (tx >= x0) & (tx < x1) & (ty >= y0) & (ty < y1)
+    if not keep.any():
+        return []
+    active = np.zeros((height, width), dtype=bool)
+    active[ty[keep] - y0, tx[keep] - x0] = True
+    rows, starts, ends, root = _label_runs(active, _run_counts(active))
+    order = np.argsort(root, kind='stable')
+    cut = np.flatnonzero(np.diff(root[order])) + 1
+    comps = []
+    for lo, hi in zip(np.r_[0, cut].tolist(), np.r_[cut, len(order)].tolist()):
+        members = order[lo:hi]
+        lens = (ends[members] - starts[members]).astype(np.int64)
+        total = int(lens.sum())
+        offsets = np.repeat(np.cumsum(lens) - lens, lens)
+        xs = np.repeat(starts[members].astype(np.int64), lens) + (np.arange(total, dtype=np.int64) - offsets)
+        ys = np.repeat(rows[members].astype(np.int64), lens)
+        comps.append({'tiles': np.sort((ys + y0) * ntx + (xs + x0)),
+                      'bbox': (int(xs.min()) + x0, int(ys.min()) + y0, int(xs.max()) + 1 + x0, int(ys.max()) + 1 + y0)})
+    return comps
+
+
+def _merge_overlapping(boxes):
+    """Boxes whose interiors overlap become one location (bbox union); repeat until none overlaps."""
+    groups = [(tuple(box), 1) for box in boxes]
+    while True:
+        n = len(groups)
+        parent = list(range(n))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        merged, active = False, []
+        for i in sorted(range(n), key=lambda k: (groups[k][0][0], groups[k][0][1])):
+            active = [j for j in active if groups[j][0][2] > groups[i][0][0]]
+            for j in active:
+                if _boxes_overlap(groups[i][0], groups[j][0]):
+                    a, b = find(i), find(j)
+                    if a != b:
+                        parent[max(a, b)] = min(a, b)
+                        merged = True
+            active.append(i)
+        if not merged:
+            return groups
+        joined = {}
+        for i in range(n):
+            root = find(i)
+            box, count = groups[i]
+            if root in joined:
+                old, total = joined[root]
+                box = (min(old[0], box[0]), min(old[1], box[1]), max(old[2], box[2]), max(old[3], box[3]))
+                count += total
+            joined[root] = (box, count)
+        groups = [joined[root] for root in sorted(joined)]
+
+
+def plan_rows(member, vt, vv, ntx, tile_um, win_box, opts):
+    """README 18.4: the rows (lines) of one pair on one product, before tile ownership and the frame test.
+
+    member = the pair's membership tile ids (sorted), vt/vv = its sparse value tiles, win_box = the window in tiles.
+    Returns {'linear': bool, 'rows': [{'type', 'box', ...}], 'others_n', 'others_value', 'components'}; a row box is in
+    tile units and may leave the frame (the edge rule decides)."""
+    reach = _ceil_tiles(opts['range_um'], tile_um)
+    comps = member_components(member, ntx, win_box)
+    for comp in comps:
+        bx0, by0, bx1, by1 = comp['bbox']
+        long_t, short_t = max(bx1 - bx0, by1 - by0), min(bx1 - bx0, by1 - by0)
+        comp['linear'] = (long_t * tile_um >= opts['linear_min_length_um'] - 1e-9
+                          and long_t >= opts['linear_min_aspect'] * short_t - 1e-9)
+    total_cells = sum(len(c['tiles']) for c in comps)
+    linear_cells = sum(len(c['tiles']) for c in comps if c['linear'])
+    pair_linear = bool(comps) and 2 * linear_cells >= total_cells
+    max_rows = opts['max_rows']
+    rows, others_n, others_value = [], 0, 0.0
+    if pair_linear:
+        for comp in comps:
+            if not comp['linear']:
+                continue
+            bx0, by0, bx1, by1 = comp['bbox']
+            along_x = (bx1 - bx0) >= (by1 - by0)
+            lo, hi = (bx0, bx1) if along_x else (by0, by1)
+            s_lo, s_hi = (by0, by1) if along_x else (bx0, bx1)
+            length = hi - lo
+            n = max(1, min(max_rows, int(math.ceil(length * tile_um / opts['segment_um'] - 1e-9))))
+            cuts = [lo + (i * length) // n for i in range(n + 1)]
+            for i in range(n):
+                a0 = cuts[i] - (reach if i == 0 else 0)
+                a1 = cuts[i + 1] + (reach if i == n - 1 else 0)
+                box = (a0, s_lo - reach, a1, s_hi + reach) if along_x else (s_lo - reach, a0, s_hi + reach, a1)
+                rows.append({'type': 'linear', 'box': box, 'segment': i + 1, 'segments': n})
+        if len(rows) > max_rows:
+            for row in rows[max_rows:]:
+                others_n += 1
+                others_value += _box_value(vt, vv, row['box'], ntx)
+            rows = rows[:max_rows]
+    point_comps = [c for c in comps if not (pair_linear and c['linear'])]
+    groups = _merge_overlapping([(c['bbox'][0] - reach, c['bbox'][1] - reach, c['bbox'][2] + reach, c['bbox'][3] + reach)
+                                 for c in point_comps])
+    scored = sorted(((-_box_value(vt, vv, box, ntx), box[1], box[0], box, count) for box, count in groups))
+    slots = max(0, max_rows - len(rows))
+    for neg, _y, _x, box, count in scored[:slots]:
+        rows.append({'type': 'point', 'box': box, 'components': count})
+    for neg, _y, _x, box, count in scored[slots:]:
+        others_n += 1
+        others_value += -neg
+    return {'linear': pair_linear, 'rows': rows, 'others_n': others_n, 'others_value': others_value,
+            'components': len(comps)}
+
+
+def _edge_resolve(index, rows, boxes, ntx, nty, edge):
+    """Row `index` leaves the frame: look for a +-U shifted copy (README 18.4). Returns row fields."""
+    box = boxes[index]
+    if not edge['enabled']:
+        return {'edge': 'excluded', 'edge_reason': edge['reason']}
+    if edge['shift'] is None:
+        return {'edge': 'excluded', 'edge_reason': 'edge_no_repeat_position'}
+    ux, uy = edge['shift']
+    shifts = [(s * ux, 0) for s in (1, -1) if ux] + [(0, s * uy) for s in (1, -1) if uy]
+    shifts += [(sx * ux, sy * uy) for sx in (1, -1) for sy in (1, -1) if ux and uy]
+    clipped = _clip_box(box, ntx, nty)
+    if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+        return {'edge': 'excluded', 'edge_reason': 'edge_no_repeat_position'}
+    fitted = False
+    for sx, sy in shifts:
+        moved = _shift_box(box, sx, sy)
+        if not _box_in_frame(moved, ntx, nty):
+            continue
+        if any(_boxes_overlap(moved, _clip_box(other, ntx, nty)) for k, other in enumerate(boxes) if k != index):
+            continue
+        fitted = True
+        verdict = edge['equiv'](clipped, (sx, sy))
+        if verdict is None:
+            return {'edge': 'excluded', 'edge_reason': 'edge_no_dl1'}
+        if verdict[0] >= edge['min_match'] - 1e-12 and verdict[1] >= edge['min_match'] - 1e-12:
+            return {'edge': 'repeat_used', 'edge_reason': None, 'shift_tiles': [sx, sy], 'fbox': moved,
+                    'edge_match': verdict[0], 'edge_dice': verdict[1]}
+    return {'edge': 'excluded', 'edge_reason': 'edge_mismatch' if fitted else 'edge_no_repeat_position'}
+
+
+def place_rows(rows, ntx, nty, edge):
+    """Edge repeat, then tile ownership: the first row keeps a tile (README 18.4). Returns the placed rows.
+
+    edge = {'enabled', 'reason', 'shift': (ux, uy) | None, 'min_match', 'equiv': f(clipped_box, shift) -> (match, dice) | None}.
+    Each row gets 'edge', 'fbox' (the box that is counted), 'tiles' (sorted ids it owns), 'lost' (tiles another row owns)."""
+    boxes = [row['box'] for row in rows]
+    placed, owned = [], _NO_IDS
+    for index, row in enumerate(rows):
+        row = dict(row)
+        if _box_in_frame(row['box'], ntx, nty):
+            row.update({'edge': 'none', 'edge_reason': None, 'fbox': row['box']})
+        else:
+            row.update(_edge_resolve(index, rows, boxes, ntx, nty, edge))
+            if row['edge'] == 'repeat_used':
+                boxes[index] = row['fbox']
+        if row['edge'] == 'excluded':
+            row.update({'tiles': _NO_IDS, 'lost': 0, 'fbox': row['box']})
+        else:
+            ids = _box_ids(row['fbox'], ntx, nty)
+            free = ids[~np.isin(ids, owned, assume_unique=True)] if len(owned) else ids
+            row.update({'tiles': free, 'lost': int(len(ids) - len(free))})
+            owned = np.union1d(owned, free)
+        placed.append(row)
+    return placed
+
+
+def _row_sums(row_tiles, item_tiles, item_values, nrows):
+    """Per-row sum of an item's sparse values over the tiles each row owns (sorted ids; np.searchsorted)."""
+    ids, owner = row_tiles
+    if not len(ids) or not len(item_tiles):
+        return np.zeros(nrows), np.zeros(nrows, dtype=np.int64)
+    pos = np.searchsorted(ids, item_tiles)
+    pos = np.minimum(pos, len(ids) - 1)
+    hit = ids[pos] == item_tiles
+    which = owner[pos[hit]]
+    return (np.bincount(which, weights=item_values[hit], minlength=nrows),
+            np.bincount(which, minlength=nrows))
+
+
+def _owner_index(rows):
+    parts = [(row['tiles'], np.full(len(row['tiles']), i, dtype=np.int64)) for i, row in enumerate(rows) if len(row['tiles'])]
+    if not parts:
+        return _NO_IDS, _NO_IDS
+    ids = np.concatenate([p[0] for p in parts])
+    owner = np.concatenate([p[1] for p in parts])
+    order = np.argsort(ids, kind='stable')
+    return ids[order], owner[order]
+
+
+def _pair_arrays(ctx, pair_id):
+    """The pair's membership tiles (sorted unique) and its summed sparse values (tile ids, values)."""
+    recs = [rec for rec in ctx.items if rec['pair_id'] == pair_id]
+    members = [ctx.sparse[rec['item_id']]['member'] for rec in recs if len(ctx.sparse[rec['item_id']]['member'])]
+    tiles = [ctx.sparse[rec['item_id']]['tiles'] for rec in recs if len(ctx.sparse[rec['item_id']]['tiles'])]
+    values = [ctx.sparse[rec['item_id']]['values'] for rec in recs if len(ctx.sparse[rec['item_id']]['tiles'])]
+    member = np.unique(np.concatenate(members)).astype(np.int64) if members else _NO_IDS
+    if tiles:
+        unique, inverse = np.unique(np.concatenate(tiles).astype(np.int64), return_inverse=True)
+        vv = np.bincount(inverse, weights=np.concatenate(values), minlength=len(unique))
+        return member, unique, vv
+    return member, _NO_IDS, np.zeros(0)
+
+
+def _window_box(ctx):
+    ox, oy = ctx.window['origin_px']
+    width, height = ctx.window['size_px']
+    tp = ctx.tile_px
+    return (ox // tp, oy // tp, -(-(ox + width) // tp), -(-(oy + height) // tp))
+
+
+def _tile_electrodes(ctx, run, layer):
+    """The DL1 electrode number of every tile (centre pixel) of one layer, frame wide (nty, ntx) uint16; None = no DL1."""
+    cache = ctx.tile_el
+    if layer in cache:
+        return cache[layer]
+    from .adapters.electrode_png import load_electrode_layer, scan_electrode_shapes
+    cfg2, role = run.cfg2, ctx.role
+    root, model = cfg2.report.dl1_root, getattr(cfg2, role).dl1_model
+    if root is None or model is None:
+        cache[layer] = None
+        return None
+    if '_names' not in cache:
+        try:
+            cache['_names'] = scan_electrode_shapes(root, model)
+        except (NumericContractError, OSError, ValueError):
+            cache['_names'] = None
+    available = cache['_names']
+    if available is None:
+        cache[layer] = None
+        return None
+    frame = ctx.info['frame']
+    height, width = frame.shape_yx
+    tp = ctx.tile_px
+    grid_bytes = ctx.ntx * ctx.nty * 2
+    run.budget.reserve(grid_bytes, f'tile electrode grid {role} {layer}')
+    ctx.el_bytes += grid_bytes
+    grid = np.zeros((ctx.nty, ctx.ntx), dtype=np.uint16)
+    cy = np.minimum(np.arange(ctx.nty) * tp + tp // 2, height - 1)
+    cx = np.minimum(np.arange(ctx.ntx) * tp + tp // 2, width - 1)
+    for number, name in enumerate(sorted(available), start=1):
+        fs_rel = available[name].get(layer)
+        if fs_rel is None:
+            continue
+        run.budget.reserve(height * width * 3, f'electrode PNG decode {role} {name} {layer}')
+        try:
+            mask = load_electrode_layer(root, model, frame, [fs_rel], [])
+            if mask is None:
+                continue
+            sample = mask[cy[:, None], cx[None, :]]
+            del mask
+        except (NumericContractError, OSError, ValueError):
+            continue
+        finally:
+            run.budget.release(height * width * 3, 'electrode PNG decode')
+        new = sample & (grid == 0)
+        grid[new] = number
+    cache[layer] = grid
+    return grid
+
+
+def _edge_env(ctx, run, member, layers):
+    """The edge-repeat rules of one pair on one product (README 18.4, G4)."""
+    opts = run.opts
+    tile_um = ctx.tile_px * ctx.info['pitch']
+    width, height = ctx.window['size_px']
+    frame_h, frame_w = ctx.info['frame'].shape_yx
+    shift = None
+    if width < frame_w and height < frame_h and width % ctx.tile_px == 0 and height % ctx.tile_px == 0:
+        shift = (width // ctx.tile_px, height // ctx.tile_px)
+    ntx, nty = ctx.ntx, ctx.nty
+
+    def equiv(clipped, shift_xy):
+        grids = [_tile_electrodes(ctx, run, layer) for layer in layers]
+        if not grids or any(g is None for g in grids):
+            return None
+        sx, sy = shift_xy
+        ids = _box_ids(clipped, ntx, nty)
+        ty, tx = ids // ntx, ids % ntx
+        match = denom = 0
+        for grid in grids:
+            a, b = grid[ty, tx], grid[ty + sy, tx + sx]
+            used = (a != 0) | (b != 0)
+            denom += int(used.sum())
+            match += int(((a == b) & used).sum())
+        ratio = match / denom if denom else 1.0
+        here = ids[np.isin(ids, member)]
+        moved = ((here // ntx + sy) * ntx + (here % ntx + sx))
+        target_ids = ((ids // ntx + sy) * ntx + (ids % ntx + sx))
+        there = target_ids[np.isin(target_ids, member)]
+        both = int(np.isin(moved, there).sum())
+        dice = 1.0 if not len(here) and not len(there) else 2.0 * both / (len(here) + len(there))
+        return ratio, dice
+
+    return {'enabled': tile_um <= opts['coord_tolerance_um'] + 1e-9, 'reason': 'coords_resolution_too_coarse',
+            'shift': shift, 'min_match': opts['edge_repeat_min_match'], 'equiv': equiv}
+
+
+def _side_rows(ctx, run, plan):
+    """Rows of one pair on this product (README 18.4 steps 1 and 4 before the A-B split)."""
+    member, vt, vv = _pair_arrays(ctx, plan['pair_id'])
+    tile_um = ctx.tile_px * ctx.info['pitch']
+    win = _window_box(ctx)
+    planned = plan_rows(member, vt, vv, ctx.ntx, tile_um, win, run.opts)
+    cells = sum(max(0, row['box'][2] - row['box'][0]) * max(0, row['box'][3] - row['box'][1]) for row in planned['rows'])
+    temp = 32 * (cells + len(member) + len(vt))
+    run.budget.reserve(temp, f'card tiles {ctx.role} {plan["pair_id"]}')
+    try:
+        layers = sorted({layer for rec in ctx.items if rec['pair_id'] == plan['pair_id']
+                         for layer in (rec['layer'], rec['upper_layer'], rec['lower_layer']) if layer})
+        edge = _edge_env(ctx, run, member, layers)
+        rows = place_rows(planned['rows'], ctx.ntx, ctx.nty, edge)
+    finally:
+        run.budget.release(temp, 'card tiles')
+    return {'rows': rows, 'member': member, 'vt': vt, 'vv': vv, 'planned': planned}
+
+
+def _fill_values(ctx, plan, rows):
+    """Per row: this pair, the other pairs, the range total (README 18.4, check 3 inputs). Rows keep their tiles."""
+    kind, pair_id = plan['kind'], plan['pair_id']
+    owner = _owner_index(rows)
+    nrows = len(rows)
+    per_pair, hits = {}, {}
+    for rec in ctx.items:
+        if rec['kind'] != kind:
+            continue
+        sp = ctx.sparse[rec['item_id']]
+        if not len(sp['tiles']):
+            continue
+        sums, count = _row_sums(owner, sp['tiles'].astype(np.int64), sp['values'], nrows)
+        per_pair[rec['pair_id']] = per_pair.get(rec['pair_id'], np.zeros(nrows)) + sums
+        hits[rec['pair_id']] = hits.get(rec['pair_id'], np.zeros(nrows, dtype=np.int64)) + count
+    grid = ctx.grids[kind]
+    for i, row in enumerate(rows):
+        if row['edge'] == 'excluded':
+            row.update({'pair': None, 'others': None, 'range_total': None, 'others_sum': None})
+            continue
+        this = float(per_pair[pair_id][i]) if pair_id in per_pair else 0.0
+        others = sorted(((float(arr[i]), pid) for pid, arr in per_pair.items() if pid != pair_id and hits[pid][i] > 0),
+                        key=lambda t: (-t[0], t[1]))
+        rest = others[TOP_OTHERS:]
+        row.update({'pair': this,
+                    'others': {'top': [{'pair_id': pid, 'value': v} for v, pid in others[:TOP_OTHERS]],
+                               'others_n': len(rest), 'others_value': math.fsum(v for v, _p in rest)},
+                    'others_sum': math.fsum(v for v, _p in others),
+                    'range_total': math.fsum(grid[row['tiles']].tolist()) if len(row['tiles']) else 0.0})
+
+
+def _pair_total(ctx, pair_id, ids):
+    """The pair's value on the tile set `ids` (sorted unique)."""
+    _m, vt, vv = _pair_arrays(ctx, pair_id)
+    if not len(vt) or not len(ids):
+        return 0.0
+    sums, _c = _row_sums((ids, np.zeros(len(ids), dtype=np.int64)), vt, vv, 1)
+    return float(sums[0])
+
+
+def _window_ids(ctx):
+    return _box_ids(_window_box(ctx), ctx.ntx, ctx.nty)
+
+
+def _select_cards(led_doc, top_cards):
+    """README 17/18.1: per kind the top |delta| pairs with a value on both sides (pending pairs and CNO are not cards)."""
+    plans = []
+    for kind in KINDS:
+        pairs = [p for p in led_doc.get('pairs') or [] if p.get('kind') == kind
+                 and p.get('a') is not None and p.get('b') is not None and p.get('delta') is not None]
+        pairs.sort(key=lambda p: (-abs(p['delta']), p['pair_id']))
+        for rank, pair in enumerate(pairs[:top_cards], start=1):
+            items = pair.get('items') or []
+            comparable = (pair.get('change_kind') in COMPARABLE_CHANGE_KINDS and bool(items)
+                          and all(item.get('presence') == 'both' for item in items)
+                          and pair.get('present_a') and pair.get('present_b'))
+            if pair.get('present_a') and not pair.get('present_b'):
+                match, reason = 'a_only', None
+            elif pair.get('present_b') and not pair.get('present_a'):
+                match, reason = 'b_only', None
+            elif comparable:
+                match, reason = 'matched', None
+            else:
+                match, reason = 'not_compared', pair.get('change_kind') or 'not_comparable'
+            plans.append({'kind': kind, 'pair_id': pair['pair_id'], 'rank': rank, 'delta': pair['delta'],
+                          'a': pair['a'], 'b': pair['b'], 'change_kind': pair.get('change_kind'),
+                          'comparable': bool(comparable), 'match': match, 'reason': reason})
+    return plans
+
+
+# ---- the 04 field (README 19) --------------------------------------------------------------------------------------------
+
+class _Corr(object):
+    """What the 04 folder allows: cells = [(y0, y1, x0, x1, dx, dy)] in reference px, or a band code and why not."""
+
+    def __init__(self, band=None, detail=None, mode=None, cells=None, pitch=None):
+        self.band, self.detail, self.mode, self.cells, self.pitch = band, detail, mode, cells, pitch
+
+    @property
+    def ok(self):
+        return self.band is None and self.cells is not None
+
+
+def _optional_json(path):
+    try:
+        doc = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _dig(doc, *keys):
+    for key in keys:
+        if not isinstance(doc, dict):
+            return None
+        doc = doc.get(key)
+    return doc
+
+
+def load_correspondence(candidates, infos, cfg, opts):
+    """README 19.2-19.3: mode, fingerprint, pitch and the field of the 04 folder -> _Corr (never raises)."""
+    if candidates is None:
+        return _Corr('coords_no_candidates', 'no --candidates folder')
+    queries = _optional_json(Path(candidates) / CAND_FILE)
+    align = _optional_json(Path(candidates) / ALIGN_FILE)
+    if queries is None or align is None:
+        return _Corr('coords_unavailable', f'{CAND_FILE} or {ALIGN_FILE} is missing or unreadable in {candidates}')
+    mode = _dig(queries, 'change_args', 'apply_align')
+    if mode in (None, 'diagnostic'):
+        return _Corr('coords_not_applied', f'change_args.apply_align = {mode!r}: 04 did not apply an offset field', mode)
+    if mode not in APPLIED_MODES:
+        return _Corr('coords_unavailable', f'unknown apply_align {mode!r}', mode)
+    from .candidates import _canonical_sha
+    stale, unknown = [], []
+
+    def compare(what, recorded, current):
+        if recorded is None:
+            unknown.append(what)
+        elif recorded != current:
+            stale.append(f'{what}: 04 {recorded!r}, now {current!r}')
+
+    compare('config_sha256', _dig(queries, 'inputs', 'config_sha256'), cfg.get('_config_sha256'))
+    for role in ROLES:
+        info = infos[role]
+        assignment = (info['section'].get('condition_assignment') if isinstance(info['section'], dict) else None)
+        compare(f'{role} condition_assignment_sha256', _dig(queries, 'inputs', role, 'condition_assignment_sha256'),
+                None if assignment is None else _canonical_sha(assignment))
+        compare(f'{role} product_id', _dig(queries, 'inputs', 'cnt', role, 'product_id'), info['product_id'])
+        recorded_shape = align.get('frame_shape_reference_yx' if role == 'reference' else 'frame_shape_target_yx')
+        compare(f'{role} frame shape', None if recorded_shape is None else list(recorded_shape),
+                list(info['frame'].shape_yx))
+    pitch = align.get('pitch_um')
+    compare('pitch_um', pitch, infos['reference']['pitch'])
+    if pitch is not None and abs(float(pitch) - infos['reference']['pitch']) <= 1e-9 * max(1.0, abs(float(pitch))):
+        stale = [s for s in stale if not s.startswith('pitch_um')]
+    if stale:
+        return _Corr('coords_stale', '; '.join(stale), mode)
+    if unknown:
+        return _Corr('coords_unavailable', 'not recorded by 04: ' + ', '.join(unknown), mode)
+    if abs(infos['reference']['pitch'] - infos['target']['pitch']) > 1e-9 * max(1.0, infos['reference']['pitch']):
+        return _Corr('coords_unavailable', 'reference and target pixel pitch differ', mode)
+    unit_cells = [rec for rec in (align.get('unit_offsets') or []) if isinstance(rec, dict)]
+    raw = None
+    if mode == 'stretch':
+        stretch = _optional_json(Path(candidates) / STRETCH_FILE)
+        raw = [rec for rec in ((stretch or {}).get('tiles') or []) if isinstance(rec, dict)] or None
+    elif mode == 'unit' or (mode == 'local' and unit_cells):
+        raw = unit_cells or None
+    else:                                           # local without a unit alignment: the global offset
+        offset = align.get('offset_xy_px')
+        height, width = infos['reference']['frame'].shape_yx
+        if isinstance(offset, (list, tuple)) and len(offset) == 2:
+            raw = [{'region_px': [0, height, 0, width], 'offset_xy_px': list(offset)}]
+    if raw is None:
+        return _Corr('coords_unavailable', f'no offset field for apply_align {mode!r}', mode)
+    cells = []
+    for rec in raw:
+        region, offset = rec.get('region_px'), rec.get('offset_xy_px')
+        if not (isinstance(region, (list, tuple)) and len(region) == 4 and isinstance(offset, (list, tuple))
+                and len(offset) == 2):
+            return _Corr('coords_unavailable', 'a field cell has no region_px / offset_xy_px', mode)
+        cells.append((int(region[0]), int(region[1]), int(region[2]), int(region[3]), int(offset[0]), int(offset[1])))
+    return _Corr(mode=mode, cells=cells, pitch=float(pitch))
+
+
+def pick_offset(cells, box_px, spread_px):
+    """README 19.4: the offset of the field cell with the largest overlap, if every overlapped cell agrees.
+
+    box_px = (x0, y0, x1, y1) in reference px. Returns (offset (dx, dy), None) or (None, reason)."""
+    x0, y0, x1, y1 = box_px
+    hit = []
+    for index, (cy0, cy1, cx0, cx1, dx, dy) in enumerate(cells):
+        area = max(0, min(y1, cy1) - max(y0, cy0)) * max(0, min(x1, cx1) - max(x0, cx0))
+        if area > 0:
+            hit.append((-area, index, dx, dy))
+    if not hit:
+        return None, 'no_field_cell'
+    for _a, _i, dx, dy in hit:
+        for _b, _j, ex, ey in hit:
+            if max(abs(dx - ex), abs(dy - ey)) > spread_px + 1e-9:
+                return None, 'offset_spread'
+    hit.sort()
+    return (hit[0][2], hit[0][3]), None
+
+
+def _tile_shift(offset_px, info_a, info_b, tile_um):
+    """G6: k_B = k_A + round((g_A + d - g_B) / tile), d = _shift_um (frame origin difference + offset_px * pitch)."""
+    pitch = info_a['pitch']
+    gax, gay = info_a['frame'].origin_xy_um
+    gbx, gby = info_b['frame'].origin_xy_um
+    dx, dy = gbx - gax + offset_px[0] * pitch, gby - gay + offset_px[1] * pitch
+    sx, sy = int(round((gax + dx - gbx) / tile_um)), int(round((gay + dy - gby) / tile_um))
+    return sx, sy, (sx * tile_um - offset_px[0] * pitch, sy * tile_um - offset_px[1] * pitch)
+
+
+def _ratio_overlap(a_tiles, b_member, ntx, nty, tol_tiles):
+    """Share of the tiles a_tiles with a b_member tile within tol_tiles (Chebyshev)."""
+    if not len(a_tiles) or not len(b_member):
+        return 0.0
+    ty, tx = a_tiles // ntx, a_tiles % ntx
+    found = np.zeros(len(a_tiles), dtype=bool)
+    for dy in range(-tol_tiles, tol_tiles + 1):
+        for dx in range(-tol_tiles, tol_tiles + 1):
+            ny, nx = ty + dy, tx + dx
+            ok = (ny >= 0) & (ny < nty) & (nx >= 0) & (nx < ntx)
+            ids = ny[ok] * ntx + nx[ok]
+            pos = np.minimum(np.searchsorted(b_member, ids), len(b_member) - 1)
+            found[np.flatnonzero(ok)[b_member[pos] == ids]] = True
+    return float(found.sum()) / len(a_tiles)
+
+
+class _CardRun(object):
+    """Shared state of the card step of one run (the two products share it through ctx.run)."""
+
+    def __init__(self, led_doc, opts, budget, cfg2, infos, corr):
+        self.led_doc, self.opts, self.budget, self.cfg2, self.infos, self.corr = led_doc, opts, budget, cfg2, infos, corr
+        self.plans = _select_cards(led_doc, opts['top_cards'])
+        self.carried = {}
+        self.carried_bytes = 0
+        self.checks = {'range_sum': [], 'pair_bound': [], 'partition': []}
+        self.bands = []
+        tile_um = None
+        for role in ROLES:
+            info = infos[role]
+            tile_um = _tile_px(info, opts['tile_um']) * info['pitch']
+        if corr.band is not None:
+            self.bands.append({'code': corr.band, 'detail': corr.detail})
+        if tile_um is not None and tile_um > opts['coord_tolerance_um'] + 1e-9:
+            self.bands.append({'code': 'coords_resolution_too_coarse',
+                               'detail': f'--tile-um {opts["tile_um"]} > --coord-tolerance-um {opts["coord_tolerance_um"]}'})
+        self.coarse = any(b['code'] == 'coords_resolution_too_coarse' for b in self.bands)
+        self.stats = {'range_sum': 0, 'pair_bound': 0, 'partition': 0}
+
+
+def _row_json(row, info, role, ident, tile_um):
+    gx, gy = info['frame'].origin_xy_um
+    box = row['fbox']
+    return {'id': ident, 'side': role, 'type': row['type'],
+            'rect': [round(gx + box[0] * tile_um, 9), round(gy + box[1] * tile_um, 9),
+                     round(gx + box[2] * tile_um, 9), round(gy + box[3] * tile_um, 9)],
+            'rect_tiles': [int(v) for v in box],
+            'edge': row['edge'], 'edge_reason': row.get('edge_reason'),
+            'shift_tiles': row.get('shift_tiles'), 'tiles': int(len(row['tiles'])), 'tiles_lost': int(row['lost']),
+            'pair': row['pair'], 'others': row['others'], 'range_total': row['range_total'],
+            'match': row.get('match', {'status': 'only', 'reason': None})}
+
+
+def _side_final(ctx, run, plan, rows, role):
+    """Values, observed area and checks 3-4 of the final rows of one pair on one product."""
+    _fill_values(ctx, plan, rows)
+    rid = f'{plan["kind"]}:{plan["pair_id"]}:{role}'
+    live = [row for row in rows if row['edge'] != 'excluded']
+    for i, row in enumerate(rows):
+        if row['edge'] == 'excluded':
+            continue
+        run.stats['range_sum'] += 1
+        total = row['pair'] + row['others_sum']
+        if not _within(total - row['range_total'], row['range_total']):
+            run.checks['range_sum'].append({'card': rid, 'row': i, 'range_total': row['range_total'],
+                                            'pair_plus_others': total})
+    ids = np.unique(np.concatenate([_window_ids(ctx)] + [row['tiles'] for row in live]))
+    observed = _pair_total(ctx, plan['pair_id'], ids)
+    section4 = plan['a'] if role == 'reference' else plan['b']
+    row_sum = math.fsum(row['pair'] for row in live)
+    run.stats['pair_bound'] += 1
+    slack = lambda y: CHECK_REL_TOL * max(abs(y), 1e-12)
+    if row_sum > observed + slack(observed) or observed > section4 + slack(section4):
+        run.checks['pair_bound'].append({'card': rid, 'rows_sum': row_sum, 'observed': observed, 'section4': section4})
+    return {'observed': observed, 'section4': section4, 'rows_sum': row_sum, 'ids': ids}
+
+
 def _cards(ctx):
-    """Cards of this side (lmap/T4). T3 returns no card and carries nothing to the other product.
+    """Cards of this side (lmap/T4).
 
     Returns (cards, carried_bytes): carried_bytes is what the caller keeps reserved while the next product is read
-    (the card pairs' membership and sparse values, README 18.1); the caller releases it at the end."""
-    return [], 0
+    (the card pairs' rows of the first product, README 18.1). The second product returns the finished cards."""
+    run = getattr(ctx, 'run', None)
+    if run is None or not run.plans:
+        return [], 0
+    try:
+        if ctx.role == 'reference':
+            return [], _cards_reference(ctx, run)
+        return _cards_target(ctx, run), 0
+    finally:
+        run.budget.release(ctx.el_bytes, 'tile electrode grids')
+        ctx.el_bytes = 0
+        ctx.tile_el.clear()
+
+
+def _cards_reference(ctx, run):
+    carried = 0
+    for plan in run.plans:
+        side = _side_rows(ctx, run, plan)
+        rows = side['rows']
+        final = _side_final(ctx, run, plan, rows, 'reference')
+        a_member = [np.intersect1d(side['member'], row['tiles'], assume_unique=True) for row in rows]
+        run.carried[plan['pair_id'], plan['kind']] = {'rows': rows, 'final': final, 'a_member': a_member,
+                                                       'planned': side['planned'], 'ntx': ctx.ntx}
+        carried += sum(row['tiles'].nbytes for row in rows) + sum(a.nbytes for a in a_member)
+    run.carried_bytes = carried
+    return carried
+
+
+def _cards_target(ctx, run):
+    opts, corr = run.opts, run.corr
+    info_a, info_b = run.infos['reference'], run.infos['target']
+    tile_um = ctx.tile_px * info_b['pitch']
+    tol_tiles = _ceil_tiles(opts['coord_tolerance_um'], tile_um)
+    spread_px = opts['coord_offset_spread_um'] / info_a['pitch']
+    cards = []
+    for plan in run.plans:
+        carried = run.carried.pop((plan['pair_id'], plan['kind']), None)
+        side = _side_rows(ctx, run, plan)
+        b_rows = side['rows']
+        a_rows = carried['rows'] if carried else []
+        ntx_a = carried['ntx'] if carried else ctx.ntx
+        member_b = side['member']
+        for arow in a_rows:
+            arow['match'] = {'status': 'only', 'reason': arow['edge_reason']}
+        confirmed = _NO_IDS
+        moved_rows, rounding = [], []
+        if plan['match'] != 'matched':
+            row_reason = plan['reason'] or plan['match']
+        elif not corr.ok:
+            row_reason = corr.band
+        elif run.coarse:
+            row_reason = 'coords_resolution_too_coarse'
+        else:
+            row_reason = None
+        for ia, arow in enumerate(a_rows):
+            if arow['edge'] == 'excluded' or not len(arow['tiles']):
+                continue
+            if row_reason is not None:
+                arow['match'] = {'status': 'only', 'reason': row_reason}
+                continue
+            x0, y0, x1, y1 = arow['fbox']
+            box_px = (x0 * ctx.tile_px, y0 * ctx.tile_px, x1 * ctx.tile_px, y1 * ctx.tile_px)
+            offset, why = pick_offset(corr.cells, box_px, spread_px)
+            if offset is None:
+                arow['match'] = {'status': 'only', 'reason': why}
+                continue
+            sx, sy, err = _tile_shift(offset, info_a, info_b, tile_um)
+            ty, tx = arow['tiles'] // ntx_a, arow['tiles'] % ntx_a
+            ny, nx = ty + sy, tx + sx
+            if (ny < 0).any() or (nx < 0).any() or (ny >= ctx.nty).any() or (nx >= ctx.ntx).any():
+                arow['match'] = {'status': 'only', 'reason': 'outside_b_frame'}
+                continue
+            ids = np.sort(ny * ctx.ntx + nx)
+            a_mem = carried['a_member'][ia]
+            shifted = (a_mem // ntx_a + sy) * ctx.ntx + (a_mem % ntx_a + sx) if len(a_mem) else _NO_IDS
+            keep = np.ones(len(shifted), dtype=bool)
+            if len(shifted):
+                sty, stx = shifted // ctx.ntx, shifted % ctx.ntx
+                keep = (sty >= 0) & (sty < ctx.nty) & (stx >= 0) & (stx < ctx.ntx)
+            ratio = _ratio_overlap(np.sort(shifted[keep]), member_b, ctx.ntx, ctx.nty, tol_tiles)
+            if ratio < opts['coord_min_overlap'] - 1e-12:
+                arow['match'] = {'status': 'only', 'reason': 'low_membership_overlap', 'overlap': ratio}
+                continue
+            if len(confirmed) and np.isin(ids, confirmed, assume_unique=True).any():
+                arow['match'] = {'status': 'only', 'reason': 'b_conflict'}
+                continue
+            confirmed = np.union1d(confirmed, ids)
+            arow['match'] = {'status': 'matched', 'reason': None, 'overlap': ratio, 'offset_px': list(offset),
+                             'shift_tiles': [sx, sy], 'rounding_error_um': [err[0], err[1]]}
+            rounding.append(max(abs(err[0]), abs(err[1])))
+            moved_rows.append((ia, ids, (sx, sy)))
+        # B rows: the matched copies first (A order), then the rest of the B lines without the matched part
+        final_b, absorbed = [], []
+        for ia, ids, shift in moved_rows:
+            arow = a_rows[ia]
+            box = _shift_box(arow['fbox'], shift[0], shift[1])
+            final_b.append({'type': arow['type'], 'box': box, 'fbox': box, 'edge': 'none', 'edge_reason': None,
+                            'tiles': ids, 'lost': 0, 'match': {'status': 'matched', 'reason': None, 'with_a': ia + 1}})
+        n_matched = len(final_b)
+        for jb, brow in enumerate(b_rows):
+            if brow['edge'] == 'excluded':
+                final_b.append(dict(brow, match={'status': 'only', 'reason': brow['edge_reason']}))
+                continue
+            rest = brow['tiles'][~np.isin(brow['tiles'], confirmed, assume_unique=True)] if len(confirmed) else brow['tiles']
+            if not len(rest) and len(brow['tiles']):
+                absorbed.append(jb + 1)
+                continue
+            final_b.append(dict(brow, tiles=rest, match={'status': 'only', 'reason': row_reason,
+                                                         'partial_matched': len(rest) < len(brow['tiles'])}))
+        final = _side_final(ctx, run, plan, final_b, 'target')
+        # check 5: the partition of both products
+        run.stats['partition'] += 1
+        t_ids = [r['tiles'] for r in final_b[:n_matched]]
+        u_ids = [r['tiles'] for r in final_b[n_matched:]]
+        s_b = [r['tiles'] for r in b_rows]
+        all_b = np.concatenate(t_ids + u_ids) if (t_ids or u_ids) else _NO_IDS
+        want_b = np.unique(np.concatenate(t_ids + s_b)) if (t_ids or s_b) else _NO_IDS
+        a_live = [r['tiles'] for r in a_rows if r['edge'] != 'excluded']
+        a_matched = [a_rows[ia]['tiles'] for ia, _i, _s in moved_rows]
+        a_only = [r['tiles'] for k, r in enumerate(a_rows) if r['edge'] != 'excluded'
+                  and r['match']['status'] != 'matched']
+        all_a = np.concatenate(a_matched + a_only) if (a_matched or a_only) else _NO_IDS
+        want_a = np.concatenate(a_live) if a_live else _NO_IDS
+        bad = []
+        if len(np.unique(all_b)) != len(all_b) or not np.array_equal(np.unique(all_b), want_b):
+            bad.append('target')
+        if len(np.unique(all_a)) != len(all_a) or not np.array_equal(np.sort(all_a), np.sort(want_a)):
+            bad.append('reference')
+        if bad:
+            run.checks['partition'].append({'card': f'{plan["kind"]}:{plan["pair_id"]}', 'sides': bad})
+        cards.append(_card_json(run, plan, carried, a_rows, final_b, final, side, absorbed, rounding, tile_um))
+    run.budget.release(run.carried_bytes, 'cards carried from the first product')
+    run.carried_bytes = 0
+    return cards
+
+
+def _card_json(run, plan, carried, a_rows, final_b, final_side_b, side_b, absorbed, rounding, tile_um):
+    """One card (README 22 `cards[]`): the rows of both products, the match state, the observed values."""
+    info_a, info_b = run.infos['reference'], run.infos['target']
+    rows = [_row_json(row, info_a, 'reference', f'A{i}', tile_um) for i, row in enumerate(a_rows, start=1)]
+    for j, row in enumerate(final_b, start=1):
+        rows.append(_row_json(row, info_b, 'target', f'B{j}', tile_um))
+    b_of = {row['match']['with_a']: f'B{j}' for j, row in enumerate(final_b, start=1) if row['match'].get('with_a')}
+    for row in rows:
+        if row['side'] == 'reference' and row['match']['status'] == 'matched':
+            row['match']['counterpart'] = b_of[int(row['id'][1:])]
+        elif row['side'] == 'target' and row['match'].get('with_a'):
+            row['match']['counterpart'] = f'A{row["match"]["with_a"]}'
+    a_only_reasons = sorted({r['match']['reason'] for r in rows
+                             if r['side'] == 'reference' and r['match']['status'] == 'only' and r['match']['reason']})
+    n_matched = sum(1 for r in rows if r['side'] == 'reference' and r['match']['status'] == 'matched')
+    status, reason = plan['match'], plan['reason']
+    if status == 'matched' and not n_matched:
+        status = 'not_compared'
+        reason = run.corr.band or ('coords_resolution_too_coarse' if run.coarse else
+                                   (','.join(a_only_reasons) or 'no_row_matched'))
+    final_a = carried['final'] if carried else {'observed': 0.0, 'rows_sum': 0.0}
+    others_a = carried['planned'] if carried else {'others_n': 0, 'others_value': 0.0}
+    return {'kind': plan['kind'], 'pair_id': plan['pair_id'], 'rank': plan['rank'], 'delta': plan['delta'],
+            'a': plan['a'], 'b': plan['b'], 'change_kind': plan['change_kind'], 'rows': rows,
+            'match': {'status': status, 'reason': reason, 'matched_rows': n_matched,
+                      'absorbed_b_rows': absorbed,
+                      'not_listed': {'reference': {'n': others_a['others_n'], 'value': others_a['others_value']},
+                                     'target': {'n': side_b['planned']['others_n'],
+                                                'value': side_b['planned']['others_value']}}},
+            'observed': {'reference': final_a['observed'], 'target': final_side_b['observed']},
+            'section4_ref': {'reference': plan['a'], 'target': plan['b']},
+            'rows_sum': {'reference': final_a['rows_sum'], 'target': final_side_b['rows_sum']},
+            'rounding_error_um': max(rounding) if rounding else 0.0}
 
 
 def _encode_png(array):
@@ -547,7 +1366,7 @@ def _check_kinds(ctx, led_doc, key):
     return out
 
 
-def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings):
+def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings, run=None):
     """Read one product once and return (side json, files, window json, checks, ctx-free summary)."""
     from .pipeline import _configured_real
     product = getattr(cfg2, role)
@@ -561,6 +1380,7 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     window = geom['window']
     region, block = geom['region'], geom['block']
     ctx = _SideContext(role, info, window, geom['tile_px'], region, block, items, by_id, layers)
+    ctx.run = run
     key = 'a' if role == 'reference' else 'b'
 
     # estimate of the unchanged compute_areas holding (real_hotspot.estimate_area_bytes, via the dataset admission)
@@ -660,6 +1480,13 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
                                                for layer in row['layers'].values())},
         'unlisted_items': ctx.unlisted, 'incomplete_items': sorted(ctx.incomplete)}
     return side_json, files, checks, cards, meta
+
+
+def _card_check(run, name):
+    """Checks 3 (range_sum), 4 (pair_bound), 5 (partition): how many rows/cards were checked and which failed."""
+    failed, checked = run.checks[name], run.stats[name]
+    status = 'failed' if failed else ('passed' if checked else 'not_evaluated')
+    return {'status': status, 'checked': checked, 'failed': failed[:20], 'failed_count': len(failed)}
 
 
 def _check_input_hash(role, recorded, current):
@@ -775,12 +1602,16 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         estimates.append((f'item map canvases {role}', len(side_layers[role]) * dh * dw * 6))
     guard_stage_ledger_maps(limit, estimates)
 
+    corr = load_correspondence(candidates, infos, cfg, opts)
+    run = _CardRun(led_doc, opts, budget, cfg2, infos, corr)
+    if cand.get('given'):
+        cand.update({'apply_align': corr.mode, 'status': 'ok' if corr.ok else corr.band, 'detail': corr.detail})
     texts_files, sides_json, window_json, checks, cards, metas = [], {}, {}, {}, [], {}
     warnings, reasons = [], []
     for role in ROLES:
         side, files, side_checks, side_cards, meta = _process_side(
             role, infos[role], cfg, cfg2, led_doc, recorded_hash[role], opts, budget, geoms[role],
-            report_diameter, warnings)
+            report_diameter, warnings, run=run)
         sides_json[role] = side
         window_json[role] = geoms[role]['window']
         checks[role] = side_checks
@@ -790,13 +1621,16 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     failed = [role for role in ROLES
               if checks[role]['item_sum']['status'] == 'failed'
               or any(row['status'] == 'failed' for row in checks[role]['kind_sum'].values())]
+    card_checks = {name: _card_check(run, name) for name in ('range_sum', 'pair_bound', 'partition')}
+    if any(row['status'] == 'failed' for row in card_checks.values()):
+        failed.append('cards')
     status = 'partial' if failed else 'ok'
     if failed:
         reasons.append('ledger_maps_value_check_failed')
     summary = {'status': 'failed' if failed else 'passed',
                'item_sum': {role: checks[role]['item_sum'] for role in ROLES},
                'kind_sum': {role: checks[role]['kind_sum'] for role in ROLES},
-               'range_sum': None, 'pair_bound': None, 'partition': None,
+               **card_checks,
                'not_evaluated': {'items': {role: checks[role]['item_sum']['not_evaluated'] for role in ROLES}}}
     document = {
         'schema_version': SCHEMA_VERSION, 'status': status, 'reasons': reasons,
@@ -810,7 +1644,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         'cards': cards,
         'checks': summary,
         'scale_steps': scale_steps,
-        'warnings': warnings, 'bands': []}
+        'warnings': warnings, 'bands': run.bands}
     exit_code = 0 if status == 'ok' else 3
     texts_files.sort(key=lambda item: item[0])
     record = {'command': COMMAND, 'status': status, 'reasons': reasons,
