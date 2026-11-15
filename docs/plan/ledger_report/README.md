@@ -267,7 +267,7 @@ CNO (종류 CNO, 목업에서 K6):
 
 ## 15. ETX 재실행 범위
 
-- 기존 결과가 있으면 `STEPS = ['02', '08']`(02 를 새 번들로 다시). 08 만 다시는 `STEPS = ['08']`. 01·03·04·06 은 필요 없다.
+- 기존 결과가 있으면 `STEPS = ['02', '08']`(02 를 새 번들로 다시). 08 만 다시는 `STEPS = ['08']`(`LEDGER_MAPS = True` 면 `ledger-maps` 가 hotspot 을 다시 읽어 02 와 비슷한 시간이 든다. 무거우면 `LEDGER_MAPS = False`). 01·03·04·06 은 필요 없다.
 - 07 은 선택이다. 07 의 값은 같다. 07 `report.json` 의 compare2.json sha256 기록을 맞추려 할 때만 다시 돈다(검증하는 소비자는 src 에 없음). `docs/usage.md` 에 그대로 적는다(T6).
 - Python 3.9.14(numpy 1.23.5, Pillow 10.1.0)로 bundle 을 확인한다. ETX 화면은 EUC-KR 이고 환경 변수를 넘길 수 없다.
 - 실자료는 폐쇄망에만 있다. 이 호스트에서는 합성 자료와 fixture 로 확인한다.
@@ -289,7 +289,7 @@ CNO (종류 CNO, 목업에서 K6):
 - 07(`compare2_report.py`)·`compare2_link.py`·`ledger.py` 의 값과 출력은 바꾸지 않는다. 07 의 `_side_info`·`_FrameInfo`(`compare2_report.py:277-305`)와 input_hash 대조 문구(`compare2_report.py:367-374`)는 import 해서 쓴다. `_scan_side`(`compare2_report.py:352`)는 쓰지 않는다(한 지름·선택 조건 전용, 몫 없음).
 - real.yaml 을 여는 방식(코드 사실 d): 07 은 `_side_info`(`compare2_report.py:287-305`)로 `cfg[role]` 의 `real_hotspot_v1` 소스(`pipeline._real_source`)와 frame 명세를 읽는다. 마스크는 `_scan_side` 안에서 `pipeline._configured_real(cfg, info['section'], info['real'], {'bucket_detail': 'summary', 'top_buckets': ...})`(`compare2_report.py:361-363`, 정의 `pipeline.py:33-44`)로 연다. `condition_assignment` 가 없으면 `None` 이고 `compare2_condition_assignment_required` 오류다(`compare2_report.py:364-365`). `ledger-maps` 는 같은 호출을 쓴다. 02 와 같은 몫을 얻으려면 02 의 `_load_side` 처럼 `require_distance=True` 로 연다(`compare2.py:249`). 계획 v1 은 이 차이를 적지 않았다.
 - input_hash 대조: `compare2.json` 의 `input_hash` 와 지금 자료의 `dataset.provenance['input_hash']` 가 다르면 `compare2_input_hash_mismatch`(`compare2_report.py:367-374`). `ledger-maps` 도 같은 문구로 멈춘다(종료 2 `ledger_maps_input_missing` 이 아니라 07 과 같은 코드를 쓸지는 T3 가 정하고 이 표에 적는다).
-- ETX 08 확장: `ledger` → `ledger-maps` → `ledger-report --maps-dir`. 실행기 상수 `LEDGER_MAPS`(기본 True, 스위치), `LEDGER_MAPS_DIR`, `LEDGER_MAPS_ARGS`. 04 출력(`data/changes`)은 07 처럼 폴더가 있으면 넘긴다. `LEDGER_MAPS=False` 면 08 은 지금과 같은 작업 2개다. `ledger-maps` 종료 3 → 실행기 계속, 종료 2 → 멈춤. 재실행은 새 번들로 `STEPS=['08']` 이다(compare2.json 이 바뀌지 않으므로 02 는 필요 없다).
+- ETX 08 확장(T7 구현됨): `ledger` → `ledger-maps` → `ledger-report --maps-dir`. 실행기 상수 `LEDGER_MAPS`(기본 True, 스위치), `LEDGER_MAPS_DIR`(`data/ledger_maps`), `LEDGER_MAPS_ARGS`(문자열 목록, 설정 이름 `ledger_maps`, `ledger_maps_dir`, `ledger_maps_args`). 04 출력(`data/changes`)은 07 처럼 `'04' in steps` 이거나 폴더가 있으면 `--candidates` 로 넘긴다. `LEDGER_MAPS=False` 면 08 은 지금과 같은 작업 2개다. `ledger-maps` 종료 3 → 실행기 계속, 종료 2 → 멈춤. 재실행은 새 번들로 `STEPS=['08']` 이다(compare2.json 이 바뀌지 않으므로 02 는 필요 없다).
 
 ## 17. 값
 

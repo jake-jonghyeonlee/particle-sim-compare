@@ -98,7 +98,7 @@ BASE_DIR/
   data/compare2                       02 출력
   outputs/numeric_real                diag 출력 (real.yaml 의 output_dir)
   data/changes  data/confirmed  data/local  data/compare2_report     04 · 05 · 06 · 07 출력
-  data/ledger  data/ledger_report     08 출력 (ledger_report/ledger_report.html 이 장부 보고서 한 장)
+  data/ledger  data/ledger_maps  data/ledger_report     08 출력 (ledger_report/ledger_report.html 이 장부 보고서 한 장, ledger_maps 는 지도 자료)
   data/_runs/<RUN_TAG>/               다시 실행할 때 옮겨 둔 이전 출력
   runs/simcompare_job_etx.log         로그
 ```
@@ -126,6 +126,7 @@ BASE_DIR/
 | `DL2_MATCH_ARGS`, `DL2_DECISION_ARGS` | 예시 | 05를 STEPS에 넣을 때만 쓰는 DL2 인수(`--match`, `--decisions`, `--labelled-by`, `--mutual-tolerance-um`) |
 | `CHANGES_DIR`, `CONFIRMED_DIR`, `LOCAL_DIR`, `REPORT_DIR` | `data/changes`, `data/confirmed`, `data/local`, `data/compare2_report` | 04~07 출력 폴더(기본 그대로 쓴다) |
 | `LEDGER_DIR`, `LEDGER_REPORT_DIR` | `data/ledger`, `data/ledger_report` | 08 출력 폴더(기본 그대로 쓴다) |
+| `LEDGER_MAPS`, `LEDGER_MAPS_DIR`, `LEDGER_MAPS_ARGS` | `True`, `data/ledger_maps`, `[]` | 08 의 `ledger-maps` 스위치·출력 폴더·추가 인수(예 `["--range-um", "10"]`). `False` 면 `ledger` → `ledger-report` 두 작업만 돈다 |
 | `LOG_FILE`, `WORK_DIR`, `BASE_DIR` | `runs/simcompare_job_etx.log`, `None`, `None` | 로그, 패키지를 풀 폴더, 상대 경로 기준 폴더 |
 
 설정 파일에서 오는 값은 다음과 같다.
@@ -166,20 +167,20 @@ BASE_DIR/
 8. (DL2 경로 전용) 단계 05: 첫 작업이 `--list`로 `candidate_id` 목록을 로그에 찍고, 둘째 작업이 accept한 후보만 `data/confirmed/roi_correspondence.json`으로 바꾼다. `DL2_DECISION_ARGS`의 `--labelled-by CHANGE_ME`를 실제 ID로 바꾼다. `decisions.csv`가 없으면 둘째 작업이 종료 코드 2로 멈춘다. 05를 STEPS에 넣으면 06은 `data/confirmed/roi_correspondence.json`을 쓰고 07에는 `--confirm data/confirmed`가 붙는다. 처음에는 `STEPS = ['05']`로 목록만 보고 `decisions.csv`를 쓴 뒤 `STEPS = ['05', '06', '07']`로 돌린다.
 9. 단계 06: `compare-windows`. 창은 `report.map_window_um`(`EXTRA_WINDOWS_UM`이 있으면 뒤에 더한다), jitter 0.5 µm(권장 운용값), 정렬 지름은 `report.diameter_um`이다. `data/local/local_delta.html`에서 쌍별 결과를 본다. 창이 frame 밖으로 나가거나 valid 구멍을 덮으면 그 Δ는 null이고 종료 코드 3이다. diag의 `comparison_masks.zip`이 맞으면 재사용하므로 diag를 06 앞에 두는 것이 빠르다.
 10. 단계 07: `compare2-report`. 02 출력(`compare2.json`)으로 보고서 HTML 한 장(`data/compare2_report/report.html`)을 만든다. 04·06이 STEPS에 있거나 그 출력 폴더가 있으면 `--candidates`·`--windows`를 붙인다. DL1 검색 결과가 있으면 EDIT 블록과 별개로 07 JOBS 인수에 `--dl1-search <파일>`이 필요하다(통합 실행기에는 이 인수 상수가 없으므로 필요하면 `compare2-report`를 직접 실행한다).
-11. 단계 08: `ledger` → `ledger-report`. 02 출력(`compare2.json`)과 `compare2.yaml`로 쌍·전극 장부(`data/ledger/ledger.json`, `ledger_pairs.csv`, `ledger_electrodes.csv`)를 만들고, 그 장부로 보고서 한 장(`data/ledger_report/ledger_report.html`)을 만든다. 02가 STEPS에 없으면 02 출력 폴더의 `compare2.json`이 있어야 한다. 보고서는 단일 HTML이다. 브라우저에서 `file:///<BASE_DIR>/data/ledger_report/ledger_report.html`로 연다(외부 CDN 없음, 폴더째 옮기지 않아도 파일 하나로 열린다). 상위 쌍·전극 수 옵션은 기본값(30)을 쓴다.
+11. 단계 08: `ledger` → `ledger-maps` → `ledger-report --maps-dir`. 02 출력(`compare2.json`)과 `compare2.yaml`로 쌍·전극 장부(`data/ledger/ledger.json`, `ledger_pairs.csv`, `ledger_electrodes.csv`)를 만들고, `ledger-maps`가 hotspot 을 다시 읽어 지도 자료(`data/ledger_maps/ledger_maps.json`과 지도 PNG)를 만들고, 그 둘로 보고서 한 장(`data/ledger_report/ledger_report.html`, 2절 지도·5절 위치 카드 포함)을 만든다. `ledger-maps`는 hotspot 을 다시 읽으므로 02와 비슷한 시간이 걸린다. 무거우면 `LEDGER_MAPS = False`(예전처럼 `ledger` → `ledger-report` 두 작업, 2절·5절은 빈 자리). 04 결과(`CHANGES_DIR`)가 있으면(STEPS 에 04 가 있거나 폴더가 이미 있으면) `--candidates`로 넘겨 좌표 대응에 쓴다. `ledger-maps` 추가 인수는 `LEDGER_MAPS_ARGS`(예 `["--range-um", "10"]`)에 둔다. 02가 STEPS에 없으면 02 출력 폴더의 `compare2.json`이 있어야 한다. 보고서는 단일 HTML이다. 브라우저에서 `file:///<BASE_DIR>/data/ledger_report/ledger_report.html`로 연다(외부 CDN 없음, 폴더째 옮기지 않아도 파일 하나로 열린다). 상위 쌍·전극 수 옵션은 기본값(30)을 쓴다.
 
 통합 `report`는 아직 실자료 `compare` 출력을 읽지 못해(`missing_input_file`, 종료 코드 2) ETX 단계에 넣지 않았다.
 
 ### 다시 실행하기
 
-고른 단계의 출력 폴더가 이미 있으면 실행기가 실행 전에 `data/_runs/<RUN_TAG>/` 아래로 옮긴다(`RUN_TAG`가 `None`이면 UTC 시각 `YYYYMMDD-HHMMSS`). 옮기는 폴더는 고정 경로다: 01 = `real.yaml` 양쪽 `data_dir`, 03 = 양쪽 `asset_manifest.path`의 부모 폴더, 02 = `compare2.yaml`의 `output_dir`, diag = `real.yaml`의 `output_dir`, 04 = `data/changes`, 05 = `data/confirmed`, 06 = `data/local`, 07 = `data/compare2_report`, 08 = `data/ledger`와 `data/ledger_report`. 지우거나 복사하지 않고 같은 파일 시스템 안에서 `os.rename`만 쓴다. 보관 위치가 이미 있으면(같은 `RUN_TAG`를 다시 썼을 때) 아무것도 옮기지 않고 종료 코드 2로 멈춘다. `real.yaml`은 고치지 않는다. 옮긴 폴더는 쓸모가 없어지면 사용자가 직접 지운다.
+고른 단계의 출력 폴더가 이미 있으면 실행기가 실행 전에 `data/_runs/<RUN_TAG>/` 아래로 옮긴다(`RUN_TAG`가 `None`이면 UTC 시각 `YYYYMMDD-HHMMSS`). 옮기는 폴더는 고정 경로다: 01 = `real.yaml` 양쪽 `data_dir`, 03 = 양쪽 `asset_manifest.path`의 부모 폴더, 02 = `compare2.yaml`의 `output_dir`, diag = `real.yaml`의 `output_dir`, 04 = `data/changes`, 05 = `data/confirmed`, 06 = `data/local`, 07 = `data/compare2_report`, 08 = `data/ledger`, `data/ledger_maps`(`LEDGER_MAPS = True`일 때), `data/ledger_report`. 지우거나 복사하지 않고 같은 파일 시스템 안에서 `os.rename`만 쓴다. 보관 위치가 이미 있으면(같은 `RUN_TAG`를 다시 썼을 때) 아무것도 옮기지 않고 종료 코드 2로 멈춘다. `real.yaml`은 고치지 않는다. 옮긴 폴더는 쓸모가 없어지면 사용자가 직접 지운다.
 
 - **이번 변경(층간 거리 필터, 입력 경로 통일) 뒤 첫 실행**: 01부터 전체를 다시 돈다(`STEPS` 기본값). 필터는 로드 단계에 있어 01 출력은 같지만, 03 자산·04~06 산출물이 입력 해시에 필터 규칙을 넣어 이전 것을 거부하고, 설정 구조(경로)가 바뀌었으므로 처음부터 하는 것이 안전하다. 이전 결과는 `data/_runs/`에 남는다.
 - **일부만 다시**: 입력 해시를 바꾸는 값(`real.yaml`의 `condition_assignment` 값 — `max_operation_bytes` 포함 —, `thk_info` 파일, `pairs.csv`)을 고쳤다면 02부터 다시 돈다(07의 `compare2_input_hash_mismatch`가 요구하는 최소 범위). 03 자산 기록은 같은 입력 해시에 묶여 있어서(04가 `source_asset_manifest_identity_mismatch`로 막는다) 04 이후도 다시 만들려면 03부터 돈다: `STEPS = ['03', '02', 'diag', '04', '06', '07']`. `max_operation_bytes`는 **02 전에 넉넉히** 정한다: 07이 메모리 가드(`oversized_real_operation`)로 멈춰 한도를 올리면 입력 해시가 달라져 07이 `compare2_input_hash_mismatch`로 다시 멈춘다. 그때는 `real.yaml`의 `condition_assignment` 값을 바꾼 것이므로 02부터 다시 돈다. `compare2.yaml`을 고쳐도 07이 `compare2_config_mismatch`로 멈추므로 02부터 다시 돈다.
 - **04만 다시**(인수만 바뀐 경우): `STEPS = ['04', '06', '07']`. 01~03 출력은 그대로 쓴다.
 - **07만 다시**: `STEPS = ['07']`.
 - **기존 결과가 있고 장부(08)를 새로 만들 때**: `STEPS = ['02', '08']`. 08의 입력(`compare2.json`의 장부 항목)은 이 번들의 02가 만든다. 예전 번들로 만든 02 출력에는 없으므로 02를 새 번들로 다시 돈다. 07은 선택이다: 07의 값은 같으므로 07 `report.json`에 적힌 `compare2.json` sha256을 맞추려 할 때만 다시 돈다.
-- **08만 다시**: `STEPS = ['08']`. 02 출력 폴더의 `compare2.json`이 없으면 실행 전에 종료 코드 2로 멈춘다(`etx_compare2_output_missing`). `ledger`가 성공한 뒤 `ledger-report`만 실패해도 `STEPS = ['08']`로 두 작업을 다시 돈다(이전 두 폴더는 `data/_runs/<RUN_TAG>/`로 옮겨진다). `ledger`가 종료 코드 3(부분 결과)이면 실행기는 계속하고 `ledger-report`가 맨 위에 "부분 결과" 띠를 보인다. 종료 코드 2면 실행기가 멈춘다.
+- **08만 다시**: `STEPS = ['08']`(02 는 다시 돌릴 필요 없다. 새 번들로 처음 돌릴 때만 `['02', '08']`). 02 출력 폴더의 `compare2.json`이 없으면 실행 전에 종료 코드 2로 멈춘다(`etx_compare2_output_missing`). `ledger-report`만 실패해도 `STEPS = ['08']`로 세 작업을 다시 돈다(이전 08 폴더는 `data/_runs/<RUN_TAG>/`로 옮겨진다). `ledger`·`ledger-maps`가 종료 코드 3(부분 결과)이면 실행기는 계속하고 `ledger-report`가 맨 위에 "부분 결과"·"지도 부분 결과" 띠를 보인다. 둘 중 하나가 종료 코드 2면 실행기가 멈추고 이후 작업(`ledger-report`)은 실행하지 않는다. 시간이 오래 걸리면 `LEDGER_MAPS = False`로 `ledger` → `ledger-report`만 돌린다.
 - **실행기만 교체해서 이어갈 때**: 01 import 결과(`.npz`, 옛 `.npy`)는 그대로 읽힌다. 새 실행기 파일로 바꾸고(`BASE_DIR`, `STEPS`는 다시 고친다) 02부터 다시 돈다. 새 실행기로 `compare`(diag)를 다시 돌려야 `comparison_masks.zip`이 생겨 06이 면적 계산을 건너뛴다.
 - 다제품(`models_`)과 dv 실행기는 보관 기능이 없다. `--out`이 이미 있으면 거부하므로 먼저 옮기거나 이름을 바꾼다.
 

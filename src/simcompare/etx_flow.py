@@ -37,6 +37,9 @@ DEFAULTS = {
     'report_dir': 'data/compare2_report',
     'ledger_dir': 'data/ledger',
     'ledger_report_dir': 'data/ledger_report',
+    'ledger_maps': True,
+    'ledger_maps_dir': 'data/ledger_maps',
+    'ledger_maps_args': (),
 }
 
 
@@ -257,7 +260,16 @@ def plan_jobs(base_dir, settings):
                                 '(STEPS = ["02", "08"]) or run 02 first' % (c2.output_dir / 'compare2.json'))
             ledger, ledger_report = _under(base, cfg['ledger_dir']), _under(base, cfg['ledger_report_dir'])
             jobs.append(('ledger', ['--compare2-dir', rel(c2.output_dir), '--config', compare2_arg, '--out', rel(ledger)]))
-            jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--out', rel(ledger_report)]))
+            if cfg['ledger_maps']:
+                maps = _under(base, cfg['ledger_maps_dir'])
+                maps_extra = _text_list(cfg['ledger_maps_args'], 'LEDGER_MAPS_ARGS')
+                maps_args = ['--compare2-dir', rel(c2.output_dir), '--config', compare2_arg, '--ledger-dir', rel(ledger)]
+                if '04' in steps or changes.is_dir():
+                    maps_args += ['--candidates', rel(changes)]
+                jobs.append(('ledger-maps', maps_args + ['--out', rel(maps)] + maps_extra))
+                jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--maps-dir', rel(maps), '--out', rel(ledger_report)]))
+            else:
+                jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--out', rel(ledger_report)]))
     return jobs
 
 
@@ -287,7 +299,10 @@ def output_folders(ctx, steps):
         elif step == '07':
             found.append((step, _under(base, cfg['report_dir'])))
         elif step == '08':
-            found += [(step, _under(base, cfg['ledger_dir'])), (step, _under(base, cfg['ledger_report_dir']))]
+            found.append((step, _under(base, cfg['ledger_dir'])))
+            if cfg['ledger_maps']:
+                found.append((step, _under(base, cfg['ledger_maps_dir'])))
+            found.append((step, _under(base, cfg['ledger_report_dir'])))
     return found
 
 

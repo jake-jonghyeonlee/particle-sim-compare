@@ -39,7 +39,7 @@ VERTICAL_CASE = 'vertical_short-A-L1-C-L2'     # only in the target's (and the m
 STAGE_ARGS = {'--align-search-um': '3', '--align-min-dice': '0.3', '--align-layer-tolerance-um': '0.5',
               '--change-tolerance-um': '0.2', '--top-k': '3'}   # small synthetic world (40 x 42 um); --window-um comes from compare2.yaml
 FLOW_COMMANDS = ['import-hotspots', 'import-hotspots', 'import-electrode-assets', 'import-electrode-assets', 'compare2',
-                 'validate-data', 'compare', 'candidates-change', 'compare-windows', 'compare2-report', 'ledger', 'ledger-report']
+                 'validate-data', 'compare', 'candidates-change', 'compare-windows', 'compare2-report', 'ledger', 'ledger-maps', 'ledger-report']
 
 
 def _stages():
@@ -347,7 +347,7 @@ def test_the_integrated_log_identifies_the_run_and_every_command_exits_zero_or_t
     assert [name for name, _ in codes] == FLOW_COMMANDS, (codes, text[-2500:])
     assert all(int(code) in (0, 3) for _, code in codes), (codes, text[-2500:])
     assert chain.results['main'].returncode in (0, 3), chain.results['main'].stderr[-2500:]
-    assert 'flow: 12 job(s):' in text and 'flow: no previous output folder to move' in text      # a first run has nothing to move
+    assert 'flow: 13 job(s):' in text and 'flow: no previous output folder to move' in text      # a first run has nothing to move
     if chain.python != sys.executable:
         assert 'python 3.9.' in text
 
@@ -473,7 +473,7 @@ def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_p
         assert [name for name, _ in codes] == commands, (stage, codes, text[-1500:])
         assert all(int(code) in (0, 3) for _, code in codes), (stage, codes, text[-1500:])
     assert [name for name, _ in _exit_codes(chain.logs['01'])] == ['import-hotspots'] * 2
-    assert [name for name, _ in _exit_codes(chain.logs['rest'])] == FLOW_COMMANDS[2:-2]
+    assert [name for name, _ in _exit_codes(chain.logs['rest'])] == FLOW_COMMANDS[2:-3]
     base = chain.base
     assert (base / f'data/models/{MODEL_FOLDER}/manifest.json').is_file() and (base / f'data/assets/models/{MODEL_FOLDER}/review_assets.json').is_file()
     assert (base / f'data/confirmed/models/{MODEL_PRODUCT}/roi_correspondence.json').is_file()
@@ -502,14 +502,22 @@ def test_step_08_writes_the_ledger_and_the_single_file_report_after_02(chain):
     assert page.is_file() and page.stat().st_size > 0
     text = chain.logs['main']
     assert ' start ledger --compare2-dir data/compare2 --config compare2.yaml --out data/ledger' in text
-    assert ' start ledger-report --ledger-dir data/ledger --out data/ledger_report' in text
-    assert [name for name, _ in _exit_codes(text)][-2:] == ['ledger', 'ledger-report']
+    assert (' start ledger-maps --compare2-dir data/compare2 --config compare2.yaml --ledger-dir data/ledger '
+            '--candidates data/changes --out data/ledger_maps') in text
+    assert ' start ledger-report --ledger-dir data/ledger --maps-dir data/ledger_maps --out data/ledger_report' in text
+    assert [name for name, _ in _exit_codes(text)][-3:] == ['ledger', 'ledger-maps', 'ledger-report']
+    assert (base / 'data/ledger_maps/ledger_maps.json').is_file()
+    html = page.read_text(encoding='utf-8')
+    assert 'id="maps-data"' in html and '2. layout 리스크 지도' in html          # section 2 is filled from the maps folder
 
 
 def test_step_08_alone_moves_its_old_folders_and_rewrites_them(chain):
     base, text = chain.base, chain.logs['ledger_again']
-    assert [name for name, _ in _exit_codes(text)] == ['ledger', 'ledger-report'] and chain.results['ledger_again'].returncode in (0, 3)
+    assert [name for name, _ in _exit_codes(text)] == ['ledger', 'ledger-maps', 'ledger-report']
+    assert chain.results['ledger_again'].returncode in (0, 3)
     assert (base / 'data/_runs/L08A/data/ledger/ledger.json').is_file()
+    assert (base / 'data/_runs/L08A/data/ledger_maps/ledger_maps.json').is_file()
+    assert (base / 'data/ledger_maps/ledger_maps.json').is_file()
     assert (base / 'data/_runs/L08A/data/ledger_report/ledger_report.html').is_file()
     assert (base / 'data/ledger_report/ledger_report.html').is_file()
     assert (base / 'data/compare2/compare2.json').is_file()         # 02 is not a chosen step: untouched
@@ -521,8 +529,9 @@ def test_step_08_recovers_after_ledger_report_failed(chain):
     assert failed[0][0] == 'ledger' and failed[0][1] in (0, 3) and failed[-1][0] == 'ledger-report' and failed[-1][1] not in (0, 3)
     assert chain.results['ledger_fail'].returncode not in (0, 3)
     assert (base / 'data/_runs/L08C/data/ledger/ledger.json').is_file()      # the ledger of the failed run was kept (moved), not deleted
-    assert [name for name, _ in _exit_codes(chain.logs['ledger_recover'])] == ['ledger', 'ledger-report']
+    assert [name for name, _ in _exit_codes(chain.logs['ledger_recover'])] == ['ledger', 'ledger-maps', 'ledger-report']
     assert chain.results['ledger_recover'].returncode in (0, 3)
+    assert (base / 'data/_runs/L08C/data/ledger_maps/ledger_maps.json').is_file()      # the maps of the failed run were moved too
     assert not (base / 'data/blocker/report').exists() and (base / 'data/ledger_report/ledger_report.html').is_file()
 
 
@@ -547,10 +556,70 @@ def test_step_08_continues_with_ledger_report_after_a_partial_ledger(tmp_path, p
     (base / 'data').mkdir()
     shutil.move(str(world.c2), str(base / 'data/compare2'))
     _write_real_yaml(base)
-    text, result = _run_flow(python, base, tmp_path, 'partial', STEPS=['08'])
+    text, result = _run_flow(python, base, tmp_path, 'partial', STEPS=['08'], LEDGER_MAPS=False)      # the old two-job 08
     assert _exit_codes(text) == [('ledger', '3'), ('ledger-report', '3')] and result.returncode in (0, 3), text[-2000:]
+    assert ' start ledger-report --ledger-dir data/ledger --out data/ledger_report' in text and 'ledger-maps' not in text
+    assert not (base / 'data/ledger_maps').exists()
     page = (base / 'data/ledger_report/ledger_report.html').read_text(encoding='utf-8')
     assert 'class="band partial"' in page and '부분 결과' in page
+
+
+@pytest.mark.parametrize('python', _python_params())
+def test_step_08_stops_after_ledger_maps_exits_2_and_never_starts_ledger_report(tmp_path, python):
+    """The test_ledger mockup world has no compare2 execution.json, so ledger-maps cannot read its input and exits 2: the runner stops."""
+    from test_ledger import ELECTRODES_A, ELECTRODES_B, MOCKUP_CNO, make_world, mockup_pairs
+    if python is None:
+        pytest.fail('SIMCOMPARE_REQUIRE_ETX_PY=1 but SIMCOMPARE_ETX_PY is not set')
+
+    def config(cfg):
+        cfg.update(numeric_config='real.yaml', output_dir='data/compare2')
+
+    base = tmp_path / 'work'
+    base.mkdir()
+    world = make_world(base, mockup_pairs(), dl1={'reference': ELECTRODES_A, 'target': ELECTRODES_B}, cno=MOCKUP_CNO, config_mutate=config)
+    (base / 'data').mkdir()
+    shutil.move(str(world.c2), str(base / 'data/compare2'))
+    _write_real_yaml(base)
+    text, result = _run_flow(python, base, tmp_path, 'maps_exit2', STEPS=['08'])
+    codes = _exit_codes(text)
+    assert codes[-1] == ('ledger-maps', '2') and 'ledger-report' not in [name for name, _ in codes], text[-2000:]
+    assert ' start ledger-report' not in text and result.returncode == 2
+    assert not (base / 'data/ledger_report').exists()
+
+
+@pytest.mark.parametrize('python', _python_params())
+def test_step_08_goes_on_to_ledger_report_after_ledger_maps_exits_3(tmp_path, python):
+    """A computable world (test_ledger_maps: real compare2 on 4x4 hotspot pictures). A hotspot picture changed after 02 makes the tile
+    sums disagree with the ledger: ledger-maps exits 3 (partial), the runner continues, ledger-report writes the report with the band."""
+    from test_ledger_maps import chain as maps_world
+    if python is None:
+        pytest.fail('SIMCOMPARE_REQUIRE_ETX_PY=1 but SIMCOMPARE_ETX_PY is not set')
+    base = tmp_path / 'work'
+    base.mkdir()
+    maps_world(base, dl1={'ref': {'A': {'L1': {0, 1}}, 'B': {'L1': {1, 2}}}, 'tgt': {'A': {'L1': {0, 1}}}})
+    numeric = yaml.safe_load((base / 'numeric.yaml').read_text(encoding='utf-8'))
+    for side in ('reference', 'target'):
+        numeric[side]['product_id'] = side.upper()                       # the runner's real config reader wants a product_id
+    (base / 'numeric.yaml').write_text(yaml.safe_dump(numeric), encoding='utf-8')
+    constants = {'STEPS': ['08'], 'REAL_CONFIG': 'numeric.yaml', 'LEDGER_DIR': 'led_runner', 'LEDGER_MAPS_DIR': 'maps_runner',
+                 'LEDGER_REPORT_DIR': 'report_runner'}
+    text, result = _run_flow(python, base, tmp_path, 'maps_ok', **constants)
+    assert _exit_codes(text) == [('ledger', '0'), ('ledger-maps', '0'), ('ledger-report', '0')], text[-2500:]
+    # one item value of compare2.json is changed (the ledger copies it, the tiles read from the masks do not): the tile check fails
+    c2_path = base / 'out/compare2.json'
+    c2_doc = json.loads(c2_path.read_text(encoding='utf-8'))
+    item = c2_doc['sides']['reference']['ledger_items'][0]
+    item['lambda'] += 0.1
+    for row in item['by_size']:
+        row['lambda'] += 0.1
+    c2_path.write_text(json.dumps(c2_doc), encoding='utf-8')
+    text, result = _run_flow(python, base, tmp_path, 'maps_exit3', RUN_TAG='M3', **constants)
+    codes = _exit_codes(text)
+    assert [name for name, _ in codes] == ['ledger', 'ledger-maps', 'ledger-report'], text[-2500:]
+    assert dict(codes)['ledger-maps'] == '3' and dict(codes)['ledger-report'] in ('0', '3'), codes
+    assert result.returncode in (0, 3)
+    page = (base / 'report_runner/ledger_report.html').read_text(encoding='utf-8')
+    assert 'id="maps-partial"' in page and '지도 부분 결과' in page
 
 
 def test_chain_elapsed_time_is_reported(chain):

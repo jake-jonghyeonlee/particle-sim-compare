@@ -22,7 +22,7 @@ CONFIG = "real.yaml"
 FLOW_NAME = "etx"      # 통합 실행기 파일 이름: simcompare_job_etx.py
 
 FLOW_HEADER = [
-    "ETX 기본 흐름 통합 실행기. 01(hotspot import) → 03(전극 PNG import) → 02(compare2) → diag(검사·비교) → 04(변경점 ROI) → 05(DL2 확정, 선택) → 06(창별 국부 ΔCA) → 07(보고서) → 08(장부·장부 보고서)를 한 파일로 돌린다.",
+    "ETX 기본 흐름 통합 실행기. 01(hotspot import) → 03(전극 PNG import) → 02(compare2) → diag(검사·비교) → 04(변경점 ROI) → 05(DL2 확정, 선택) → 06(창별 국부 ΔCA) → 07(보고서) → 08(장부·지도 자료·장부 보고서)를 한 파일로 돌린다.",
     "모델 이름·hotspot 입력 root·DL1 root·지름·창은 설정 파일(real.yaml, compare2.yaml)에서 읽는다. 이 파일의 EDIT 블록에는 그 밖의 값만 둔다.",
     "순서·준비물·재실행 방법은 docs/usage.md \"ETX(Linux GPU 서버) 실행 순서\"에 있다.",
 ]
@@ -59,10 +59,16 @@ CHANGES_DIR = "data/changes"
 CONFIRMED_DIR = "data/confirmed"
 LOCAL_DIR = "data/local"
 REPORT_DIR = "data/compare2_report"
-# 08: 장부(ledger)와 장부 보고서(ledger-report). 02 가 만든 data/compare2/compare2.json 을 읽으므로 02 를 이 번들로 다시 돌린 뒤 08 을 돌린다.
-# 02 없이 08 만 고르면 02 출력 폴더의 compare2.json 이 있어야 한다(없으면 실행 전에 종료 2). 08 은 두 폴더를 만든다.
+# 08: 장부(ledger) → 지도 자료(ledger-maps) → 장부 보고서(ledger-report --maps-dir). 02 가 만든 data/compare2/compare2.json 을 읽으므로 02 를 이 번들로 다시 돌린 뒤 08 을 돌린다.
+# 02 없이 08 만 고르면 02 출력 폴더의 compare2.json 이 있어야 한다(없으면 실행 전에 종료 2). 08 은 폴더 셋(ledger, ledger_maps, ledger_report)을 만든다.
+# ledger-maps 는 hotspot 을 다시 읽어 지도 자료를 만들므로 02 와 비슷한 시간이 걸린다. 무거우면 LEDGER_MAPS = False (예전처럼 ledger, ledger-report 두 작업만 돈다).
+# 08 만 다시 돌릴 때는 STEPS = ["08"] (compare2.json 이 바뀌지 않으므로 02 는 필요 없다). 04 결과(CHANGES_DIR)가 있으면 지도의 좌표 대응에 쓴다.
+# ledger-maps 종료 3(부분 결과)이면 실행기는 계속하고 ledger-report 가 띠를 보인다. 종료 2 이면 실행기가 멈추고 ledger-report 는 실행하지 않는다.
 LEDGER_DIR = "data/ledger"
 LEDGER_REPORT_DIR = "data/ledger_report"
+LEDGER_MAPS = True
+LEDGER_MAPS_DIR = "data/ledger_maps"
+LEDGER_MAPS_ARGS = []                         # ledger-maps 추가 인수(문자열 목록). 예: ["--range-um", "10"]
 
 LOG_FILE = "runs/simcompare_job_etx.log"      # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None
 WORK_DIR = None                               # 패키지를 풀 폴더. None이면 이 파일 옆, 쓸 수 없으면 임시 폴더
@@ -76,7 +82,8 @@ FLOW_FUNC = '''def _flow_jobs():
                     include_cno=INCLUDE_CNO, max_asset_memory_mb=MAX_ASSET_MEMORY_MB, align_args=ALIGN_ARGS,
                     extra_window_sizes_um=EXTRA_WINDOWS_UM, jitter_um=JITTER_UM, dl2_match_args=DL2_MATCH_ARGS,
                     dl2_decision_args=DL2_DECISION_ARGS, changes_dir=CHANGES_DIR, confirmed_dir=CONFIRMED_DIR,
-                    local_dir=LOCAL_DIR, report_dir=REPORT_DIR, ledger_dir=LEDGER_DIR, ledger_report_dir=LEDGER_REPORT_DIR)
+                    local_dir=LOCAL_DIR, report_dir=REPORT_DIR, ledger_dir=LEDGER_DIR, ledger_report_dir=LEDGER_REPORT_DIR,
+                    ledger_maps=LEDGER_MAPS, ledger_maps_dir=LEDGER_MAPS_DIR, ledger_maps_args=LEDGER_MAPS_ARGS)
     try:
         return etx_flow.prepare(os.getcwd(), settings, dry_run=DRY_RUN)
     except etx_flow.FlowError as exc:

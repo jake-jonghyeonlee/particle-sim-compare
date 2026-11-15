@@ -10,6 +10,13 @@ Orca Run run_c9825fe14b68. Base c7a2829. Reviews by Claude Opus 5.5 high (Codex 
 - F-R3 PASS-WITH-ADVISORIES. Coordinator fixed A1 (cli.py comment) and A2 (F1_report correction); bundles rebuilt.
 - Open: F-R3 A4 (pre-existing) successful inspection-only compare leaves an older comparison_masks.zip; F-R A5/A6 notes.
 
+## Ledger maps Run (20261116-ledger-maps, 2026-11-16)
+
+ETX 08 이 `ledger` → `ledger-maps` → `ledger-report --maps-dir` 를 돈다(실행기 상수 `LEDGER_MAPS`, `LEDGER_MAPS_DIR`, `LEDGER_MAPS_ARGS`; 규칙은 [../ledger_report/README.md](../ledger_report/README.md) 16절 이후). 남은 일:
+- 실측(폐쇄망 ETX): 08 시간(hotspot 재읽기), `ledger_maps.json`·HTML 크기, `edge_reason` 분포(`edge_unverifiable` 비율, R2b:1), ETX numpy 에서 병합 예약 상수(R2b:3), 04 지문 대조로 좌표 대응이 켜지는지(C2), 폐쇄망 브라우저 canvas 자기 검사·큰 PNG 성능.
+- 설정값 조정: `--range-um`·`--segment-um`·`--linear-*`·`--edge-repeat-min-match`·`--coord-*`(`LEDGER_MAPS_ARGS` 로 넘긴다).
+- CNO 지도 표시(D3: 지금은 제외). 대각선 배선은 점형으로 다룬다(한계).
+
 ## Ledger report Run (20261115-ledger-report, 2026-11-15)
 
 ETX 08(`ledger` + `ledger-report`)까지 구현했다. 남은 일:
