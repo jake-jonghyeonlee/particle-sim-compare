@@ -7,6 +7,7 @@ on small real_hotspot_v1 fixtures with a bigger frame (0.1 um pixel pitch, 0.5 u
 import hashlib
 import json
 import math
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -122,21 +123,69 @@ def test_a_range_that_leaves_the_frame_without_dl1_or_a_repeat_position_is_exclu
     assert placed[0]['edge_reason'] == 'coords_resolution_too_coarse'
 
 
-def test_edge_repeat_uses_the_shifted_copy_when_equivalent_and_excludes_it_when_not():
+def test_edge_repeat_replaces_only_the_tiles_outside_the_frame_by_their_image_one_period_away():
+    """R2:1: the 3 tiles left of the frame come back +20 tiles (x 37..39 of a 40 tile frame is NOT this case: ux = 20)."""
     rows = [{'type': 'point', 'box': (-3, 10, 8, 20)}]
-    same = dict(NO_EDGE, shift=(20, 40), equiv=lambda clipped, shift: (1.0, 1.0))
-    placed = lm.place_rows(rows, 40, 40, same)[0]
-    assert placed['edge'] == 'repeat_used' and placed['shift_tiles'] == [20, 0] and placed['fbox'] == (17, 10, 28, 20)
-    assert len(placed['tiles']) == 110
-    other = dict(NO_EDGE, shift=(20, 40), equiv=lambda clipped, shift: (0.5, 1.0))
+    calls = []
+
+    def equiv(strip, shift):
+        calls.append((strip, shift))
+        return 1.0, 1.0
+    placed = lm.place_rows(rows, 40, 40, dict(NO_EDGE, shift=(20, 30), equiv=equiv))[0]
+    assert calls == [((0, 10, 3, 20), (20, 0))]            # the neighbour strip: 3 tiles wide, the rows of the box
+    assert placed['edge'] == 'repeat_used' and placed['shift_tiles'] == [20, 0]
+    assert placed['fbox'] == (0, 10, 8, 20) and placed['image_tiles'] == 30      # the cut box, plus 3 x 10 image tiles
+    assert len(placed['tiles']) == 8 * 10 + 30 and placed['lost'] == 0
+    x = placed['tiles'] % 40
+    assert sorted(set(x[(x >= 8)].tolist())) == [17, 18, 19]                       # x -3..-1 come back at 17..19
+    other = dict(NO_EDGE, shift=(20, 30), equiv=lambda strip, shift: (0.5, 1.0))
     placed = lm.place_rows(rows, 40, 40, other)[0]
     assert placed['edge'] == 'excluded' and placed['edge_reason'] == 'edge_mismatch' and not len(placed['tiles'])
+    low_dice = dict(NO_EDGE, shift=(20, 30), equiv=lambda strip, shift: (1.0, 0.5))
+    assert lm.place_rows(rows, 40, 40, low_dice)[0]['edge_reason'] == 'edge_mismatch'
 
 
-def test_edge_repeat_position_must_not_touch_another_row_of_the_card():
-    rows = [{'type': 'point', 'box': (-3, 10, 8, 20)}, {'type': 'point', 'box': (18, 10, 30, 20)}]
-    placed = lm.place_rows(rows, 40, 40, dict(NO_EDGE, shift=(20, 40), equiv=lambda c, s: (1.0, 1.0)))
-    assert placed[0]['edge'] == 'excluded' and placed[0]['edge_reason'] == 'edge_no_repeat_position'
+def test_edge_repeat_moves_both_axes_and_checks_the_strip_of_every_outside_part():
+    rows = [{'type': 'point', 'box': (-2, -3, 5, 4)}]
+    calls = []
+    placed = lm.place_rows(rows, 40, 40, dict(NO_EDGE, shift=(20, 30),
+                                              equiv=lambda strip, shift: calls.append((strip, shift)) or (1.0, 1.0)))[0]
+    assert sorted(calls) == [((0, 0, 2, 3), (20, 30)), ((0, 0, 2, 4), (20, 0)), ((0, 0, 5, 3), (0, 30))]
+    assert placed['edge'] == 'repeat_used' and sorted(placed['image_shifts']) == [[0, 30], [20, 0], [20, 30]]
+    assert placed['image_tiles'] == 2 * 3 + 2 * 4 + 5 * 3                         # corner + left part + top part
+    assert placed['fbox'] == (0, 0, 5, 4) and len(placed['tiles']) == 5 * 4 + 29
+    placed = lm.place_rows([{'type': 'point', 'box': (35, 10, 45, 20)}], 40, 40,
+                           dict(NO_EDGE, shift=(20, 30), equiv=lambda strip, shift: calls.append((strip, shift)) or (1.0, 1.0)))[0]
+    assert calls[-1] == ((35, 10, 40, 20), (-20, 0)) and placed['image_tiles'] == 50     # right side: -U, 5 tiles wide
+
+
+def test_edge_repeat_is_refused_when_the_image_or_the_strip_one_period_further_is_outside_the_frame():
+    never = dict(NO_EDGE, shift=(20, 30), equiv=lambda strip, shift: (1.0, 1.0))
+    # 25 tiles left of the frame: its image (x -5..-1) is still left of the frame
+    assert lm.place_rows([{'type': 'point', 'box': (-25, 10, 8, 20)}], 40, 40, never)[0]['edge_reason'] == 'edge_no_repeat_position'
+    # the box leaves the frame below, and this unit has no vertical period (unit >= frame in y)
+    placed = lm.place_rows([{'type': 'point', 'box': (3, 30, 8, 45)}], 40, 40, dict(never, shift=(20, None)))[0]
+    assert placed['edge'] == 'excluded' and placed['edge_reason'] == 'edge_no_repeat_position'
+    # the strip + period leaves the frame: unit 38 of 40 tiles, strip 3 tiles wide -> 38..41
+    tight = dict(NO_EDGE, shift=(38, None), equiv=lambda strip, shift: (1.0, 1.0))
+    assert lm.place_rows([{'type': 'point', 'box': (-3, 10, 8, 20)}], 40, 40, tight)[0]['edge_reason'] == 'edge_no_repeat_position'
+    assert lm.place_rows([{'type': 'point', 'box': (-2, 10, 8, 20)}], 40, 40, tight)[0]['edge'] == 'repeat_used'
+
+
+def test_an_image_tile_that_an_earlier_row_owns_stays_with_that_row():
+    rows = [{'type': 'point', 'box': (17, 10, 30, 20)}, {'type': 'point', 'box': (-3, 10, 8, 20)}]
+    placed = lm.place_rows(rows, 40, 40, dict(NO_EDGE, shift=(20, 30), equiv=lambda c, s: (1.0, 1.0)))
+    assert placed[0]['edge'] == 'none' and len(placed[0]['tiles']) == 13 * 10 and placed[0]['lost'] == 0
+    assert placed[1]['edge'] == 'repeat_used' and placed[1]['image_tiles'] == 30
+    assert placed[1]['lost'] == 30 and len(placed[1]['tiles']) == 80          # the 3 x 10 image tiles belong to row 1
+    assert len(np.intersect1d(placed[0]['tiles'], placed[1]['tiles'])) == 0
+
+
+def test_edge_that_cannot_be_checked_is_excluded_not_passed():
+    rows = [{'type': 'point', 'box': (-3, 10, 8, 20)}]
+    for verdict in ((None, 1.0), (1.0, None)):
+        placed = lm.place_rows(rows, 40, 40, dict(NO_EDGE, shift=(20, 30), equiv=lambda strip, shift, v=verdict: v))[0]
+        assert placed['edge'] == 'excluded' and placed['edge_reason'] == 'edge_unverifiable'
 
 
 def test_pick_offset_takes_the_biggest_overlap_and_refuses_a_spread():
@@ -159,6 +208,84 @@ def test_tile_shift_counts_the_frame_origin_difference_once():
     assert (sx, sy) == (5, -3) and err == pytest.approx((0.0, 0.0))
     sx, sy, err = lm._tile_shift((55, 0), info_a, info_b, 1.0)                         # 5.5 um -> a tile of rounding
     assert sx in (5, 6) and abs(err[0]) == pytest.approx(0.5)
+
+
+def _frame_info(gx, gy, pitch=0.1):
+    return {'pitch': pitch, 'frame': SimpleNamespace(origin_xy_um=(gx, gy))}
+
+
+def test_tile_shift_is_exact_where_a_float_sum_of_origins_rounds_the_wrong_way():
+    """C3. 04's d = (g_B - g_A) + offset * pitch, so g_A + d - g_B is 1.4999999999999998 in float for g_A=0, g_B=0.8,
+    offset 15 px (1.5 um): the old formula gave 1 tile, the exact value is a half tile and goes away from zero -> 2."""
+    assert lm._tile_shift((15, 0), _frame_info(0.0, 0.0), _frame_info(0.8, 0.0), 1.0)[:2] == (2, 0)
+    # the negative twin: g_A=0.1, g_B=0.2, offset -15 px; the old formula gave -1
+    assert lm._tile_shift((-15, 0), _frame_info(0.1, 0.0), _frame_info(0.2, 0.0), 1.0)[:2] == (-2, 0)
+    for offset, want in ((5, 1), (-5, -1), (15, 2), (-15, -2), (25, 3), (-25, -3), (4, 0), (-4, 0), (14, 1), (-14, -1),
+                         (16, 2), (-16, -2), (0, 0)):
+        sx, _sy, err = lm._tile_shift((offset, 0), _frame_info(0.3, 0.7), _frame_info(0.1, 0.9), 1.0)
+        assert sx == want, offset
+        assert err[0] == pytest.approx((sx * 10 - offset) * 0.1, abs=1e-12)          # the exact pixel difference
+    sx, sy, err = lm._tile_shift((12.5, -7.5), _frame_info(0, 0), _frame_info(0, 0), 1.0)   # a non-integer pixel offset
+    assert (sx, sy) == (1, -1) and err == pytest.approx((-0.25, -0.25))
+
+
+def test_run_with_another_frame_origin_shifts_the_target_rows_by_the_exact_tile_count(tmp_path, big, monkeypatch):
+    """R2:5: the origin of B is 0.8 um, the 04 offset 15 px = 1.5 um, tile 1 um -> 2 tiles (an origin counted twice or a
+    float rounding to 1 would show as another shift)."""
+    shape = correspondence_chain(tmp_path, big, bar(40, 60, 60, 90), bar(40, 60, 75, 105))
+    write_candidates(tmp_path, shape, shape, cells=[(0, 100, 0, 200, 15, 0)])
+    real_info = lm._side_info
+
+    def info(cfg, cfg2, role):
+        out = real_info(cfg, cfg2, role)
+        if role == 'target':
+            out['frame'].origin_xy_um = (0.8, 0.0)
+        return out
+    monkeypatch.setattr(lm, '_side_info', info)
+    code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'), '--tile-um', '1.0')
+    c = card(doc, 'AB')
+    assert code == 0 and c['match']['status'] == 'matched'
+    (a1,) = rows_of(c, 'reference')
+    assert a1['match']['shift_tiles'] == [2, 0] and a1['match']['rounding_error_um'] == pytest.approx([0.5, 0.0])
+    assert c['rounding_error_um'] == pytest.approx(0.5)
+    b1 = [r for r in rows_of(c, 'target') if r['match']['status'] == 'matched'][0]
+    assert b1['rect_tiles'] == [a1['rect_tiles'][0] + 2, a1['rect_tiles'][1], a1['rect_tiles'][2] + 2, a1['rect_tiles'][3]]
+    assert doc['checks']['partition']['status'] == 'passed'
+
+
+def test_box_values_equal_the_brute_force_sum_of_every_box_and_ranking_ignores_input_order():
+    """R2:4: one searchsorted pair per box row gives the same exact sums as masking the whole array per box."""
+    rng = np.random.RandomState(5)
+    ntx, nty = 60, 40
+    tiles = np.unique(rng.randint(0, ntx * nty, size=700)).astype(np.int64)
+    values = rng.uniform(1e-6, 1e3, size=len(tiles)) * 10.0 ** rng.randint(-8, 8, size=len(tiles))
+    boxes = [(0, 0, 60, 40), (-5, -5, 10, 10), (50, 30, 80, 60), (10, 10, 11, 11), (20, 5, 20, 30), (7, 12, 31, 29),
+             (100, 100, 120, 120)]
+    got = lm._box_values(tiles, values, boxes, ntx)
+    ty, tx = tiles // ntx, tiles % ntx
+    for box, value in zip(boxes, got):
+        keep = (tx >= box[0]) & (tx < box[2]) & (ty >= box[1]) & (ty < box[3])
+        assert value == math.fsum(values[keep].tolist())
+    assert lm._box_values(np.zeros(0, np.int64), np.zeros(0), boxes, ntx) == [0.0] * len(boxes)
+
+
+def test_not_listed_places_count_the_pair_value_once_on_the_tiles_no_listed_row_owns():
+    """R2:3: the box of a place that is not listed overlaps a listed row; the value of the shared tiles belongs to the
+    listed row, and two unlisted boxes that overlap each other count their common tiles once."""
+    ntx, nty = 60, 40
+    vt = ids([(10, 10), (14, 10), (30, 10), (31, 10), (50, 30)], ntx)
+    vv = np.array([1.0, 2.0, 4.0, 8.0, 16.0])
+    listed = lm.place_rows([{'type': 'point', 'box': (8, 8, 16, 14)}], ntx, nty, NO_EDGE)          # tiles (10,10), (14,10)
+    boxes = [(12, 8, 20, 14), (29, 8, 40, 14), (35, 8, 45, 14), (45, 25, 55, 35)]
+    # unlisted boxes hold (14,10)=2 [owned by the listed row], (30,10)=4 + (31,10)=8, and (50,30)=16; the two overlapping
+    # boxes (29..40 / 35..45) share tiles 35..39, which hold no value here
+    assert lm.others_free_value(boxes, listed, vt, vv, ntx, nty) == pytest.approx(4.0 + 8.0 + 16.0)
+    plain = math.fsum(lm._box_values(vt, vv, boxes, ntx))
+    assert plain == pytest.approx(2.0 + 4.0 + 8.0 + 16.0)                      # the old number counted tile (14,10) twice
+    assert lm.others_free_value([], listed, vt, vv, ntx, nty) == 0.0
+    # the same tile in two unlisted boxes
+    both = lm.others_free_value([(29, 8, 33, 14), (30, 9, 32, 12)], [], vt, vv, ntx, nty)
+    assert both == pytest.approx(4.0 + 8.0)
 
 
 def test_membership_overlap_ratio_uses_the_tolerance_in_tiles():
@@ -263,8 +390,13 @@ def write_candidates(tmp, shape_a, shape_b, *, mode='stretch', cells=None, globa
     queries = {'schema_version': 'candidate_queries_v1', 'change_args': {} if mode is None else {'apply_align': mode},
                'inputs': {'config_sha256': hashlib.sha256(numeric.read_bytes()).hexdigest(),
                           'cnt': {role: {'product_id': 'P'} for role in ('reference', 'target')}}}
+    recorded_hash = json.loads((tmp / 'out' / 'compare2.json').read_text(encoding='utf-8'))['inputs']['manifests']
     for role in ('reference', 'target'):
-        queries['inputs'][role] = {'condition_assignment_sha256': _canonical_sha(section[role]['condition_assignment'])}
+        # what candidates.prepare_side records: the manifest file sha256 and the dataset input hash (C2)
+        queries['inputs'][role] = {
+            'condition_assignment_sha256': _canonical_sha(section[role]['condition_assignment']),
+            'manifest_sha256': hashlib.sha256((Path(section[role]['data_dir']) / 'manifest.json').read_bytes()).hexdigest(),
+            'dataset_input_hash': recorded_hash[role]['input_hash']}
     align = {'schema_version': 'alignment_v1', 'pitch_um': 0.1, 'frame_shape_reference_yx': list(shape_a),
              'frame_shape_target_yx': list(shape_b), 'offset_xy_px': list(global_offset)}
     cell_docs = [{'region_px': list(c[:4]), 'offset_xy_px': [c[4], c[5]], 'applied': True} for c in (cells or [])]
@@ -405,6 +537,13 @@ def test_without_a_04_folder_every_row_stays_on_its_own_side_and_a_band_says_why
     ('stretch', lambda q, a: q['inputs']['cnt']['target'].__setitem__('product_id', 'Q'), 'coords_stale'),
     ('stretch', lambda q, a: a.__setitem__('pitch_um', 0.2), 'coords_stale'),
     ('stretch', lambda q, a: a.pop('pitch_um'), 'coords_unavailable'),
+    # C2: the input files themselves
+    ('stretch', lambda q, a: q['inputs']['reference'].__setitem__('manifest_sha256', '0' * 64), 'coords_stale'),
+    ('stretch', lambda q, a: q['inputs']['target'].__setitem__('dataset_input_hash', '0' * 64), 'coords_stale'),
+    ('stretch', lambda q, a: [q['inputs']['reference'].pop(k) for k in ('manifest_sha256', 'dataset_input_hash')],
+     'coords_unavailable'),
+    ('stretch', lambda q, a: [q['inputs']['target'].pop(k) for k in ('manifest_sha256', 'dataset_input_hash')],
+     'coords_unavailable'),
 ])
 def test_04_that_cannot_be_used_gives_a_band_and_no_correspondence(tmp_path, big, mode, change, band):
     shape = correspondence_chain(tmp_path, big, tiles_px(6, 9, 6, 9), tiles_px(16, 19, 10, 13))
@@ -414,6 +553,44 @@ def test_04_that_cannot_be_used_gives_a_band_and_no_correspondence(tmp_path, big
     c = card(doc, 'AB')
     assert c['match']['status'] == 'not_compared' and c['match']['reason'] == band
     assert not [r for r in c['rows'] if r['match']['status'] == 'matched']
+
+
+def test_04_made_from_another_manifest_file_is_stale_although_config_names_shapes_and_pitch_agree(tmp_path, big):
+    """C2: every setting 04 recorded still matches; only the bytes of a file it read changed (a re-saved manifest)."""
+    shape = correspondence_chain(tmp_path, big, tiles_px(6, 9, 6, 9), tiles_px(16, 19, 10, 13))
+    write_candidates(tmp_path, shape, shape, cells=[(0, 100, 0, 200, 50, 20)])
+    code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'))
+    assert code == 0 and doc['bands'] == [] and card(doc, 'AB')['match']['status'] == 'matched'
+    section = yaml.safe_load((tmp_path / 'numeric.yaml').read_text(encoding='utf-8'))
+    manifest = Path(section['reference']['data_dir']) / 'manifest.json'
+    manifest.write_text(json.dumps(json.loads(manifest.read_text(encoding='utf-8')), indent=2) + '\n', encoding='utf-8')
+    code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'), out='m2')
+    assert code == 0 and [b['code'] for b in doc['bands']] == ['coords_stale']
+    assert 'reference manifest_sha256' in doc['bands'][0]['detail'] and 'dataset_input_hash' not in doc['bands'][0]['detail']
+    assert card(doc, 'AB')['match']['status'] == 'not_compared'
+
+
+def test_04_asset_fingerprints_are_compared_when_04_recorded_them(tmp_path, big, monkeypatch):
+    from simcompare import pipeline
+    shape = correspondence_chain(tmp_path, big, tiles_px(6, 9, 6, 9), tiles_px(16, 19, 10, 13))
+
+    def recorded(sha_manifest, sha_record):
+        def change(queries, align):
+            queries['inputs']['reference']['asset_manifest'] = {'path': 'm.json', 'sha256': sha_manifest}
+            queries['inputs']['reference']['electrode_import_record'] = {'path': 'r.json', 'sha256': sha_record}
+        return change
+    # only the reference carries recorded asset fingerprints, so only its evidence is asked for
+    monkeypatch.setattr(pipeline, '_electrode_evidence', lambda root, section, config_dir=None:
+                        ('accepted', {}, (('r.json', 'aa' * 32), ('m.json', 'bb' * 32)), None))
+    write_candidates(tmp_path, shape, shape, cells=[(0, 100, 0, 200, 50, 20)], changes=recorded('bb' * 32, 'aa' * 32))
+    code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'))
+    assert doc['bands'] == [] and card(doc, 'AB')['match']['status'] == 'matched'
+    write_candidates(tmp_path, shape, shape, cells=[(0, 100, 0, 200, 50, 20)], changes=recorded('cc' * 32, 'aa' * 32))
+    code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'), out='m2')
+    assert [b['code'] for b in doc['bands']] == ['coords_stale'] and 'asset_manifest.sha256' in doc['bands'][0]['detail']
+    monkeypatch.setattr(pipeline, '_electrode_evidence', lambda root, section, config_dir=None: None)
+    code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'), out='m3')
+    assert [b['code'] for b in doc['bands']] == ['coords_unavailable']          # recorded by 04, cannot be recomputed now
 
 
 def test_unit_and_local_modes_read_the_unit_field_and_local_without_it_the_global_offset(tmp_path, big):
@@ -487,11 +664,11 @@ def test_layer_change_pair_shows_both_positions_and_values_without_a_comparison(
 
 # ---- edge repeat with a synthetic electrode grid -----------------------------------------------------------------------
 
-def edge_ctx(grid, w_tiles=40, ntx=100, nty=40, member=None):
+def edge_ctx(grid, w_tiles=40, ntx=100, nty=40, member=None, window_px=None, tolerance_um=2.0):
     ctx = SimpleNamespace(tile_px=5, ntx=ntx, nty=nty, role='reference', tile_el={'L1': grid}, el_bytes=0,
-                          window={'origin_px': [0, 0], 'size_px': [w_tiles * 5, 20 * 5]},
+                          window={'origin_px': [0, 0], 'size_px': list(window_px or [w_tiles * 5, 20 * 5])},
                           info={'pitch': 0.1, 'frame': SimpleNamespace(shape_yx=(nty * 5, ntx * 5))})
-    run = SimpleNamespace(opts=opts(tile_um=0.5, coord_tolerance_um=2.0))
+    run = SimpleNamespace(opts=opts(tile_um=0.5, coord_tolerance_um=tolerance_um))
     return lm._edge_env(ctx, run, member if member is not None else np.zeros(0, np.int64), ['L1'])
 
 
@@ -506,12 +683,13 @@ def test_small_unit_repeat_is_used_when_electrodes_and_shape_match_and_the_value
     assert edge['shift'] == (40, 20)
     rows = [{'type': 'point', 'box': (-3, 10, 8, 20)}]
     (row,) = lm.place_rows(rows, ntx, nty, edge)
-    assert row['edge'] == 'repeat_used' and row['shift_tiles'] == [40, 0] and row['fbox'] == (37, 10, 48, 20)
-    assert row['edge_match'] == 1.0 and row['edge_dice'] == 1.0
-    # the value is the moved place: put 2.0 on a tile of the copy and 99 on the (cut) original
-    vt = np.array([15 * ntx + 42, 15 * ntx + 3], dtype=np.int64)
-    sums, _ = lm._row_sums(lm._owner_index([row]), vt, np.array([2.0, 99.0]), 1)
-    assert sums.tolist() == [2.0]
+    assert row['edge'] == 'repeat_used' and row['shift_tiles'] == [40, 0] and row['fbox'] == (0, 10, 8, 20)
+    assert row['edge_match'] == 1.0 and row['edge_dice'] == 1.0 and row['image_tiles'] == 30
+    # hand calculation: the value is the original tiles inside the frame + the image tiles (x -3..-1 -> 37..39);
+    # 99 on an original tile, 2.0 on an image tile, 5.0 on tile 42 (one period right of the strip: in neither set)
+    vt = np.array([15 * ntx + 3, 15 * ntx + 38, 15 * ntx + 42], dtype=np.int64)
+    sums, _ = lm._row_sums(lm._owner_index([row]), vt, np.array([99.0, 2.0, 5.0]), 1)
+    assert sums.tolist() == [101.0]
 
 
 def test_small_unit_repeat_that_differs_in_electrodes_or_shape_is_excluded():
@@ -531,6 +709,79 @@ def test_small_unit_repeat_that_differs_in_electrodes_or_shape_is_excluded():
     (row,) = lm.place_rows([{'type': 'point', 'box': (-3, 10, 8, 20)}], ntx, nty,
                            dict(edge_ctx(grid, member=member), min_match=0.9))
     assert row['edge'] == 'repeat_used'
+
+
+def test_both_strips_empty_is_unverifiable_and_the_row_is_excluded():
+    """Two empty membership strips give no Dice: "equal" is not shown, the row is excluded (not Dice = 1)."""
+    ntx, nty = 100, 40
+    grid = np.zeros((nty, ntx), dtype=np.uint16)
+    grid[10:20, 0:10] = 7
+    grid[10:20, 40:50] = 7
+    member = block(5, 12, 7, 15, ntx)                      # inside the box but outside both 3 tile strips
+    (row,) = lm.place_rows([{'type': 'point', 'box': (-3, 10, 8, 20)}], ntx, nty, edge_ctx(grid, member=member))
+    assert row['edge'] == 'excluded' and row['edge_reason'] == 'edge_unverifiable' and not len(row['tiles'])
+    # no electrode on either strip: the electrode match cannot be shown either
+    empty = np.zeros((nty, ntx), dtype=np.uint16)
+    member = np.union1d(block(2, 12, 5, 15, ntx), block(42, 12, 45, 15, ntx))
+    (row,) = lm.place_rows([{'type': 'point', 'box': (-3, 10, 8, 20)}], ntx, nty, edge_ctx(empty, member=member))
+    assert row['edge'] == 'excluded' and row['edge_reason'] == 'edge_unverifiable'
+
+
+def test_a_unit_that_is_not_a_whole_number_of_tiles_records_the_rounding_and_is_excluded_beyond_the_tolerance():
+    ntx, nty = 100, 40
+    grid = np.zeros((nty, ntx), dtype=np.uint16)
+    member = np.zeros(0, np.int64)
+    ctx = edge_ctx(grid, w_tiles=40, member=member)
+    assert ctx['shift'] == (40, 20) and ctx['rounding_um'] == (0.0, 0.0)
+    # window 203 px, tile 5 px: 41 tiles (205 px), error 2 px = 0.2 um <= 2.0 um
+    ctx = edge_ctx(grid, member=member, window_px=(203, 100))
+    assert ctx['shift'][0] == 41 and ctx['rounding_um'][0] == pytest.approx(0.2)
+    row = lm._edge_resolve((-3, 10, 8, 20), ntx, nty, dict(ctx, equiv=lambda strip, shift: (1.0, 1.0)))
+    assert row['edge'] == 'repeat_used' and row['edge_rounding_um'] == pytest.approx(0.2) and row['shift_tiles'] == [41, 0]
+    # the rounding is at most half a tile, and the edge rule only runs when a tile is <= --coord-tolerance-um, so with the
+    # tolerance test of `period` the error can never exceed it in a real run; a tile coarser than the tolerance is G4
+    ctx = edge_ctx(grid, member=member, window_px=(203, 100), tolerance_um=0.1)
+    row = lm._edge_resolve((-3, 10, 8, 20), ntx, nty, dict(ctx, equiv=lambda s, v: (1.0, 1.0)))
+    assert row['edge'] == 'excluded' and row['edge_reason'] == 'coords_resolution_too_coarse'
+
+
+PERIOD_DL1 = {'A': {'L1': bar(0, 40, 0, 20) | bar(0, 40, 190, 200)}, 'B': {'L1': bar(0, 40, 100, 110)}}
+PERIOD_CELLS = bar(15, 25, 0, 15) | bar(15, 25, 190, 200)          # the same layout at both ends of the 19 um unit
+
+
+def period_chain(tmp, big, dl1):
+    big(40, 200)                                                    # frame 20 um x 4 um, unit 19 um x 4 um (period 38 tiles)
+    side = ([line_case(PERIOD_CELLS)], LINE_PAIRS)
+    base.chain(tmp, ref=side, tgt=side, unit=(19.0, 4.0), dl1={'ref': dl1, 'tgt': dl1})
+
+
+def test_run_with_a_small_unit_counts_the_image_tiles_and_the_range_checks_hold(tmp_path, big):
+    """The window starts 1 tile inside the frame and the range is 2 tiles: each end of the layout leaves the frame by 1
+    tile. The strip at that edge equals the strip one period (38 tiles) further, so the row takes its image tiles."""
+    period_chain(tmp_path, big, PERIOD_DL1)
+    code, doc = run_cards(tmp_path, '--range-um', '1.0')
+    assert code == 0 and doc['status'] == 'ok'
+    c = card(doc, 'AB')
+    first, second = rows_of(c, 'reference')
+    assert (first['edge'], second['edge']) == ('repeat_used', 'repeat_used')
+    assert first['rect_tiles'] == [0, 1, 5, 7] and first['image_tiles'] == 6 and first['image_shifts'] == [[38, 0]]
+    assert second['rect_tiles'] == [36, 1, 40, 7] and second['image_tiles'] == 6 and second['image_shifts'] == [[-38, 0]]
+    # image column 37 (first row) lies inside the second row's box and image column 2 (second row) inside the first
+    # row's: the first row owns both, the second row lost 6 + 6 tiles
+    assert (first['tiles'], first['tiles_lost']) == (5 * 6 + 6, 0)                 # clipped box 5 x 6 + image column
+    assert (second['tiles'], second['tiles_lost']) == (4 * 6 + 6 - 12, 12)         # clipped 4 x 6 + image column - 12 lost
+    assert first['pair'] + second['pair'] == pytest.approx(c['a'])             # the whole pair stands on the final tiles
+    for name in ('range_sum', 'pair_bound', 'partition'):
+        assert doc['checks'][name]['status'] == 'passed', name
+
+
+def test_run_with_a_small_unit_excludes_the_edge_row_when_the_strip_one_period_further_differs(tmp_path, big):
+    other = {'A': {'L1': bar(0, 40, 0, 20)}, 'B': {'L1': bar(0, 40, 190, 200)}}          # another electrode at the far end
+    period_chain(tmp_path, big, other)
+    code, doc = run_cards(tmp_path, '--range-um', '1.0')
+    rows = rows_of(card(doc, 'AB'), 'reference')
+    assert code == 0 and [r['edge'] for r in rows] == ['excluded', 'excluded']
+    assert {r['edge_reason'] for r in rows} == {'edge_mismatch'} and all(r['pair'] is None for r in rows)
 
 
 # ---- G4, options, checks ------------------------------------------------------------------------------------------------

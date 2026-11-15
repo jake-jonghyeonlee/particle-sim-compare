@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import json
 import math
 import os
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +46,13 @@ MAX_NUMBER = 0xFFFF
 BIG_RANK = 2 ** 31 - 1
 # temporaries of one sink call: share_idx, geom_idx, y/x, tile index, unique + inverse, weights (all int64/float64)
 SINK_BYTES_PER_CELL = 64
+# `_merge_sparse` peak per merged entry (measured 49 B with np.unique(return_inverse) on numpy 2.x, the rest is margin for
+# older numpy): concatenated tiles (4) + values (8), argsort/inverse/cumsum temporaries of np.unique (about 33), bincount
+# result (8) and the cast tile copy (4). The member phase (4 + sort copy + mask + cast) is smaller.
+MERGE_BYTES_PER_ENTRY = 64
+MERGE_MEMBER_BYTES_PER_ENTRY = 40
+# arrays are summed with math.fsum in pieces of this many numbers (one Python list of <= 2 MB at a time, not reserved)
+FSUM_CHUNK = 1 << 16
 REMEDY = 'raise max_operation_bytes, or use a larger --tile-um / smaller map (--max-map-px)'
 
 OPTION_DEFAULTS = {
@@ -407,12 +416,23 @@ def _make_sink(ctx, budget, report_diameter, slope, tables, factors, subset, ent
     return sink
 
 
+def _fsum_array(array):
+    """math.fsum of a numpy array without one Python float per entry at once (same exact value as fsum(array.tolist()))."""
+    return math.fsum(itertools.chain.from_iterable(
+        array[start:start + FSUM_CHUNK].tolist() for start in range(0, len(array), FSUM_CHUNK)))
+
+
 def _merge_sparse(chunks, budget, what):
     """Sorted unique tile index + summed values + membership of the chunks of one item (np.unique + np.bincount).
 
-    The merged copy is reserved before it is built (the chunks are still held)."""
-    total = sum(a.nbytes for part in chunks for a in part)
-    budget.reserve(total, f'merge copy {what}')
+    The chunks are still held (the caller reserved them). Before anything is allocated the peak of each phase is
+    reserved: phase 1 holds the concatenated tiles and values, the np.unique temporaries (argsort, inverse, ...) and the
+    bincount result at the same time (MERGE_BYTES_PER_ENTRY per entry); phase 2 does the same for the membership
+    (MERGE_MEMBER_BYTES_PER_ENTRY) while the merged tiles and values from phase 1 are alive."""
+    tile_entries = sum(len(a) for a in chunks[0])
+    member_entries = sum(len(a) for a in chunks[2])
+    phase_one = MERGE_BYTES_PER_ENTRY * tile_entries
+    budget.reserve(phase_one, f'merge copy {what} ({tile_entries} entries)')
     try:
         tiles = np.concatenate(chunks[0]) if chunks[0] else np.zeros(0, dtype=np.int32)
         values = np.concatenate(chunks[1]) if chunks[1] else np.zeros(0, dtype=np.float64)
@@ -420,12 +440,24 @@ def _merge_sparse(chunks, budget, what):
             unique, inverse = np.unique(tiles, return_inverse=True)
             values = np.bincount(inverse, weights=values, minlength=len(unique))
             tiles = unique.astype(np.int32)
+            del inverse, unique
+    finally:
+        budget.release(phase_one, 'merge copy')
+    merged = tiles.nbytes + values.nbytes
+    budget.reserve(merged, f'merged sparse {what}')
+    phase_two = MERGE_MEMBER_BYTES_PER_ENTRY * member_entries
+    try:
+        budget.reserve(phase_two, f'merge membership copy {what} ({member_entries} entries)')
+    except NumericContractError:
+        budget.release(merged, 'merged sparse')
+        raise
+    try:
         member = np.concatenate(chunks[2]) if chunks[2] else np.zeros(0, dtype=np.int32)
         if len(chunks[2]) > 1:
             member = np.unique(member).astype(np.int32)
     finally:
-        budget.release(total, 'merge copy')
-    budget.reserve(tiles.nbytes + values.nbytes + member.nbytes, f'merged sparse {what}')
+        budget.release(phase_two, 'merge membership copy')
+    budget.reserve(member.nbytes, f'merged membership {what}')
     return tiles, values, member
 
 
@@ -435,6 +467,11 @@ def _merge_sparse(chunks, budget, what):
 
 MIN_ROW_TILES = 1
 TOP_OTHERS = 3
+# temporaries of `member_components` per membership tile: 16 B per run (<= tiles) of `_label_runs`, its root copy, the
+# argsort of the roots, the cut positions and the per-component id arrays (all int64/int32), with margin
+COMPONENT_BYTES_PER_MEMBER = 64
+# temporaries of one np.unique(np.concatenate(...)) / np.isin over int64 ids per id (concatenated copy, sort copy, mask)
+IDS_UNIQUE_BYTES_PER_ID = 40
 CAND_FILE, ALIGN_FILE, STRETCH_FILE = 'candidate_queries_v1.json', 'alignment.json', 'stretch_map.json'
 APPLIED_MODES = ('unit', 'local', 'stretch')
 COMPARABLE_CHANGE_KINDS = ('same_pair_change', 'no_change')
@@ -471,13 +508,30 @@ def _shift_box(box, sx, sy):
     return (box[0] + sx, box[1] + sy, box[2] + sx, box[3] + sy)
 
 
+def _box_values(vt, vv, boxes, ntx):
+    """The exact (math.fsum) sum of the sparse values inside each box. vt = sorted unique tile ids, vv = their values.
+
+    One np.searchsorted pair per box row (the ids of a box row are one id interval), so a box costs O(its height * log N
+    + the tiles inside) and no array of the size of vt is built per box."""
+    out = []
+    last_row = int(vt[-1]) // ntx if len(vt) else -1
+    for x0, y0, x1, y1 in boxes:
+        xlo, xhi = max(0, x0), min(ntx, x1)
+        ylo, yhi = max(0, y0), min(y1, last_row + 1)
+        if not len(vt) or xhi <= xlo or yhi <= ylo:
+            out.append(0.0)
+            continue
+        ys = np.arange(ylo, yhi, dtype=np.int64) * ntx
+        lows = np.searchsorted(vt, ys + xlo, side='left')
+        highs = np.searchsorted(vt, ys + xhi, side='left')
+        parts = [vv[lo:hi] for lo, hi in zip(lows.tolist(), highs.tolist()) if hi > lo]
+        out.append(_fsum_array(np.concatenate(parts)) if parts else 0.0)
+    return out
+
+
 def _box_value(vt, vv, box, ntx):
     """Sum of the sparse values (tile ids vt, values vv) inside a box."""
-    if not len(vt):
-        return 0.0
-    ty, tx = vt // ntx, vt % ntx
-    keep = (tx >= box[0]) & (tx < box[2]) & (ty >= box[1]) & (ty < box[3])
-    return math.fsum(vv[keep].tolist())
+    return _box_values(vt, vv, [box], ntx)[0]
 
 
 def member_components(member, ntx, win_box):
@@ -564,7 +618,7 @@ def plan_rows(member, vt, vv, ntx, tile_um, win_box, opts):
     linear_cells = sum(len(c['tiles']) for c in comps if c['linear'])
     pair_linear = bool(comps) and 2 * linear_cells >= total_cells
     max_rows = opts['max_rows']
-    rows, others_n, others_value = [], 0, 0.0
+    rows, others_boxes = [], []
     if pair_linear:
         for comp in comps:
             if not comp['linear']:
@@ -582,73 +636,148 @@ def plan_rows(member, vt, vv, ntx, tile_um, win_box, opts):
                 box = (a0, s_lo - reach, a1, s_hi + reach) if along_x else (s_lo - reach, a0, s_hi + reach, a1)
                 rows.append({'type': 'linear', 'box': box, 'segment': i + 1, 'segments': n})
         if len(rows) > max_rows:
-            for row in rows[max_rows:]:
-                others_n += 1
-                others_value += _box_value(vt, vv, row['box'], ntx)
+            others_boxes.extend(row['box'] for row in rows[max_rows:])
             rows = rows[:max_rows]
     point_comps = [c for c in comps if not (pair_linear and c['linear'])]
     groups = _merge_overlapping([(c['bbox'][0] - reach, c['bbox'][1] - reach, c['bbox'][2] + reach, c['bbox'][3] + reach)
                                  for c in point_comps])
-    scored = sorted(((-_box_value(vt, vv, box, ntx), box[1], box[0], box, count) for box, count in groups))
+    # one pass over the sorted sparse values for every place (R2:4), not one pass per place
+    sums = _box_values(vt, vv, [box for box, _count in groups], ntx)
+    scored = sorted(((-total, box[1], box[0], box, count) for total, (box, count) in zip(sums, groups)))
     slots = max(0, max_rows - len(rows))
     for neg, _y, _x, box, count in scored[:slots]:
         rows.append({'type': 'point', 'box': box, 'components': count})
-    for neg, _y, _x, box, count in scored[slots:]:
-        others_n += 1
-        others_value += -neg
-    return {'linear': pair_linear, 'rows': rows, 'others_n': others_n, 'others_value': others_value,
-            'components': len(comps)}
+    others_boxes.extend(item[3] for item in scored[slots:])
+    # others_value here is the plain sum over the boxes (the boxes can overlap a listed row); `_side_rows` replaces it with
+    # the value on the tiles that no listed row owns (README 18.4)
+    others_value = math.fsum(_box_values(vt, vv, others_boxes, ntx))
+    return {'linear': pair_linear, 'rows': rows, 'others_n': len(others_boxes), 'others_value': others_value,
+            'others_boxes': others_boxes, 'components': len(comps)}
 
 
-def _edge_resolve(index, rows, boxes, ntx, nty, edge):
-    """Row `index` leaves the frame: look for a +-U shifted copy (README 18.4). Returns row fields."""
-    box = boxes[index]
+def others_free_value(boxes, rows, vt, vv, ntx, nty):
+    """README 18.4 "그 밖 k 곳": the pair's value on (union of the boxes not listed) minus (union of the tiles of the listed
+    rows), after the rows are placed. Every tile counts once, a tile a listed row owns counts for that row only."""
+    if not boxes or not len(vt):
+        return 0.0
+    ids = np.unique(np.concatenate([_box_ids(box, ntx, nty) for box in boxes]))
+    owned = [row['tiles'] for row in rows if len(row['tiles'])]
+    if owned and len(ids):
+        ids = ids[~np.isin(ids, np.concatenate(owned))]
+    if not len(ids):
+        return 0.0
+    sums, _hits = _row_sums((ids, np.zeros(len(ids), dtype=np.int64)), vt, vv, 1)
+    return float(sums[0])
+
+
+def _axis_segments(lo, hi, size, unit):
+    """One axis of a row box [lo, hi) against the frame [0, size): the part left of the frame (it comes back by +unit),
+    the part inside (shift 0) and the part right of it (it comes back by -unit). unit None = no period known (shift None).
+    Each segment is (start, end, shift, side)."""
+    segments = []
+    if lo < 0:
+        segments.append((lo, min(hi, 0), None if unit is None else unit, 'low'))
+    if hi > 0 and lo < size:
+        segments.append((max(lo, 0), min(hi, size), 0, 'mid'))
+    if hi > size:
+        segments.append((max(lo, size), hi, None if unit is None else -unit, 'high'))
+    return segments
+
+
+def _strip_range(segment, mid):
+    """The frame tiles next to the edge that an outside segment of the box came from: as many tiles wide as that segment
+    (README 18.4, decision 11), cut to the part of the box inside the frame (mid = its (start, end) on this axis).
+    A segment inside the frame is its own strip (the strip keeps the whole extent along the other axis)."""
+    start, end, _shift, side = segment
+    depth = end - start
+    lo, hi = mid
+    if side == 'low':
+        return lo, min(hi, lo + depth)
+    if side == 'high':
+        return max(lo, hi - depth), hi
+    return start, end
+
+
+def _edge_resolve(box, ntx, nty, edge):
+    """README 18.4 (decision 11, tile periodic mapping): the tiles of `box` outside the frame are replaced by the tiles one
+    period U away (tile units; +U for a tile left of / above the frame, -U right of / below it, both axes when both are
+    outside). The row stays when every image tile is inside the frame and the neighbour strip next to the cut equals the
+    strip one period further (same electrode on the layers of the pair, membership Dice >= `edge_repeat_min_match`)."""
     if not edge['enabled']:
         return {'edge': 'excluded', 'edge_reason': edge['reason']}
-    if edge['shift'] is None:
-        return {'edge': 'excluded', 'edge_reason': 'edge_no_repeat_position'}
-    ux, uy = edge['shift']
-    shifts = [(s * ux, 0) for s in (1, -1) if ux] + [(0, s * uy) for s in (1, -1) if uy]
-    shifts += [(sx * ux, sy * uy) for sx in (1, -1) for sy in (1, -1) if ux and uy]
     clipped = _clip_box(box, ntx, nty)
     if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
         return {'edge': 'excluded', 'edge_reason': 'edge_no_repeat_position'}
-    fitted = False
-    for sx, sy in shifts:
-        moved = _shift_box(box, sx, sy)
-        if not _box_in_frame(moved, ntx, nty):
-            continue
-        if any(_boxes_overlap(moved, _clip_box(other, ntx, nty)) for k, other in enumerate(boxes) if k != index):
-            continue
-        fitted = True
-        verdict = edge['equiv'](clipped, (sx, sy))
+    unit = edge['shift'] or (None, None)
+    rounding = edge.get('rounding_um') or (0.0, 0.0)
+    xs = _axis_segments(box[0], box[2], ntx, unit[0])
+    ys = _axis_segments(box[1], box[3], nty, unit[1])
+    mid_x = next(((s[0], s[1]) for s in xs if s[3] == 'mid'), None)
+    mid_y = next(((s[0], s[1]) for s in ys if s[3] == 'mid'), None)
+    groups, error = [], 0.0
+    for xseg in xs:
+        for yseg in ys:
+            if xseg[3] == 'mid' and yseg[3] == 'mid':
+                continue
+            if xseg[2] is None or yseg[2] is None:
+                return {'edge': 'excluded', 'edge_reason': 'edge_no_repeat_position'}
+            vx, vy = xseg[2], yseg[2]
+            image = (xseg[0] + vx, yseg[0] + vy, xseg[1] + vx, yseg[1] + vy)
+            sx0, sx1 = _strip_range(xseg, mid_x)
+            sy0, sy1 = _strip_range(yseg, mid_y)
+            strip = (sx0, sy0, sx1, sy1)
+            if (not _box_in_frame(image, ntx, nty) or not _box_in_frame(strip, ntx, nty)
+                    or not _box_in_frame(_shift_box(strip, vx, vy), ntx, nty)):
+                return {'edge': 'excluded', 'edge_reason': 'edge_no_repeat_position'}
+            groups.append((vx, vy, image, strip))
+            error = max(error, rounding[0] if vx else 0.0, rounding[1] if vy else 0.0)
+    verdicts, unverifiable, mismatch = [], False, False
+    for vx, vy, _image, strip in groups:
+        verdict = edge['equiv'](strip, (vx, vy))
         if verdict is None:
             return {'edge': 'excluded', 'edge_reason': 'edge_no_dl1'}
-        if verdict[0] >= edge['min_match'] - 1e-12 and verdict[1] >= edge['min_match'] - 1e-12:
-            return {'edge': 'repeat_used', 'edge_reason': None, 'shift_tiles': [sx, sy], 'fbox': moved,
-                    'edge_match': verdict[0], 'edge_dice': verdict[1]}
-    return {'edge': 'excluded', 'edge_reason': 'edge_mismatch' if fitted else 'edge_no_repeat_position'}
+        if verdict[0] is None or verdict[1] is None:
+            unverifiable = True
+        elif verdict[0] < edge['min_match'] - 1e-12 or verdict[1] < edge['min_match'] - 1e-12:
+            mismatch = True
+        verdicts.append(verdict)
+    if unverifiable:
+        return {'edge': 'excluded', 'edge_reason': 'edge_unverifiable'}
+    if mismatch:
+        return {'edge': 'excluded', 'edge_reason': 'edge_mismatch'}
+    image_ids = np.unique(np.concatenate([_box_ids(group[2], ntx, nty) for group in groups]))
+    boxes = [group[2] for group in groups]
+    return {'edge': 'repeat_used', 'edge_reason': None, 'fbox': clipped, 'image_ids': image_ids,
+            'image_tiles': int(len(image_ids)), 'shift_tiles': [groups[0][0], groups[0][1]],
+            'image_shifts': [[g[0], g[1]] for g in groups],
+            'image_bbox': (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes),
+                           max(b[3] for b in boxes)),
+            'edge_match': min(v[0] for v in verdicts), 'edge_dice': min(v[1] for v in verdicts),
+            'edge_rounding_um': error}
 
 
 def place_rows(rows, ntx, nty, edge):
     """Edge repeat, then tile ownership: the first row keeps a tile (README 18.4). Returns the placed rows.
 
-    edge = {'enabled', 'reason', 'shift': (ux, uy) | None, 'min_match', 'equiv': f(clipped_box, shift) -> (match, dice) | None}.
-    Each row gets 'edge', 'fbox' (the box that is counted), 'tiles' (sorted ids it owns), 'lost' (tiles another row owns)."""
-    boxes = [row['box'] for row in rows]
+    edge = {'enabled', 'reason', 'shift': (ux, uy) | None, 'rounding_um', 'min_match',
+            'equiv': f(strip_box, shift) -> (match, dice) | None}, where match/dice None = cannot be checked.
+    Each row gets 'edge', 'fbox' (the box inside the frame that is counted), 'tiles' (sorted ids it owns: its own tiles
+    plus the image tiles of a repeat, an image tile that is also an own tile counts once; first row wins a tile) and
+    'lost' (tiles another row owns)."""
     placed, owned = [], _NO_IDS
-    for index, row in enumerate(rows):
+    for row in rows:
         row = dict(row)
         if _box_in_frame(row['box'], ntx, nty):
             row.update({'edge': 'none', 'edge_reason': None, 'fbox': row['box']})
         else:
-            row.update(_edge_resolve(index, rows, boxes, ntx, nty, edge))
-            if row['edge'] == 'repeat_used':
-                boxes[index] = row['fbox']
+            row.update(_edge_resolve(row['box'], ntx, nty, edge))
         if row['edge'] == 'excluded':
             row.update({'tiles': _NO_IDS, 'lost': 0, 'fbox': row['box']})
         else:
             ids = _box_ids(row['fbox'], ntx, nty)
+            image = row.pop('image_ids', None)
+            if image is not None:
+                ids = np.union1d(ids, image)
             free = ids[~np.isin(ids, owned, assume_unique=True)] if len(owned) else ids
             row.update({'tiles': free, 'lost': int(len(ids) - len(free))})
             owned = np.union1d(owned, free)
@@ -753,20 +882,34 @@ def _tile_electrodes(ctx, run, layer):
 def _edge_env(ctx, run, member, layers):
     """The edge-repeat rules of one pair on one product (README 18.4, G4)."""
     opts = run.opts
-    tile_um = ctx.tile_px * ctx.info['pitch']
+    pitch = ctx.info['pitch']
+    tile_px = ctx.tile_px
+    tile_um = tile_px * pitch
     width, height = ctx.window['size_px']
     frame_h, frame_w = ctx.info['frame'].shape_yx
-    shift = None
-    if width < frame_w and height < frame_h and width % ctx.tile_px == 0 and height % ctx.tile_px == 0:
-        shift = (width // ctx.tile_px, height // ctx.tile_px)
     ntx, nty = ctx.ntx, ctx.nty
 
-    def equiv(clipped, shift_xy):
+    def period(unit_px, frame_px):
+        """The unit in whole tiles (rounded half up) and the rounding error in um; None when the unit is not smaller than
+        the frame (nothing repeats) or the error is above --coord-tolerance-um."""
+        if unit_px >= frame_px:
+            return None, 0.0
+        tiles = (2 * unit_px + tile_px) // (2 * tile_px)
+        error = abs(unit_px - tiles * tile_px) * pitch
+        if tiles < 1 or error > opts['coord_tolerance_um'] + 1e-9:
+            return None, error
+        return tiles, error
+
+    (ux, ex), (uy, ey) = period(width, frame_w), period(height, frame_h)
+
+    def equiv(strip, shift_xy):
+        """(electrode match, membership Dice) of a strip and the strip one period further; a value is None when nothing
+        can be compared (no electrode on either strip, no membership tile on either strip); None = no DL1."""
         grids = [_tile_electrodes(ctx, run, layer) for layer in layers]
         if not grids or any(g is None for g in grids):
             return None
         sx, sy = shift_xy
-        ids = _box_ids(clipped, ntx, nty)
+        ids = _box_ids(strip, ntx, nty)
         ty, tx = ids // ntx, ids % ntx
         match = denom = 0
         for grid in grids:
@@ -774,17 +917,17 @@ def _edge_env(ctx, run, member, layers):
             used = (a != 0) | (b != 0)
             denom += int(used.sum())
             match += int(((a == b) & used).sum())
-        ratio = match / denom if denom else 1.0
+        ratio = match / denom if denom else None
         here = ids[np.isin(ids, member)]
         moved = ((here // ntx + sy) * ntx + (here % ntx + sx))
         target_ids = ((ids // ntx + sy) * ntx + (ids % ntx + sx))
         there = target_ids[np.isin(target_ids, member)]
         both = int(np.isin(moved, there).sum())
-        dice = 1.0 if not len(here) and not len(there) else 2.0 * both / (len(here) + len(there))
+        dice = None if not len(here) and not len(there) else 2.0 * both / (len(here) + len(there))
         return ratio, dice
 
     return {'enabled': tile_um <= opts['coord_tolerance_um'] + 1e-9, 'reason': 'coords_resolution_too_coarse',
-            'shift': shift, 'min_match': opts['edge_repeat_min_match'], 'equiv': equiv}
+            'shift': (ux, uy), 'rounding_um': (ex, ey), 'min_match': opts['edge_repeat_min_match'], 'equiv': equiv}
 
 
 def _side_rows(ctx, run, plan):
@@ -792,8 +935,17 @@ def _side_rows(ctx, run, plan):
     member, vt, vv = _pair_arrays(ctx, plan['pair_id'])
     tile_um = ctx.tile_px * ctx.info['pitch']
     win = _window_box(ctx)
-    planned = plan_rows(member, vt, vv, ctx.ntx, tile_um, win, run.opts)
-    cells = sum(max(0, row['box'][2] - row['box'][0]) * max(0, row['box'][3] - row['box'][1]) for row in planned['rows'])
+    # the component labelling holds the window as a bool picture and 16 B per run plus the sort/cut temporaries of
+    # `member_components`: reserved before it runs (R2:2)
+    win_cells = max(0, win[2] - win[0]) * max(0, win[3] - win[1])
+    label_bytes = win_cells + COMPONENT_BYTES_PER_MEMBER * len(member)
+    run.budget.reserve(label_bytes, f'component labelling {ctx.role} {plan["pair_id"]} (window {win_cells} tiles)')
+    try:
+        planned = plan_rows(member, vt, vv, ctx.ntx, tile_um, win, run.opts)
+    finally:
+        run.budget.release(label_bytes, 'component labelling')
+    cells = sum(max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+                for box in [row['box'] for row in planned['rows']] + planned['others_boxes'])
     temp = 32 * (cells + len(member) + len(vt))
     run.budget.reserve(temp, f'card tiles {ctx.role} {plan["pair_id"]}')
     try:
@@ -801,6 +953,8 @@ def _side_rows(ctx, run, plan):
                          for layer in (rec['layer'], rec['upper_layer'], rec['lower_layer']) if layer})
         edge = _edge_env(ctx, run, member, layers)
         rows = place_rows(planned['rows'], ctx.ntx, ctx.nty, edge)
+        # R2:3: the value of the places that are not listed, on the tiles no listed row owns
+        planned['others_value'] = others_free_value(planned['others_boxes'], rows, vt, vv, ctx.ntx, ctx.nty)
     finally:
         run.budget.release(temp, 'card tiles')
     return {'rows': rows, 'member': member, 'vt': vt, 'vv': vv, 'planned': planned}
@@ -834,7 +988,7 @@ def _fill_values(ctx, plan, rows):
                     'others': {'top': [{'pair_id': pid, 'value': v} for v, pid in others[:TOP_OTHERS]],
                                'others_n': len(rest), 'others_value': math.fsum(v for v, _p in rest)},
                     'others_sum': math.fsum(v for v, _p in others),
-                    'range_total': math.fsum(grid[row['tiles']].tolist()) if len(row['tiles']) else 0.0})
+                    'range_total': _fsum_array(grid[row['tiles']]) if len(row['tiles']) else 0.0})
 
 
 def _pair_total(ctx, pair_id, ids):
@@ -868,6 +1022,9 @@ def _select_cards(led_doc, top_cards):
                 match, reason = 'b_only', None
             elif comparable:
                 match, reason = 'matched', None
+            elif (pair.get('change_kind') in COMPARABLE_CHANGE_KINDS and items and pair.get('present_a')
+                  and pair.get('present_b')):
+                match, reason = 'not_compared', 'items_not_on_both_sides'     # R2:6: an item exists on one product only
             else:
                 match, reason = 'not_compared', pair.get('change_kind') or 'not_comparable'
             plans.append({'kind': kind, 'pair_id': pair['pair_id'], 'rank': rank, 'delta': pair['delta'],
@@ -905,6 +1062,47 @@ def _dig(doc, *keys):
     return doc
 
 
+INPUT_FINGERPRINT_KEYS = ('manifest_sha256', 'dataset_input_hash')       # candidate_queries_v1.json inputs.<role>.<key>
+ASSET_FINGERPRINT_KEYS = ('asset_manifest', 'electrode_import_record')   # inputs.<role>.<key>.sha256 (when 04 recorded it)
+
+
+def _current_input_fingerprints(info, cfg):
+    """The fingerprints 04 stores in `candidate_queries_v1.json` `inputs.<role>` (candidates.prepare_side, candidates.py:
+    manifest_sha256 = sha256 of the manifest file, dataset_input_hash = provenance input_hash), recomputed from the
+    same files: the manifest of the hotspot folder the config points at and the same assignment/thk files. None = cannot."""
+    from .adapters.real_hotspot import configured_input_hash
+    from .numeric_images import resolve_path
+    section = info['section'] if isinstance(info['section'], dict) else {}
+    root, manifest = info['real']
+    out = {key: None for key in INPUT_FINGERPRINT_KEYS}
+    try:
+        manifest_path = section.get('manifest_path', 'manifest.json')
+        out['manifest_sha256'] = hashlib.sha256(resolve_path(Path(root), manifest_path).read_bytes()).hexdigest()
+    except Exception:                                      # an unreadable file is "cannot recompute", never an error
+        pass
+    try:
+        assignment = section.get('condition_assignment')
+        if isinstance(assignment, dict):
+            out['dataset_input_hash'] = configured_input_hash(root, manifest, assignment,
+                                                               config_dir=cfg.get('_config_dir'))
+    except Exception:
+        pass
+    return out
+
+
+def _current_asset_fingerprints(info, cfg):
+    """sha256 of the electrode asset manifest and import record that the config makes accepted (as 04 records them)."""
+    from .pipeline import _electrode_evidence
+    try:
+        evidence = _electrode_evidence(info['real'][0], info['section'], cfg.get('_config_dir'))
+        if evidence is None or evidence[0] != 'accepted':
+            return {}
+        (_record_file, record_sha), (_manifest_file, manifest_sha) = evidence[2]
+        return {'asset_manifest': manifest_sha, 'electrode_import_record': record_sha}
+    except Exception:
+        return {}
+
+
 def load_correspondence(candidates, infos, cfg, opts):
     """README 19.2-19.3: mode, fingerprint, pitch and the field of the 04 folder -> _Corr (never raises)."""
     if candidates is None:
@@ -937,6 +1135,33 @@ def load_correspondence(candidates, infos, cfg, opts):
         recorded_shape = align.get('frame_shape_reference_yx' if role == 'reference' else 'frame_shape_target_yx')
         compare(f'{role} frame shape', None if recorded_shape is None else list(recorded_shape),
                 list(info['frame'].shape_yx))
+        # the input files themselves (C2): 04 records fingerprints of what it read, recomputed here from the same files
+        compared = 0
+        current = _current_input_fingerprints(info, cfg)
+        for key in INPUT_FINGERPRINT_KEYS:
+            recorded = _dig(queries, 'inputs', role, key)
+            if recorded is None:
+                continue
+            if current[key] is None:
+                unknown.append(f'{role} {key} (cannot be recomputed now)')
+            elif recorded != current[key]:
+                stale.append(f'{role} {key}: 04 {recorded!r}, now {current[key]!r}')
+            else:
+                compared += 1
+        recorded_assets = {key: _dig(queries, 'inputs', role, key, 'sha256') for key in ASSET_FINGERPRINT_KEYS}
+        if any(sha is not None for sha in recorded_assets.values()):
+            assets = _current_asset_fingerprints(info, cfg)
+            for key, recorded in sorted(recorded_assets.items()):
+                if recorded is None:
+                    continue
+                if assets.get(key) is None:
+                    unknown.append(f'{role} {key}.sha256 (cannot be recomputed now)')
+                elif recorded != assets[key]:
+                    stale.append(f'{role} {key}.sha256: 04 {recorded!r}, now {assets[key]!r}')
+                else:
+                    compared += 1
+        if not compared:
+            unknown.append(f'{role} input fingerprint (' + ' / '.join(INPUT_FINGERPRINT_KEYS) + ')')
     pitch = align.get('pitch_um')
     compare('pitch_um', pitch, infos['reference']['pitch'])
     if pitch is not None and abs(float(pitch) - infos['reference']['pitch']) <= 1e-9 * max(1.0, abs(float(pitch))):
@@ -991,14 +1216,29 @@ def pick_offset(cells, box_px, spread_px):
     return (hit[0][2], hit[0][3]), None
 
 
+def _round_half_away(value):
+    """round() of a Fraction with an exact half going away from zero (2.5 -> 3, -2.5 -> -3)."""
+    whole = (abs(value.numerator) * 2 + value.denominator) // (2 * value.denominator)
+    return whole if value >= 0 else -whole
+
+
 def _tile_shift(offset_px, info_a, info_b, tile_um):
-    """G6: k_B = k_A + round((g_A + d - g_B) / tile), d = _shift_um (frame origin difference + offset_px * pitch)."""
+    """G6: k_B = k_A + round((g_A + d - g_B) / tile) with d = _shift_um = (g_B - g_A) + offset_px * pitch (README 18.3).
+
+    The frame origins cancel (g_A + (g_B - g_A) - g_B = 0), so the shift is round(offset_px / tile_px): it is computed
+    exactly (Fraction of the pixel offset over the whole pixels of a tile; no float sum of origins), an exact half tile
+    goes away from zero. The rounding error in um is (shift * tile_px - offset_px) * pitch, also exact in pixels."""
     pitch = info_a['pitch']
-    gax, gay = info_a['frame'].origin_xy_um
-    gbx, gby = info_b['frame'].origin_xy_um
-    dx, dy = gbx - gax + offset_px[0] * pitch, gby - gay + offset_px[1] * pitch
-    sx, sy = int(round((gax + dx - gbx) / tile_um)), int(round((gay + dy - gby) / tile_um))
-    return sx, sy, (sx * tile_um - offset_px[0] * pitch, sy * tile_um - offset_px[1] * pitch)
+    tile_px = int(round(tile_um / pitch))
+    if tile_px < 1 or abs(tile_px * pitch - tile_um) > 1e-9 * max(1.0, tile_um):
+        raise _invalid(f'tile {tile_um} um is not a whole number of pixels of the pitch {pitch}')
+    shifts, errors = [], []
+    for axis in (0, 1):
+        offset = Fraction(offset_px[axis])
+        shift = _round_half_away(offset / tile_px)
+        shifts.append(shift)
+        errors.append(float(shift * tile_px - offset) * pitch)
+    return shifts[0], shifts[1], (errors[0], errors[1])
 
 
 def _ratio_overlap(a_tiles, b_member, ntx, nty, tol_tiles):
@@ -1048,13 +1288,31 @@ def _row_json(row, info, role, ident, tile_um):
                      round(gx + box[2] * tile_um, 9), round(gy + box[3] * tile_um, 9)],
             'rect_tiles': [int(v) for v in box],
             'edge': row['edge'], 'edge_reason': row.get('edge_reason'),
-            'shift_tiles': row.get('shift_tiles'), 'tiles': int(len(row['tiles'])), 'tiles_lost': int(row['lost']),
+            'shift_tiles': row.get('shift_tiles'), 'image_tiles': int(row.get('image_tiles', 0)),
+            'image_shifts': row.get('image_shifts') or [], 'edge_rounding_um': row.get('edge_rounding_um', 0.0),
+            'tiles': int(len(row['tiles'])), 'tiles_lost': int(row['lost']),
             'pair': row['pair'], 'others': row['others'], 'range_total': row['range_total'],
             'match': row.get('match', {'status': 'only', 'reason': None})}
 
 
 def _side_final(ctx, run, plan, rows, role):
     """Values, observed area and checks 3-4 of the final rows of one pair on one product."""
+    # reserved before the arrays exist (R2:2): the window ids + the rows' ids (concatenate / unique / isin), the pair's
+    # summed sparse values and the searchsorted temporaries of one item
+    win = _window_box(ctx)
+    win_cells = max(0, win[2] - win[0]) * max(0, win[3] - win[1])
+    pair_sparse = sum(len(ctx.sparse[rec['item_id']]['tiles']) for rec in ctx.items if rec['pair_id'] == plan['pair_id'])
+    item_sparse = max([len(ctx.sparse[rec['item_id']]['tiles']) for rec in ctx.items] or [0])
+    temp = (IDS_UNIQUE_BYTES_PER_ID * (win_cells + sum(len(row['tiles']) for row in rows))
+            + 32 * (pair_sparse + item_sparse))
+    run.budget.reserve(temp, f'card values {ctx.role} {plan["pair_id"]} (window {win_cells} tiles)')
+    try:
+        return _side_final_values(ctx, run, plan, rows, role)
+    finally:
+        run.budget.release(temp, 'card values')
+
+
+def _side_final_values(ctx, run, plan, rows, role):
     _fill_values(ctx, plan, rows)
     rid = f'{plan["kind"]}:{plan["pair_id"]}:{role}'
     live = [row for row in rows if row['edge'] != 'excluded']
@@ -1068,13 +1326,14 @@ def _side_final(ctx, run, plan, rows, role):
                                             'pair_plus_others': total})
     ids = np.unique(np.concatenate([_window_ids(ctx)] + [row['tiles'] for row in live]))
     observed = _pair_total(ctx, plan['pair_id'], ids)
+    del ids                                 # the observed area is not kept: it is reserved only while it is built
     section4 = plan['a'] if role == 'reference' else plan['b']
     row_sum = math.fsum(row['pair'] for row in live)
     run.stats['pair_bound'] += 1
     slack = lambda y: CHECK_REL_TOL * max(abs(y), 1e-12)
     if row_sum > observed + slack(observed) or observed > section4 + slack(section4):
         run.checks['pair_bound'].append({'card': rid, 'rows_sum': row_sum, 'observed': observed, 'section4': section4})
-    return {'observed': observed, 'section4': section4, 'rows_sum': row_sum, 'ids': ids}
+    return {'observed': observed, 'section4': section4, 'rows_sum': row_sum}
 
 
 def _cards(ctx):
@@ -1142,6 +1401,9 @@ def _cards_target(ctx, run):
                 arow['match'] = {'status': 'only', 'reason': row_reason}
                 continue
             x0, y0, x1, y1 = arow['fbox']
+            if arow.get('image_bbox') is not None:          # a repeat row also stands on its image tiles (R2:1)
+                ix0, iy0, ix1, iy1 = arow['image_bbox']
+                x0, y0, x1, y1 = min(x0, ix0), min(y0, iy0), max(x1, ix1), max(y1, iy1)
             box_px = (x0 * ctx.tile_px, y0 * ctx.tile_px, x1 * ctx.tile_px, y1 * ctx.tile_px)
             offset, why = pick_offset(corr.cells, box_px, spread_px)
             if offset is None:
@@ -1357,7 +1619,7 @@ def _check_kinds(ctx, led_doc, key):
     out = {}
     for kind in KINDS:
         total = (((led_doc.get('totals') or {}).get(kind) or {}).get('items') or {}).get(key)
-        grid_sum = math.fsum(ctx.grids[kind].tolist()) if ctx.grids.get(kind) is not None else None
+        grid_sum = _fsum_array(ctx.grids[kind]) if ctx.grids.get(kind) is not None else None
         if total is None or grid_sum is None:
             out[kind] = {'status': 'not_evaluated', 'sum': grid_sum, 'total': total}
         else:
@@ -1391,6 +1653,9 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     provenance = getattr(dataset[1], 'provenance', None) or {}
     current_hash = provenance.get('input_hash')
     estimate = int(((provenance.get('resource_estimate') or {}).get('estimated_peak_bytes')) or 0)
+    if not estimate:
+        # R2:6: without the estimate nothing is reserved for the compute_areas holding; the run goes on and says so
+        warnings.append({'code': 'maps_resource_estimate_missing', 'role': role})
     del dataset
     _check_input_hash(role, doc_hash, current_hash)
     budget.reserve(estimate, f'compute_areas holding ({role})')
@@ -1421,7 +1686,7 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
         ctx.sparse[rec['item_id']] = {'tiles': tiles, 'values': values, 'member': member, 'bytes': merged}
         ctx.sparse_bytes += merged
         entries[rec['item_id']] = {
-            'tile_sum': None if rec['value'] is None else math.fsum(values.tolist()), 'has_area': len(member) > 0,
+            'tile_sum': None if rec['value'] is None else _fsum_array(values), 'has_area': len(member) > 0,
             'total_px': ctx.total_px.get(rec['item_id'], 0), 'value_tiles': int(len(tiles)),
             'membership_tiles': int(len(member))}
 

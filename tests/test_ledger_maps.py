@@ -15,7 +15,7 @@ from PIL import Image
 
 from simcompare import ledger, ledger_maps
 from simcompare.cli import main
-from simcompare.numeric_schema import DIAMETERS_UM
+from simcompare.numeric_schema import DIAMETERS_UM, NumericContractError
 from test_compare2 import (CNO_CSV, CNO_NAME, PAIRS, RES, assignment, base_cases, write_density, write_side, DENS_LINE,
                            DENS_PIXEL)
 
@@ -551,3 +551,123 @@ def test_dense_grid_and_item_tiles_follow_the_hand_calculation(tmp_path):
         assert doc['checks']['kind_sum'][role]['line']['sum'] == pytest.approx(ab[key], rel=1e-12)
         assert doc['checks']['kind_sum'][role]['pixel']['sum'] == 0.0
     assert doc['sides']['target']['items'][0]['membership_tiles'] == 1
+
+
+# ---- lmap/T8: budgeted merges (C1), reservations of the card step (R2:2), R2:6 ------------------------------------------
+
+def _chunks(n, overlap=0):
+    """Two chunks of an item: n tile ids each (the second starts `overlap` tiles before the end of the first)."""
+    first = np.arange(n, dtype=np.int32)
+    second = np.arange(n - overlap, 2 * n - overlap, dtype=np.int32)
+    return ([first, second], [np.ones(n), np.full(n, 2.0)], [first[:1000].copy(), second[:1000].copy()])
+
+
+def test_merge_of_two_large_chunks_is_refused_before_anything_is_allocated(monkeypatch):
+    """C1: the budget is original + merged result (the old code reserved only the size of the concatenated copy, so the
+    np.unique / inverse / sort temporaries ran unreserved)."""
+    n = 1000000
+    chunks = _chunks(n)
+    held = sum(a.nbytes for part in chunks for a in part)
+    merged = 2 * n * 12 + 2000 * 4
+    budget = ledger_maps._Budget(held + merged)
+    budget.reserve(held, 'chunks')
+
+    def boom(*args, **kwargs):
+        raise AssertionError('allocated before the reservation')
+    monkeypatch.setattr(ledger_maps.np, 'concatenate', boom)
+    monkeypatch.setattr(ledger_maps.np, 'unique', boom)
+    with pytest.raises(NumericContractError) as error:
+        ledger_maps._merge_sparse(chunks, budget, 'big')
+    assert error.value.code == 'oversized_real_operation' and 'merge copy big' in str(error.value)
+    assert budget.used == held                                    # nothing stays reserved after the refusal
+
+
+def test_merge_reservation_covers_the_real_peak_and_the_merge_is_exact():
+    import tracemalloc
+    n = 300000
+    chunks = _chunks(n, overlap=n // 3)                            # overlapping tiles must be summed
+    held = sum(a.nbytes for part in chunks for a in part)
+    budget = ledger_maps._Budget(10 ** 10)
+    budget.reserve(held, 'chunks')
+    tracemalloc.start()
+    try:
+        tiles, values, member = ledger_maps._merge_sparse(chunks, budget, 'x')
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert budget.peak - held >= peak                              # reserved >= what the merge really held at once
+    assert budget.peak - held >= ledger_maps.MERGE_BYTES_PER_ENTRY * 2 * n
+    assert len(tiles) == 2 * n - n // 3 and tiles[0] == 0 and tiles[-1] == 2 * n - n // 3 - 1
+    overlap = values[(tiles >= n - n // 3) & (tiles < n)]
+    assert overlap.tolist() == [3.0] * (n // 3) and values[0] == 1.0 and values[-1] == 2.0
+    assert member.tolist() == sorted(set(chunks[2][0].tolist()) | set(chunks[2][1].tolist()))
+    assert budget.used == held + tiles.nbytes + values.nbytes + member.nbytes      # only the result stays reserved
+
+
+def test_fsum_of_an_array_is_the_same_exact_value_without_a_list_of_the_whole_array(monkeypatch):
+    rng = np.random.RandomState(3)
+    array = rng.uniform(-1, 1, size=5003) * 10.0 ** rng.randint(-9, 9, size=5003)
+    monkeypatch.setattr(ledger_maps, 'FSUM_CHUNK', 7)
+    assert ledger_maps._fsum_array(array) == math.fsum(array.tolist())
+    assert ledger_maps._fsum_array(np.zeros(0)) == 0.0
+
+
+def test_card_step_arrays_are_reserved_before_they_are_built(tmp_path, monkeypatch):
+    """R2:2: the component labelling (window picture + run arrays) and the window ids / observed-area arrays are reserved,
+    so a limit that cannot hold them stops the run with exit 2 before they exist."""
+    chain(tmp_path)
+    code, out = maps_direct(tmp_path)
+    limit = json.loads((out / 'execution.json').read_text())['max_reserved_bytes']
+    reserved = []
+    real_reserve = ledger_maps._Budget.reserve
+    monkeypatch.setattr(ledger_maps._Budget, 'reserve',
+                        lambda self, nbytes, what: (reserved.append((what, nbytes)), real_reserve(self, nbytes, what))[1])
+    code, out = maps_direct(tmp_path, 'm2', max_operation_bytes=limit)
+    assert code == 0
+    labelling = [n for what, n in reserved if what.startswith('component labelling')]
+    values = [n for what, n in reserved if what.startswith('card values')]
+    assert labelling and values and all(n > 0 for n in labelling + values)
+    for name in ('COMPONENT_BYTES_PER_MEMBER', 'IDS_UNIQUE_BYTES_PER_ID'):
+        monkeypatch.undo()
+        monkeypatch.setattr(ledger_maps, name, 10 ** 9)
+        code, out = maps_direct(tmp_path, 'm3' + name[:3], max_operation_bytes=limit)
+        error = json.loads((out / 'error.json').read_text())
+        assert code == 2 and error['code'] == 'oversized_real_operation'
+        assert ('component labelling' if name.startswith('COMP') else 'card values') in error['detail']
+        assert not (out / 'ledger_maps.json').exists()
+
+
+def test_without_the_resource_estimate_the_run_goes_on_and_warns(tmp_path, monkeypatch):
+    """R2:6(b): no `resource_estimate` in the dataset provenance = nothing reserved for compute_areas, a warning says so."""
+    from simcompare import pipeline
+    chain(tmp_path)
+    real = pipeline._configured_real
+
+    def stripped(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if result is not None:
+            result[1].provenance.pop('resource_estimate', None)
+        return result
+    monkeypatch.setattr(pipeline, '_configured_real', stripped)
+    code, out = run_maps(tmp_path)
+    doc = load_maps(out)
+    assert code == 0
+    assert [w for w in doc['warnings'] if w['code'] == 'maps_resource_estimate_missing'] == [
+        {'code': 'maps_resource_estimate_missing', 'role': 'reference'},
+        {'code': 'maps_resource_estimate_missing', 'role': 'target'}]
+    monkeypatch.undo()
+    code, out = run_maps(tmp_path, 'm3')
+    assert not [w for w in load_maps(out)['warnings'] if w['code'] == 'maps_resource_estimate_missing']
+
+
+def test_a_same_pair_change_with_an_item_on_one_product_only_says_items_not_on_both_sides():
+    """R2:6(c): the pair exists on both products but one of its items exists on one of them: no comparison, its own code."""
+    pair = {'kind': 'line', 'pair_id': 'AB', 'a': 1.0, 'b': 2.0, 'delta': 1.0, 'change_kind': 'same_pair_change',
+            'present_a': True, 'present_b': True,
+            'items': [{'presence': 'both'}, {'presence': 'new'}]}
+    (plan,) = ledger_maps._select_cards({'pairs': [pair]}, 5)
+    assert plan['match'] == 'not_compared' and plan['reason'] == 'items_not_on_both_sides' and not plan['comparable']
+    pair['items'] = [{'presence': 'both'}]
+    assert ledger_maps._select_cards({'pairs': [pair]}, 5)[0]['match'] == 'matched'
+    pair['change_kind'] = 'layer_change'
+    assert ledger_maps._select_cards({'pairs': [pair]}, 5)[0]['reason'] == 'layer_change'

@@ -326,9 +326,10 @@ CNO (종류 CNO, 목업에서 K6):
   1. 기존 `compute_areas` 보유량 추정. 기존 가드의 추정식은 `adapters/real_hotspot.py:1119-1151` `estimate_area_bytes`(masks + output + group + history + payload)이고 호출·비교는 `real_hotspot.py:1749-1754`(`estimated_peak_bytes > max_operation_bytes` → `oversized_real_operation`)다. 시작 때 같은 식으로 예약한다. 계획 v1.2 는 `linepixel.py` 의 가드를 가리켰으나 **계획과 다름**: `linepixel.py` 에는 가드가 없고(`oversized_real_bucket_output`·`oversized_real_label_patterns` 만 `linepixel.py:344-353`) 위 위치가 맞다.
   2. 종류별 dense 합계 격자.
   3. 표시용 번호 그림·전극 그림.
-  4. item 희소 값·membership 완성 배열과 정렬·병합 사본.
+  4. item 희소 값·membership 완성 배열과 정렬·병합 사본. 병합(`_merge_sparse`)은 할당 전에 **동시 생존량 최대치**를 예약한다: 1단계(타일·값 이어 붙이기 + `np.unique(return_inverse)` 의 argsort·inverse·cumsum 임시 + `bincount` 결과)는 항목 수 × `MERGE_BYTES_PER_ENTRY`(64 B, 측정 49 B), 2단계(membership 이어 붙이기·정렬)는 항목 수 × `MERGE_MEMBER_BYTES_PER_ENTRY`(40 B). 청크는 호출자가 이미 예약해 두었으므로 원본 + 병합 결과 + 임시가 모두 예산에 들어간다. 검산의 합(`math.fsum`)은 배열 조각(65,536개)씩 넘겨 전체 배열의 Python list 를 만들지 않는다(값은 같다).
   5. sink 호출마다의 임시 배열(index·몫·`unique`/`bincount` 결과).
   6. B 처리 중 남겨 둔 A 카드 자료.
+  7. 카드 단계 임시: 성분 라벨링(창 bool 그림 + 성분당 64 B, `COMPONENT_BYTES_PER_MEMBER`), 창 색인 배열·관찰 영역 합집합(`IDS_UNIQUE_BYTES_PER_ID` × (창 타일 수 + 줄 타일 수))과 쌍 희소 값 합계. 모두 만들기 전에 예약하고 끝나면 반환한다.
 - `--max-tile-entries`(기본 40,000,000 ≈ 480 MB)는 item 희소 항목 합의 상한이다. 읽는 중 넘으면 즉시 멈추고(종료 2 `oversized_real_operation`, 조치 `--tile-um` 키우기) 출력 파일을 쓰지 않는다. 표시 옵션(`--map-px-um` 등)으로 줄지 않는 비용이다.
 - 읽기 전 가드 `guard_stage_ledger_maps`: frame 셀 수·item 수·레이어 수로 dense 배열 크기를 추정해 마스크를 읽기 전에 비교한다. `compute_areas` 기존 가드는 그대로 둔다. `execution.json` 에 최대 예약량을 기록한다.
 
@@ -337,7 +338,7 @@ CNO (종류 CNO, 목업에서 K6):
 - unit 한 장 창: U_px = round(U_um / pitch), 창 원점 = ((W−U_px)//2, (H−U_px)//2)(frame px, 축별). U_px ≥ frame 이면 창 = frame. U_um 은 `_side_info` 의 `unit_um`(설정 `product.unit_size_um`, 없으면 유도)이다. JSON 에 frame 물리 원점·pitch·U 출처(설정/유도)를 같이 남긴다.
 - **`UnitGeometry` 의 unit 번호와 다르다**(코드 사실 f). `_side_info` 의 유도식은 `unit_um = ((nx + UNIT_MARGIN_PX)/2 × pitch, (ny + UNIT_MARGIN_PX)/2 × pitch)`, `UNIT_MARGIN_PX = 2 × BORDER_PX = 1000`(`compare2_report.py:50-51, 296-303`)다. `layer_align.UnitGeometry` 는 `unit_px = ((h + 2·border)//2, (w + 2·border)//2)`(`layer_align.py:44-48`)로 같은 크기식이지만 정수 나눗셈이고 홀수 크기를 `unit_size_odd_px` 로 표시한다. 결정적 차이는 위치다. `UnitGeometry` 는 frame 을 경계 `unit_px − border` 에서 2×2 영역으로 나눈다(`layer_align.py:59-69`). 창은 frame **중앙의 위상 이동된 한 주기 창**이라 이 영역과 경계가 맞지 않는다. 그래서 창 번호를 unit 번호로 부르지 않는다.
 - 타일 격자는 **제품별**이다. 제품 r 의 타일 0 은 그 제품 frame 의 픽셀 (0,0), 물리 원점 g_r(µm)이다. 타일 k 는 물리 구간 [g_r + k·tile, g_r + (k+1)·tile).
-- A 점의 B 물리 좌표 = A 물리 좌표 + d_i. **d_i 는 `_shift_um`(`change_candidates.py:322-326`)이 준 물리 이동량 = (B 원점 − A 원점) + offset_px × pitch 다. frame 원점 차이가 이미 들어 있다**(코드 사실 b). 그러므로 g_B − g_A 를 한 번 더 빼거나 더하지 않는다. 이동 색인은 G6 식 `k_B = k_A + round((g_A + d_i − g_B) / tile)` 이다. 이 식은 `d_i` 의 원점 차이 항과 `g_A − g_B` 가 서로 상쇄되어 `k_B = k_A + round(offset_px × pitch / tile)` 이 된다(offset 은 04 가 정한 픽셀 이동). 구현은 식을 그대로 두어 `d_i` 정의가 바뀌어도 맞게 한다. fixture: A 원점 0 µm, B 원점 10 µm, 픽셀 offset 0 이면 기대 이동 색인 0(원점 차이를 두 번 세거나 빠뜨리면 실패).
+- A 점의 B 물리 좌표 = A 물리 좌표 + d_i. **d_i 는 `_shift_um`(`change_candidates.py:322-326`)이 준 물리 이동량 = (B 원점 − A 원점) + offset_px × pitch 다. frame 원점 차이가 이미 들어 있다**(코드 사실 b). 그러므로 g_B − g_A 를 한 번 더 빼거나 더하지 않는다. 이동 색인은 G6 식 `k_B = k_A + round((g_A + d_i − g_B) / tile)` 이다. 이 식은 `d_i` 의 원점 차이 항과 `g_A − g_B` 가 서로 상쇄되어 `k_B = k_A + round(offset_px × pitch / tile)` 이 된다(offset 은 04 가 정한 픽셀 이동). **구현(T8)**: 부동소수로 원점을 더하고 빼면 반 타일 근처에서 틀린 쪽으로 반올림한다(예: g_A=0, g_B=0.8, pitch 0.1, offset 15 px 이면 `g_A + d − g_B = 1.4999999999999998`). 그래서 상쇄를 **먼저** 하고 `k_B − k_A = round_half_away(offset_px / tile_px)` 를 `fractions.Fraction` 으로 정확히 계산한다(정확한 반 타일은 0 에서 먼 쪽: 1.5 → 2, −1.5 → −2). `rounding_error_um` = `(이동 × tile_px − offset_px) × pitch`(픽셀 차이가 정확하므로 오차도 정확하다). `d_i` 정의(원점 차이를 이미 포함)가 바뀌면 이 절과 `_tile_shift` 를 함께 고친다. fixture: A 원점 0 µm, B 원점 10 µm, 픽셀 offset 0 이면 기대 이동 색인 0(원점 차이를 두 번 세거나 빠뜨리면 실패).
 - 계획과 다름 아님: 계획 v1 은 "R_B = R_A + offset + 원점 차이" 라고 적었고 코드와 같다.
 
 ### 18.4 줄 (선형/점형)
@@ -348,9 +349,11 @@ CNO (종류 CNO, 목업에서 K6):
 - 점형: 사방으로 `--range-um` 넓히고 넓힌 사각형이 겹치는 성분끼리 한 위치로 묶는다. 값 큰 순 `--max-rows` 개 + "그 밖 k 곳". 선형 쌍의 점형 성분은 점형 줄로 뒤에 붙인다.
 - 범위는 frame 좌표 그대로 센다(창 밖이어도 frame 안이면 센다). 사각형은 타일 경계로 바깥 맞춤한다.
 - **타일 소유**: 한 카드 안에서 각 타일은 줄 하나에만 속한다. 줄 순서(선형 구간 → 점형 위치 값 큰 순)대로 먼저 차지한 줄이 갖는다. 뺏긴 타일 수를 줄마다 기록한다.
-- 가장자리 반복(결정 11): 범위가 frame 밖으로 나가면 ±U 옮긴 복사본 중 frame 안에 다 들어오고 그 카드의 다른 줄과 타일이 겹치지 않는 것을 찾는다. 동등성 = 관련 레이어 전극 그림 일치율 ≥ `--edge-repeat-min-match` 그리고 그 쌍 membership 타일 Dice ≥ 같은 값. 통과 → 옮긴 위치의 값(`edge: repeat_used`). 아니면 `edge: excluded`(빗금, 비교 제외, 줄 값 없음). 창 밖 불량 영역은 지도에 그리지 않는다.
+- 가장자리 반복(결정 11, **T8 에서 타일 단위 주기 매핑으로 바꿈**; Lead 결정, 결정 11 "같은 위치의 안쪽 반복" 의 해석): 줄 범위의 타일 중 **frame 밖 타일만** 한 주기 U(타일 단위 `ux`, `uy`; 창 크기 / 타일을 반올림, 오차는 `edge_rounding_um` 에 기록하고 `--coord-tolerance-um` 를 넘으면 그 축은 주기 없음)만큼 옮긴 frame 안 타일(이미지 타일)로 바꾼다. frame 왼쪽·위쪽 밖 타일은 +U, 오른쪽·아래쪽 밖 타일은 −U 이고 두 축 모두 밖이면 두 축 모두 옮긴다. 옮겨도 frame 밖이면 줄은 `excluded`(`edge_no_repeat_position`). 줄의 최종 집합 = frame 안 원래 타일 ∪ 이미지 타일이다(겹치면 한 번만 센다). 이미지 타일도 타일 소유에 같이 들어가므로 다른 줄과 겹치면 앞 줄이 갖는다. 통과 줄은 `edge: repeat_used` 이고 `image_tiles`(이미지 타일 수)·`image_shifts` 를 기록한다. 이전의 "범위 전체를 ±U 옮긴 복사본" 규칙은 중앙 창(frame = U + 2m)에서 복사본이 반대편 가장자리를 넘어 거의 쓸 수 없었다(R2).
+  동등성(같은 주기 가정이 맞는지): 바뀐 타일마다 **원래 이웃 띠** = 가장자리에서 밖으로 나간 폭만큼의 frame 안 띠(다른 축은 줄 범위 전체)와, 그 띠를 같은 ∓U 로 옮긴 띠를 비교한다. 이웃 띠가 하나라도 아래 조건을 못 지키면 줄은 `excluded` 다. (1) 관련 레이어 타일 전극 격자 일치율 ≥ `--edge-repeat-min-match`, (2) 그 띠 쌍의 membership 타일 Dice ≥ 같은 값. DL1 이 없으면 `edge_no_dl1`, 둘 다 비교할 값이 없으면(두 띠에 전극이 없거나 membership 이 둘 다 비어 있음) Dice·일치율을 1 로 치지 않고 `edge_unverifiable`, 기준 미달이면 `edge_mismatch`. `--tile-um` > `--coord-tolerance-um` 이면 `coords_resolution_too_coarse`(G4). 아니면 `edge: excluded`(빗금, 비교 제외, 줄 값 없음). 창 밖 불량 영역은 지도에 그리지 않는다.
+- "그 밖 k 곳"(목록에 못 든 위치·선형 구간)의 값 = 줄을 배치한 **뒤**(목록 밖 상자 합집합 − 목록 줄이 가진 타일) 위의 이 쌍 값이다. 겹치는 타일을 한 번만 센다(`others_free_value`).
 - **최종 집계 타일 집합 (G1)**. 사각형은 표시용이고 값·검산·관찰 영역은 최종 집합으로만 계산한다. 한 카드(한 쌍)에서 다음 순서로 확정한다.
-  1. A 줄 집합: A 창·형상에서 줄 사각형 → 가장자리 반복 이동 → 줄 순서대로 타일 소유 → `S_A,i`(서로 겹치지 않음).
+  1. A 줄 집합: A 창·형상에서 줄 사각형 → 가장자리 반복(frame 밖 타일을 이미지 타일로) → 줄 순서대로 타일 소유 → `S_A,i`(서로 겹치지 않음).
   2. 대응 이동: 대응 조건(19절)을 통과한 A 줄은 G6 식으로 `T_i = S_A,i + round((g_A + d_i − g_B) / tile)` 을 만든다(반올림 오차를 JSON 에 기록). `T_i` 가 B frame 을 벗어나면 대응하지 않는다.
   3. B 쪽 충돌 처리: A 줄 순서대로 `T_i` 를 확정한다. `T_i` 가 이미 확정된 `T_k`(k<i)와 타일이 하나라도 겹치면 줄 i 의 대응을 **거부**한다(그 A 줄은 "있는 쪽 값만" 표의 A 줄). 대응 줄은 A·B 양쪽 모두 서로 겹치지 않고, A 값 = `S_A,i` 합, B 값 = `T_i` 합이다.
   4. B 줄 집합: B 창·형상에서 줄 사각형 → 가장자리 반복 → 타일 소유 → `S_B,j`. 그다음 `U_j = S_B,j − ∪T_i`. 비어 있지 않으면 "있는 쪽 값만" 표의 B 줄이다(대응 부분을 뺐으면 "대응 부분 제외" 표시). 비어 있으면 대응 줄에 모두 포함된 것으로 기록한다.
@@ -392,7 +395,19 @@ CNO (종류 CNO, 목업에서 K6):
 
 ### 19.3 지문·pitch 확인 (코드 사실 c)
 
-- 04 의 제품 이름(`inputs.cnt.<role>.product_id`), frame 크기(`frame_shape_reference_yx`·`frame_shape_target_yx`), `pitch_um`, 입력 지문(`inputs.reference/target` 의 `condition_assignment_sha256` 등, `inputs.config_sha256`)이 현재 자료와 같아야 한다. 다르거나 읽을 수 없으면 대응하지 않는다(띠 `coords_stale`). 계획 v1.1 D3 에 맞다.
+- 04 의 제품 이름(`inputs.cnt.<role>.product_id`), frame 크기(`frame_shape_reference_yx`·`frame_shape_target_yx`), `pitch_um`, 설정 해시(`inputs.config_sha256`, `inputs.reference/target.condition_assignment_sha256`)가 현재 자료와 같아야 한다(**추가 조건: 아래 입력 지문도 같아야 한다**). 다르면 `coords_stale`, 키가 없거나 다시 계산할 수 없으면 `coords_unavailable`(대응 끔). 계획 v1.1 D3 에 맞다.
+- **입력 지문 대조(T8, C2)**: 설정 해시는 설정 파일이 같다는 뜻일 뿐이라 자료 파일이 바뀐 04 를 걸러내지 못한다. 04 가 `candidate_queries_v1.json` `inputs.<role>` 에 기록하는 지문(`candidates.py:233-237` `prepare_side`, `change_candidates.py:2128-2132` 가 `inputs` 로 옮김) 가운데 ledger-maps 가 **현재 입력에서 같은 방식으로 다시 계산할 수 있는 것**을 모두 대조한다. 제품마다 (`ledger_maps.py` `_current_input_fingerprints`, `_current_asset_fingerprints`):
+
+  | 04 키 | 현재 값 계산 | 비고 |
+  |---|---|---|
+  | `inputs.<role>.manifest_sha256` | real hotspot 폴더(`data_dir`, `manifest_path`)의 manifest 파일 sha256 | `candidates.py:235` 와 같은 파일·같은 방식 |
+  | `inputs.<role>.dataset_input_hash` | `real_hotspot.configured_input_hash(root, manifest, condition_assignment, config_dir)`(마스크를 읽지 않음) | `candidates.py:236`(`provenance['input_hash']`). manifest 원본 해시 + 배정 + pair 표 + 거리 표 |
+  | `inputs.<role>.asset_manifest.sha256`, `inputs.<role>.electrode_import_record.sha256` | `pipeline._electrode_evidence` 가 받아들인 두 파일의 sha256 | `candidates.py:210-225`. 04 가 이 sha256 을 기록한 경우에만 대조한다(설정에 전극 asset 이 없으면 기록 자체가 없다) |
+
+  - 기록된 지문이 하나라도 현재 값과 다르면 `coords_stale`(사유에 키·04 값·현재 값). 기록된 지문을 지금 다시 계산할 수 없으면 `coords_unavailable`.
+  - 제품마다 대조에 성공한 입력 지문이 **하나도 없으면**(키가 없음 = 04 가 기록하지 않음) `coords_unavailable` 이다. 설정 해시·제품명·frame·pitch 가 모두 같아도 입력 지문 없이는 켜지 않는다.
+  - 대조하지 **않는** 지문과 이유: `inputs.cnt.<role>.files_sha256`·`inputs.layers`(CNT·Layer PNG 파일 목록 해시)는 04 CLI 인자 `--cnt-from-dl1-root` 로 찾은 파일의 목록이고 그 root 를 04 가 기록하지 않아(`change_args` 에 없음, `change_candidates.py:2160`) ledger-maps 가 같은 목록을 만들 수 없다. `inputs.<role>.export_sha256`·`mask_derivation_sha256` 은 04 가 만든 파일(그 폴더의 것)의 해시이고 입력이 아니다.
+  - 실자료: 04 는 `prepare_side` 에서 real 이든 numeric 이든 `manifest_sha256`·`dataset_input_hash` 를 항상 기록하므로(`candidates.py:233-237`) 실자료에서 대응이 항상 꺼지지는 않는다. 이 키를 기록하지 않은 04 폴더(이 저장소의 `prepare_side` 이전 코드로 만든 것 등)만 `coords_unavailable` 이 된다. 대응을 실제로 켤 수 있는지는 폐쇄망 실행에서 확인한다(ETX 04 가 같은 버전의 코드로 만들어진 경우).
 - A·B pitch 가 다르면 대응하지 않는다. 04 도 거부한다(`candidates_change_pitch_mismatch`, `change_candidates.py:712-714`).
 - `--tile-um` > `--coord-tolerance-um` 이면 좌표 대응과 가장자리 동등성 판정을 하지 않는다(띠 `coords_resolution_too_coarse`, 가장자리 줄은 `excluded`). 허용치는 타일 수 `ceil(tol / tile)` 로 바꿔 쓴다.
 - 04 결과 폴더가 없으면 대응 판정 없이 "있는 쪽 값만" 으로 보이고 맨 위 띠 1줄이 선다(D4).
@@ -407,11 +422,11 @@ CNO (종류 CNO, 목업에서 K6):
 - T4 가 정한 세부(계획에 없던 부분):
   - **spread**: field 칸 offset 의 서로 차이는 축별 최댓값(체비쇼프, `max(|Δdx|, |Δdy|)` × pitch)이 `--coord-offset-spread-um` 이내여야 한다. 초과 → 줄 사유 `offset_spread`. 겹치는 칸이 없으면 `no_field_cell`.
   - **범위로 쓰는 박스**: 줄의 최종 사각형(`fbox`, 타일 단위)을 reference px 로 바꿔 field 칸과 겹침 면적을 센다.
-  - **지문 비교**: `inputs.config_sha256` = 현재 numeric config 파일의 sha256, `inputs.<role>.condition_assignment_sha256` = `candidates._canonical_sha(condition_assignment)`, `inputs.cnt.<role>.product_id` = `condition_assignment.product_id`, `alignment.json` `frame_shape_reference_yx`·`frame_shape_target_yx`·`pitch_um`. 값이 다르면 `coords_stale`, 키가 없으면 `coords_unavailable`.
+  - **지문 비교**: `inputs.config_sha256` = 현재 numeric config 파일의 sha256, `inputs.<role>.condition_assignment_sha256` = `candidates._canonical_sha(condition_assignment)`, `inputs.cnt.<role>.product_id` = `condition_assignment.product_id`, `alignment.json` `frame_shape_reference_yx`·`frame_shape_target_yx`·`pitch_um`, 그리고 위 19.3 의 입력 지문(`manifest_sha256`, `dataset_input_hash`, 전극 asset sha256). 값이 다르면 `coords_stale`, 키가 없거나 다시 계산할 수 없으면 `coords_unavailable`.
   - **대응 줄 거부 사유**: `b_conflict`(앞 줄 T 와 겹침), `outside_b_frame`, `low_membership_overlap`(대응 비율 < `--coord-min-overlap`), `offset_spread`, `no_field_cell`.
   - 대응 membership 비율 = 이동한 A membership(그 줄 소유 타일 안) 중 B membership 이 `ceil(tol/tile)` 타일(체비쇼프) 안에 있는 비율.
   - `unit`·`local`(unit 있음) 은 `unit_offsets[]`, `stretch` 는 `stretch_map.json.tiles[]`, `local` 에 unit 정렬이 없으면 `alignment.json.offset_xy_px` 하나를 frame 전체 칸으로 쓴다.
-  - **가장자리 한계(남은 의문)**: 창은 frame 중앙의 U 크기 영역이고 frame = U + 2m 이므로, 창 안 성분의 범위가 frame 밖으로 나가면(r > m) ±U 복사본은 항상 반대편 가장자리를 넘는다(오른쪽 끝 = 성분 위치 + 상자 폭 + U > U + 2m). 그래서 실제 자료에서 `repeat_used` 는 거의 나오지 않고 `excluded`(`edge_no_repeat_position`)가 된다. 코드는 계약대로 두었고 `repeat_used` 경로는 합성 전극 격자 단위 테스트로만 확인했다.
+  - **가장자리(T8 에서 바꿈)**: T4 의 "범위 전체를 ±U 옮긴 복사본" 은 창이 frame 중앙(frame = U + 2m)이라 범위가 frame 밖으로 나가면(r > m) 복사본이 반대편 가장자리를 넘어 실제 경로에서 `repeat_used` 에 도달하지 못했다(R2:1). 이제 18.4 의 타일 단위 주기 매핑(frame 밖 타일만 한 주기 안쪽으로)이라 `repeat_used` 가 실제 경로에서 나온다. 합성 격자 단위 테스트와 `tests/test_ledger_maps_cards.py` 의 실행 테스트(`test_run_with_a_small_unit_counts_the_image_tiles_and_the_range_checks_hold`)로 확인한다.
 
 ## 20. 보고서 2절·5절 표시 규칙
 
@@ -478,8 +493,8 @@ CNO (종류 CNO, 목업에서 K6):
 | `cards[]` | `kind`, `pair_id`, `rank`, `delta`, `rows`(줄 목록: `type`(선형/점형), `rect`, `edge`(`none`/`repeat_used`/`excluded`), `side`, `pair`(이 쌍 값), `others`(상위 3 + `others_n`), `range_total`, `tiles_lost`), `match`(`matched`/`a_only`/`b_only`/`not_compared` 와 사유 띠), `observed`(`O_A`, `O_B` 값), `section4_ref`(4절 쌍 값), `rounding_error` | 5절 카드 자료 |
 
 **`cards[]` 세부 키(T4 확정)**: 카드 `kind`, `pair_id`, `rank`(종류별 |Δ| 순위), `delta`, `a`, `b`(쌍 값), `change_kind`, `rows`, `match`, `observed`, `section4_ref`, `rows_sum`, `rounding_error_um`.
-- `rows[]`: 제품마다 줄 하나가 항목 하나다(대응 줄은 A 줄과 B 줄 둘이 서로 `match.counterpart` 로 가리킨다). 키 `id`(`A1`…, `B1`…), `side`(`reference`/`target`), `type`(`linear`/`point`), `rect`(frame 물리 µm `[x0, y0, x1, y1]`, 세는 상자), `rect_tiles`(타일 단위), `edge`(`none`/`repeat_used`/`excluded`), `edge_reason`(`coords_resolution_too_coarse`, `edge_no_dl1`, `edge_no_repeat_position`, `edge_mismatch`), `shift_tiles`, `tiles`(최종 집합 타일 수), `tiles_lost`(앞 줄이 가져간 타일 수), `pair`(이 쌍 값, `excluded` 면 null), `others`(`top`[`pair_id`, `value`] 상위 3 + `others_n`·`others_value`), `range_total`, `match`(`status` `matched`/`only`, `reason`, `counterpart`, `offset_px`, `shift_tiles`, `overlap`, `rounding_error_um`, 부분 대응이면 `partial_matched`).
-- `match`: `status`(`matched`/`a_only`/`b_only`/`not_compared`), `reason`(띠 코드·`layer_change` 등), `matched_rows`, `absorbed_b_rows`(B 줄이 대응 줄에 모두 포함된 경우 그 B 줄 번호), `not_listed`(`reference`/`target` 별 최대 줄 수에 못 든 점형 "그 밖 k 곳": `n`, `value`).
+- `rows[]`: 제품마다 줄 하나가 항목 하나다(대응 줄은 A 줄과 B 줄 둘이 서로 `match.counterpart` 로 가리킨다). 키 `id`(`A1`…, `B1`…), `side`(`reference`/`target`), `type`(`linear`/`point`), `rect`(frame 물리 µm `[x0, y0, x1, y1]`, 세는 상자), `rect_tiles`(타일 단위), `edge`(`none`/`repeat_used`/`excluded`), `edge_reason`(`coords_resolution_too_coarse`, `edge_no_dl1`, `edge_no_repeat_position`, `edge_mismatch`, `edge_unverifiable`), `shift_tiles`(반복 줄은 첫 이동 묶음의 `[sx, sy]`), `image_tiles`(이미지 타일 수, 반복 아니면 0), `image_shifts`(이동 묶음 `[sx, sy]` 목록, 반복 아니면 `[]`), `edge_rounding_um`(주기 반올림 오차 µm), `tiles`(최종 집합 타일 수), `tiles_lost`(앞 줄이 가져간 타일 수), `pair`(이 쌍 값, `excluded` 면 null), `others`(`top`[`pair_id`, `value`] 상위 3 + `others_n`·`others_value`), `range_total`, `match`(`status` `matched`/`only`, `reason`, `counterpart`, `offset_px`, `shift_tiles`, `overlap`, `rounding_error_um`, 부분 대응이면 `partial_matched`).
+- `match`: `status`(`matched`/`a_only`/`b_only`/`not_compared`), `reason`(띠 코드·`layer_change`·`items_not_on_both_sides` 등; 변화 종류가 같은 쌍 변화·변화 없음인데 item 이 한쪽에만 있으면 `items_not_on_both_sides`), `matched_rows`, `absorbed_b_rows`(B 줄이 대응 줄에 모두 포함된 경우 그 B 줄 번호), `not_listed`(`reference`/`target` 별 최대 줄 수에 못 든 점형 "그 밖 k 곳": `n`, `value`).
 - `observed`·`rows_sum`: 제품별(`reference`/`target`) 관찰 영역 이 쌍 값, 줄 이 쌍 값 합.
 - `checks.range_sum`/`pair_bound`/`partition`: `{status, checked, failed[], failed_count}`. 확인할 줄이 없으면 `not_evaluated`.
 
@@ -490,12 +505,14 @@ CNO (종류 CNO, 목업에서 K6):
 | 종료 | 코드 | 뜻 |
 |---|---|---|
 | 2 | `ledger_maps_input_missing` | `compare2.json`·`ledger.json`·execution.json·config·`--candidates` 폴더 없음, 또는 입력 execution 이 error. 읽은 자료의 input_hash 가 compare2.json 기록과 다르면 이 코드가 아니라 07 과 같은 `compare2_input_hash_mismatch` 다(문구 동일). `ledger.json` 이 가리키는 compare2.json·config sha256 이 다르면 `ledger_maps_stale`(ledger-maps 쪽)이다. 모든 지름이 `lambda_diameters_um` 밖이면 오류 없이 모든 item 이 값 대기(`pending`)이고 검산은 `not_evaluated` 인 지도가 나온다(종료 0) |
+| 2 | `compare2_config_mismatch` | `compare2.json` 이 기록한 config sha256(`inputs.compare2_config.sha256`)이 이 `--config` 의 sha256 과 다름(02 부터 다시 실행). `ledger.json` 쪽 불일치는 `ledger_maps_stale` |
 | 2 | `ledger_maps_output_not_owned` | `--out` 에 이 명령이 만들지 않은 파일이 있음(아무것도 쓰지 않고 지우지 않는다) |
 | 2 | `ledger_maps_option_invalid` | 21절 허용 범위 밖 |
 | 2 | `oversized_real_operation` | `_Budget` 예약이나 읽기 전 가드가 `max_operation_bytes` 또는 `--max-tile-entries` 초과(출력 파일 쓰지 않음) |
 | 2 | `ledger_maps_stale`(보고서 쪽) | `ledger-report --maps-dir` 에서 `ledger_maps.json` 이 기록한 `ledger.json` sha256 이 현재와 다름 |
 | 3 | `ledger_maps_value_check_failed` | 검산 1·2·3·4·5 중 하나라도 통과하지 못함(결과 파일은 쓴다) |
 | 0 + 경고 | `maps_dl1_not_configured` | DL1 전극 폴더가 설정에 없음. 전극 그림 없이 item 지도만 만든다 |
+| 0 + 경고 | `maps_resource_estimate_missing` | 데이터셋 provenance 에 `resource_estimate` 가 없어 `compute_areas` 보유량을 예약하지 못함(예약 0 으로 진행, 제품마다 `warnings` 에 `{code, role}`) |
 
 - 오류(종료 2)면 자기 소유 결과 파일을 지우고 `error.json`·`execution.json` 만 남긴다(11절과 같음).
 - 실행기: 종료 3 은 계속, 종료 2 는 멈춘다(`CONTINUE_CODES` 그대로).
