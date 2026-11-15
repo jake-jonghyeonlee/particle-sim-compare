@@ -368,6 +368,8 @@ def build_ledger(doc, doc_sha256, cfg2):
                 'endpoints': base.get('endpoints') or [], 'class': ikind,
                 'presence': 'both' if ia is not None and ib is not None else ('new' if ib is not None else 'gone'),
                 'filtered_out': filtered,
+                'a_filtered': bool(ia is not None and ia['filtered_out']),
+                'b_filtered': bool(ib is not None and ib['filtered_out']),
                 'lambda_a': lam_a, 'lambda_b': lam_b, 'a': a, 'b': b, 'delta': d})
             for role, item in (('reference', ia), ('target', ib)):
                 if item is not None and item.get('lambda') is None:
@@ -411,6 +413,8 @@ def build_ledger(doc, doc_sha256, cfg2):
                 return 0.0
             return None if rec['noncomputable'] else total
 
+        other_ids = {'reference': set(recs['target']['items']) if recs['target'] else set(),
+                     'target': set(recs['reference']['items']) if recs['reference'] else set()}
         a_pub, b_pub = public('reference', sum_a), public('target', sum_b)
         d_pub = _sub(b_pub, a_pub)
         pair_rows[pid] = {
@@ -421,8 +425,10 @@ def build_ledger(doc, doc_sha256, cfg2):
             'layers_b': sorted({i['analysis_layer'] for i in (recs['target'] or {'items': {}})['items'].values()}),
             'items': item_rows,
             '_keys_known': not any(recs[role] is not None and recs[role]['noncomputable'] for role in ROLES),
-            # the layer-change key set leaves out items the distance filter removed entirely (a true 0, README 8)
-            '_keys': {role: {item_id for item_id, item in recs[role]['items'].items() if not item['filtered_out']}
+            # the layer-change key set leaves out a filter-removed item (a true 0) only when the other product
+            # has no item with the same id at all (README 8)
+            '_keys': {role: {item_id for item_id, item in recs[role]['items'].items()
+                             if not item['filtered_out'] or item_id in other_ids[role]}
                       if recs[role] is not None else set() for role in ROLES}}
 
     # change kinds (README 8)

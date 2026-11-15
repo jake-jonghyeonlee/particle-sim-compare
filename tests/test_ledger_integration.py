@@ -84,3 +84,20 @@ def test_vertical_short_variant_with_the_diameter_filter_passes_every_sum(tmp_pa
     code, out = run(tmp_path, ref, ref, thk=THK, diameters=[3])
     assert code == 0
     assert_sums_passed(ledger_of(tmp_path, out))
+
+
+def test_diameter_filter_that_removes_every_cell_of_an_item_reaches_the_ledger_filter_path(tmp_path):
+    # no 3 um input exists at all, so the filter (3 um only) removes every cell of every item: a true 0 per item
+    # (T8 adv:2). compare2 exits 3 (nothing left to compute); the ledger still runs and marks each item filtered.
+    pairs = PAIRS + [('XY', 'X', 'Y', 'line')]
+    ref = (base_cases() + [VERTICAL], pairs)
+    code, out = run(tmp_path, ref, ref, thk=THK, diameters=[3], skip=(3,))
+    assert code == 3
+    raw = json.loads((out / 'compare2.json').read_text(encoding='utf-8'))['sides']['reference']['ledger_items']
+    assert raw and all(item['reasons'] == ['diameter_filter_removed_all'] for item in raw)
+    doc = ledger_of(tmp_path, out)
+    items = [item for row in doc['pairs'] for item in row['items']]
+    assert len(items) == len(raw)
+    assert all(item['filtered_out'] and item['a_filtered'] and item['b_filtered'] for item in items)
+    # same item ids on both sides, so the layer keys agree; the values are not computable here (nothing left)
+    assert all(row['change_kind'] == 'value_pending' for row in doc['pairs'])

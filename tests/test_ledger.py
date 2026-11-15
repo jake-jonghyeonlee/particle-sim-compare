@@ -791,7 +791,7 @@ def test_percent_columns_use_a_tiny_vi_a(tmp_path):
     def tamper(doc):
         doc['sides']['reference']['vi_line'] = 1e-16
     world = mockup(tmp_path, mutate=tamper)
-    assert go(world) in (0, 3)                                         # the equations no longer hold: only the % is read
+    assert go(world) == 3                       # the equations no longer hold (vi_line was tampered): exit 3, the % is read
     doc = result(world)
     row = by_pair(doc)['P1']
     assert row['pct_a'] == pytest.approx(100 * row['a'] / 1e-16)
@@ -877,7 +877,7 @@ def test_filtered_item_on_both_sides_and_one_side_only_with_a_value(tmp_path):
     pairs = [pair('P1', ['A', 'B'], 'line',
                   [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
                   [lateral(['A', 'B'], .02, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)]),
-             # filtered on A, a real value on B: the key sets differ
+             # filtered on A, a real value on B: the item exists on both sides (T8 rule), so a value change
              pair('P2', ['B', 'C'], 'line',
                   [lateral(['B', 'C'], .01, 'SD1'), lateral(['B', 'C'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
                   [lateral(['B', 'C'], .01, 'SD1'), lateral(['B', 'C'], .004, 'SD2')])]
@@ -886,8 +886,40 @@ def test_filtered_item_on_both_sides_and_one_side_only_with_a_value(tmp_path):
     doc = result(world)
     assert by_pair(doc)['P1']['change_kind'] == 'same_pair_change'
     assert [i['filtered_out'] for i in by_pair(doc)['P1']['items'] if i['analysis_layer'] == 'SD2'] == [True]
-    assert by_pair(doc)['P2']['change_kind'] == 'layer_change'
-    assert [i['filtered_out'] for i in by_pair(doc)['P2']['items'] if i['analysis_layer'] == 'SD2'] == [False]
+    assert by_pair(doc)['P2']['change_kind'] == 'same_pair_change'
+    p2 = [i for i in by_pair(doc)['P2']['items'] if i['analysis_layer'] == 'SD2']
+    assert [i['filtered_out'] for i in p2] == [False]
+    assert [(i['a_filtered'], i['b_filtered']) for i in p2] == [(True, False)]
+
+
+def test_filtered_on_a_and_valued_on_b_is_a_value_change_not_a_layer_change(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], .004, 'SD2')])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    assert by_pair(result(world))['P1']['change_kind'] != 'layer_change'
+
+
+def test_filtered_on_a_and_missing_on_b_is_left_out_of_the_keys(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
+                  [lateral(['A', 'B'], .02, 'SD1')])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    assert by_pair(result(world))['P1']['change_kind'] == 'same_pair_change'
+
+
+def test_filtered_on_both_sides_is_no_change(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    row = by_pair(result(world))['P1']
+    assert row['change_kind'] == 'no_change'
+    assert [(i['filtered_out'], i['a_filtered'], i['b_filtered']) for i in row['items']
+            if i['analysis_layer'] == 'SD2'] == [(True, True, True)]
 
 
 # change 7 (opus adv:6) ----------------------------------------------------------------------------------------------

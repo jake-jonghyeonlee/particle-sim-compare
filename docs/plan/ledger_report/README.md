@@ -97,7 +97,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 1. 두 전극 중 하나라도 한쪽 제품의 전극 목록에 없다 → **전극 추가·제거**
 2. 쌍이 B 에만 → **새 쌍**, A 에만 → **사라진 쌍**
-3. A, B 의 item 키 집합이 다르다 → **레이어 변경** (방식만, 아래 레이어만, 방향만 바뀐 경우 포함). 키 = `item_id`(9절). 거리 필터가 전부 지운 item(아래 "거리 필터 item")은 키 집합에서 뺀다.
+3. A, B 의 item 키 집합이 다르다 → **레이어 변경** (방식만, 아래 레이어만, 방향만 바뀐 경우 포함). 키 = `item_id`(9절). 거리 필터가 전부 지운 item(아래 "거리 필터 item")은 상대 제품에 같은 `item_id` 가 아예 없을 때만 키 집합에서 뺀다. 상대 제품에 같은 `item_id` 가 있으면(필터든 값이든) 양쪽에 있는 것으로 센다.
 4. |Δ| ≤ 1e-12 + 1e-9·max(|a|,|b|) → **변화 없음**
 5. 그 밖 → **같은 쌍 증감**
 
@@ -106,7 +106,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 - 계산 불가 조건(`computable=false`)의 쌍은 "있음, 값 없음"이다. 그 쌍은 12절 7절(참고) "계산 불가 항목" 목록(`ledger.json` `unavailable`)에도 올린다.
   - 한쪽 또는 양쪽 조건이 계산 불가라 item 키를 알 수 없으면 **레이어 변경을 판정하지 않고** "값 대기"로 둔다(구현: 쌍의 `_keys_known` 이 false).
   - 관측 사실 판정(전극 추가·제거, 새 쌍·사라진 쌍)은 그대로 한다. 그 판정은 item 키를 쓰지 않는다.
-- 거리 필터 item: compare2 `ledger_items[].reasons` 가 `diameter_filter_removed_all` 하나뿐인 item(λ 0, 이물 크기 필터가 모든 셀을 지움)은 레이어 변경 판정의 키 집합에서 뺀다. 쌍 줄 안에서는 그대로 보이고, `ledger.json` 쌍의 item 에 `filtered_out: true` 가 붙는다(표시 상태 "거리 필터로 0"). 양쪽 item 이 모두 이 사유이면 `true`, 한쪽이라도 값이 있으면 `false` 이고 그 키는 값이 있는 쪽의 키로 센다(한쪽에만 값이 있으면 키 집합이 다르다 → 레이어 변경).
+- 거리 필터 item: compare2 `ledger_items[].reasons` 가 `diameter_filter_removed_all` 하나뿐인 item(λ 0, 이물 크기 필터가 모든 셀을 지움)은 상대 제품에 같은 `item_id` 가 **아예 없을 때만** 레이어 변경 판정의 키 집합에서 뺀다(T8). 상대에 같은 `item_id` 가 있으면 그 item 은 양쪽에 있는 것으로 센다. 그러면 "A 필터 0, B 값"은 키가 같아 값 판정(같은 쌍 증감 / 변화 없음)이 되고, "A 필터 0, B 에 item 없음"은 키에서 빠져 변화 없음 쪽이며, "양쪽 필터 0"은 값 0 이라 변화 없음이다. 쌍 줄 안에서는 그대로 보이고, `ledger.json` 쌍의 item 에 `filtered_out`, `a_filtered`, `b_filtered` 가 붙는다. `a_filtered`/`b_filtered` 는 그쪽 item 이 거리 필터로 0 이면 `true`(그쪽 값 칸에 "거리 필터로 0" 표시), item 이 없으면 `false`. `filtered_out` 은 있는 쪽이 모두 필터일 때만 `true`(표시 상태 "거리 필터로 0")이다.
 - CNO 는 (electrode_id, density_layer) 단위의 별도 종류 "CNO"이다.
 
 전극 목록 완전성 (X3):
@@ -130,7 +130,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 기존 키·값·CSV 4개·`OWNED_NAMES` 는 불변이다. `schema_version` 은 `compare2_v1` 을 유지한다(07·compare2_link 가 문자열 비교: `compare2_report.py:257`, `compare2_link.py:64`).
 
-- `sides.<role>.ledger_items[]` — item = (pair_id, failure_type, endpoints_key, analysis_layer, class) 마다 하나. 이물 크기·density_layer 는 `by_size` 로 펼친다. 정렬은 (analysis_layer, pair_id, failure_type, endpoints_key, class). 필드(구현된 이름):
+- `sides.<role>.ledger_items[]` — item = (pair_id, failure_type, endpoints_key, analysis_layer, class) 마다 하나. 이물 크기·density_layer 는 `by_size` 로 펼친다. 정렬은 (analysis_layer, pair_id, failure_type, endpoints_key, class). 끝점(`endpoints`)은 `(electrode_id, actual_layer)` 순으로 정렬한다. 필드(구현된 이름):
   - `item_id`: 구조 값 `[pair_id, failure_type, upper, lower, [[electrode_id, actual_layer], [electrode_id, actual_layer]]]` 를 `json.dumps(…, ensure_ascii=False, separators=(',', ':'))` 로 쓴 문자열(끝점은 endpoints_key 순). 이름에 `|`·`,`·`@`·`"`·한글이 있어도 두 item 이 같은 id 가 되지 않는다(예전 `|`·`,`·`@` 이음 문자열은 레이어 `Z,B@Z` 와 `Z` 의 두 방향이 같은 id 가 되었다). compare2 의 `_item_id` 가 만들고 `ledger` 가 같은 함수로 다시 계산해 일치를 검사한다. 한 side 안에서 유일하다.
   - `pair_id`, `class`(line/pixel; CNO 는 `ledger_items` 에 없다), `failure_type`, `analysis_layer`, `upper_layer`, `lower_layer`
   - `electrodes`(그 쌍의 전극 목록), `endpoints: [{electrode_id, actual_layer}]`(electrode_id 순)
@@ -170,7 +170,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 | `totals.<line/pixel>` | `items`(쌍 item 합 A·B·Δ), `intercept`(절편 줄), pixel 만 `cno`·`crp`(A = −d, B = 0, Δ = d; `present`), `a`·`b`·`delta`(열 합계), `vi_a`·`vi_b` |
 | `kinds.<line/pixel>` | `computable`, `vi_a`, `vi_b`, `slope`, `slope_method`, `lambda_a`, `lambda_b`, `pair_count`, `change_kinds`(코드별 건수; pixel 은 `cno` 건수 포함), `increase_sum`·`decrease_sum`, `value_pending_rows` |
 | `kinds.change_kind_counts` | 쌍 + CNO 전체의 변화 종류별 건수(건수는 쌍 하나 한 번) |
-| `pairs` | 쌍별 `rank`(L#, P#), `pair_id`, `electrodes`, `kind`, `change_kind`, `present_a/b`, `computable_a/b`, `a`·`b`·`delta`·`pct_a`·`pct_b`·`pct_delta`, `layers_a/b`, `items`[`item_id`, 방식, 레이어, `endpoints`, `presence` both/new/gone, `filtered_out`(거리 필터로 0, 8절), `lambda_a/b`, `a`·`b`·`delta`]. 순서: line 순위, pixel 순위, 종류 불명 |
+| `pairs` | 쌍별 `rank`(L#, P#), `pair_id`, `electrodes`, `kind`, `change_kind`, `present_a/b`, `computable_a/b`, `a`·`b`·`delta`·`pct_a`·`pct_b`·`pct_delta`, `layers_a/b`, `items`[`item_id`, 방식, 레이어, `endpoints`, `presence` both/new/gone, `filtered_out`(거리 필터로 0, 8절), `a_filtered`/`b_filtered`(side 별 거리 필터 0, 8절), `lambda_a/b`, `a`·`b`·`delta`]. 순서: line 순위, pixel 순위, 종류 불명 |
 | `electrodes` | 전극별 `status`, `present_a/b`, `layers_a/b`, `line`·`pixel`(A·B·Δ·% ; pixel 은 CNO 포함), `cno`, `partners_a/b`, `layers`(레이어별 line·pixel 값) |
 | `cno` | (electrode_id, density_layer) 줄: `change_kind: cno`, `presence`, `lambda_a/b`, `a`·`b`·`delta`·% |
 | `layers.<line/pixel/cno>` | 레이어(analysis_layer, CNO 는 density_layer)별 `a`·`b`·`delta`, `by_size`(이물 크기별), `top_pairs`(Δ 절댓값 상위 2쌍) |
