@@ -549,10 +549,14 @@ def _item_layers(case, analysis_layer):
     return analysis_layer, (others[0] if others else analysis_layer)
 
 
-def _ledger_kind(pair_masks, items, keep, size, expected_cells, stats, transfer_keep):
+def _ledger_kind(pair_masks, items, keep, size, expected_cells, stats, transfer_keep, sink=None, sink_ctx=None):
     """1/n pair shares of one class split over the pair's items (docs/plan/ledger_report/README.md sections 3-4).
 
-    Arrays are built per class and dropped on return: one counter array (n) plus short-lived unpacked masks."""
+    Arrays are built per class and dropped on return: one counter array (n) plus short-lived unpacked masks.
+
+    sink (observe-only, see compute_areas) is called once per item with the keywords group_key, kind, item_key, item,
+    frame, geom_idx, share_idx, share. sink_ctx = (group_key, kind, frame, valid_flat). Its return value is ignored
+    and its exceptions propagate; no ledger number depends on it."""
     pair_ids = sorted(pair_masks)
     n = np.zeros(size, dtype=_count_dtype(len(pair_ids)))
     for pid in pair_ids:
@@ -585,12 +589,22 @@ def _ledger_kind(pair_masks, items, keep, size, expected_cells, stats, transfer_
                 code = n[im].astype(np.int64) * (k + 1) + m[im]
                 uniq, cnt = np.unique(code, return_counts=True)
                 terms = [int(c) / ((int(u) // (k + 1)) * (int(u) % (k + 1))) for u, c in zip(uniq, cnt)]
-            out_items.append({
+            out_item = {
                 'pair_id': ikey[0], 'failure_type': ikey[1], 'upper_layer': items[ikey]['upper'],
                 'lower_layer': items[ikey]['lower'],
                 'endpoints': copy.deepcopy(items[ikey]['endpoints']),
                 'share_cells': math.fsum(terms), 'own_cells': int(np.count_nonzero(im)),
-                'transferred_out_cells': 0 if transfer_keep is None else int(np.count_nonzero(full & transfer_keep))})
+                'transferred_out_cells': 0 if transfer_keep is None else int(np.count_nonzero(full & transfer_keep))}
+            out_items.append(out_item)
+            if sink is not None:
+                group_key, kind, frame, valid_flat = sink_ctx
+                share_idx = np.flatnonzero(im)
+                share = 1.0 / (n[share_idx].astype(np.float64) if m is None
+                               else n[share_idx].astype(np.float64) * m[share_idx].astype(np.float64))
+                sink_item = {name: out_item[name] for name in ('pair_id', 'failure_type', 'upper_layer', 'lower_layer')}
+                sink_item['endpoints'] = copy.deepcopy(out_item['endpoints'])
+                sink(group_key=group_key, kind=kind, item_key=ikey, item=sink_item, frame=frame,
+                     geom_idx=np.flatnonzero(full & valid_flat), share_idx=share_idx, share=share)
         m = None
     hist = {}
     for per_pair in pair_hist.values():
@@ -618,7 +632,8 @@ class _UnionMeta(NamedTuple):
 
 def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
            max_bucket_entries=DEFAULT_MAX_BUCKET_OUTPUT_ENTRIES,
-           max_label_entries=DEFAULT_MAX_LABEL_PATTERN_ENTRIES, top_buckets=None, condition_stats=False):
+           max_label_entries=DEFAULT_MAX_LABEL_PATTERN_ENTRIES, top_buckets=None, condition_stats=False,
+           share_sink=None):
     """top_buckets=None keeps every bucket; an int N keeps lineage/contributors only for the N largest buckets per class."""
     entries = sorted(entries, key=lambda item: _json(asdict(item[0].identity)))
     frame = entries[0][1].frame
@@ -834,9 +849,11 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
         line_flat = _unpack_flat(line, size)
         group.ledger_shares = {
             LINE: _ledger_kind(pair_bits[LINE], item_info[LINE], valid_flat, size, packed(line).count(),
-                               group.condition_stats[LINE], None),
+                               group.condition_stats[LINE], None, share_sink,
+                               (key, LINE, frame, valid_flat) if share_sink is not None else None),
             PIXEL: _ledger_kind(pair_bits[PIXEL], item_info[PIXEL], valid_flat & ~line_flat, size,
-                                packed(effective).count(), group.condition_stats[PIXEL], valid_flat & line_flat)}
+                                packed(effective).count(), group.condition_stats[PIXEL], valid_flat & line_flat,
+                                share_sink, (key, PIXEL, frame, valid_flat) if share_sink is not None else None)}
         line_flat = None
     return group
 
@@ -844,8 +861,20 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
 def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells: int = 65536,
                   max_bucket_output_entries: int | None = None, bucket_detail: str | None = None,
                   top_buckets: int | None = None, max_label_pattern_entries: int | None = None,
-                  condition_stats: bool = False) -> AreaResult:
+                  condition_stats: bool = False, share_sink=None) -> AreaResult:
     """Per-source-condition/layer/diameter full-mask areas with conservative coverage.
+
+    share_sink (observe-only, needs condition_stats=True, else ValueError): a callable called once per ledger item
+    (per group = per GroupKey, so per diameter and density layer; per class LINE / PIXEL), keywords only:
+    group_key (the GroupKey: product_id, design_version, unit_id, source_id, process_step_id, exposure_id,
+    analysis_layer, density_process_layer, source_contract_version, frame_id, diameter_um), kind (LINE/PIXEL),
+    item_key (pair_id, failure_type, ((electrode_id, actual_layer), ...)), item (pair_id, failure_type, upper_layer,
+    lower_layer, endpoints; a copy), frame (the group's Frame; shape_yx = (H, W)), geom_idx (ascending int64 flat
+    indices of the item's full mask & valid; a pixel item includes cells a line covers), share_idx (ascending flat
+    indices of the item's own cells for its class), share (float64, 1/(n*m) per share_idx cell; m = same-pair item
+    count at the cell when the pair has several items, else 1/n). Flat index is row-major: flat = y * W + x
+    (frame.valid.reshape(-1)). The sink's return value is ignored, its exceptions propagate, and no result changes.
+    It runs for every group, including diameters outside compare2's lambda_diameters_um.
 
     Incomplete groups expose observed-source partial areas, not lower bounds:
     an unknown line mask could remove part of the currently effective pixel area.
@@ -868,6 +897,8 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
     """
     if isinstance(chunk_cells, bool) or not isinstance(chunk_cells, int) or chunk_cells <= 0:
         raise NumericContractError('invalid_membership_chunk_size')
+    if share_sink is not None and not condition_stats:
+        raise ValueError('share_sink needs condition_stats=True')
     admitted = getattr(inputs, 'provenance', {}).get('admitted_bucket_detail')
     if bucket_detail is None:
         bucket_detail = admitted['bucket_detail'] if admitted else 'full'
@@ -943,7 +974,7 @@ def compute_areas(inputs: NumericDataset | Iterable[NumericCase], *, chunk_cells
                                    max_bucket_entries=max_bucket_output_entries,
                                    max_label_entries=max_label_pattern_entries,
                                    top_buckets=top_buckets if bucket_detail == 'summary' else None,
-                                   condition_stats=condition_stats)
+                                   condition_stats=condition_stats, share_sink=share_sink)
                        for key in sorted(grouped)},
                       copy.deepcopy(dataset.gates) if dataset else {}, provenance.get('input_hash'),
                       table_version, provenance.get('pair_table_hash'), bool(provenance.get('is_synthetic',False)))

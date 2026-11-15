@@ -236,7 +236,7 @@ def _extract(areas, absent_zero=False):
     return {'cells': cells, 'classes': classes, 'electrodes': electrodes, 'absent_cases': sorted(absent_cases)}
 
 
-def _load_side(cfg, role, top_buckets):
+def _load_side(cfg, role, top_buckets, share_sink=None):
     """Load one side, measure it and return plain numbers; the dataset and the masks are released on return."""
     from .linepixel import compute_areas
     from .pipeline import _configured_real, _real_source
@@ -256,7 +256,7 @@ def _load_side(cfg, role, top_buckets):
             'case_exclusions': manifest.get('case_exclusions'),
             'expected_case_coverage_status': manifest.get('expected_case_coverage_status'),
             'same_name_cases_unresolved': bool(dataset.provenance.get('unresolved_same_name_cases'))}
-    result = compute_areas(dataset, **detail, condition_stats=True)
+    result = compute_areas(dataset, **detail, condition_stats=True, share_sink=share_sink)
     extracted = _extract(result, absent_zero=meta['expected_case_coverage_status'] == 'confirmed')
     meta['pair_table_version'] = result.pair_table_version
     meta['pair_table_hash'] = result.pair_table_hash
