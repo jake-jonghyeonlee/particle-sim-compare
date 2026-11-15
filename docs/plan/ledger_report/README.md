@@ -271,3 +271,250 @@ CNO (종류 CNO, 목업에서 K6):
 - 07 은 선택이다. 07 의 값은 같다. 07 `report.json` 의 compare2.json sha256 기록을 맞추려 할 때만 다시 돈다(검증하는 소비자는 src 에 없음). `docs/usage.md` 에 그대로 적는다(T6).
 - Python 3.9.14(numpy 1.23.5, Pillow 10.1.0)로 bundle 을 확인한다. ETX 화면은 EUC-KR 이고 환경 변수를 넘길 수 없다.
 - 실자료는 폐쇄망에만 있다. 이 호스트에서는 합성 자료와 fixture 로 확인한다.
+
+# 2단계(unit 지도)·3단계(범위 합계) 규칙 — Run 20261116-ledger-maps (lmap)
+
+이 아래 16절부터는 2단계와 3단계의 규칙이다. 원천은 계획 v1, v1.1, v1.2 이고 뒤가 우선한다(v1 ← v1.1 ← v1.2). 코드 사실은 기준 commit 1ce685b 를 직접 읽어 확인했다. 계획과 다른 사실은 해당 절에 "계획과 다름" 으로 적었다. 이 문서의 구현 Task 는 T2 이후다.
+
+## 16. 개요와 흐름
+
+- 새 명령 `ledger-maps` 가 hotspot 과 DL1 을 한 번 다시 읽는다. 결과는 `ledger_maps.json`(`ledger_maps_v1`)과 번호 PNG 다.
+- `ledger-report --maps-dir <data/ledger_maps>` 가 그 결과를 읽어 2절과 5절을 그린다. 보고서는 다시 계산하지 않는다.
+- 흐름: `compare2.json`(02) + `compare2.yaml` + `ledger.json`(08) + 선택 `data/changes`(04) → `ledger-maps` → `ledger_maps.json` + PNG → `ledger-report --maps-dir`.
+- 명령: `ledger-maps --compare2-dir <02> --config <compare2.yaml> --ledger-dir <data/ledger> [--candidates <data/changes>] --out <data/ledger_maps> [옵션]`.
+- 출력 파일: `ledger_maps.json`, `map_<role>_<nnn>_<el|it>.png`, `execution.json`(시각은 여기에만). 출력 폴더 규약(새 폴더 또는 이 명령이 만든 폴더만, 임시 폴더에 쓴 뒤 rename)은 11절과 같다.
+- 설정값은 CLI 옵션으로만 준다. compare2.yaml 에 넣으면 config sha256 이 바뀌어 02 를 다시 돌려야 한다.
+- 값은 02 와 같은 코드 경로에서 얻는다. `linepixel._ledger_kind`(`linepixel.py:552`)에 선택 인자 sink 를 단다. sink 는 **관찰만** 한다. 기존 `terms → math.fsum` 계산은 그대로다. 호출 지점은 `im = full & keep` 이 확정된 뒤(`linepixel.py:579-593`)다. 기본 None 이면 02 결과는 바이트 동일이다.
+- sink 는 `compare2._load_side`(`compare2.py:239`)에 `share_sink=None` 인자를 더해 `compute_areas`(`compare2.py:258` 호출)로 넘긴다. 1ce685b 에는 `share_sink` 가 아직 없다(`git grep share_sink src` 결과 0).
+- 07(`compare2_report.py`)·`compare2_link.py`·`ledger.py` 의 값과 출력은 바꾸지 않는다. 07 의 `_side_info`·`_FrameInfo`(`compare2_report.py:277-305`)와 input_hash 대조 문구(`compare2_report.py:367-374`)는 import 해서 쓴다. `_scan_side`(`compare2_report.py:352`)는 쓰지 않는다(한 지름·선택 조건 전용, 몫 없음).
+- real.yaml 을 여는 방식(코드 사실 d): 07 은 `_side_info`(`compare2_report.py:287-305`)로 `cfg[role]` 의 `real_hotspot_v1` 소스(`pipeline._real_source`)와 frame 명세를 읽는다. 마스크는 `_scan_side` 안에서 `pipeline._configured_real(cfg, info['section'], info['real'], {'bucket_detail': 'summary', 'top_buckets': ...})`(`compare2_report.py:361-363`, 정의 `pipeline.py:33-44`)로 연다. `condition_assignment` 가 없으면 `None` 이고 `compare2_condition_assignment_required` 오류다(`compare2_report.py:364-365`). `ledger-maps` 는 같은 호출을 쓴다. 02 와 같은 몫을 얻으려면 02 의 `_load_side` 처럼 `require_distance=True` 로 연다(`compare2.py:249`). 계획 v1 은 이 차이를 적지 않았다.
+- input_hash 대조: `compare2.json` 의 `input_hash` 와 지금 자료의 `dataset.provenance['input_hash']` 가 다르면 `compare2_input_hash_mismatch`(`compare2_report.py:367-374`). `ledger-maps` 도 같은 문구로 멈춘다(종료 2 `ledger_maps_input_missing` 이 아니라 07 과 같은 코드를 쓸지는 T3 가 정하고 이 표에 적는다).
+- ETX 08 확장: `ledger` → `ledger-maps` → `ledger-report --maps-dir`. 실행기 상수 `LEDGER_MAPS`(기본 True, 스위치), `LEDGER_MAPS_DIR`, `LEDGER_MAPS_ARGS`. 04 출력(`data/changes`)은 07 처럼 폴더가 있으면 넘긴다. `LEDGER_MAPS=False` 면 08 은 지금과 같은 작업 2개다. `ledger-maps` 종료 3 → 실행기 계속, 종료 2 → 멈춤. 재실행은 새 번들로 `STEPS=['08']` 이다(compare2.json 이 바뀌지 않으므로 02 는 필요 없다).
+
+## 17. 값
+
+- item 값 = s_kind × λ_item. 종류별 기울기 s 는 장부와 같다. pixel 의 s 에는 이미 B 의 CRP 가 들어 있다(`ledger.py:348-362, 497-525`). 타일 값에 CRP 를 다시 곱하지 않는다.
+- 셀 몫은 `밀도 × 계수 × pitch²`(`compare2.py` 의 `lam` 과 같은 식) × 1/(n·m) 이다. n·m 은 장부와 같은 값이다(`linepixel.py:579-593`). 지름은 장부와 같은 범위(`lambda_diameters_um`) 전체다. 거리 필터로 0 이 된 item·side 는 장부와 같게 0 이다.
+- ledger item 값 키(코드 사실 g): `ledger.json` `pairs[].items[]` 의 `item_id`, `lambda_a`, `lambda_b`, `a`, `b`, `delta`, `presence`, `filtered_out`, `a_filtered`, `b_filtered`(`ledger.py:354-362`). 종류별 item 합은 `totals.<kind>.items` 의 `a`·`b`·`delta` 이다(`ledger.py:508, 525`, `_Tri.out` 은 `ledger.py:89-102`). 경로는 `totals.line.items.a` / `totals.line.items.b` / `totals.pixel.items.a` / `totals.pixel.items.b` 로 고정한다.
+- **공간에 넣지 않는 것**: 곡선 보정(절편) 줄 `totals.<kind>.intercept`, CRP 줄 `totals.pixel.crp`, CNO `totals.pixel.cno`. CNO λ 는 CSV 합 기준이라 셀로 나눌 수 없다(`compare2_link.py:574-577`). 지도 문구는 "CNO 는 지도가 없어 이 목록에 없습니다"를 유지하고 5절에 "pixel 범위 합계는 CNO 제외" 를 적는다. 1단계 값은 그대로다.
+- 검산(`math.fsum`, 상대 1e-9). 값이 null(대기)인 계열·item 은 0 이나 passed 로 보지 않고 `not_evaluated` 로 적고 개수를 센다.
+  1. item 전체 타일 합 = `ledger.json` 의 그 item 값(A 쪽 `a`, B 쪽 `b`). 대기 item 은 제외하고 개수를 기록한다.
+  2. 종류별 전체 타일 합 = `totals.<kind>.items.a` / `totals.<kind>.items.b`. 절편·CRP·CNO 는 이 합에 없다(`not_evaluated` 가 아니라 제외로 명시).
+  3. 줄마다 범위 합계 = 이 쌍 + 다른 쌍 전부(같은 최종 집계 타일 집합 위에서).
+  4. 제품별 Σ(줄의 이 쌍 값, 최종 집합) ≤ 관찰 영역의 이 쌍 값 ≤ 4절 쌍 값(타일 값 ≥ 0, 상대 1e-9). 최종 집합이 서로 겹치지 않으므로 앞 부등식은 포함 관계다.
+  5. 분할 검산(18절 G1 5단계): B 의 `{T_i} ∪ {U_j}` 는 서로 겹치지 않고 합집합 = `∪T_i ∪ ∪S_B,j`. A 의 대응 줄과 A 전용 줄 = `{S_A,i}` 전체. 누락·중복 없음.
+- 검사 실패(통과하지 못함)는 종료 3 `ledger_maps_value_check_failed` 다. 보고서는 부분 결과 띠를 보인다.
+- 수치 검산(상대 1e-9)과 바이트 동일(sink 있음/없음의 `compare2.json`·CSV sha256 = 1ce685b 결과)은 따로 확인한다(T2).
+
+## 18. 저장 구조, 메모리 예산, 창, 줄
+
+### 18.1 저장 구조
+
+- 종류별 합계 격자: 제품·종류마다 frame 전체 dense float64 타일 배열 1개(기본 1 µm 타일).
+- item 희소 값: item 마다 (타일 색인 int32, 값 float64) 정렬 배열. `np.unique(tile_idx, return_inverse=True)` + `np.bincount(inverse)` 로 만든다(항목 수 비례, Python dict 금지).
+- membership(분석용): item 별 희소 타일 집합. 지도 지름 `report.diameter_um` 의 셀이 하나라도 있는 타일이다. 가림이 없다. 연결 성분·선형 판정·반복 Dice·좌표 대응 겹침은 모두 membership 으로 계산한다.
+- 번호 PNG(표시·hover 전용): 모든 item 을 넣는다. 번호 16비트 = R 하위 8비트, G 상위 8비트. gAMA·sRGB·iCCP 청크 없이 쓴다. B 는 0. `--top-pairs` 는 목록·라벨 수만 줄인다. 한 픽셀에 item 하나이고 우선순위는 line > pixel, 같은 종류는 순위가 앞선 쌍이다. 가려진 픽셀 수 `hidden_px` 를 item 에 기록하고 범례에 한 줄 적는다. 레이어별 전극 번호 그림도 같은 형식이다. 번호 → 이름 표는 JSON 에 둔다.
+- 카드 대상은 `ledger.json` 의 |Δ| 순위로 고르며 지도 순위와 무관하다.
+- 한 제품씩 차례로 처리한다. 한 제품의 희소 항목은 그 제품의 카드·검산을 낸 뒤 버린다. 다만 A→B 대응에 필요한 카드 쌍의 A 쪽 membership·희소 값은 B 처리 때까지 남긴다(카드 쌍만).
+- 분석 타일 크기 `--tile-um` 은 JSON 과 보고서 1절 조건 표에 적는다. 허용 [0.5, 2.0], 기본 1.0.
+
+### 18.2 메모리 예산
+
+- 예산 하나: `max_operation_bytes`(`_side_info` 의 `limit`, `compare2_report.py:305`, 기본 `DEFAULT_MAX_OPERATION_BYTES`)를 이 명령 전체의 동시 보유 상한으로 쓴다. `--max-tile-entries` 는 보조 상한이다.
+- 회계 객체 `_Budget`: `reserve(nbytes, what)` / `release(nbytes, what)`. 큰 할당(추정 ≥ 1 MB) **전에** `reserve` 를 부른다. 넘으면 할당하지 않고 `oversized_real_operation`(종료 2, 출력 파일 쓰지 않음, 메시지에 `what`·추정·상한)을 낸다.
+- 회계 대상 6가지:
+  1. 기존 `compute_areas` 보유량 추정. 기존 가드의 추정식은 `adapters/real_hotspot.py:1119-1151` `estimate_area_bytes`(masks + output + group + history + payload)이고 호출·비교는 `real_hotspot.py:1749-1754`(`estimated_peak_bytes > max_operation_bytes` → `oversized_real_operation`)다. 시작 때 같은 식으로 예약한다. 계획 v1.2 는 `linepixel.py` 의 가드를 가리켰으나 **계획과 다름**: `linepixel.py` 에는 가드가 없고(`oversized_real_bucket_output`·`oversized_real_label_patterns` 만 `linepixel.py:344-353`) 위 위치가 맞다.
+  2. 종류별 dense 합계 격자.
+  3. 표시용 번호 그림·전극 그림.
+  4. item 희소 값·membership 완성 배열과 정렬·병합 사본.
+  5. sink 호출마다의 임시 배열(index·몫·`unique`/`bincount` 결과).
+  6. B 처리 중 남겨 둔 A 카드 자료.
+- `--max-tile-entries`(기본 40,000,000 ≈ 480 MB)는 item 희소 항목 합의 상한이다. 읽는 중 넘으면 즉시 멈추고(종료 2 `oversized_real_operation`, 조치 `--tile-um` 키우기) 출력 파일을 쓰지 않는다. 표시 옵션(`--map-px-um` 등)으로 줄지 않는 비용이다.
+- 읽기 전 가드 `guard_stage_ledger_maps`: frame 셀 수·item 수·레이어 수로 dense 배열 크기를 추정해 마스크를 읽기 전에 비교한다. `compute_areas` 기존 가드는 그대로 둔다. `execution.json` 에 최대 예약량을 기록한다.
+
+### 18.3 창과 타일 격자 (G6)
+
+- unit 한 장 창: U_px = round(U_um / pitch), 창 원점 = ((W−U_px)//2, (H−U_px)//2)(frame px, 축별). U_px ≥ frame 이면 창 = frame. U_um 은 `_side_info` 의 `unit_um`(설정 `product.unit_size_um`, 없으면 유도)이다. JSON 에 frame 물리 원점·pitch·U 출처(설정/유도)를 같이 남긴다.
+- **`UnitGeometry` 의 unit 번호와 다르다**(코드 사실 f). `_side_info` 의 유도식은 `unit_um = ((nx + UNIT_MARGIN_PX)/2 × pitch, (ny + UNIT_MARGIN_PX)/2 × pitch)`, `UNIT_MARGIN_PX = 2 × BORDER_PX = 1000`(`compare2_report.py:50-51, 296-303`)다. `layer_align.UnitGeometry` 는 `unit_px = ((h + 2·border)//2, (w + 2·border)//2)`(`layer_align.py:44-48`)로 같은 크기식이지만 정수 나눗셈이고 홀수 크기를 `unit_size_odd_px` 로 표시한다. 결정적 차이는 위치다. `UnitGeometry` 는 frame 을 경계 `unit_px − border` 에서 2×2 영역으로 나눈다(`layer_align.py:59-69`). 창은 frame **중앙의 위상 이동된 한 주기 창**이라 이 영역과 경계가 맞지 않는다. 그래서 창 번호를 unit 번호로 부르지 않는다.
+- 타일 격자는 **제품별**이다. 제품 r 의 타일 0 은 그 제품 frame 의 픽셀 (0,0), 물리 원점 g_r(µm)이다. 타일 k 는 물리 구간 [g_r + k·tile, g_r + (k+1)·tile).
+- A 점의 B 물리 좌표 = A 물리 좌표 + d_i. **d_i 는 `_shift_um`(`change_candidates.py:322-326`)이 준 물리 이동량 = (B 원점 − A 원점) + offset_px × pitch 다. frame 원점 차이가 이미 들어 있다**(코드 사실 b). 그러므로 g_B − g_A 를 한 번 더 빼거나 더하지 않는다. 이동 색인은 G6 식 `k_B = k_A + round((g_A + d_i − g_B) / tile)` 이다. 이 식은 `d_i` 의 원점 차이 항과 `g_A − g_B` 가 서로 상쇄되어 `k_B = k_A + round(offset_px × pitch / tile)` 이 된다(offset 은 04 가 정한 픽셀 이동). 구현은 식을 그대로 두어 `d_i` 정의가 바뀌어도 맞게 한다. fixture: A 원점 0 µm, B 원점 10 µm, 픽셀 offset 0 이면 기대 이동 색인 0(원점 차이를 두 번 세거나 빠뜨리면 실패).
+- 계획과 다름 아님: 계획 v1 은 "R_B = R_A + offset + 원점 차이" 라고 적었고 코드와 같다.
+
+### 18.4 줄 (선형/점형)
+
+- 줄 후보는 창 안으로 자른 membership 의 4-이웃 연결 성분에서 만든다(`electrode_map._label_runs` 재사용).
+- 분류: 선형 성분 = bbox 긴 변 ≥ `--linear-min-length-um`(50) 이고 긴/짧은 변 ≥ `--linear-min-aspect`(4). 쌍이 선형 = 선형 성분 셀이 절반 이상. 대각선 배선은 점형으로 분류된다(한계).
+- 선형 구간: 긴 축을 `ceil(L / --segment-um)` 등분하고 `--max-rows` 이하로 한다. 구간 사각형은 **짧은 축 방향과 성분 양 끝에서만** `--range-um` 넓힌다. 이웃 구간 사이 경계는 자른 선 그대로다.
+- 점형: 사방으로 `--range-um` 넓히고 넓힌 사각형이 겹치는 성분끼리 한 위치로 묶는다. 값 큰 순 `--max-rows` 개 + "그 밖 k 곳". 선형 쌍의 점형 성분은 점형 줄로 뒤에 붙인다.
+- 범위는 frame 좌표 그대로 센다(창 밖이어도 frame 안이면 센다). 사각형은 타일 경계로 바깥 맞춤한다.
+- **타일 소유**: 한 카드 안에서 각 타일은 줄 하나에만 속한다. 줄 순서(선형 구간 → 점형 위치 값 큰 순)대로 먼저 차지한 줄이 갖는다. 뺏긴 타일 수를 줄마다 기록한다.
+- 가장자리 반복(결정 11): 범위가 frame 밖으로 나가면 ±U 옮긴 복사본 중 frame 안에 다 들어오고 그 카드의 다른 줄과 타일이 겹치지 않는 것을 찾는다. 동등성 = 관련 레이어 전극 그림 일치율 ≥ `--edge-repeat-min-match` 그리고 그 쌍 membership 타일 Dice ≥ 같은 값. 통과 → 옮긴 위치의 값(`edge: repeat_used`). 아니면 `edge: excluded`(빗금, 비교 제외, 줄 값 없음). 창 밖 불량 영역은 지도에 그리지 않는다.
+- **최종 집계 타일 집합 (G1)**. 사각형은 표시용이고 값·검산·관찰 영역은 최종 집합으로만 계산한다. 한 카드(한 쌍)에서 다음 순서로 확정한다.
+  1. A 줄 집합: A 창·형상에서 줄 사각형 → 가장자리 반복 이동 → 줄 순서대로 타일 소유 → `S_A,i`(서로 겹치지 않음).
+  2. 대응 이동: 대응 조건(19절)을 통과한 A 줄은 G6 식으로 `T_i = S_A,i + round((g_A + d_i − g_B) / tile)` 을 만든다(반올림 오차를 JSON 에 기록). `T_i` 가 B frame 을 벗어나면 대응하지 않는다.
+  3. B 쪽 충돌 처리: A 줄 순서대로 `T_i` 를 확정한다. `T_i` 가 이미 확정된 `T_k`(k<i)와 타일이 하나라도 겹치면 줄 i 의 대응을 **거부**한다(그 A 줄은 "있는 쪽 값만" 표의 A 줄). 대응 줄은 A·B 양쪽 모두 서로 겹치지 않고, A 값 = `S_A,i` 합, B 값 = `T_i` 합이다.
+  4. B 줄 집합: B 창·형상에서 줄 사각형 → 가장자리 반복 → 타일 소유 → `S_B,j`. 그다음 `U_j = S_B,j − ∪T_i`. 비어 있지 않으면 "있는 쪽 값만" 표의 B 줄이다(대응 부분을 뺐으면 "대응 부분 제외" 표시). 비어 있으면 대응 줄에 모두 포함된 것으로 기록한다.
+  5. 분할 검산(검산 5): 17절 5번.
+  6. 관찰 영역: 제품별 `O_A = 창_A ∪ ∪S_A,i`, `O_B = 창_B ∪ ∪T_i ∪ ∪U_j`(타일 집합).
+  7. 검산 3: 줄마다 범위 합계 = 이 쌍 + 다른 쌍 전부.
+  8. 검산 4: 17절 4번.
+  9. 04 가 없거나 대응이 꺼진 경우: 2–3 단계를 건너뛰고 A·B 각각 `S_A,i`, `S_B,j` 를 그대로 "있는 쪽 값만" 줄로 쓴다.
+- 줄 값: 이 쌍 = 범위 안 이 쌍 타일 합(최종 집합). 다른 쌍 = 범위 안 타일 합(상위 3 + "외 k 쌍"). 범위 합계 line/pixel = 그 종류 모든 쌍 합(CNO 제외).
+- 반례 fixture(T4): (a) A 에서 겹치지 않는 두 줄이 서로 다른 offset 으로 B 에서 겹침 → 뒤 줄 대응 거부, (b) B 줄 100타일 중 1타일만 대응 집합과 겹침 → 나머지 99타일이 B 전용 줄로 남음, (c) 타일 소유로 줄어든 A 줄의 값 = 최종 집합 합(사각형 합 아님), (d) 검산 5 의 분할 확인, (e) 선형 300 µm + `--segment-um 70` → 구간 5개·경계 60 µm 간격·구간별 값 = 기대값, (f) 점 8곳 + `--max-rows 6` → 6줄 + "그 밖 2곳".
+
+## 19. 좌표 대응
+
+줄은 제품별로 만든다(A 줄은 A 창·형상, B 줄은 B 창·형상). A 줄을 B 에 대응시키려면 04(`candidates-change`) 출력이 필요하다.
+
+### 19.1 04 출력 구조 (코드 사실 a, 확인)
+
+| 항목 | 위치 | 근거 |
+|---|---|---|
+| 전역 offset | `alignment.json` `offset_xy_px`(`[dx, dy]`, int), `pitch_um` | `change_candidates.py:1643-1644, 1657` |
+| unit offset | `alignment.json` `unit_offsets[]`(`unit_align_um` 를 줬을 때만): 각 항목 `region_px = [y0, y1, x0, x1]`(reference px, **끝 미포함**), `offset_xy_px = [dx, dy]`(**x 먼저**), `applied`(bool), `offset_xy_um`, `delta_xy_px`, `unit_index_xy = [x, y]` | `change_candidates.py:1150-1163`. 정렬 `order`·`regions` 는 `UnitGeometry.unit_regions()`(`layer_align.py:63-69`), `alignment_doc.update(unit['doc'])` 는 `change_candidates.py:1700`. `unit_offsets` 키 자체는 `unit['doc']` 안에 있다(키 이름을 이 절에서 직접 읽지 못함 → T3 가 `change_candidates.py:1164` 이후 doc 조립부에서 재확인) |
+| stretch | `alignment.json` `stretch.path = 'stretch_map.json'`(요약), 본문은 `stretch_map.json` | `change_candidates.py:1244-1254, 1704, 1752` |
+| stretch 타일 | `stretch_map.json` `tiles[]`: 레코드마다 `applied`, `offset_source`, offset 은 `field` 튜플 `(y0, y1, x0, x1, dx, dy)` 와 같은 값. 조회 `lookup(y, x)` 가 `((dx, dy), offset_source, 타일 색인)` | `change_candidates.py:1238-1243`. 레코드의 정확한 키 이름은 `records` 조립부(`:1200-1237`)에서 T3 가 확인 |
+| frame 크기 | `alignment.json` `frame_shape_reference_yx`, `frame_shape_target_yx`, `frame_anchor = 'top_left_index'` | `change_candidates.py:1602-1613, 1741` |
+| 입력 지문 | `candidate_queries_v1.json` `inputs.config_sha256`, `inputs.reference/target`(`condition_assignment_sha256`, `asset_manifest`, `electrode_import_record` 등 `input_record` 와 `product_ids`), `inputs.cnt.<reference|target>.product_id` | `change_candidates.py:2128-2132`, `candidates.py:200-224` |
+| 적용 모드 | `candidate_queries_v1.json` `change_args.apply_align` ∈ {`diagnostic`, `unit`, `local`, `stretch`}. 키가 없으면 모드 없음 | `change_candidates.py:66, 759-760, 2175-2180, 2189` |
+
+- 물리 이동량 = Δorigin + offset_px × pitch(`_shift_um`, `change_candidates.py:322-326`). 18.3 참고.
+- 계획과 다름: 계획 v1.1 D1 은 `stretch.path → stretch_map.json.tiles[]` 라고만 적었다. 코드의 `alignment_doc['stretch']` 는 요약(`n_tiles`, `n_applied` 등)이고 `path` 는 `'stretch_map.json'` 이다(`change_candidates.py:1244-1247`). 맞다.
+- 계획과 다름: `candidates-change` 에서 `unit` 모드에는 `--unit-align-um` 이 필수이고(`change_candidates.py:147-148`), `local` 에서 `--unit-align-um` 이 없으면 전역 offset 이 시작점이다(`:1727`).
+
+### 19.2 모드 판별과 field (G3, D2)
+
+- 모드는 `candidate_queries_v1.json.change_args.apply_align` 에서만 읽는다. `alignment.json.args` 와 `unit_offsets[].applied` 로 판별하지 않는다(`unit_offsets[].applied` 는 진단 단계에서도 참일 수 있다).
+- 모드별 field: `stretch` → `stretch_map.json.tiles[]` 최종 offset. `unit` → `alignment.json.unit_offsets[]`. `local` + unit 정렬 있음 → unit field. `local` + unit 정렬 없음 → 전역 offset. `diagnostic`·모드 없음 → 대응하지 않는다(띠 `coords_not_applied`). 이 선택은 04 의 `use_field`·`active_field` 와 같다(`change_candidates.py:1727-1729`).
+- `local` 의 ROI 별 추가 보정(`roi_local_alignment.json`, 변경 지도 생성 뒤 적용, `change_candidates.py:1541-1563, 1754-1767`)은 쓰지 않는다. "변경 지도 기준 field 만 쓰며 ROI 별 최종 보정과 다를 수 있음"을 문서와 보고서에 적는다.
+- 04 가 실제로 적용한 field 만 쓴다. 진단만 한 offset 은 새로 채택하지 않는다.
+- 모드나 필요한 field 자료를 확인할 수 없으면 대응하지 않는다(띠 `coords_unavailable`).
+
+### 19.3 지문·pitch 확인 (코드 사실 c)
+
+- 04 의 제품 이름(`inputs.cnt.<role>.product_id`), frame 크기(`frame_shape_reference_yx`·`frame_shape_target_yx`), `pitch_um`, 입력 지문(`inputs.reference/target` 의 `condition_assignment_sha256` 등, `inputs.config_sha256`)이 현재 자료와 같아야 한다. 다르거나 읽을 수 없으면 대응하지 않는다(띠 `coords_stale`). 계획 v1.1 D3 에 맞다.
+- A·B pitch 가 다르면 대응하지 않는다. 04 도 거부한다(`candidates_change_pitch_mismatch`, `change_candidates.py:712-714`).
+- `--tile-um` > `--coord-tolerance-um` 이면 좌표 대응과 가장자리 동등성 판정을 하지 않는다(띠 `coords_resolution_too_coarse`, 가장자리 줄은 `excluded`). 허용치는 타일 수 `ceil(tol / tile)` 로 바꿔 쓴다.
+- 04 결과 폴더가 없으면 대응 판정 없이 "있는 쪽 값만" 으로 보이고 맨 위 띠 1줄이 선다(D4).
+
+### 19.4 이동량 선택과 대응 조건
+
+- 범위와 겹치는 **모든 field 칸**(unit 영역·stretch 타일)의 offset 을 모은다. 모두 서로 `--coord-offset-spread-um` 이내여야 한다. 쓰는 이동량 = 범위와 겹친 면적이 가장 큰 칸의 offset(같으면 색인 작은 쪽). offset 순서는 `[dx, dy]` 이고 영역은 `[y0, y1, x0, x1]` 이다.
+- 대응 조건: (1) offset 출처 상태 ok, (2) 위 spread 통과, (3) `T_i` 가 B frame 안, (4) 그 쌍의 A membership(이동 후)과 B membership 이 `--coord-tolerance-um` 허용으로 겹치는 비율 ≥ `--coord-min-overlap`. 충돌 처리는 18.4 의 G1 3단계다.
+- 비교는 change_kind 가 같은 쌍 변화·변화 없음이고 item 이 양쪽에 있는 쌍만 한다. 그 밖(B-only·A-only·레이어 변경 쌍)은 "있는 쪽 값만" 표에 side 를 밝혀 넣는다. 레이어 변경 쌍은 양쪽 위치·값을 각각 보인다.
+- 04 없음·진단 모드·stale 이면 모든 줄이 제품별 "있는 쪽 값만" 이다(A 사각형을 B 에 그대로 쓰지 않는다).
+- 띠 코드: `coords_not_applied`, `coords_stale`, `coords_unavailable`, `coords_resolution_too_coarse`.
+
+## 20. 보고서 2절·5절 표시 규칙
+
+- 입력은 `ledger_maps.json` 과 PNG 뿐이다. 카드 숫자는 `ledger_maps.json` 값이다(보고서는 다시 더하지 않는다).
+- 2절(지도): 제품별 지도. 선택 상태 `{전극|쌍, 이름}` 하나를 두 canvas(전극 그림·item 그림)가 함께 강조한다. 처음엔 선택 없음. 번호 그림을 canvas 가 읽어 보기별로 칠한다. hover·선택은 번호 조회다.
+- 진하기("리스크 크기"): 그 제품 item 장부 값(% of vi_A) ÷ 같은 종류 최댓값, 불투명도 0.18–1.0(목업 v8 과 같은 식).
+- "변화" 보기: 색 = 쌍 전체 Δ 부호, 무늬 = `ledger.json` 의 `change_kind` 코드.
+- 새·사라진 전극: 없는 쪽 지도 아래 "이 제품에 없음". 그 지름에 영역이 없는 item 은 "지도 영역 없음".
+- 레이어 변경 쌍: A 는 옛 레이어, B 는 새 레이어 item 을 빗금. 새 쌍은 굵은 테두리, 사라진 쌍은 점선 테두리(목업 v8).
+- 5절(위치 카드): 종류별 |Δ| 상위 `--top-cards`(기본 5). 카드 표 2종: "같은 좌표 비교" 표(A 값 = `S_A,i` 합, B 값 = `T_i` 합)와 "있는 쪽 값만" 표(side 명시, "대응 부분 제외" 표시).
+- **합계 줄**: "범위 안 합 / 이 쌍 관찰 영역 값"(제품별 `O_A`, `O_B` 기준). 4절 쌍 값은 참고 줄로 따로 적고 "unit 한 장 기준이라 4절 값과 다릅니다" 를 붙인다. 계획 v1 의 "unit 한 장 값" 은 v1.1 C5 에서 "관찰 영역(창 ∪ 쓴 범위) 값" 으로 바뀌었다.
+- 07 위치 Δvi(`compare2_link._pair_location`)는 창 면적 × 밀도 근사라 5절 값과 다를 수 있다고 한 줄 적는다. 07 은 바꾸지 않는다.
+- 표시 구분: "대기"(값 null) / "없음"(그 제품에 없음) / "0%"(있고 값 0) 를 서로 다르게 보인다. "해당 없음" 은 12절 규칙을 따른다. `edge: excluded` 는 "비교 제외" 로 보인다.
+- 인쇄: `beforeprint`·`#print` 에서 canvas 를 다시 그리고 카드를 모두 편다.
+- canvas 값 자기 검사: 로드 때 번호별 픽셀 수를 JSON 과 대조한다. 다르면 지도 대신 경고 + 목록만 보인다(폐쇄망 브라우저가 색을 바꾸는 경우의 탐지).
+- 상한: `--map-px-um`(0.2), `--max-map-px`(2000), `--max-map-bytes`(12 MB). 넘으면 배율을 2배씩 거칠게 하고 `scale_steps` 에 기록한다. 줄일 때 블록 안에 하나라도 있으면 남긴다(가는 선 보존).
+- `--maps-dir` 가 없으면 보고서 HTML 은 1ce685b 출력과 바이트 동일이다. 있으면 `report.json` 에 `ledger_maps.json` sha256 을 기록하고, `ledger.json` sha256 이 맞지 않으면 종료 2 `ledger_maps_stale` 이다.
+
+## 21. CLI 옵션 표 (`ledger-maps`, `ledger-report`)
+
+`ledger-maps` 옵션. 허용 범위 밖이면 종료 2 `ledger_maps_option_invalid`.
+
+| 옵션 | 기본값 | 허용 범위·뜻 |
+|---|---|---|
+| `--range-um` | 10 | > 0. 줄 범위 넓힘 |
+| `--tile-um` | 1.0 | [0.5, 2.0]. 분석 타일 크기 |
+| `--segment-um` | 70 | > 0. 선형 구간 길이 |
+| `--max-rows` | 6 | ≥ 1. 카드의 줄 수 상한 |
+| `--linear-min-length-um` | 50 | > 0. 선형 성분 최소 길이 |
+| `--linear-min-aspect` | 4 | ≥ 1. 긴/짧은 변 비 |
+| `--edge-repeat-min-match` | 0.98 | (0, 1]. 가장자리 반복 동등성(일치율·Dice) |
+| `--coord-offset-spread-um` | 1.0 | ≥ 0. 범위 안 field offset 차이 상한 |
+| `--coord-tolerance-um` | 2.0 | > 0. 대응 membership 겹침 허용 |
+| `--coord-min-overlap` | 0.5 | (0, 1]. 대응 겹침 비율 |
+| `--map-px-um` | 0.2 | > 0. 번호 PNG 표시 배율 |
+| `--max-map-px` | 2000 | ≥ 1. PNG 한 변 상한 |
+| `--max-map-bytes` | 12 MB | ≥ 1. PNG 합계 상한 |
+| `--top-pairs` | 보고서 기본과 같음(30) | ≥ 1. 지도 라벨·목록에 넣는 종류별 쌍 수(번호 PNG 와 카드 대상에는 영향 없음) |
+| `--top-cards` | 5 | ≥ 1. 종류별 카드 수 |
+| `--max-tile-entries` | 40,000,000 | ≥ 1. item 희소 항목 합 상한 |
+
+- 이 표의 범위 열(허용 범위의 구체값)은 계획에 없는 부분을 이 문서가 정했다. 구현 Task 가 다르게 구현해야 하면 이 표를 먼저 고친다. 확정된 값은 이름과 기본값, `--tile-um` [0.5, 2.0] 이다. `--top-pairs` 기본은 계획에 적혀 있지 않아 `ledger-report` 와 같은 30 으로 둔다(남은 의문).
+- 필수 인자: `--compare2-dir`, `--config`, `--ledger-dir`, `--out`. 선택: `--candidates`.
+- `ledger-report` 는 `--maps-dir` 를 더한다. 값은 `ledger-maps` 의 `--out` 폴더다.
+
+## 22. `ledger_maps_v1` 키 표
+
+| 위치 | 키 | 뜻 |
+|---|---|---|
+| 최상위 | `schema_version` | `ledger_maps_v1` |
+| | `status`, `reasons` | `ok` / `partial`(종료 3, 사유 `ledger_maps_value_check_failed`) |
+| | `inputs` | `compare2_json_sha256`, `ledger_json_sha256`, `config_sha256`, `candidates`(04 폴더 상태·`apply_align`·지문 대조 결과), `real_input_hash`(제품별) |
+| | `options` | 21절 옵션 값 전체(`tile_um` 포함) |
+| | `report` | `diameter_um`(지도 지름) |
+| | `window` | 제품별 `origin_px`, `size_px`, `origin_um`, `unit_um`, `unit_source`(설정/유도), `tile_origin_um`(g_r) |
+| | `sides` | `<role>` 별 항목(아래) |
+| | `cards` | 카드 목록(아래) |
+| | `checks` | 검산 1–5 결과와 `not_evaluated` 개수 |
+| | `scale_steps` | PNG 배율을 거칠게 한 횟수와 사유 |
+| | `warnings`, `bands` | 경고(`maps_dl1_not_configured`), 띠 코드(19절) |
+| `sides.<role>` | `frame`(shape, origin_um, pitch), `items[]`, `maps[]`, `electrodes`(번호 → 이름 표), `hidden` | 제품별 자료 |
+| `sides.<role>.items[]` | `item_id`(ledger 와 같음), `pair_id`, `kind`, `layers`, `number`(번호 PNG 의 번호), `value`(`ledger.json` 의 그 side 값), `tile_sum`(타일 합), `diameter_um` 영역 유무, `hidden_px`, `status`(`ok`, `no_map_area`, `pending`) | item 값은 `ledger.json` 값과 같다 |
+| `sides.<role>.maps[]` | `file`(`map_<role>_<nnn>_<el|it>.png`), `layer`, `kind`(el/it), `px_um`, `shape`, `numbers`(번호별 픽셀 수) | 자기 검사에 쓴다 |
+| `cards[]` | `kind`, `pair_id`, `rank`, `delta`, `rows`(줄 목록: `type`(선형/점형), `rect`, `edge`(`none`/`repeat_used`/`excluded`), `side`, `pair`(이 쌍 값), `others`(상위 3 + `others_n`), `range_total`, `tiles_lost`), `match`(`matched`/`a_only`/`b_only`/`not_compared` 와 사유 띠), `observed`(`O_A`, `O_B` 값), `section4_ref`(4절 쌍 값), `rounding_error` | 5절 카드 자료 |
+
+세부 키 이름은 T3·T4 가 확정하고 이 표를 고친다. 이 표의 최상위 키와 `sides.<role>.items[]`, `maps[]`, `cards[]`, `checks` 구성은 고정이다.
+
+## 23. 오류·종료 코드
+
+| 종료 | 코드 | 뜻 |
+|---|---|---|
+| 2 | `ledger_maps_input_missing` | `compare2.json`·`ledger.json`·config 없음, 또는 입력 execution 이 error. input_hash 불일치도 이 코드로 낼지는 T3 가 정한다 |
+| 2 | `ledger_maps_output_not_owned` | `--out` 에 이 명령이 만들지 않은 파일이 있음(아무것도 쓰지 않고 지우지 않는다) |
+| 2 | `ledger_maps_option_invalid` | 21절 허용 범위 밖 |
+| 2 | `oversized_real_operation` | `_Budget` 예약이나 읽기 전 가드가 `max_operation_bytes` 또는 `--max-tile-entries` 초과(출력 파일 쓰지 않음) |
+| 2 | `ledger_maps_stale`(보고서 쪽) | `ledger-report --maps-dir` 에서 `ledger_maps.json` 이 기록한 `ledger.json` sha256 이 현재와 다름 |
+| 3 | `ledger_maps_value_check_failed` | 검산 1·2·3·4·5 중 하나라도 통과하지 못함(결과 파일은 쓴다) |
+| 0 + 경고 | `maps_dl1_not_configured` | DL1 전극 폴더가 설정에 없음. 전극 그림 없이 item 지도만 만든다 |
+
+- 오류(종료 2)면 자기 소유 결과 파일을 지우고 `error.json`·`execution.json` 만 남긴다(11절과 같음).
+- 실행기: 종료 3 은 계속, 종료 2 는 멈춘다(`CONTINUE_CODES` 그대로).
+
+## 24. Lead 결정 D1–D5 와 바뀐 결정
+
+사용자 위임으로 Lead 가 정했다. 사용자가 바꿀 수 있다.
+
+| # | 결정 | 채택 |
+|---|---|---|
+| D1 | 5절 줄 값 기준 | v1: unit 한 장 값. **v1.1 C5 로 바뀜**: 관찰 영역(창 ∪ 쓴 범위) 값. v1.2 G1 로 최종 집계 타일 집합 기준. 합계 줄 = 범위 안 합 / 이 쌍 관찰 영역 값, 4절 값은 참고 줄 |
+| D2 | 지도 영역 지름 | `report.diameter_um` 하나. 값은 장부 지름 전체 |
+| D3 | CNO | 지도·범위 합계에서 제외 + 주석 |
+| D4 | 04 결과 없음 | 대응 판정 없이 있는 쪽 값만 + 띠 |
+| D5 | ETX 단계 | 08 확장 + `LEDGER_MAPS` 스위치 |
+
+추가로 바뀐 결정(v1.1·v1.2):
+- 04 는 적용된 field 만 쓰고 진단 offset 은 채택하지 않는다. 모드는 `change_args.apply_align` 에서만 읽는다(G3).
+- 줄은 제품별로 만든다. 타일 소유로 줄 중복을 없앤다.
+- 대응 줄이 B 에서 충돌하면 뒤 줄 대응을 거부한다(나누지 않는다). B 줄은 대응 부분을 뺀 나머지를 B 전용 줄로 남긴다(G5).
+- 메모리는 `_Budget` 하나로 회계한다(G2). 분석 해상도 `--tile-um` 은 [0.5, 2.0] 이고 정렬 허용보다 거칠면 대응하지 않는다(G4).
+- 타일 격자는 제품별이다(G6).
+- Lead 기본값: 카드 5, 창 중앙, 진하기 = item 장부 값, 정적 그림 대체 없음.
+
+## 25. 한계
+
+- 대각선 배선은 점형으로 분류된다.
+- 07 위치 Δvi(`compare2_link._pair_location`)는 창 면적 × 밀도 근사라 5절 값과 다를 수 있다.
+- local ROI 별 보정은 쓰지 않는다. 변경 지도 기준 field 만 쓰므로 ROI 별 최종 보정과 다를 수 있다.
+- 줄 값은 분석 타일(기본 1 µm)로 반올림한 집합이라 대응 위치에 반올림 오차가 있다(JSON `rounding_error` 에 기록).
+- CNO·곡선 보정 줄·CRP 줄은 지도·범위 합계에 없다.
+- 실측 대상 값(실자료 unit·frame 크기, 창 여유 ≥ 10 µm 여부, 02·08 시간, DL1 전극 PNG 수, HTML 크기, 폐쇄망 브라우저 canvas 값 보존)은 폐쇄망 실행에서 확인한다. Pillow PNG 바이트 결정성은 같은 환경 안에서만 요구한다.
+
+## 26. 13절과의 충돌 확인
+
+13절 "넣지 않는 것"(간격 측정, A 로 되돌리기, 우선순위, 신뢰도, DR, 기능 묶음 표, 07·`delta.*` 변경)과 16–25절은 충돌하지 않는다. 13절의 "1단계에서 뺀 것"(2절 지도, 5절 위치 상세·범위 합계, 방향·분포 열, 가장자리 반복)은 이 Run 이 2·3단계로 넣는 항목이다. 방향·분포 열은 여전히 넣지 않는다.
