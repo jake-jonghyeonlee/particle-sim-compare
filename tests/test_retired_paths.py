@@ -14,7 +14,9 @@ RETIRED = {'model','train','losses','dataset','retrieval','baseline','split','va
            'cards','plots','caa','analysis','neighborhood','pair_geometry','checks','config'}
 APPROVED = {'demo-data','validate-data','compare','electrode-map','export-review-rois','merge-exports','import-hotspots','import-electrode-assets','compare-windows','report','candidates','candidates-change','candidates-dv','vulnerability-report','confirm-pairs','export-template-rois','dv-template','dv-grade',
             # approved by the user: model-report merged in the 2026-10-28 Run; compare2 and compare2-report in Run 20261105-compare2 (2026-11-06)
-            'model-report','compare2','compare2-report'}
+            'model-report','compare2','compare2-report',
+            # ledger and ledger-report: Run 20261115-ledger-report (2026-11-15)
+            'ledger','ledger-report'}
 
 
 def test_help_lists_exactly_approved_commands():
