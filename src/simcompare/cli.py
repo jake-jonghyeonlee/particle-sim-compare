@@ -254,6 +254,13 @@ def _parser() -> argparse.ArgumentParser:
     led.add_argument("--compare2-dir", required=True, help="compare2 출력 폴더(compare2.json 이 있는 곳)")
     led.add_argument("--config", required=True, help="compare2 를 실행할 때 쓴 compare2_config_v1 YAML(같은 파일이어야 함)")
     led.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger 가 이전에 만든 폴더만 덮어씀")
+    lrep = _korean_help(sub.add_parser(
+        "ledger-report", add_help=False,
+        help="ledger 결과(ledger.json)로 장부 보고서(ledger_report.html, 단일 파일)를 만든다. 1·3·4·6·7절, 2·5절은 자리 표시"))
+    lrep.add_argument("--ledger-dir", required=True, help="ledger 출력 폴더(ledger.json 이 있는 곳)")
+    lrep.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-report 가 이전에 만든 폴더만 덮어씀")
+    lrep.add_argument("--top-pairs", type=int, default=30, help="불량 종류별 상위 쌍 수(기본 30). 나머지는 '기타 k 쌍' 합계 줄")
+    lrep.add_argument("--top-electrodes", type=int, default=30, help="불량 종류별 상위 전극 수(기본 30). 나머지는 '기타 k 전극' 합계 줄")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -378,6 +385,11 @@ def main(argv: list[str] | None = None) -> int:
             # 새 폴더 또는 ledger 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2.
             from simcompare import ledger
             return ledger.main_ledger(args.compare2_dir, args.config, args.out, _print)
+        if args.command == "ledger-report":
+            # 새 폴더 또는 ledger-report 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2.
+            from simcompare import ledger_report
+            return ledger_report.main_ledger_report(args.ledger_dir, args.out, _print,
+                                                    top_pairs=args.top_pairs, top_electrodes=args.top_electrodes)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

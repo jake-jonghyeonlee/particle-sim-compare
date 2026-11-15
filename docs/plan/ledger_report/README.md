@@ -213,6 +213,18 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 - 7절 참고: 규칙, 용어, 제품, caa, 입력, 경고, 계산 불가 항목.
 - 1단계에서 빼는 열: 방향, 분포(점형/선형), 카드. 요약 타일 연결은 3·4절로 한다.
 - 상위 N + "기타 k 쌍" 합계 줄(펼치면 전체). 기본 쌍 30, 전극 30(종류별). 옵션 `--top-pairs`, `--top-electrodes`. 합계 줄은 묶어도 totals(N=1, 전체)와 같다.
+
+구현 (T5, `src/simcompare/ledger_report.py`):
+
+- 명령: `python -m simcompare ledger-report --ledger-dir <data/ledger> --out <새 폴더> [--top-pairs N] [--top-electrodes N]` (기본 30/30, 1 이상 정수).
+- 출력: `ledger_report.html`(단일 파일, 외부 URL 0), `report.json`(`ledger.json` sha256, `ledger` execution 상태, 옵션, 절 구성), `execution.json`. 시각은 `execution.json` 에만 둔다. 같은 입력 두 번이면 HTML 이 바이트 동일이다.
+- 종료 코드: `ledger.json` 이 ok 면 0. `ledger.json` 이 partial 이면 보고서를 만들고(맨 위 "부분 결과" 띠 + 사유) **3** 으로 끝난다(`compare2-report` 와 같은 규칙). 실행기는 3 을 계속 진행으로 본다.
+- 오류(종료 2, `error.json` + `execution.json` 만 남김): `ledger_input_missing`(`ledger.json` 없음, `ledger` 의 `execution.json` 이 error, 또는 `error.json` 이 있는 폴더), `ledger_schema_mismatch`(`schema_version` 이 `ledger_v1` 이 아님), `ledger_report_option_invalid`(상위 N 이 1 미만), `ledger_report_output_not_owned`(이 명령이 만들지 않은 파일이 있는 폴더 — 아무것도 쓰지 않고 지우지 않는다).
+- 출력 폴더 규약은 `ledger` 와 같다(새 폴더 또는 이 명령이 만든 폴더만, 임시 폴더에 쓴 뒤 rename, 오류 시 이전 결과 파일 삭제).
+- 계산하지 않는다. `ledger.json` 값의 형식 변환(A 의 vi 대비 %, %p)과 상위 N 에 못 든 줄의 합("기타 k" 줄, `math.fsum`, 값이 null 인 줄은 더하지 않음 — `ledger` totals 가 그 줄을 0 으로 세는 것과 같다)만 한다. 합계 줄은 `ledger.json` totals 그대로이고 전극 pixel 합계 줄만 `items + cno` 이다. 쌍 × 레이어 표의 칸은 그 쌍의 item Δ 를 레이어별로 더한 값이다.
+- 정렬: 쌍은 `ledger.json` 순위(L#/P#) 순서, 전극은 변화(Δ) 절댓값이 큰 순(값 없음은 맨 뒤). 불량 종류를 알 수 없는 쌍은 번호 없이 이름만 나열한다.
+- 표시: "없음"(그 제품에 없음) / "0%"(있고 값 0) / "해당 없음"(그 종류의 쌍·CNO 가 없는 전극, CNO 가 없는 전극의 CNO 칸) / "대기"(값 null) / "거리 필터로 0"(item 의 그쪽 값이 거리 필터로 0). `#print`·`beforeprint` 에서 모든 `<details>` 가 열린다.
+- `caa` 지표는 `ledger.json` 에 없다. 7절에는 "07 보고서에서 본다" 한 줄만 둔다.
 - "없음"(그 제품에 없음) / "0%"(있고 값 0) / "해당 없음"(그 종류와 무관)을 구분한다.
 - line % 와 pixel % 는 합산·통합 정렬하지 않는다.
 
