@@ -304,7 +304,7 @@ CNO (종류 CNO, 목업에서 K6):
   4. 제품별 Σ(줄의 이 쌍 값, 최종 집합) ≤ 관찰 영역의 이 쌍 값 ≤ 4절 쌍 값(타일 값 ≥ 0, 상대 1e-9). 최종 집합이 서로 겹치지 않으므로 앞 부등식은 포함 관계다.
   5. 분할 검산(18절 G1 5단계): B 의 `{T_i} ∪ {U_j}` 는 서로 겹치지 않고 합집합 = `∪T_i ∪ ∪S_B,j`. A 의 대응 줄과 A 전용 줄 = `{S_A,i}` 전체. 누락·중복 없음.
 - 검사 실패(통과하지 못함)는 종료 3 `ledger_maps_value_check_failed` 다. 보고서는 부분 결과 띠를 보인다.
-- 수치 검산(상대 1e-9)과 바이트 동일(sink 있음/없음의 `compare2.json`·CSV sha256 = 1ce685b 결과)은 따로 확인한다(T2).
+- 수치 검산(상대 1e-9)과 바이트 동일은 따로 확인한다(T2). "sink 있음 = 없음"은 `tests/test_linepixel_share_sink.py` 가, "sink 없음 = 기준(1ce685b 결과의 `compare2.json`·CSV sha256)"은 기존 GOLDEN 테스트가 맡는다.
 
 ## 18. 저장 구조, 메모리 예산, 창, 줄
 
@@ -475,7 +475,7 @@ CNO (종류 CNO, 목업에서 K6):
 
 | 종료 | 코드 | 뜻 |
 |---|---|---|
-| 2 | `ledger_maps_input_missing` | `compare2.json`·`ledger.json`·config 없음, 또는 입력 execution 이 error. input_hash 불일치도 이 코드로 낼지는 T3 가 정한다 |
+| 2 | `ledger_maps_input_missing` | `compare2.json`·`ledger.json`·execution.json·config·`--candidates` 폴더 없음, 또는 입력 execution 이 error. 읽은 자료의 input_hash 가 compare2.json 기록과 다르면 이 코드가 아니라 07 과 같은 `compare2_input_hash_mismatch` 다(문구 동일). `ledger.json` 이 가리키는 compare2.json·config sha256 이 다르면 `ledger_maps_stale`(ledger-maps 쪽)이다. 모든 지름이 `lambda_diameters_um` 밖이면 오류 없이 모든 item 이 값 대기(`pending`)이고 검산은 `not_evaluated` 인 지도가 나온다(종료 0) |
 | 2 | `ledger_maps_output_not_owned` | `--out` 에 이 명령이 만들지 않은 파일이 있음(아무것도 쓰지 않고 지우지 않는다) |
 | 2 | `ledger_maps_option_invalid` | 21절 허용 범위 밖 |
 | 2 | `oversized_real_operation` | `_Budget` 예약이나 읽기 전 가드가 `max_operation_bytes` 또는 `--max-tile-entries` 초과(출력 파일 쓰지 않음) |

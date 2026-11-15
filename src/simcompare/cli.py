@@ -261,6 +261,28 @@ def _parser() -> argparse.ArgumentParser:
     lrep.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-report 가 이전에 만든 폴더만 덮어씀")
     lrep.add_argument("--top-pairs", type=int, default=30, help="불량 종류별 상위 쌍 수(기본 30). 나머지는 '기타 k 쌍' 합계 줄")
     lrep.add_argument("--top-electrodes", type=int, default=30, help="불량 종류별 상위 전극 수(기본 30). 나머지는 '기타 k 전극' 합계 줄")
+    lmaps = _korean_help(sub.add_parser(
+        "ledger-maps", add_help=False,
+        help="ledger 값을 타일·번호 PNG 로 만든다(ledger_maps.json, map_*.png). hotspot 과 DL1 을 한 번 다시 읽음"))
+    lmaps.add_argument("--compare2-dir", required=True, help="compare2 출력 폴더(compare2.json 이 있는 곳)")
+    lmaps.add_argument("--config", required=True, help="compare2 를 실행할 때 쓴 compare2_config_v1 YAML(같은 파일이어야 함)")
+    lmaps.add_argument("--ledger-dir", required=True, help="ledger 출력 폴더(ledger.json 이 있는 곳)")
+    lmaps.add_argument("--candidates", help="(선택) 04 candidates-change 출력 폴더(이 단계는 존재만 확인)")
+    lmaps.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-maps 가 이전에 만든 폴더만 덮어씀")
+    for flag, kind, default, text in (
+            ("range-um", float, 10, "줄 범위 넓힘(µm, >0)"), ("tile-um", float, 1.0, "분석 타일 크기(µm, 0.5~2.0)"),
+            ("segment-um", float, 70, "선형 구간 길이(µm, >0)"), ("max-rows", int, 6, "카드 줄 수 상한(≥1)"),
+            ("linear-min-length-um", float, 50, "선형 성분 최소 길이(µm, >0)"),
+            ("linear-min-aspect", float, 4, "선형 성분 긴/짧은 변 비(≥1)"),
+            ("edge-repeat-min-match", float, 0.98, "가장자리 반복 동등성(0 초과 1 이하)"),
+            ("coord-offset-spread-um", float, 1.0, "범위 안 field offset 차이 상한(µm, ≥0)"),
+            ("coord-tolerance-um", float, 2.0, "대응 membership 겹침 허용(µm, >0)"),
+            ("coord-min-overlap", float, 0.5, "대응 겹침 비율(0 초과 1 이하)"),
+            ("map-px-um", float, 0.2, "번호 PNG 표시 배율(µm/픽셀, >0)"),
+            ("max-map-px", int, 2000, "PNG 한 변 상한(≥1)"), ("max-map-bytes", int, 12 * 1024 * 1024, "PNG 합계 상한(바이트, ≥1)"),
+            ("top-pairs", int, 30, "지도 라벨·목록에 넣는 종류별 쌍 수(≥1)"), ("top-cards", int, 5, "종류별 카드 수(≥1)"),
+            ("max-tile-entries", int, 40000000, "item 희소 항목 합 상한(≥1)")):
+        lmaps.add_argument("--" + flag, type=kind, default=default, help=f"{text}(기본 {default})")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -390,6 +412,12 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare import ledger_report
             return ledger_report.main_ledger_report(args.ledger_dir, args.out, _print,
                                                     top_pairs=args.top_pairs, top_electrodes=args.top_electrodes)
+        if args.command == "ledger-maps":
+            # 새 폴더 또는 ledger-maps 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2, 검산 실패는 3.
+            from simcompare import ledger_maps
+            options = {name: getattr(args, name) for name in ledger_maps.OPTION_DEFAULTS}
+            return ledger_maps.main_ledger_maps(args.compare2_dir, args.config, args.ledger_dir, args.out, _print,
+                                                options=options, candidates=args.candidates)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

@@ -16,7 +16,9 @@ APPROVED = {'demo-data','validate-data','compare','electrode-map','export-review
             # approved by the user: model-report merged in the 2026-10-28 Run; compare2 and compare2-report in Run 20261105-compare2 (2026-11-06)
             'model-report','compare2','compare2-report',
             # ledger and ledger-report: Run 20261115-ledger-report (2026-11-15)
-            'ledger','ledger-report'}
+            'ledger','ledger-report',
+            # ledger-maps: Run 20261116-ledger-maps (2026-11-16)
+            'ledger-maps'}
 
 
 def test_help_lists_exactly_approved_commands():
