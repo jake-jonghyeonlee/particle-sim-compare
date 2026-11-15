@@ -152,24 +152,35 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 ## 10. `ledger.json` (`ledger_v1`)
 
-`compare2.json` → `ledger.json`. 마스크는 읽지 않는다. 같은 입력 두 번이면 바이트 동일이다(입력에 DL1 전극 폴더 목록 포함). 최상위 키는 모두 **제안**이다(PLAN 은 이름을 정하지 않았다. `inputs.electrode_inventory` 만 PLAN 이름).
+`compare2.json` → `ledger.json`. 마스크는 읽지 않는다. 같은 입력 두 번이면 바이트 동일이다(입력에 DL1 전극 폴더 목록 포함). 최상위 키는 T4 가 확정한 이름이다(PLAN 은 이름을 정하지 않았다. `inputs.electrode_inventory` 만 PLAN 이름). 출력 파일: `ledger.json`, `ledger_pairs.csv`, `ledger_electrodes.csv`, `execution.json`(시각은 여기에만).
 
 | 키 | 뜻 |
 |---|---|
 | `schema_version` | `ledger_v1` |
-| `status`, `reasons` | ok / partial(종료 3) 과 사유 |
-| `inputs` | compare2.json sha256, config sha256, `ledger_basis`, `electrode_inventory.<role>` {정규화한 전극 목록(정렬), 출처, 상태, 목록 sha256} |
-| `totals` | 종류별 A·B·Δ 합계, 절편 줄, CRP 줄, 합계식 6개 결과(passed/not_evaluated) |
-| `kinds` | 종류(line/pixel)별 vi A·B, s, 계산 가능 여부, 변화 종류별 건수·증가 합·감소 합 |
-| `pairs` | 쌍별 번호(L#, P# = 종류별 B 값 순위, 동률 pair_id 순), 변화 종류, A·B·Δ·%, item 목록(both/new/gone) |
-| `electrodes` | 전극별 상태(공통/신규/제거/확인 불가), 레이어 A → B, 종류별 A·B·Δ, 그중 CNO, 상대 전극 A → B, 레이어별 값 |
-| `cno` | (electrode_id, density_layer) 줄 |
-| `layers` | 레이어 집계와 레이어 × 이물 크기, 주된 기여 |
-| `checks` | 합계식 6개, Σ 전극 = Σ 쌍 + CNO, 쌍 Δ 합 = `delta.conditions` + `delta.shared` |
-| `warnings` | `electrode_inventory_from_hotspots`, `electrode_inventory_conflict` 등 |
-| `unavailable` | 계산 불가 항목(7절) |
+| `status`, `reasons` | `ok` / `partial`(종료 3, 사유 `ledger_totals_check_failed`) |
+| `change_kinds`, `electrode_status` | 코드 → 표시 이름 표(`same_pair_change` 같은 쌍 증감, `layer_change` 레이어 변경, `new_pair` 새 쌍, `gone_pair` 사라진 쌍, `electrode_added_removed` 전극 추가·제거, `no_change` 변화 없음, `cno` CNO, `value_pending` 값 대기 / `common` 공통, `new` 신규, `removed` 제거, `unverifiable` 확인 불가) |
+| `inputs` | `compare2_json_sha256`, `config_sha256`, `ledger_basis`, `products.<role>`(model_group, pair_table_hash, crp), `electrode_inventory.<role>` {`electrodes`(정렬), `layers`(dl1 만), `source` dl1/observed, `status` complete/incomplete, `sha256`} |
+| `totals.<line/pixel>` | `items`(쌍 item 합 A·B·Δ), `intercept`(절편 줄), pixel 만 `cno`·`crp`(A = −d, B = 0, Δ = d; `present`), `a`·`b`·`delta`(열 합계), `vi_a`·`vi_b` |
+| `kinds.<line/pixel>` | `computable`, `vi_a`, `vi_b`, `slope`, `slope_method`, `lambda_a`, `lambda_b`, `pair_count`, `change_kinds`(코드별 건수; pixel 은 `cno` 건수 포함), `increase_sum`·`decrease_sum`, `value_pending_rows` |
+| `kinds.change_kind_counts` | 쌍 + CNO 전체의 변화 종류별 건수(건수는 쌍 하나 한 번) |
+| `pairs` | 쌍별 `rank`(L#, P#), `pair_id`, `electrodes`, `kind`, `change_kind`, `present_a/b`, `computable_a/b`, `a`·`b`·`delta`·`pct_a`·`pct_b`·`pct_delta`, `layers_a/b`, `items`[`item_id`, 방식, 레이어, `endpoints`, `presence` both/new/gone, `lambda_a/b`, `a`·`b`·`delta`]. 순서: line 순위, pixel 순위, 종류 불명 |
+| `electrodes` | 전극별 `status`, `present_a/b`, `layers_a/b`, `line`·`pixel`(A·B·Δ·% ; pixel 은 CNO 포함), `cno`, `partners_a/b`, `layers`(레이어별 line·pixel 값) |
+| `cno` | (electrode_id, density_layer) 줄: `change_kind: cno`, `presence`, `lambda_a/b`, `a`·`b`·`delta`·% |
+| `layers.<line/pixel/cno>` | 레이어(analysis_layer, CNO 는 density_layer)별 `a`·`b`·`delta`, `by_size`(이물 크기별), `top_pairs`(Δ 절댓값 상위 2쌍) |
+| `checks` | `equations`(`eq1_line_a` … `eq6_pixel_delta`), `electrode_sum`(Σ 전극 = Σ 쌍 + CNO, 종류별 a/b/delta), `pair_delta_vs_compare2`(쌍 Δ 합 = `delta.conditions` + `delta.shared`; 조건 Δ 중 null 이 있으면 `not_evaluated`), `status` |
+| `warnings` | `electrode_inventory_from_hotspots`(role), `electrode_inventory_conflict`(role, electrodes) |
+| `unavailable` | 계산 불가 항목(`scope` kind/pair/item/cno) |
 
 번호 L#, P# 는 `ledger.json` 에 저장한다(다음 Run 지도가 같은 번호를 쓴다).
+
+순위 규칙(7항): 종류(line / pixel)별로 따로 센다. 정렬 값 = B 값(쌍이 B 에 있고 값이 있을 때), 아니면 A 값. 큰 값이 앞이다. 값이 둘 다 없으면 맨 뒤. 동률은 pair_id 순이다. 종류를 알 수 없는 쌍은 번호가 없다(`rank: null`).
+
+값과 합계 규칙(T4 확정):
+
+- 증가 합 / 감소 합 = 그 종류의 쌍 Δ(값 있는 것) + CNO Δ(pixel) + CRP 줄 Δ(pixel) 중 양수의 합 / 음수의 합이다. 절편 줄은 0 이다.
+- 합계식과 Σ 전극 검산은 item 값으로 계산한다. 쌍 값이 null 인 쌍(조건 계산 불가)에는 item 이 없어 합계에 0 으로 들어간다.
+- 전극 값 = item 값을 두 끝점 전극(같은 이름이면 한 전극)에 1/2 씩 넣는다. 레이어별 값은 끝점의 actual_layer 에 넣는다. CNO 는 그 전극에 전부, 레이어는 density_layer 이다.
+- 전극 존재: 목록이 complete 면 목록 ∪ 관측(충돌은 경고), incomplete 면 관측(조건 전극, item 끝점, CNO 전극)이다.
 
 ## 11. 출력 폴더 규약과 08 단계 (X4)
 

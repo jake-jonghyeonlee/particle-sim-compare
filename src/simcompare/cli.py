@@ -248,6 +248,12 @@ def _parser() -> argparse.ArgumentParser:
     c2r.add_argument("--top-improved", type=int, default=3, help="개선 ROI 수(기본 3)")
     c2r.add_argument("--top-n", type=int, default=10, help="4·5절 표 길이(기본 10). 7절 조건 지도 수(config report.top_n)와 다름")
     c2r.add_argument("--max-pairs-per-condition", type=int, default=3, help="조건당 표시할 쌍 수(기본 3)")
+    led = _korean_help(sub.add_parser(
+        "ledger", add_help=False,
+        help="compare2 결과(compare2.json)로 쌍·전극 장부(ledger.json, ledger_pairs.csv, ledger_electrodes.csv)를 만든다. 마스크는 읽지 않음"))
+    led.add_argument("--compare2-dir", required=True, help="compare2 출력 폴더(compare2.json 이 있는 곳)")
+    led.add_argument("--config", required=True, help="compare2 를 실행할 때 쓴 compare2_config_v1 YAML(같은 파일이어야 함)")
+    led.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger 가 이전에 만든 폴더만 덮어씀")
     validate = _korean_help(sub.add_parser("validate-data", add_help=False, help="numeric_v2 계약·누락·단위 점검"))
     validate.add_argument("--config", required=True, help="numeric_config_v1 YAML")
     validate.add_argument("--out", help="출력 디렉터리")
@@ -368,6 +374,10 @@ def main(argv: list[str] | None = None) -> int:
                 candidates_dir=args.candidates, confirm_dir=args.confirm, windows_dir=args.windows,
                 dl1_search=args.dl1_search, top_regions=args.top_regions, top_improved=args.top_improved,
                 top_n=args.top_n, max_pairs_per_condition=args.max_pairs_per_condition)
+        if args.command == "ledger":
+            # 새 폴더 또는 ledger 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2.
+            from simcompare import ledger
+            return ledger.main_ledger(args.compare2_dir, args.config, args.out, _print)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.
