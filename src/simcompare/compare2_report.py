@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image
 
 from .adapters.real_hotspot import CASE_EXCLUSION_RULE
-from .compare2 import AREA_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _json_text, _publish
+from .compare2 import SCHEMA_VERSION as COMPARE2_SCHEMA, _json_text, _publish, stale_reason
 from .compare2_inputs import VI_LINE_DIVISOR, VI_PIXEL_DIVISOR, load_compare2_config
 from .compare2_link import APPROXIMATION_NOTE, APPROXIMATION_NOTE_CNO, build_link, cno_condition_id, compute_locations
 from .numeric_schema import NumericContractError
@@ -256,19 +256,9 @@ def _read_compare2(compare2_dir, cfg2):
         raise NumericContractError('compare2_json_invalid', f'{path}: {exc}') from exc
     if not isinstance(doc, dict) or doc.get('schema_version') != COMPARE2_SCHEMA:
         raise NumericContractError('unsupported_compare2_json', f'{path}: schema_version must be {COMPARE2_SCHEMA}')
-    basis = (doc.get('inputs') or {}).get('area_basis')
-    if basis != AREA_BASIS:
-        raise NumericContractError(
-            'compare2_stale_area_basis',
-            f'compare2.json area_basis is {basis!r}, this code uses {AREA_BASIS!r}: 02(compare2)를 새 번들로 다시 실행')
-    exclusions = (doc.get('inputs') or {}).get('case_exclusions')
-    rules = {role: (exclusions.get(role) or {}).get('rule') if isinstance(exclusions, dict) else None
-             for role in ('reference', 'target')}
-    if any(rule != CASE_EXCLUSION_RULE for rule in rules.values()):
-        raise NumericContractError(
-            'compare2_stale_case_exclusion_rule',
-            f'compare2.json case_exclusions rule is {rules!r}, this code uses {CASE_EXCLUSION_RULE!r}: '
-            '02(compare2)를 새 번들로 다시 실행')
+    stale = stale_reason(doc)
+    if stale is not None:
+        raise NumericContractError(stale[0], stale[1])
     recorded = ((doc.get('inputs') or {}).get('compare2_config') or {}).get('sha256')
     if recorded != cfg2.config_sha256:
         raise NumericContractError(

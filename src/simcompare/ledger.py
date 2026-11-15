@@ -20,9 +20,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .adapters.real_hotspot import CASE_EXCLUSION_RULE
-from .compare2 import (AREA_BASIS, LEDGER_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _csv_text, _item_id, _json_text,
-                       _within)
+from .compare2 import (LEDGER_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _csv_text, _item_id, _json_text,
+                       _within, stale_reason)
 from .compare2_inputs import load_compare2_config
 from .numeric_schema import NumericContractError
 
@@ -148,20 +147,10 @@ def _read_compare2(compare2_dir, cfg2):
             'ledger_compare2_stale',
             f'compare2.json ledger_basis is {inputs.get("ledger_basis")!r}, this code needs {LEDGER_BASIS!r}: '
             '02(compare2)를 새 번들로 다시 실행')
-    # the same stale checks as 07 (compare2_report._read_compare2): same constants, same codes
-    if inputs.get('area_basis') != AREA_BASIS:
-        raise NumericContractError(
-            'compare2_stale_area_basis',
-            f'compare2.json area_basis is {inputs.get("area_basis")!r}, this code uses {AREA_BASIS!r}: '
-            '02(compare2)를 새 번들로 다시 실행')
-    exclusions = inputs.get('case_exclusions')
-    rules = {role: (exclusions.get(role) or {}).get('rule') if isinstance(exclusions, dict) else None
-             for role in ROLES}
-    if any(rule != CASE_EXCLUSION_RULE for rule in rules.values()):
-        raise NumericContractError(
-            'compare2_stale_case_exclusion_rule',
-            f'compare2.json case_exclusions rule is {rules!r}, this code uses {CASE_EXCLUSION_RULE!r}: '
-            '02(compare2)를 새 번들로 다시 실행')
+    # the same stale checks as 07 (compare2_report._read_compare2): one shared function
+    stale = stale_reason(doc)
+    if stale is not None:
+        raise NumericContractError(stale[0], stale[1])
     recorded = (inputs.get('compare2_config') or {}).get('sha256')
     if recorded != cfg2.config_sha256:
         raise NumericContractError(

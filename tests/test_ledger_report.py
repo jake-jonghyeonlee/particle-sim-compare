@@ -298,6 +298,71 @@ def test_other_row_without_pending_rows_has_no_pending_note(tmp_path):
     assert '줄 포함' not in html_of(out)
 
 
+def _tile2_lines(page):
+    tile = page[page.index('② 증가가 가장 큰 변화 종류'):page.index('③ 가장 크게')]
+    return tile.split('<div class="kl">')[1:]    # [line, pixel]
+
+
+def test_tile2_pending_group_only_shows_pending_not_no_increase(tmp_path):
+    pairs = [spec('W1', ['W', 'X'], 'line', None, 0.0001, change='value_pending'),
+             spec('PX', ['Pix', 'Eff2'], 'pixel', 0.0040, 0.0050)]
+    code, out = run_report(tmp_path, make_ledger(pairs))
+    line, pixel = _tile2_lines(html_of(out))
+    assert '대기' in line and '증가 없음' not in line and '값 대기 포함' not in line
+    assert '증가 없음' not in pixel and '값 대기 포함' not in pixel     # pixel has a real increase, no pending group
+
+
+def test_tile2_value_group_plus_pending_group_shows_max_with_pending_mark(tmp_path):
+    pairs = [spec('P1', ['A', 'B'], 'line', 0.0120, 0.0150),
+             spec('W1', ['W', 'X'], 'line', None, 0.0001, change='value_pending')]
+    code, out = run_report(tmp_path, make_ledger(pairs))
+    line, pixel = _tile2_lines(html_of(out))
+    assert '값 대기 포함' in line and '증가 없음' not in line and '<b>' in line
+    assert '값 대기 포함' not in pixel and '증가 없음' in pixel          # no pixel pairs at all
+
+
+def test_tile2_without_pending_has_no_pending_mark(tmp_path):
+    code, out = run_report(tmp_path, sample_doc())
+    line, pixel = _tile2_lines(html_of(out))
+    assert '값 대기 포함' not in line and '값 대기 포함' not in pixel
+    assert '증가 없음' not in line
+
+
+def test_electrode_and_cno_other_rows_note_pending_lines(tmp_path):
+    pairs = [spec('P1', ['A', 'B'], 'line', 0.0120, 0.0150), spec('P2', ['B', 'C'], 'line', 0.0060, 0.0078)]
+    doc = make_ledger(pairs, cno=[('A', 'PXL', 0.0050, 0.0060), ('C', 'PXL', 0.0010, 0.0020)])
+    # make one electrode row and one CNO row value-pending (null a and delta)
+    for row in doc['electrodes']:
+        if row['electrode'] == 'C':
+            row['line']['a'] = row['line']['delta'] = None
+    for row in doc['cno']:
+        if row['electrode_id'] == 'C':
+            row['a'] = row['delta'] = None
+    code, out = run_report(tmp_path, doc, top_pairs=1, top_electrodes=1)
+    page = html_of(out)
+    el = page[page.index('<table id="el-line"'):]
+    el_rest = el[el.index('<tr class="rest"'):]
+    el_rest = el_rest[:el_rest.index('</tr>')]
+    assert '값 대기 1 줄 포함' in el_rest
+    cno = page[page.index('<table id="cno"'):]
+    cno_rest = cno[cno.index('<tr class="rest"'):]
+    cno_rest = cno_rest[:cno_rest.index('</tr>')]
+    assert '값 대기 1 줄 포함' in cno_rest
+
+
+def test_present_zero_shows_0_percent_when_no_row_is_pending(tmp_path):
+    pairs = [spec('Z1', ['Zed', 'Eff'], 'line', 0.0, 0.0, change='no_change'),
+             spec('P1', ['A', 'B'], 'line', 0.0120, 0.0150)]
+    code, out = run_report(tmp_path, make_ledger(pairs))
+    page = html_of(out)
+    line = page[page.index('<table id="pairs-line"'):]
+    m = re.search(r'<tr id="pair-(L\d+)"[^>]*>(?:(?!<tr id="pair-).)*?<b>Zed–Eff</b>(.*?)(?=<tr id="pair-|<tr class="(?:rest|sum)")',
+                  line, re.S)
+    assert m
+    cells = m.group(2)
+    assert '<td>0%</td><td>0%</td>' in cells and '<span class="muted">없음</span>' not in cells
+
+
 def test_absent_zero_not_applicable_and_pending_are_told_apart(tmp_path):
     pairs = [spec('Z1', ['Zed', 'Eff'], 'line', 0.0, 0.0, change='no_change'),
              spec('N1', ['New', 'Eff'], 'line', 0.0, 0.0030, present_a=False, change='new_pair'),

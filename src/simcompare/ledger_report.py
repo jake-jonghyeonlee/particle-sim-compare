@@ -278,13 +278,16 @@ def _tiles(ctx):
     t1 = ''.join(line(k, dcell(doc['totals'][k]['delta'], ctx.pct(doc['totals'][k]['delta'], k))) for k in KINDS)
     t2 = []
     for kind in KINDS:
-        cands = [(v['inc'], code) for (k, code), v in sums.items() if k == kind and code != 'no_change' and v['inc']]
+        groups = [(v['inc'], code) for (k, code), v in sums.items() if k == kind and code != 'no_change']
+        pending = any(inc is None for inc, _ in groups)
+        cands = [(inc, code) for inc, code in groups if inc]
         if not cands:
-            t2.append(line(kind, '증가 없음'))
+            t2.append(line(kind, muted('대기') if pending else '증가 없음'))
             continue
         inc, code = max(cands, key=lambda c: (c[0], c[1]))
-        t2.append(line(kind, '<a href="#s1"><b>%s</b></a> 증가 %s' % (esc(ctx.change_labels.get(code, code)),
-                                                                  dcell(inc, ctx.pct(inc, kind)))))
+        note = ' ' + muted('(값 대기 포함)') if pending else ''
+        t2.append(line(kind, '<a href="#s1"><b>%s</b></a> 증가 %s%s' % (esc(ctx.change_labels.get(code, code)),
+                                                                     dcell(inc, ctx.pct(inc, kind)), note)))
     t3 = []
     for kind in KINDS:
         rows = _sorted_electrodes(ctx, kind)

@@ -43,6 +43,26 @@ OWNED_NAMES = {'compare2.json', 'compare2_summary.csv', 'compare2_layers.csv', '
 EXECUTION_COMMAND = 'compare2'
 
 
+def stale_reason(doc):
+    """Shared stale check of a compare2.json document (07 compare2-report and ledger).
+
+    Returns None when area_basis and the case-exclusion rules match this code, otherwise (error code, message).
+    Check order: area_basis, then case_exclusions rules."""
+    inputs = doc.get('inputs') or {}
+    basis = inputs.get('area_basis')
+    if basis != AREA_BASIS:
+        return ('compare2_stale_area_basis',
+                f'compare2.json area_basis is {basis!r}, this code uses {AREA_BASIS!r}: 02(compare2)를 새 번들로 다시 실행')
+    exclusions = inputs.get('case_exclusions')
+    rules = {role: (exclusions.get(role) or {}).get('rule') if isinstance(exclusions, dict) else None
+             for role in ROLES}
+    if any(rule != CASE_EXCLUSION_RULE for rule in rules.values()):
+        return ('compare2_stale_case_exclusion_rule',
+                f'compare2.json case_exclusions rule is {rules!r}, this code uses {CASE_EXCLUSION_RULE!r}: '
+                '02(compare2)를 새 번들로 다시 실행')
+    return None
+
+
 # ---- small numeric helpers -----------------------------------------------------------------------------------
 
 def _g(x):

@@ -979,6 +979,22 @@ def test_stale_case_exclusion_rule_exits_2(tmp_path):
     assert go(gone) == 2 and error_code(gone.out) == 'compare2_stale_case_exclusion_rule'
 
 
+def test_07_and_ledger_share_one_stale_check_with_the_same_codes():
+    from simcompare import compare2, compare2_report, ledger
+    assert ledger.stale_reason is compare2.stale_reason and compare2_report.stale_reason is compare2.stale_reason
+    good = {'inputs': {'area_basis': compare2.AREA_BASIS,
+                       'case_exclusions': {r: {'rule': compare2.CASE_EXCLUSION_RULE} for r in compare2.ROLES}}}
+    assert compare2.stale_reason(good) is None
+    stale_basis = {'inputs': dict(good['inputs'], area_basis='older_basis')}
+    assert compare2.stale_reason(stale_basis)[0] == 'compare2_stale_area_basis'
+    stale_rule = {'inputs': dict(good['inputs'], case_exclusions={'reference': {'rule': 'x'}, 'target': {}})}
+    code, message = compare2.stale_reason(stale_rule)
+    assert code == 'compare2_stale_case_exclusion_rule' and '다시 실행' in message
+    assert compare2.stale_reason({})[0] == 'compare2_stale_area_basis'          # area_basis is checked first
+    gone = {'inputs': {'area_basis': compare2.AREA_BASIS}}
+    assert compare2.stale_reason(gone)[0] == 'compare2_stale_case_exclusion_rule'
+
+
 # change 9 (opus adv:8) ----------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize('roles', [('reference',), ('target',), ('reference', 'target')])
