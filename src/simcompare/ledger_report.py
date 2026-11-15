@@ -6,6 +6,7 @@ value. The report only converts formats (% of the reference vi, %p), and adds up
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -169,6 +170,7 @@ class Ctx(object):
     def __init__(self, doc, top_pairs, top_electrodes):
         self.doc = doc
         self.top_pairs, self.top_electrodes = top_pairs, top_electrodes
+        self.maps = None                      # the loaded ledger-maps folder (T5), or None
         self.change_labels = {c['code']: c['label'] for c in doc['change_kinds']}
         self.status_labels = {c['code']: c['label'] for c in doc['electrode_status']}
         self.vi_a = {kind: doc['kinds'][kind]['vi_a'] for kind in KINDS}
@@ -194,6 +196,14 @@ def _abc_cells(ctx, kind, a, b, delta, present_a=True, present_b=True):
 
 def _data_attrs(row, a, b, d):
     return 'data-row="%s" data-a="%s" data-b="%s" data-d="%s"' % (row, attr_num(a), attr_num(b), attr_num(d))
+
+
+def _maps_band(ctx):
+    maps = ctx.maps
+    if maps is None or maps['doc'].get('status') != 'partial':
+        return ''
+    return ('<div class="band partial" id="maps-partial"><b>지도 부분 결과</b> — ledger-maps 의 값 검산이 맞지 않습니다'
+            '(%s). 2절 지도의 값을 그대로 믿지 마세요.</div>' % esc(', '.join(maps['doc'].get('reasons') or ['partial'])))
 
 
 def _head_band(ctx):
@@ -532,9 +542,12 @@ def _pair_row(ctx, pair, kind, row_kind):
                   '<th class="l">전극@레이어</th><th class="l">A·B</th><th>A</th><th>B</th><th class="l">Δ</th></tr>%s</table></details>'
                   % (len(items), ''.join(items)))
     anchor = ' id="pair-%s"' % esc(pair['rank']) if row_kind == 'top' else ''
-    return ('<tr%s %s><td>%s</td><td class="l"><b>%s</b></td><td class="l">%s</td><td class="l">%s</td><td class="l">%s</td>'
+    link = ''
+    if getattr(ctx, 'maps', None) is not None:
+        link = '<br><a class="maplink" href="#s2" data-map-pair="%s">지도에서 보기</a>' % esc(pair['pair_id'])
+    return ('<tr%s %s><td>%s</td><td class="l"><b>%s</b>%s</td><td class="l">%s</td><td class="l">%s</td><td class="l">%s</td>'
             '<td>%s</td><td>%s</td><td class="l">%s</td><td class="l wrap">%s</td></tr>' % (
-                anchor, _data_attrs(row_kind, pair['a'], pair['b'], pair['delta']), esc(pair['rank']), esc(name),
+                anchor, _data_attrs(row_kind, pair['a'], pair['b'], pair['delta']), esc(pair['rank']), esc(name), link,
                 ctx.change_badge(pair['change_kind']), esc(_pair_modes(pair)), esc(_pair_layers_text(pair)),
                 vcell(pair['a'], pair['pct_a'], pair['present_a']), vcell(pair['b'], pair['pct_b'], pair['present_b']),
                 dcell(pair['delta'], pair['pct_delta']), detail))
@@ -779,6 +792,359 @@ def _section7(ctx):
     return ''.join(out)
 
 
+# ---- section 2: layout risk maps (needs --maps-dir) -------------------------------------------------------------------
+
+MAPS_SCHEMA = 'ledger_maps_v1'
+ROLE_KEYS = (('reference', 'A'), ('target', 'B'))
+
+
+def _read_maps(maps_dir, ledger_sha):
+    """{'doc', 'sha', 'pngs'} of a ledger-maps folder, or NumericContractError ledger_maps_input_missing /
+    ledger_maps_schema_mismatch / ledger_maps_stale (the maps were made from another ledger.json)."""
+    folder = Path(maps_dir)
+    path = folder / 'ledger_maps.json'
+    if not path.is_file():
+        raise NumericContractError('ledger_maps_input_missing', f'{path}: ledger_maps.json 이 없습니다. 먼저 ledger-maps 를 실행하세요')
+    if (folder / 'error.json').is_file():
+        raise NumericContractError('ledger_maps_input_missing', f'{folder / "error.json"}: ledger-maps 가 오류로 끝난 폴더입니다')
+    raw = path.read_bytes()
+    try:
+        doc = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise NumericContractError('ledger_maps_input_missing', f'{path}: ledger_maps.json 을 읽을 수 없습니다')
+    if not isinstance(doc, dict) or doc.get('schema_version') != MAPS_SCHEMA:
+        found = doc.get('schema_version') if isinstance(doc, dict) else None
+        raise NumericContractError('ledger_maps_schema_mismatch', f'{path}: schema_version {found!r} (필요 {MAPS_SCHEMA})')
+    recorded = (doc.get('inputs') or {}).get('ledger_json_sha256')
+    if recorded != ledger_sha:
+        raise NumericContractError('ledger_maps_stale', f'{path}: 다른 ledger.json 으로 만든 지도입니다(지도 {recorded}, 현재 {ledger_sha}). '
+                                                      'ledger-maps 를 다시 실행하세요')
+    pngs = {}
+    for role, _key in ROLE_KEYS:
+        for entry in ((doc.get('sides') or {}).get(role) or {}).get('maps') or []:
+            png = folder / entry['file']
+            if not png.is_file():
+                raise NumericContractError('ledger_maps_input_missing', f'{png}: 지도 PNG 가 없습니다')
+            pngs[entry['file']] = png.read_bytes()
+    return {'doc': doc, 'sha': hashlib.sha256(raw).hexdigest(), 'pngs': pngs}
+
+
+def _plain_val(value, pct, present=True):
+    if not present:
+        return '없음'
+    if value is None:
+        return '대기'
+    if value == 0:
+        return '0%'
+    return pct_txt(pct) if pct is not None else raw_pct(value)
+
+
+def _plain_delta(delta, pct):
+    if delta is None:
+        return '대기'
+    if delta == 0:
+        return '0'
+    return spct(pct) if pct is not None else raw_pp(delta)
+
+
+def _maps_top(ctx):
+    """Pairs of each kind that get a number in the list and on the maps (ledger-maps --top-pairs)."""
+    top = (ctx.maps['doc'].get('options') or {}).get('top_pairs')
+    top = top if isinstance(top, int) and not isinstance(top, bool) and top >= 1 else ctx.top_pairs
+    return {kind: [p for p in ctx.doc['pairs'] if p['kind'] == kind][:top] for kind in KINDS}
+
+
+def _side_maps(ctx, role):
+    return ((ctx.maps['doc'].get('sides') or {}).get(role) or {})
+
+
+def _pair_map_state(ctx, pair, role):
+    """What the map of one product says about a pair: 없음 / 지도 영역 없음 / 값 대기 / 표시."""
+    present = pair['present_a'] if role == 'reference' else pair['present_b']
+    if not present:
+        return '이 제품에 없음'
+    items = [i for i in _side_maps(ctx, role).get('items') or [] if i['pair_id'] == pair['pair_id']]
+    if not items:
+        return '지도 영역 없음'
+    if all(i['status'] == 'no_map_area' for i in items):
+        return '지도 영역 없음'
+    if all(i['status'] == 'pending' for i in items):
+        return '값 대기'
+    return '표시'
+
+
+def _maps_payload(ctx):
+    maps = ctx.maps
+    mdoc, pngs = maps['doc'], maps['pngs']
+    doc = ctx.doc
+    top = _maps_top(ctx)
+    top_ids = {p['pair_id'] for rows in top.values() for p in rows}
+    pairs = []
+    for p in doc['pairs']:
+        if p['kind'] not in KINDS or not p.get('rank'):
+            continue
+        pairs.append({'id': p['pair_id'], 'no': p['rank'], 'name': '–'.join(p['electrodes']), 'e': list(p['electrodes']),
+                      'kind': p['kind'], 'ck': p['change_kind'], 'cl': ctx.change_labels.get(p['change_kind'], p['change_kind']),
+                      'a': p['a'], 'b': p['b'], 'd': p['delta'], 'pa': bool(p['present_a']), 'pb': bool(p['present_b']),
+                      'ta': _plain_val(p['a'], p['pct_a'], p['present_a']), 'tb': _plain_val(p['b'], p['pct_b'], p['present_b']),
+                      'td': _plain_delta(p['delta'], p['pct_delta']), 'top': p['pair_id'] in top_ids})
+    sides = {}
+    max_pct = {kind: 0.0 for kind in KINDS}
+    for role, key in ROLE_KEYS:
+        side = _side_maps(ctx, role)
+        items = []
+        for item in side.get('items') or []:
+            pct = ctx.pct(item['value'], item['kind']) if item['kind'] in KINDS else None
+            if pct is not None and item['kind'] in KINDS:
+                max_pct[item['kind']] = max(max_pct[item['kind']], abs(pct))
+            items.append({'n': item['number'], 'p': item['pair_id'], 'k': item['kind'], 'l': ', '.join(item.get('layers') or []),
+                          'pct': pct, 't': _plain_val(item['value'], pct), 's': item['status']})
+        entries = []
+        for entry in sorted(side.get('maps') or [], key=lambda m: m['file']):
+            height, width = entry['shape_yx']
+            entries.append({'file': entry['file'], 'layer': entry['layer'], 'kind': entry['kind'], 'w': width, 'h': height,
+                            'px_um': entry.get('px_um'), 'numbers': entry['numbers'],
+                            'png': 'data:image/png;base64,' + base64.b64encode(pngs[entry['file']]).decode('ascii')})
+        shape = entries[0] if entries else None
+        sides[key] = {'items': items, 'maps': entries, 'w': shape['w'] if shape else 0, 'h': shape['h'] if shape else 0,
+                      'electrodes': [{'number': e['number'], 'name': e['name']} for e in side.get('electrodes') or []]}
+    electrodes = {row['electrode']: [bool(row['present_a']), bool(row['present_b'])] for row in doc['electrodes']}
+    demo = None
+    for kind in KINDS:
+        rows = _sorted_electrodes(ctx, kind)
+        if rows and demo is None:
+            demo = rows[0]['electrode']
+    return {'pairs': pairs, 'sides': sides, 'electrodes': electrodes, 'max_pct': max_pct, 'demo_electrode': demo}
+
+
+def _legend(mode):
+    def sw(css, text):
+        return '<span><i class="sw" style="%s"></i>%s</span>' % (css, esc(text))
+    if mode == 'size':
+        return (sw('background:var(--line)', 'line 불량') + sw('background:var(--pixel)', 'pixel 불량')
+                + sw('background:var(--line);opacity:.25', '옅음 = 작음') + sw('background:var(--line)', '진함 = 큼 (같은 종류의 가장 큰 값 = 1)')
+                + sw('background:var(--mid);border:1px solid var(--common)', '전극 형상'))
+    return (sw('background:var(--up)', '증가') + sw('background:var(--down)', '감소') + sw('background:var(--common)', '변화 없음')
+            + sw('background:var(--up);border:2px solid var(--text-primary)', '새로 생김 (B 에만)')
+            + sw('background:none;border:2px dashed var(--down)', '사라짐 (A 에만)')
+            + sw('background:repeating-linear-gradient(45deg,var(--up) 0 2px,transparent 2px 5px)', '레이어 변경 (빗금, 색은 증감)')
+            + sw('background:var(--mid);border:1px solid var(--common)', '전극 형상'))
+
+
+def _map_list(ctx):
+    out = []
+    head = ('<tr><th>번호</th><th class="l">전극 쌍</th><th class="l">변화 종류</th><th>A</th><th>B</th><th class="l">Δ</th>'
+            '<th class="l">A 지도</th><th class="l">B 지도</th></tr>')
+    for kind, rows in _maps_top(ctx).items():
+        out.append('<h3>%s<b>%s</b> <span class="muted">%d 쌍 · 기준 vi_%s A = 100%%</span></h3>' % (chip(kind), kind, len(rows), kind))
+        if not rows:
+            out.append('<p class="muted">표시할 쌍이 없습니다.</p>')
+            continue
+        out.append('<table class="ledger mlist" id="mlist-%s">%s' % (kind, head))
+        for p in rows:
+            out.append('<tr data-sel-p="%s" tabindex="0"><td>%s</td><td class="l"><b>%s</b></td><td class="l">%s</td><td>%s</td><td>%s</td>'
+                       '<td class="l">%s</td><td class="l muted">%s</td><td class="l muted">%s</td></tr>' % (
+                           esc(p['pair_id']), esc(p['rank']), esc('–'.join(p['electrodes'])), ctx.change_badge(p['change_kind']),
+                           vcell(p['a'], p['pct_a'], p['present_a']), vcell(p['b'], p['pct_b'], p['present_b']),
+                           dcell(p['delta'], p['pct_delta']), esc(_pair_map_state(ctx, p, 'reference')),
+                           esc(_pair_map_state(ctx, p, 'target'))))
+        out.append('</table>')
+    return ''.join(out)
+
+
+def _section2(ctx):
+    mdoc = ctx.maps['doc']
+    layers = sorted({e['layer'] for _role, key in ROLE_KEYS for e in _side_maps(ctx, _role).get('maps') or []})
+    scale = mdoc.get('scale_steps') or []
+    notes = []
+    for role, key in ROLE_KEYS:
+        px = [e.get('px_um') for e in _side_maps(ctx, role).get('maps') or [] if e.get('px_um')]
+        notes.append('%s 지도 %s µm/픽셀' % (key, '%g' % px[0] if px else '—'))
+    hidden = ' · '.join('%s %d' % (key, ((_side_maps(ctx, role).get('hidden') or {}).get('item_px') or 0)) for role, key in ROLE_KEYS)
+    tile = (mdoc.get('options') or {}).get('tile_um')
+    diameter = (mdoc.get('report') or {}).get('diameter_um')
+    out = ['<section id="s2"><p class="q">layout 의 어디인가</p><h2>2. layout 리스크 지도</h2>',
+           '<p class="lead">두 지도는 위치를 맞추지 않습니다. 전극 이름으로 연결합니다. "변화" 보기는 무엇이 달라졌는지, '
+           '"리스크 크기" 보기는 각 제품에서 어디가 큰지 보입니다.</p>',
+           '<div class="band partial" id="mapwarn" hidden><b>지도를 표시하지 않습니다</b> — 이 브라우저가 지도 그림의 번호를 바꿔 읽었습니다'
+           '(번호별 픽셀 수가 ledger_maps.json 과 다릅니다). 아래 목록만 믿고 쓰세요.</div>',
+           '<div class="chips"><span class="muted">보기</span><span id="modes"><button type="button" data-mode="change" class="on">변화</button>'
+           '<button type="button" data-mode="size">리스크 크기</button></span>'
+           '<span class="muted" style="margin-left:14px">레이어</span><span id="mlayers"><button type="button" data-layer="" class="on">전체</button>%s</span>'
+           '<span class="muted" style="margin-left:14px">전극 찾기</span><input id="esearch" list="elist" placeholder="전극 이름" '
+           'aria-label="전극 이름으로 선택" autocomplete="off"><datalist id="elist">%s</datalist>'
+           '<button type="button" id="mclear" style="margin-left:8px">선택 해제</button></div>' % (
+               ''.join('<button type="button" data-layer="%s">%s</button>' % (esc(layer), esc(layer)) for layer in layers),
+               ''.join('<option value="%s">' % esc(row['electrode']) for row in ctx.doc['electrodes'])),
+           '<div class="maps"><div><h3>기준 A</h3><canvas class="map" id="mapA" width="1" height="1" role="img" aria-label="기준 A 지도"></canvas>'
+           '<p class="muted mnote" id="noteA"></p></div>'
+           '<div><h3>대상 B</h3><canvas class="map" id="mapB" width="1" height="1" role="img" aria-label="대상 B 지도"></canvas>'
+           '<p class="muted mnote" id="noteB"></p></div></div>',
+           '<div class="legend" id="legend-change">%s</div><div class="legend" id="legend-size" hidden>%s</div>' % (_legend('change'), _legend('size')),
+           '<p class="muted" id="mapnote">지도 이물 크기 %s µm · 분석 타일 %s µm · %s · 지도 배율을 거칠게 한 횟수 %d. 겹친 영역은 한 번호만 보입니다'
+           '(가려진 픽셀 %s). 색과 진하기는 쌍 전체의 값이고 그 위치만의 값이 아닙니다.</p>' % (
+               esc('%g' % diameter) if diameter is not None else '—', esc('%g' % tile) if tile is not None else '—',
+               esc(' · '.join(notes)), len(scale), esc(hidden)),
+           '<div class="explain" id="explain"><span class="muted">선택한 것이 없습니다. 지도의 전극이나 불량 영역, 아래 목록의 줄을 누르면 '
+           '두 지도에서 함께 강조됩니다.</span></div>',
+           '<h3>리스크 위치 목록 — 불량 종류별로 B 값이 큰 순서. 번호는 4절과 같습니다.</h3>', _map_list(ctx),
+           '<p class="muted">CNO 는 지도가 없어 이 목록에 없습니다. 3절 전극 장부의 "그중 CNO" 열에서 봅니다.</p>',
+           '</section>']
+    return ''.join(out)
+
+
+MAPS_CSS = """
+[hidden]{display:none!important}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;align-items:center}
+.chips button{font:inherit;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:14px;padding:2px 10px;cursor:pointer}
+.chips button.on{background:var(--text-primary);color:var(--surface-1)}
+input#esearch{font:inherit;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:14px;padding:2px 10px;width:130px}
+.maps{display:grid;grid-template-columns:1fr 1fr;gap:12px}.maps h3{margin-top:0}
+canvas.map{display:block;width:100%;height:auto;background:var(--surface-0);border:1px solid var(--border);border-radius:6px;cursor:pointer}
+.mnote{min-height:1.5em;margin:2px 0}
+.legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px;margin:8px 0}
+.legend .sw{display:inline-block;width:24px;height:10px;vertical-align:middle;margin-right:4px;box-sizing:border-box}
+.explain{border-left:3px solid var(--text-secondary);background:var(--surface-0);padding:8px 12px;margin-top:8px;min-height:60px}
+table.mlist tr[data-sel-p]{cursor:pointer}table.mlist tr.hl td{background:var(--sel)}
+tr[tabindex]:focus-visible{outline:2px solid var(--down);outline-offset:-2px}
+#mtip{position:fixed;z-index:9;pointer-events:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);
+border-radius:6px;padding:3px 8px;font-size:12px;max-width:420px}
+@media print{.chips button:not(.on),#mclear,#esearch{display:none}.maps{break-inside:avoid}}
+"""
+
+MAPS_SCRIPT = r"""
+(function(){
+var D=JSON.parse(document.getElementById('maps-data').textContent);
+function $(id){return document.getElementById(id);}
+var R=['A','B'];
+var st={mode:location.hash==='#size'?'size':'change',layer:'',sel:null};
+if(location.hash==='#demo'&&D.demo_electrode){st.sel={t:'e',id:D.demo_electrode};}
+var P={};D.pairs.forEach(function(p){P[p.id]=p;});
+var S={};
+R.forEach(function(r){var s=D.sides[r];S[r]={items:{},els:{},maps:[],cv:$('map'+r),comp:null,w:s.w,h:s.h};
+ s.items.forEach(function(i){S[r].items[i.n]=i;});
+ s.electrodes.forEach(function(e){S[r].els[e.number]=e.name;});});
+var CC={};
+function rgb(name,fb){var v=getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+ var m=/^#([0-9a-f]{6})$/i.exec(v)||/^#([0-9a-f]{6})$/i.exec(fb);var n=parseInt(m[1],16);return [(n>>16)&255,(n>>8)&255,n&255];}
+function colors(){CC={bg:rgb('--surface-0','#f4f3f0'),mid:rgb('--mid','#e4e2dc'),common:rgb('--common','#8d8c85'),up:rgb('--up','#d03b3b'),
+ down:rgb('--down','#2a78d6'),line:rgb('--line','#7a4fd6'),pixel:rgb('--pixel','#eb6834'),text:rgb('--text-primary','#0b0b0b')};}
+var partnerCache={};
+function partners(name){if(partnerCache[name])return partnerCache[name];var o={};
+ D.pairs.forEach(function(p){if(p.e.indexOf(name)>=0){p.e.forEach(function(x){if(x!==name)o[x]=1;});}});partnerCache[name]=o;return o;}
+function related(p){var s=st.sel;if(!s)return true;if(s.t==='p')return p.id===s.id;return p.e.indexOf(s.id)>=0;}
+function elState(name){var s=st.sel;if(!s)return 0;
+ if(s.t==='e'){if(name===s.id)return 1;if(partners(s.id)[name])return 2;return 3;}
+ var p=P[s.id];if(p&&p.e.indexOf(name)>=0)return 1;return 3;}
+function build(r){var o=S[r],w=o.w,h=o.h,item=new Uint16Array(w*h),el=new Uint16Array(w*h),bb={};
+ o.maps.forEach(function(m){if(st.layer&&m.meta.layer!==st.layer)return;var isItem=m.meta.kind==='it',dst=isItem?item:el,n=m.num;
+  for(var i=0;i<n.length;i++){var v=n[i];if(v&&!dst[i]){dst[i]=v;
+   if(isItem){var x=i%w,y=(i/w)|0,b=bb[v];if(!b){bb[v]=[x,y,x,y];}else{if(x<b[0])b[0]=x;if(x>b[2])b[2]=x;if(y<b[1])b[1]=y;if(y>b[3])b[3]=y;}}}}});
+ o.comp={item:item,el:el,bb:bb};}
+function style(r,n){var it=S[r].items[n];if(!it)return null;var p=P[it.p];if(!p)return null;
+ var s={rel:related(p),fill:true,hatch:false,bold:false,dash:false,col:null,a:1};
+ if(st.mode==='size'){var mx=D.max_pct[it.k]||0;var q=(it.pct==null||!mx)?0:Math.min(1,Math.abs(it.pct)/mx);
+  s.col=it.pct==null?CC.common:CC[it.k];s.a=.18+.82*q;}
+ else{var d=p.d;s.col=(d==null||d===0)?CC.common:(d>0?CC.up:CC.down);s.a=.85;
+  if(p.ck==='layer_change'){s.hatch=true;}
+  else if(p.ck==='new_pair'){s.bold=true;}
+  else if(p.ck==='gone_pair'){s.fill=false;s.dash=true;s.col=CC.down;}}
+ if(!s.rel)s.a*=.18;return s;}
+function isBorder(a,w,h,x,y,n,t){if(x<t||y<t||x+t>=w||y+t>=h)return true;var i=y*w+x;
+ return a[i-t]!==n||a[i+t]!==n||a[i-t*w]!==n||a[i+t*w]!==n;}
+function draw(r){var o=S[r];if(!o.comp||!o.w)return;var w=o.w,h=o.h,cv=o.cv,g=cv.getContext('2d'),img=g.createImageData(w,h),d=img.data,c=o.comp;
+ var i,x,y;
+ for(i=0;i<w*h;i++){d[i*4]=CC.bg[0];d[i*4+1]=CC.bg[1];d[i*4+2]=CC.bg[2];d[i*4+3]=255;}
+ function put(i,col,a){var q=i*4;d[q]=d[q]*(1-a)+col[0]*a;d[q+1]=d[q+1]*(1-a)+col[1]*a;d[q+2]=d[q+2]*(1-a)+col[2]*a;}
+ var ecol={};
+ for(i=0;i<w*h;i++){var e=c.el[i];if(!e)continue;var name=o.els[e],s=elState(name),k=ecol[e];
+  if(!k){k=ecol[e]=s===1?{c:CC.common,a:1}:s===2?{c:[(CC.mid[0]+CC.common[0])>>1,(CC.mid[1]+CC.common[1])>>1,(CC.mid[2]+CC.common[2])>>1],a:1}:{c:CC.mid,a:s===3?.35:1};}
+  put(i,k.c,k.a);}
+ var sty={},tb=Math.max(1,Math.round(w/400)),per=Math.max(6,Math.round(w/80));
+ for(i=0;i<w*h;i++){var n=c.item[i];if(!n)continue;var z=sty[n];if(z===undefined){z=sty[n]=style(r,n);}if(!z)continue;
+  x=i%w;y=(i/w)|0;
+  var needB=z.bold||z.dash||(st.sel&&z.rel),bd=false;
+  if(needB){bd=isBorder(c.item,w,h,x,y,n,z.bold?tb*2:tb);}
+  if(z.dash){if(bd&&((x+y)%(per)<per/2)){put(i,z.col,1);}continue;}
+  if(bd&&(z.bold||(st.sel&&z.rel))){put(i,CC.text,1);continue;}
+  if(z.hatch){if((x+y)%per<per/2){put(i,z.col,z.a);}continue;}
+  if(z.fill){put(i,z.col,z.a);}}
+ g.putImageData(img,0,0);
+ var fs=Math.max(10,Math.round(w/55)),lab={};
+ Object.keys(o.items).forEach(function(k){var it=o.items[k],p=P[it.p],b=c.bb[it.n];if(!p||!p.top||!b)return;var u=lab[p.id];
+  if(!u){lab[p.id]=[b[0],b[1],b[2],b[3]];}else{if(b[0]<u[0])u[0]=b[0];if(b[1]<u[1])u[1]=b[1];}});
+ g.font='bold '+fs+'px sans-serif';g.textBaseline='bottom';g.lineWidth=Math.max(2,fs/5);
+ Object.keys(lab).forEach(function(id){var p=P[id],u=lab[id];g.globalAlpha=related(p)?1:.25;
+  g.strokeStyle='rgb('+CC.bg.join(',')+')';g.fillStyle='rgb('+CC.text.join(',')+')';
+  var ly=Math.max(fs+1,u[1]-2);g.strokeText(p.no,u[0],ly);g.fillText(p.no,u[0],ly);});
+ g.globalAlpha=1;}
+function drawAll(){colors();R.forEach(function(r){if(S[r].ok){build(r);draw(r);}});}
+function txt(parent,text,bold){var n=document.createElement(bold?'b':'span');n.textContent=text;parent.appendChild(n);return n;}
+function note(r){var s=st.sel;if(!s)return '';var k=r==='A'?'pa':'pb';
+ if(s.t==='p'){var p=P[s.id];if(!p)return '';if(!p[k])return '이 제품에 없음';
+  var its=Object.keys(S[r].items).map(function(n){return S[r].items[n];}).filter(function(i){return i.p===p.id;});
+  if(!its.length||its.every(function(i){return i.s==='no_map_area';}))return '지도 영역 없음';return '';}
+ var e=D.electrodes[s.id];if(e&&!e[r==='A'?0:1])return '이 제품에 없음';return '';}
+function explain(){var box=$('explain');box.textContent='';var s=st.sel;
+ if(!s){txt(box,'선택한 것이 없습니다. 지도의 전극이나 불량 영역, 아래 목록의 줄을 누르면 두 지도에서 함께 강조됩니다.').className='muted';return;}
+ if(s.t==='p'){var p=P[s.id];if(!p)return;txt(box,p.no+'. '+p.name,true);
+  txt(box,' · '+p.kind+' · '+p.cl+' · A '+p.ta+' → B '+p.tb+' ('+p.td+') · ');var a=document.createElement('a');a.href='#s4';a.textContent='4절 장부';box.appendChild(a);return;}
+ txt(box,s.id,true);var ps=D.pairs.filter(function(p){return p.e.indexOf(s.id)>=0;});
+ txt(box,' · 전극 · 이 전극이 든 쌍 '+ps.length+' 개: '+ps.slice(0,8).map(function(p){return p.no+' '+p.name;}).join(', ')+(ps.length>8?' …':''));}
+function refresh(){drawAll();explain();
+ R.forEach(function(r){$('note'+r).textContent=note(r);});
+ var rows=document.querySelectorAll('[data-sel-p]');
+ for(var i=0;i<rows.length;i++){var on=st.sel&&st.sel.t==='p'&&rows[i].getAttribute('data-sel-p')===st.sel.id;rows[i].className=on?'hl':'';}
+ var b=document.querySelectorAll('#modes button');for(i=0;i<b.length;i++){b[i].className=b[i].getAttribute('data-mode')===st.mode?'on':'';}
+ b=document.querySelectorAll('#mlayers button');for(i=0;i<b.length;i++){b[i].className=b[i].getAttribute('data-layer')===st.layer?'on':'';}
+ $('legend-change').hidden=st.mode!=='change';$('legend-size').hidden=st.mode!=='size';}
+function select(s){if(s&&st.sel&&st.sel.t===s.t&&st.sel.id===s.id)s=null;st.sel=s;refresh();}
+function at(r,ev){var cv=S[r].cv,b=cv.getBoundingClientRect();
+ return [Math.floor((ev.clientX-b.left)*cv.width/b.width),Math.floor((ev.clientY-b.top)*cv.height/b.height)];}
+function hit(r,ev){var o=S[r];if(!o.comp)return null;var q=at(r,ev),x=q[0],y=q[1];if(x<0||y<0||x>=o.w||y>=o.h)return null;var i=y*o.w+x;
+ var n=o.comp.item[i];if(n&&o.items[n]){var it=o.items[n],p=P[it.p];if(p)return {t:'p',id:p.id,text:p.no+'. '+p.name+' · '+it.k+' · '+it.l+' · '+p.cl+' · 이 제품 '+it.t+' · 쌍 Δ '+p.td};}
+ var e=o.comp.el[i];if(e&&o.els[e])return {t:'e',id:o.els[e],text:o.els[e]};return null;}
+function wire(r){var cv=S[r].cv,tip=$('mtip');
+ cv.addEventListener('mousemove',function(ev){var h=hit(r,ev);if(!h){tip.hidden=true;return;}tip.textContent=h.text;tip.hidden=false;
+  tip.style.left=(ev.clientX+12)+'px';tip.style.top=(ev.clientY+12)+'px';});
+ cv.addEventListener('mouseleave',function(){tip.hidden=true;});
+ cv.addEventListener('click',function(ev){var h=hit(r,ev);select(h?{t:h.t,id:h.id}:null);});}
+function check(m,num){var cnt={},i,bad=0;
+ for(i=0;i<num.length;i++){var v=num[i];if(v)cnt[v]=(cnt[v]||0)+1;}
+ var want=m.meta.numbers,kc=Object.keys(cnt),kw=Object.keys(want);
+ if(kc.length!==kw.length)return false;
+ for(i=0;i<kw.length;i++){if(cnt[kw[i]]!==want[kw[i]])return false;}return true;}
+function decode(r,meta,done){var im=new Image();
+ im.onload=function(){try{var c=document.createElement('canvas');c.width=meta.w;c.height=meta.h;var g=c.getContext('2d');g.drawImage(im,0,0);
+  var d=g.getImageData(0,0,meta.w,meta.h).data,num=new Uint16Array(meta.w*meta.h),blue=0;
+  for(var i=0;i<num.length;i++){num[i]=d[i*4]|(d[i*4+1]<<8);if(d[i*4+2]!==0||d[i*4+3]!==255)blue++;}
+  var m={meta:meta,num:num};S[r].maps.push(m);done(blue===0&&check(m,num));}catch(e){done(false);}};
+ im.onerror=function(){done(false);};im.src=meta.png;}
+function start(){colors();var total=0,left=0,good=true;
+ R.forEach(function(r){total+=D.sides[r].maps.length;});left=total;
+ function fin(){var failed=!good;
+  R.forEach(function(r){S[r].maps.sort(function(a,b){return a.meta.file<b.meta.file?-1:1;});S[r].ok=!failed&&S[r].w>0;
+   S[r].cv.hidden=failed||S[r].w===0;if(S[r].w>0){S[r].cv.width=S[r].w;S[r].cv.height=S[r].h;}});
+  $('mapwarn').hidden=!failed;document.body.setAttribute('data-map-check',failed?'failed':'passed');
+  refresh();document.body.setAttribute('data-map-drawn','1');}
+ if(!total){good=true;fin();return;}
+ R.forEach(function(r){D.sides[r].maps.forEach(function(meta){decode(r,meta,function(ok){if(!ok)good=false;left--;if(left===0)fin();});});});}
+document.addEventListener('click',function(ev){var t=ev.target;
+ if(t.getAttribute&&t.getAttribute('data-mode')){st.mode=t.getAttribute('data-mode');refresh();return;}
+ if(t.getAttribute&&t.getAttribute('data-layer')!==null&&t.parentNode&&t.parentNode.id==='mlayers'){st.layer=t.getAttribute('data-layer');refresh();return;}
+ if(t.id==='mclear'){st.sel=null;refresh();return;}
+ var a=t.closest?t.closest('[data-map-pair]'):null;if(a){st.sel={t:'p',id:a.getAttribute('data-map-pair')};refresh();return;}
+ var row=t.closest?t.closest('[data-sel-p]'):null;if(row){select({t:'p',id:row.getAttribute('data-sel-p')});}});
+document.addEventListener('keydown',function(ev){if(ev.key==='Enter'){var row=ev.target.closest?ev.target.closest('[data-sel-p]'):null;if(row)select({t:'p',id:row.getAttribute('data-sel-p')});}});
+$('esearch').addEventListener('change',function(){var v=this.value.trim();if(D.electrodes[v]){st.sel={t:'e',id:v};refresh();}});
+R.forEach(wire);
+window.addEventListener('beforeprint',function(){drawAll();});
+if(location.hash==='#print'){window.addEventListener('load',drawAll);}
+start();
+})();
+"""
+
+
 # ---- document ---------------------------------------------------------------------------------------------------------
 
 CSS = """
@@ -835,8 +1201,9 @@ def _json_embed(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True).replace('<', '\\u003c')
 
 
-def render_html(doc, ledger_sha, top_pairs, top_electrodes):
+def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None):
     ctx = Ctx(doc, top_pairs, top_electrodes)
+    ctx.maps = maps
     products = doc['inputs']['products']
     embed = {'schema_version': SCHEMA_VERSION, 'ledger_json_sha256': ledger_sha, 'ledger_status': doc.get('status'),
              'options': {'top_pairs': top_pairs, 'top_electrodes': top_electrodes},
@@ -844,6 +1211,8 @@ def render_html(doc, ledger_sha, top_pairs, top_electrodes):
              'shown': {'pairs': {kind: [p['pair_id'] for p in doc['pairs'] if p['kind'] == kind][:top_pairs] for kind in KINDS},
                        'electrodes': {kind: [r['electrode'] for r in _sorted_electrodes(ctx, kind)][:top_electrodes] for kind in KINDS}}}
     nav = ''.join('<a href="#s%d">%d</a>' % (i, i) for i in range(1, 8))
+    if maps is not None:
+        return _render_with_maps(ctx, embed, nav, products, top_pairs, top_electrodes)
     body = [
         '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>설계 변경 영향 보고서 (장부)</title><style>%s</style></head><body><main>' % CSS,
         '<header><div><h1>설계 변경 영향 보고서 — 장부</h1><div class="muted">기준 A: %s · 대상 B: %s · ledger %s</div></div>'
@@ -854,6 +1223,25 @@ def render_html(doc, ledger_sha, top_pairs, top_electrodes):
         _section1(ctx), _placeholder(2, 'layout 리스크 지도'), _section3(ctx), _section4(ctx), _placeholder(5, '위치 상세'),
         _section6(ctx), _section7(ctx),
         '</main><script type="application/json" id="report-data">%s</script><script>%s</script></body></html>\n' % (_json_embed(embed), SCRIPT)]
+    return ''.join(body)
+
+
+def _render_with_maps(ctx, embed, nav, products, top_pairs, top_electrodes):
+    """The same page with section 2 filled from the ledger-maps folder (sections 1, 3, 4, 6, 7 as without maps, plus
+    the 'show on map' links in section 4). Section 5 stays a placeholder."""
+    doc = ctx.doc
+    body = [
+        '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>설계 변경 영향 보고서 (장부)</title><style>%s%s</style></head><body><main>' % (CSS, MAPS_CSS),
+        '<header><div><h1>설계 변경 영향 보고서 — 장부</h1><div class="muted">기준 A: %s · 대상 B: %s · ledger %s</div></div>'
+        '<div class="muted">상위 쌍 %d · 상위 전극 %d</div></header>' % (
+            esc(products['reference'].get('model_group')), esc(products['target'].get('model_group')), esc(doc.get('status')),
+            top_pairs, top_electrodes),
+        _head_band(ctx), _maps_band(ctx), '<div id="bar">%s</div>' % nav,
+        _section1(ctx), _section2(ctx), _section3(ctx), _section4(ctx), _placeholder(5, '위치 상세'),
+        _section6(ctx), _section7(ctx),
+        '<div id="mtip" hidden></div></main><script type="application/json" id="report-data">%s</script>'
+        '<script type="application/json" id="maps-data">%s</script><script>%s</script><script>%s</script></body></html>\n' % (
+            _json_embed(embed), _json_embed(_maps_payload(ctx)), SCRIPT, MAPS_SCRIPT)]
     return ''.join(body)
 
 
@@ -891,7 +1279,7 @@ def _publish(out, files):
         shutil.rmtree(str(tmp), ignore_errors=True)
 
 
-def run_ledger_report(ledger_dir, out, top_pairs=DEFAULT_TOP, top_electrodes=DEFAULT_TOP):
+def run_ledger_report(ledger_dir, out, top_pairs=DEFAULT_TOP, top_electrodes=DEFAULT_TOP, maps_dir=None):
     """Build and publish the report; returns the execution record (exit_code 0, or 3 for a partial ledger) or raises."""
     started = time.time()
     output = Path(out)
@@ -901,7 +1289,8 @@ def run_ledger_report(ledger_dir, out, top_pairs=DEFAULT_TOP, top_electrodes=DEF
             or not isinstance(top_electrodes, int) or top_pairs < 1 or top_electrodes < 1):
         raise NumericContractError('ledger_report_option_invalid', '--top-pairs 와 --top-electrodes 는 1 이상의 정수여야 합니다')
     doc, sha, execution = _read_ledger(ledger_dir)
-    page = render_html(doc, sha, top_pairs, top_electrodes)
+    maps = None if maps_dir is None else _read_maps(maps_dir, sha)
+    page = render_html(doc, sha, top_pairs, top_electrodes) if maps is None else render_html(doc, sha, top_pairs, top_electrodes, maps=maps)
     status = 'partial' if doc.get('status') == 'partial' else 'ok'
     reasons = list(doc.get('reasons') or []) if status == 'partial' else []
     exit_code = 0 if status == 'ok' else 3
@@ -912,12 +1301,18 @@ def run_ledger_report(ledger_dir, out, top_pairs=DEFAULT_TOP, top_electrodes=DEF
               'options': {'top_pairs': top_pairs, 'top_electrodes': top_electrodes},
               'sections': {'present': [1, 3, 4, 6, 7], 'placeholders': [2, 5]},
               'html_bytes': len(page.encode('utf-8'))}
+    if maps is not None:
+        report['ledger_maps_json_sha256'] = maps['sha']
+        report['ledger_maps_status'] = maps['doc'].get('status')
+        report['sections'] = {'present': [1, 2, 3, 4, 6, 7], 'placeholders': [5]}
     record = {'command': COMMAND, 'status': status, 'reasons': reasons,
               'outputs': [str(output / name) for name in (HTML_NAME, 'report.json')],
               'ledger_dir': str(ledger_dir), 'options': report['options'],
               'started_at': datetime.fromtimestamp(started, timezone.utc).isoformat(),
               'finished_at': datetime.now(timezone.utc).isoformat(),
               'elapsed_seconds': round(time.time() - started, 3), 'exit_code': exit_code}
+    if maps is not None:
+        record['maps_dir'] = str(maps_dir)
     _publish(output, [(HTML_NAME, page), ('report.json', _json_text(report)), ('execution.json', _json_text(record))])
     error = output / 'error.json'
     if error.exists():
@@ -925,12 +1320,13 @@ def run_ledger_report(ledger_dir, out, top_pairs=DEFAULT_TOP, top_electrodes=DEF
     return record
 
 
-def main_ledger_report(ledger_dir, out, print_result, top_pairs=DEFAULT_TOP, top_electrodes=DEFAULT_TOP, error_stream=None):
+def main_ledger_report(ledger_dir, out, print_result, top_pairs=DEFAULT_TOP, top_electrodes=DEFAULT_TOP, error_stream=None,
+                       maps_dir=None):
     """CLI body: prints the record, or leaves error.json + execution.json only and returns 2."""
     error_stream = error_stream or sys.stderr
     output = Path(out)
     try:
-        record = run_ledger_report(ledger_dir, out, top_pairs=top_pairs, top_electrodes=top_electrodes)
+        record = run_ledger_report(ledger_dir, out, top_pairs=top_pairs, top_electrodes=top_electrodes, maps_dir=maps_dir)
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
         code = getattr(exc, 'code', 'input_or_config_error')
         print(f'오류: {exc}', file=error_stream)

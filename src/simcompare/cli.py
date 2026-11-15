@@ -261,6 +261,7 @@ def _parser() -> argparse.ArgumentParser:
     lrep.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-report 가 이전에 만든 폴더만 덮어씀")
     lrep.add_argument("--top-pairs", type=int, default=30, help="불량 종류별 상위 쌍 수(기본 30). 나머지는 '기타 k 쌍' 합계 줄")
     lrep.add_argument("--top-electrodes", type=int, default=30, help="불량 종류별 상위 전극 수(기본 30). 나머지는 '기타 k 전극' 합계 줄")
+    lrep.add_argument("--maps-dir", default=None, help="ledger-maps 출력 폴더(ledger_maps.json 이 있는 곳). 있으면 2절에 layout 리스크 지도를 넣음")
     lmaps = _korean_help(sub.add_parser(
         "ledger-maps", add_help=False,
         help="ledger 값을 타일·번호 PNG 로 만든다(ledger_maps.json, map_*.png). hotspot 과 DL1 을 한 번 다시 읽음"))
@@ -411,7 +412,8 @@ def main(argv: list[str] | None = None) -> int:
             # 새 폴더 또는 ledger-report 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2.
             from simcompare import ledger_report
             return ledger_report.main_ledger_report(args.ledger_dir, args.out, _print,
-                                                    top_pairs=args.top_pairs, top_electrodes=args.top_electrodes)
+                                                    top_pairs=args.top_pairs, top_electrodes=args.top_electrodes,
+                                                    maps_dir=args.maps_dir)
         if args.command == "ledger-maps":
             # 새 폴더 또는 ledger-maps 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2, 검산 실패는 3.
             from simcompare import ledger_maps
