@@ -243,7 +243,8 @@ def test_union_inventory_without_absent_byte_identical(tmp_path, monkeypatch):
     assert code == 0
     hashes = {}
     for name in UNION_SHA:
-        text = (out / name).read_bytes().decode('utf-8').replace(str(tmp_path / 'same'), 'TMP')
+        text = (out / name).read_bytes().decode('utf-8')
+        text = (tc.without_ledger_keys(text) if name == 'compare2.json' else text).replace(str(tmp_path / 'same'), 'TMP')
         got = hashlib.sha256(re.sub(r'[0-9a-f]{64}', 'H', text).encode('utf-8')).hexdigest()
         hashes[name] = got
     assert hashes == UNION_SHA

@@ -129,6 +129,18 @@ def load(out):
     return json.loads((out / 'compare2.json').read_text(encoding='utf-8'))
 
 
+def without_ledger_keys(text):
+    """compare2.json text without the keys ledger/T3 added (sides.*.ledger_items/ledger_check, inputs.ledger_basis),
+    written by the same serializer; the golden hashes below predate those keys."""
+    from simcompare.compare2 import _json_text
+    doc = json.loads(text)
+    for side in doc['sides'].values():
+        side.pop('ledger_items', None)
+        side.pop('ledger_check', None)
+    doc['inputs'].pop('ledger_basis', None)
+    return _json_text(doc)
+
+
 # pairs (class) and cases of the base scenario: L1 line AB/AC, pixel DE/EF; L2 line GH, pixel IJ
 PAIRS = [('AB', 'A', 'B', 'line'), ('AC', 'A', 'C', 'line'), ('DE', 'D', 'E', 'pixel'), ('EF', 'E', 'F', 'pixel'),
          ('GH', 'G', 'H', 'line'), ('IJ', 'I', 'J', 'pixel')]
@@ -625,7 +637,8 @@ def test_no_key_keeps_default_outputs_byte_identical(tmp_path):
     code, out = run(tmp_path, ref, tgt)
     assert code == 0
     for name, digest in GOLDEN.items():
-        text = (out / name).read_bytes().decode('utf-8').replace(str(tmp_path), 'TMP')
+        text = (out / name).read_bytes().decode('utf-8')
+        text = (without_ledger_keys(text) if name == 'compare2.json' else text).replace(str(tmp_path), 'TMP')
         assert hashlib.sha256(re.sub(r'[0-9a-f]{64}', 'H', text).encode('utf-8')).hexdigest() == digest, name
     doc = load(out)
     assert 'full_range' not in doc and 'formula_basis' not in doc and 'diameter_filter' not in doc['inputs']

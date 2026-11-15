@@ -5,7 +5,10 @@ import random
 
 import pytest
 
+import numpy as np
+
 from simcompare.linepixel import _count_dtype, compute_areas
+from simcompare.numeric_schema import DIAMETERS_UM, CaseIdentity, Endpoint, Frame, MaskRecord, NumericCase
 from test_linepixel import group, make_case
 
 
@@ -28,15 +31,42 @@ def assert_checks(ledger):
 
 # ---------- independent per-cell reference ----------
 
-def reference(specs, width, valid):
-    """specs: [(pid, failure_type, kind, set(columns))]. Returns per kind {item key: share}, pair hist, overlap."""
-    valid_cells = {c for c in range(width) if valid[c]}
+def make_case_nd(case_id, a, b, cells, kind, *, height, width, valid, failure_type, layers):
+    """Like test_linepixel.make_case with a 2D frame; cells are flat indices, layers = (layer of a, layer of b)."""
+    frame = Frame('frame', 1, (0, 0), (height, width), valid)
+    identity = CaseIdentity('product', 'design', 'source', 'step', 'exposure', case_id, 'frame', 'synthetic_v2')
+    endpoints = (Endpoint(a, 'gate', layers[0]), Endpoint(b, 'data', layers[1]))
+    raw = {'case_id': case_id, 'fab_pair_key': f'RAW:{a}-{b}', 'assigned_process_layer': 'step',
+           'ordered_endpoints': [vars(ep) for ep in endpoints]}
+    vertical = failure_type == 'vertical_short'
+    records, metadata = {}, {'unit_id': 'unit', 'height_um': 3 if vertical else None,
+                             'height_evidence': 'synthetic height' if vertical else None, 'records': []}
+    for d in DIAMETERS_UM:
+        mask = np.zeros(height * width, bool)
+        if d == 5:
+            mask[list(cells)] = True
+        na = vertical and d < 3
+        records[d] = MaskRecord(d, frame, None if na else mask.reshape(height, width),
+                                'not_applicable' if na else 'observed',
+                                ('below_height_vertical_short',) if na else (), identity=identity,
+                                analysis_layer='M2')
+        metadata['records'].append({'diameter_um': d, 'applicability_evidence': {
+            'height_um': 3, 'comparison': 'diameter_um < height_um', 'source': 'synthetic'} if na else None})
+    return NumericCase(identity, endpoints, failure_type, '-'.join(sorted((a, b))), kind, 'M2', 'density-M2',
+                       records, raw, metadata)
+
+
+def endpoints_key(a, b, layers):
+    return tuple(sorted(((a, layers[0]), (b, layers[1]))))
+
+
+def reference(specs, valid_cells):
+    """specs: [(pid, failure_type, kind, set(cells), endpoints_key, (upper, lower))]. Per kind: shares, hist, overlap."""
     pair_cells = {'line': {}, 'pixel': {}}
     item_cells = {'line': {}, 'pixel': {}}
-    for pid, ftype, kind, cols in specs:
-        upper, lower = ('M2', 'M1') if ftype == 'vertical_short' else ('M2', 'M2')
+    for pid, ftype, kind, cols, ekey, _layers in specs:
         pair_cells[kind].setdefault(pid, set()).update(cols)
-        item_cells[kind].setdefault((pid, ftype, upper, lower), set()).update(cols)
+        item_cells[kind].setdefault((pid, ftype, ekey), set()).update(cols)
     line = set().union(*pair_cells['line'].values()) & valid_cells if pair_cells['line'] else set()
     keeps = {'line': valid_cells, 'pixel': valid_cells - line}
     out = {}
@@ -59,38 +89,54 @@ def reference(specs, width, valid):
 
 
 def build_random(rng):
-    width = rng.choice([5, 7, 9, 13, 16, 21, 33, 37])
-    valid = [1 if rng.random() > 0.15 else 0 for _ in range(width)]
+    height = rng.choice([1, 2, 3, 4])
+    width = rng.choice([5, 7, 9, 13, 16])
+    total = height * width
+    valid = [[1 if rng.random() > 0.15 else 0 for _ in range(width)] for _ in range(height)]
+    valid_cells = {r * width + c for r in range(height) for c in range(width) if valid[r][c]}
     cases, specs = [], []
-    for p in range(rng.randint(1, 80)):
+    for p in range(rng.randint(1, 40)):
         kind = rng.choice(['line', 'pixel'])
-        pid = f'A{p:03}-B{p:03}'
-        for s in range(rng.choice([1, 1, 2, 3])):
+        a, b = f'A{p:03}', f'B{p:03}'
+        pid = f'{a}-{b}'
+        for s in range(rng.choice([1, 1, 2, 3, 4])):
             ftype = rng.choice(['lateral_short', 'vertical_short'])
-            cols = {c for c in range(width) if rng.random() < rng.choice([0.1, 0.3, 0.6])}
-            cases.append(make_case(f'c{p}-{s}', f'A{p:03}', f'B{p:03}', cols, kind, width=width, valid=[valid],
-                                   failure_type=ftype))
-            specs.append((pid, ftype, kind, cols))
-    return cases, specs, width, valid
+            if ftype == 'vertical_short':
+                lower = rng.choice(['M1', 'M0'])
+                layers = ('M2', lower) if rng.random() < 0.5 else (lower, 'M2')   # direction mixed
+                upper_lower = ('M2', lower)
+            else:
+                layers, upper_lower = ('M2', 'M2'), ('M2', 'M2')
+            cols = {c for c in range(total) if rng.random() < rng.choice([0.1, 0.3, 0.6])}
+            cases.append(make_case_nd(f'c{p}-{s}', a, b, cols, kind, height=height, width=width, valid=valid,
+                                      failure_type=ftype, layers=layers))
+            specs.append((pid, ftype, kind, cols, endpoints_key(a, b, layers), upper_lower))
+    return cases, specs, valid_cells
+
+
+def ikey_of(item):
+    return item['pair_id'], item['failure_type'], tuple((e['electrode_id'], e['actual_layer']) for e in item['endpoints'])
 
 
 @pytest.mark.parametrize('seed', range(300))
 def test_random_against_reference_and_integer_checks(seed):
     rng = random.Random(seed)
-    cases, specs, width, valid = build_random(rng)
+    cases, specs, valid_cells = build_random(rng)
     ledger = shares_of(cases)
     assert_checks(ledger)
-    expected = reference(specs, width, valid)
+    expected = reference(specs, valid_cells)
+    layer_of = {(pid, ftype, ekey): ul for pid, ftype, _kind, _cols, ekey, ul in specs}
     for kind in ('line', 'pixel'):
         share, hist, overlap = expected[kind]
-        got = {(i['pair_id'], i['failure_type'], i['upper_layer'], i['lower_layer']): i['share_cells']
-               for i in ledger[kind]['items']}
+        got = {ikey_of(i): i['share_cells'] for i in ledger[kind]['items']}
         assert set(got) == set(share)
         for ikey, value in share.items():
             assert got[ikey] == pytest.approx(value, rel=1e-9, abs=1e-12)
+        for i in ledger[kind]['items']:
+            assert (i['upper_layer'], i['lower_layer']) == layer_of[ikey_of(i)]
         assert ledger[kind]['pair_hist'] == hist
         assert ledger[kind]['multi_item_overlap_cells'] == overlap
-        keys = [(i['pair_id'], i['failure_type'], i['upper_layer'], i['lower_layer']) for i in ledger[kind]['items']]
+        keys = [ikey_of(i) for i in ledger[kind]['items']]
         assert keys == sorted(keys)
 
 
@@ -172,6 +218,28 @@ def test_h_m_differs_per_cell():
     assert item_of(ledger, 'line', 'A-B')['share_cells'] == pytest.approx(2.5)
     assert item_of(ledger, 'line', 'A-B', 'vertical_short', 'M2', 'M1')['share_cells'] == pytest.approx(1.5)
     assert ledger['line']['multi_item_overlap_cells'] == 1
+
+
+def test_j_swapped_direction_is_two_items():
+    # A@M1,B@M2 and A@M2,B@M1 are different items of one pair; they share cell 0 (n=2 pairs -> 1/(2*2) each)
+    cases = [make_case('d1', 'A', 'B', {0, 1}, failure_type='vertical_short'),
+             Case_swapped('d2', {0, 2}), make_case('cd', 'C', 'D', {0})]
+    ledger = shares_of(cases)
+    assert_checks(ledger)
+    items = [i for i in ledger['line']['items'] if i['pair_id'] == 'A-B']
+    assert len(items) == 2
+    assert {tuple((e['electrode_id'], e['actual_layer']) for e in i['endpoints']) for i in items} == {
+        (('A', 'M1'), ('B', 'M2')), (('A', 'M2'), ('B', 'M1'))}
+    assert all((i['upper_layer'], i['lower_layer']) == ('M2', 'M1') for i in items)
+    # cell 0: n=2, m=2 -> 1/4 each; cells 1 / 2: n=1, m=1 -> 1/2... pair has n=1 so item gets 1
+    assert sorted(i['share_cells'] for i in items) == pytest.approx([1.25, 1.25])
+    assert ledger['line']['multi_item_overlap_cells'] == 1
+    assert ledger['line']['pair_hist']['A-B'] == {1: 2, 2: 1}
+
+
+def Case_swapped(case_id, cells):
+    return make_case_nd(case_id, 'A', 'B', cells, 'line', height=1, width=6, valid=[[1] * 6],
+                        failure_type='vertical_short', layers=('M2', 'M1'))
 
 
 def test_i_counter_dtype_boundary():

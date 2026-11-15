@@ -586,7 +586,8 @@ def _ledger_kind(pair_masks, items, keep, size, expected_cells, stats, transfer_
                 uniq, cnt = np.unique(code, return_counts=True)
                 terms = [int(c) / ((int(u) // (k + 1)) * (int(u) % (k + 1))) for u, c in zip(uniq, cnt)]
             out_items.append({
-                'pair_id': ikey[0], 'failure_type': ikey[1], 'upper_layer': ikey[2], 'lower_layer': ikey[3],
+                'pair_id': ikey[0], 'failure_type': ikey[1], 'upper_layer': items[ikey]['upper'],
+                'lower_layer': items[ikey]['lower'],
                 'endpoints': copy.deepcopy(items[ikey]['endpoints']),
                 'share_cells': math.fsum(terms), 'own_cells': int(np.count_nonzero(im)),
                 'transferred_out_cells': 0 if transfer_keep is None else int(np.count_nonzero(full & transfer_keep))})
@@ -631,7 +632,7 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
     pair_bits = {LINE: {}, PIXEL: {}}   # pid -> packed OR of its sources (shares the source array if only one)
     pair_check = {LINE: {}, PIXEL: {}}  # pid -> [first-source metadata, first compatibility error]
     source_bits = {}                    # computable source_key -> packed raw mask
-    item_info = {LINE: {}, PIXEL: {}}   # condition_stats only: item key -> {'bits': packed OR, 'endpoints': [...]}
+    item_info = {LINE: {}, PIXEL: {}}   # condition_stats only: (pid, failure_type, endpoints_key) -> {'bits': packed OR, 'upper', 'lower', 'endpoints': [...]}
     type_bits = {name: np.zeros_like(valid_bits) for name in ('lateral_short', 'vertical_short')}
     observed = missing = na = unmapped = rejected = computable = 0
     reasons = set()
@@ -690,12 +691,12 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
                 type_bits[case.failure_type] |= bits & valid_bits
                 if condition_stats:
                     upper, lower = _item_layers(case, key.analysis_layer)
-                    ikey = (pid, case.failure_type, upper, lower)
+                    ends = sorted(case.endpoints, key=lambda e: (e.electrode_id, e.actual_layer))
+                    ikey = (pid, case.failure_type, tuple((ep.electrode_id, ep.actual_layer) for ep in ends))
                     known = item_info[kind].get(ikey)
                     if known is None:
-                        item_info[kind][ikey] = {'bits': bits, 'endpoints': [
-                            {'electrode_id': ep.electrode_id, 'actual_layer': ep.actual_layer}
-                            for ep in sorted(case.endpoints, key=lambda e: e.electrode_id)]}
+                        item_info[kind][ikey] = {'bits': bits, 'upper': upper, 'lower': lower, 'endpoints': [
+                            {'electrode_id': ep.electrode_id, 'actual_layer': ep.actual_layer} for ep in ends]}
                     else:
                         known['bits'] = known['bits'] | bits
     record = None  # release the last loaded mask

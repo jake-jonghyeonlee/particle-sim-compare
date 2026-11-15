@@ -19,13 +19,13 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 | 용어 | 뜻 |
 |---|---|
 | 쌍 | 전극 쌍. `pair_id` 로 식별한다. `pairs.csv` 는 두 모델 공통 한 파일이다. |
-| item | 줄 단위 항목. 키 = (pair_id, failure_type, upper_layer, lower_layer). |
+| item | 줄 단위 항목. 키 = (pair_id, failure_type, endpoints_key). endpoints_key = 두 끝의 (electrode_id, actual_layer) 를 electrode_id(같으면 layer) 순으로 정렬한 튜플. upper_layer/lower_layer 는 함께 기록한다. 방향이 다른 상하 short((A@SD1, B@SD2) 와 (A@SD2, B@SD1))는 서로 다른 item 이다. |
 | 불량 방식 | `lateral_short`(측면), `vertical_short`(상하), `lateral_open`(CNO). |
 | 위/아래 레이어 | 상하 short 의 두 전극 레이어. `위/아래`(stack 순서)로 적는다. 측면은 위 = 아래. |
 | line / pixel | 불량 종류. line 과 pixel 의 % 는 더하지 않고 한 순서로 정렬하지 않는다. |
 | 곡선 보정 줄 | 절편 c. 전극에 나누지 않는 한 줄(1절). |
 | CRP 줄 | 두 제품의 CRP 가 다를 때의 차이 한 줄(1절). pixel 에만 있다. |
-| 그룹 | (analysis_layer, density_layer, 이물 크기). |
+| 그룹 | GroupKey 전체(대표 축 analysis_layer, density_layer, 이물 크기). |
 | s | secant 기울기 `delta.slopes.<kind>.value`. |
 
 ## 3. 분담 규칙 Q1
@@ -87,8 +87,8 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 - 표기 `위/아래`(stack 순서). 집계 레이어 = analysis_layer(위).
 - 출처 `NumericCase.endpoints[].actual_layer`. item 에 `endpoints: [{electrode_id, actual_layer}]` 를 둔다.
-- T2 구현(`linepixel._item_layers`): `_group` 안에서는 stack 순서를 얻을 수 없다. 상하 short 는 `upper = GroupKey.analysis_layer`, `lower = 그 밖의 끝 레이어`(둘 다 analysis_layer 와 같으면 analysis_layer, 여럿이면 이름순 첫째)다. 측면은 upper = lower = analysis_layer 다. 어댑터가 상하 short 의 analysis_layer 를 stack order 가 높은 끝으로 정하므로(`real_hotspot.py:1707`) 위 레이어와 같다.
-- T2 구현의 `GroupArea.ledger_shares`(`condition_stats=True` 일 때만, 직렬화 제외) 구조: `{line|pixel: {items: [{pair_id, failure_type, upper_layer, lower_layer, endpoints, share_cells, own_cells, transferred_out_cells}], pair_hist: {pair_id: {n: cells}}, multi_item_overlap_cells, checks: {exclusive_ok, divisible_ok, shared_ok, sum_ok, expected_cells, share_sum, n_hist}}}`. items 는 (pair_id, failure_type, upper, lower) 순이다. `n_hist`·`pair_hist` 의 n 키는 정수다.
+- T2 구현(`linepixel._item_layers`): `_group` 안에서는 stack 순서를 얻을 수 없다. 상하 short 는 `upper = GroupKey.analysis_layer`, `lower = 그 밖의 끝 레이어`(둘 다 analysis_layer 와 같으면 analysis_layer, 여럿이면 이름순 첫째)다. 측면은 upper = lower = analysis_layer 다. 어댑터가 상하 short 의 analysis_layer 를 stack order 가 높은 끝으로 정하므로 위 레이어와 같다(근거: `real_hotspot.py:1708`(manifest)·`:1769`·`:1841`, `adapters/numeric.py:225-226`).
+- T2 구현의 `GroupArea.ledger_shares`(`condition_stats=True` 일 때만, 직렬화 제외) 구조: `{line|pixel: {items: [{pair_id, failure_type, upper_layer, lower_layer, endpoints, share_cells, own_cells, transferred_out_cells}], pair_hist: {pair_id: {n: cells}}, multi_item_overlap_cells, checks: {exclusive_ok, divisible_ok, shared_ok, sum_ok, expected_cells, share_sum, n_hist}}}`. items 는 (pair_id, failure_type, endpoints_key) 순이다(T3 에서 방향 분리를 위해 키를 이렇게 바꿨다. `upper_layer`·`lower_layer` 는 항목 필드로 남는다). `n_hist`·`pair_hist` 의 n 키는 정수다.
 
 ## 8. 변화 종류 판정 Q5
 
@@ -123,12 +123,23 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 기존 키·값·CSV 4개·`OWNED_NAMES` 는 불변이다. `schema_version` 은 `compare2_v1` 을 유지한다(07·compare2_link 가 문자열 비교: `compare2_report.py:257`, `compare2_link.py:64`).
 
-- `sides.<role>.ledger_items[]` — item 마다 (필드 이름은 제안):
-  - `pair_id`, `failure_type`, `upper_layer`, `lower_layer`, `kind`(line/pixel/cno)
-  - `analysis_layer`, `density_layer`, `diameter`(그룹)
-  - `endpoints: [{electrode_id, actual_layer}]`
-  - `lambda`(item 몫의 λ), `exclusive_cells`, `shared_share`(제안: 공유 셀 몫), `multi_item_overlap_cells`
-- `sides.<role>.ledger_check` — 정수 검산 3개 결과와 Σ item λ = `sides.lambda.line/pixel`, 쌍별 Σ item λ − lambda_excl 의 합 = shared λ 대조. 실패하면 reasons `ledger_check_failed` + partial(종료 3).
+- `sides.<role>.ledger_items[]` — item = (pair_id, failure_type, endpoints_key, analysis_layer, class) 마다 하나. 이물 크기·density_layer 는 `by_size` 로 펼친다. 정렬은 (analysis_layer, pair_id, failure_type, endpoints_key, class). 필드(구현된 이름):
+  - `item_id`: `pair_id|failure_type|upper|lower|전극@레이어,전극@레이어`(endpoints_key 순). 한 side 안에서 유일하다.
+  - `pair_id`, `class`(line/pixel; CNO 는 `ledger_items` 에 없다), `failure_type`, `analysis_layer`, `upper_layer`, `lower_layer`
+  - `electrodes`(그 쌍의 전극 목록), `endpoints: [{electrode_id, actual_layer}]`(electrode_id 순)
+  - `lambda`(item 몫 λ; 계산 불가면 null), `area_share_um2`(몫 면적 합)
+  - `by_size: [{diameter_um, density_layer, area_share_um2, lambda}]`(그룹 = 이물 크기마다. 몫이 0 인 크기도 줄이 있다)
+  - `transferred_out_area_um2`(pixel item 중 line 이 덮어 몫 0 이 된 면적. 설명용, 합계에 넣지 않는다)
+  - `computable`(λ 가 숫자면 true), `reasons`(그 item 의 그룹 사유: `density_missing_zero_area:<kind>` 등. `lambda_diameters_um` 으로 모든 셀이 빠지면 λ 0, `diameter_filter_removed_all`)
+  - λ 는 기존 `lam()` 과 같은 함수·밀도·계수·이물 크기 필터·not-ok 규칙을 쓴다(line item → line 밀도, pixel item → pixel 밀도).
+  - `exclusive_cells`·item 별 `multi_item_overlap_cells` 는 두지 않는다(쌍 단위 합은 `ledger_check.integer_checks.<kind>.multi_item_overlap_cells`).
+- `sides.<role>.ledger_check`:
+  - `status`: failed(아래 어느 하나라도 failed) > not_evaluated > passed
+  - `integer_checks`: `{status, line: {exclusive_ok, divisible_ok, shared_ok, sum_ok, multi_item_overlap_cells}, pixel: {…}}`(3절 정수 검산 3개 + 몫 합 = 면적. 모든 그룹의 AND)
+  - `lambda_line`, `lambda_pixel`: `{status, sum, total, abs_error}` — Σ item λ(종류별) = `lambda.line` / `lambda.pixel`(CNO 제외)
+  - `shared_line`, `shared_pixel`: 같은 모양 — Σ item λ − Σ 쌍 `lambda_excl`(종류별 exclusive) = `shared.lambda_line/pixel`
+  - 허용 오차는 기존 `_within`. 계열 λ 가 null 이거나 item λ 가 null 이면 그 계열은 `not_evaluated`.
+  - failed 면 side `reasons` 에 `ledger_check_failed`, status partial, 종료 3. passed·not_evaluated 면 기존 status·종료 코드 그대로.
 - `inputs.ledger_basis = 'pair_share_v1'`.
 
 불변 조건:
@@ -137,7 +148,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 - Σ item λ = `sides.lambda.line/pixel`.
 - 쌍별 Σ item λ − lambda_excl 의 합 = shared λ.
 - 입력 해시를 바꾸지 않는다(`real_hotspot.py:1553-1571`). compare2.yaml 불변.
-- `linepixel.py` `_group` 은 `condition_stats=True` 일 때만 `ledger_items` 를 추가한다. `False` 결과는 바이트 동일.
+- `linepixel.py` `_group` 은 `condition_stats=True` 일 때만 `GroupArea.ledger_shares` 를 만든다(compare2 키는 `ledger_items`). `False` 결과는 바이트 동일.
 
 ## 10. `ledger.json` (`ledger_v1`)
 

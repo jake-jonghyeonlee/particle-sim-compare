@@ -107,7 +107,7 @@ def _new_cell():
     """Areas in um^2 (cells x pitch^2 per group)."""
     return {'ok': True, 'reasons': set(), 'has_input': False, 'line': 0.0, 'peff': 0.0, 'transfer': 0.0,
             'shared_l': 0.0, 'shared_p': 0.0, 'excl_l': defaultdict(float), 'excl_p': defaultdict(float),
-            'tr': defaultdict(float)}
+            'tr': defaultdict(float), 'ledger': {}, 'ledger_checks': {}, 'ledger_overlap': {'line': 0, 'pixel': 0}}
 
 
 ABSENT_REASONS = frozenset(('source_coverage_incomplete', 'expected_case_folder_missing'))
@@ -134,6 +134,32 @@ def _absent_sources(group):
     if not missing:
         return None
     return missing
+
+
+LEDGER_BASIS = 'pair_share_v1'
+INTEGER_CHECKS = ('exclusive_ok', 'divisible_ok', 'shared_ok', 'sum_ok')
+
+
+def _extract_ledger(cell, shares, pitch_area):
+    """Add one group's ledger_shares (linepixel.GroupArea.ledger_shares) to the cell: item areas in um^2 under
+    (kind, pair_id, failure_type, endpoints_key), the integer checks AND-ed, the multi-item overlap cells summed.
+    An item exists only for an observed source, so a pair carried only by absent expected cases has none."""
+    if shares is None:
+        raise NumericContractError('compare2_ledger_shares_missing', 'compute_areas(condition_stats=True) is required')
+    for kind in KINDS:
+        block = shares[kind]
+        for entry in block['items']:
+            ekey = tuple((e['electrode_id'], e['actual_layer']) for e in entry['endpoints'])
+            known = cell['ledger'].setdefault((kind, entry['pair_id'], entry['failure_type'], ekey), {
+                'upper': entry['upper_layer'], 'lower': entry['lower_layer'],
+                'endpoints': [dict(e) for e in entry['endpoints']], 'share': 0.0, 'own': 0.0, 'out': 0.0})
+            known['share'] += entry['share_cells'] * pitch_area
+            known['own'] += entry['own_cells'] * pitch_area
+            known['out'] += entry['transferred_out_cells'] * pitch_area
+        checks = cell['ledger_checks'].setdefault(kind, {name: True for name in INTEGER_CHECKS})
+        for name in INTEGER_CHECKS:
+            checks[name] = checks[name] and bool(block['checks'][name])
+        cell['ledger_overlap'][kind] += block['multi_item_overlap_cells']
 
 
 def _extract(areas, absent_zero=False):
@@ -182,6 +208,7 @@ def _extract(areas, absent_zero=False):
             classes[(pid, key.analysis_layer)] = 'pixel'
         for pid, count in stats['transfer_by_line_pair_cells'].items():
             item['tr'][pid] += count * pitch_area
+        _extract_ledger(item, group.ledger_shares, pitch_area)
         for pid, pair in group.pair_membership.items():
             if absent is not None and pid not in seen_pids:
                 continue  # only absent cases carry this pair here: not a condition of this side (0 area, no row)
@@ -364,6 +391,9 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
     shared = {'line': _sum_opt(lam('line', ck, entries[ck]['item']['shared_l']) for ck in sorted(entries)),
               'pixel': _sum_opt(lam('pixel', ck, entries[ck]['item']['shared_p']) for ck in sorted(entries))}
 
+    ledger_items, ledger_check = _build_ledger(cells, entries, lam, conds, electrodes, shared,
+                                               {'line': total_line, 'pixel': total_pixel})
+
     # CNO
     cno_rows, cno_ok = {}, True
     for case in collect_cno(product.hotspot_root):
@@ -407,7 +437,7 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
     side = {
         'role': role, 'product': product, 'group': group, 'crp': crp, 'factors': factors, 'ok': ok,
         'reasons': reasons, 'entries': entries, 'size_lam': size_lam, 'layers': layer_rows, 'conds': conds,
-        'shared': shared, 'cno': cno_rows, 'lam': {'line': total_line, 'pixel': total_pixel, 'cno': total_cno},
+        'shared': shared, 'ledger_items': ledger_items, 'ledger_check': ledger_check, 'cno': cno_rows, 'lam': {'line': total_line, 'pixel': total_pixel, 'cno': total_cno},
         'x_pixel': x_pixel,
         'caa': {'line': None if total_line is None else _g(total_line),
                 'pixel': None if x_pixel is None or not ok['pixel'] else _g(x_pixel) / crp},
@@ -416,6 +446,86 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
                   'pixel': None if side['caa']['pixel'] is None else side['caa']['pixel'] / VI_PIXEL_DIVISOR}
     side['conservation'] = _conservation(side)
     return side
+
+
+def _item_id(pid, failure_type, upper, lower, ekey):
+    return '|'.join((pid, failure_type, upper, lower, ','.join(f'{electrode}@{layer}' for electrode, layer in ekey)))
+
+
+def _build_ledger(cells, entries, lam, conds, electrodes, shared, totals):
+    """Per-item lambda (pair share of one failure type / electrode layers, split by size) and the cross-checks.
+
+    Every item lambda goes through the same `lam` as the condition and layer lambdas (same density, factor, size
+    filter, not-ok rule). `cells` holds every cell, `entries` the cells inside the diameter filter."""
+    acc = {}
+    for ck in sorted(cells):
+        for (kind, pid, failure_type, ekey), led in cells[ck]['ledger'].items():
+            rec = acc.setdefault((ck[0], pid, failure_type, ekey, kind), {'led': led, 'rows': [], 'out': 0.0,
+                                                                          'notes': set()})
+            if ck not in entries:
+                continue
+            rec['rows'].append((ck, led['share'], lam(kind, ck, led['share'])))
+            rec['out'] += led['out']
+            rec['notes'].update(entries[ck]['notes'])
+    items = []
+    for layer, pid, failure_type, ekey, kind in sorted(acc):
+        rec = acc[(layer, pid, failure_type, ekey, kind)]
+        led = rec['led']
+        if rec['rows']:
+            values = [value for _ck, _share, value in rec['rows']]
+            total = None if any(v is None for v in values) else sum(values)
+            reasons = sorted(rec['notes'])
+        else:  # the diameter filter removed every cell of this item: a true 0, not a missing input
+            total, reasons = 0.0, ['diameter_filter_removed_all']
+        items.append({
+            'item_id': _item_id(pid, failure_type, led['upper'], led['lower'], ekey), 'pair_id': pid, 'class': kind,
+            'failure_type': failure_type, 'analysis_layer': layer, 'upper_layer': led['upper'],
+            'lower_layer': led['lower'], 'electrodes': electrodes.get((pid, layer)) or [e for e, _l in ekey],
+            'endpoints': led['endpoints'], 'lambda': total,
+            'area_share_um2': _area(sum(share for _ck, share, _v in rec['rows'])),
+            'by_size': [{'diameter_um': _diameter_json(ck[2]), 'density_layer': ck[1], 'area_share_um2': _area(share),
+                         'lambda': value} for ck, share, value in rec['rows']],
+            'transferred_out_area_um2': _area(rec['out']), 'computable': total is not None, 'reasons': reasons})
+    return items, _ledger_check(cells, items, conds, shared, totals)
+
+
+def _ledger_check(cells, items, conds, shared, totals):
+    integer = {kind: {name: True for name in INTEGER_CHECKS} for kind in KINDS}
+    for kind in KINDS:
+        integer[kind]['multi_item_overlap_cells'] = 0
+    for cell in cells.values():
+        for kind, checks in cell['ledger_checks'].items():
+            for name in INTEGER_CHECKS:
+                integer[kind][name] = integer[kind][name] and checks[name]
+        for kind in KINDS:
+            integer[kind]['multi_item_overlap_cells'] += cell['ledger_overlap'][kind]
+    failed = any(not integer[kind][name] for kind in KINDS for name in INTEGER_CHECKS)
+    integer['status'] = 'failed' if failed else 'passed'
+    out = {'integer_checks': integer}
+    empty = {'status': 'not_evaluated', 'sum': None, 'total': None, 'abs_error': None}
+    for kind, excl_name in (('line', 'excl_l'), ('pixel', 'excl_p')):
+        values = [item['lambda'] for item in items if item['class'] == kind]
+        total = totals[kind]
+        if total is None or any(v is None for v in values):
+            out[f'lambda_{kind}'] = dict(empty, total=total)
+            out[f'shared_{kind}'] = dict(empty, total=shared[kind])
+            continue
+        lhs = sum(values)
+        error = lhs - total
+        out[f'lambda_{kind}'] = {'status': 'passed' if _within(error, total) else 'failed', 'sum': lhs,
+                                 'total': total, 'abs_error': abs(error)}
+        excl = [cond['v'][excl_name] for cond in conds.values() if cond['computable'] or cond.get('filtered_out')]
+        if shared[kind] is None or any(v is None for v in excl):
+            out[f'shared_{kind}'] = dict(empty, total=shared[kind])
+            continue
+        lhs = lhs - sum(excl)
+        error = lhs - shared[kind]
+        out[f'shared_{kind}'] = {'status': 'passed' if _within(error, shared[kind]) else 'failed', 'sum': lhs,
+                                 'total': shared[kind], 'abs_error': abs(error)}
+    states = {out[name]['status'] for name in ('lambda_line', 'lambda_pixel', 'shared_line', 'shared_pixel')}
+    states.add(integer['status'])
+    out['status'] = 'failed' if 'failed' in states else ('not_evaluated' if 'not_evaluated' in states else 'passed')
+    return out
 
 
 def _conservation(side):
@@ -623,6 +733,9 @@ def _side_json(side):
     reasons = sorted(side['reasons'])
     if side['conservation']['status'] == 'failed':
         reasons.append('conservation_check_failed')
+    if side['ledger_check']['status'] == 'failed':
+        reasons.append('ledger_check_failed')
+        status = 'partial'
     caa, vi, lam = side['caa'], side['vi'], side['lam']
     doc = {
         'status': status, 'reasons': reasons,
@@ -634,7 +747,8 @@ def _side_json(side):
         'conditions': conds,
         'shared': {'lambda_line': side['shared']['line'], 'lambda_pixel': side['shared']['pixel']},
         'cno': [side['cno'][name] for name in sorted(side['cno'])],
-        'conservation_check': side['conservation']}
+        'conservation_check': side['conservation'],
+        'ledger_items': side['ledger_items'], 'ledger_check': side['ledger_check']}
     _put_absent(doc, side)
     return doc, status, reasons
 
@@ -899,7 +1013,7 @@ def build_compare2(config_path):
                           'crp_one_groups': list(CRP_ONE_GROUPS), 'round_digits': ROUND_DIGITS,
                           'conservation_tolerance': CONSERVATION_TOL, 'slope_limit_eps': SLOPE_LIMIT_EPS,
                           'ratio_null_below': RATIO_EPS},
-            'area_basis': AREA_BASIS},
+            'area_basis': AREA_BASIS, 'ledger_basis': LEDGER_BASIS},
         'products': {role: _product_json(sides[role], tables[role]) for role in ROLES},
         'sides': side_docs,
         'delta': delta}
