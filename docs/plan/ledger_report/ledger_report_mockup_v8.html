@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>설계 변경 영향 보고서 — 목업 v8 최종안 (가상 값)</title>
+<style>
+:root{color-scheme:light;
+  --surface-0:#f4f3f0;--surface-1:#fcfcfb;--border:#e2e0da;--grid:#ebe9e4;
+  --text-primary:#0b0b0b;--text-secondary:#52514e;--text-muted:#7a7972;
+  --line:#7a4fd6;--pixel:#eb6834;--up:#d03b3b;--down:#2a78d6;--mid:#e4e2dc;--common:#8d8c85;--sel:#fff3d6;
+  --badge-new:#fde7e7;--badge-gone:#e3eefc;--badge-both:#ecebe6;--trade:#f3ead0;}
+@media screen and (prefers-color-scheme:dark){:root{color-scheme:dark;
+  --surface-0:#121211;--surface-1:#1a1a19;--border:#33332f;--grid:#2a2a27;
+  --text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#94938a;
+  --line:#9a78ea;--pixel:#d95926;--up:#e66767;--down:#3987e5;--mid:#3a3a36;--common:#77766f;--sel:#3a3018;
+  --badge-new:#4a2323;--badge-gone:#1d2f4a;--badge-both:#2c2c29;--trade:#2e2a1c;}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:44px}
+body{margin:0;background:var(--surface-0);color:var(--text-primary);font:13px/1.5 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+main{max-width:1240px;margin:0 auto;padding:16px 20px 60px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}h2{font-size:16px;margin:0 0 2px}h3{font-size:13px;margin:10px 0 4px;color:var(--text-secondary)}
+section{background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-top:14px}
+.q{color:var(--text-secondary);font-weight:600;margin:0 0 2px}
+.mock{background:var(--sel);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-top:10px}
+.muted,.lead{color:var(--text-muted)}.lead{margin:0 0 8px}
+#bar{position:sticky;top:0;z-index:5;background:var(--surface-1);border:1px solid var(--border);border-radius:0 0 8px 8px;
+  padding:5px 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+#bar a,a{color:var(--down)}
+button{font:inherit;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:14px;padding:2px 10px;cursor:pointer}
+button.on{background:var(--text-primary);color:var(--surface-1)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;align-items:center}
+table{border-collapse:collapse;width:100%}
+th,td{padding:4px 8px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+th{font-weight:600;color:var(--text-secondary);font-size:12px;border-bottom:1px solid var(--border)}
+.l{text-align:left}.wrap{white-space:normal}
+tr[data-e],tr[data-p],tr[data-k]{cursor:pointer}
+tr.hl td{background:var(--sel)}
+tr.sub td{color:var(--text-secondary);font-size:12px;background:var(--surface-0)}
+tr.sum td{font-weight:650;border-top:1px solid var(--border)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.g31{display:grid;grid-template-columns:1.7fr 1fr;gap:18px}
+.maps{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.maps h3{margin-top:0}
+svg.map{display:block;width:100%;background:var(--surface-0);border:1px solid var(--border);border-radius:6px}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo",sans-serif;fill:var(--text-secondary);pointer-events:none}
+svg .num{font-weight:700;fill:var(--text-primary)}
+.el,.hs{vector-effect:non-scaling-stroke}
+.el{fill:var(--mid);stroke:var(--common);stroke-width:.6;cursor:pointer}
+.el.on{fill:var(--common);stroke:var(--text-primary);stroke-width:1.6}
+.el.partner{stroke:var(--text-primary);stroke-width:1.2;stroke-dasharray:3 2}
+.hs{cursor:pointer;stroke-width:1}.hs.on{stroke:var(--text-primary);stroke-width:2}
+.dim{opacity:.18}
+.legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px;margin:8px 0}
+.legend svg{display:inline-block;width:26px;height:12px;vertical-align:middle;margin-right:4px}
+.explain{border-left:3px solid var(--text-secondary);background:var(--surface-0);padding:8px 12px;margin-top:8px;min-height:86px}
+.explain table{width:auto}
+.headline{border-left:3px solid var(--text-secondary);padding:6px 10px;margin:10px 0;background:var(--surface-0)}
+.badge{display:inline-block;padding:0 6px;border-radius:9px;font-size:11px;background:var(--badge-both);color:var(--text-secondary)}
+.b-new{background:var(--badge-new)}.b-gone{background:var(--badge-gone)}.b-trade{background:var(--trade)}
+.sub2{display:block;font-size:11px;color:var(--text-muted);font-weight:400}
+.chip{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+.sg{font-weight:600}.s-up::before{content:"▲ ";color:var(--up);font-size:10px}.s-down::before{content:"▼ ";color:var(--down);font-size:10px}
+.dv{display:inline-block;width:84px;height:12px;position:relative;vertical-align:middle;margin-left:6px;
+  background:linear-gradient(var(--border),var(--border)) 50% 0/1px 100% no-repeat}
+.dv i{position:absolute;top:2px;height:8px}
+.dv .u{left:50%;background:var(--up);border-radius:0 4px 4px 0}.dv .d{right:50%;background:var(--down);border-radius:4px 0 0 4px}
+.hm td{text-align:center;min-width:70px}
+.key{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:10px 0}
+.tile{display:block;border:1px solid var(--border);border-radius:8px;padding:8px 10px;cursor:pointer;text-decoration:none;color:var(--text-primary)!important;background:var(--surface-0)}
+.tile .k{color:var(--text-muted);font-size:12px}.tile .v{font-size:16px;font-weight:650}
+.win{fill:none;stroke:var(--text-primary);stroke-width:1;stroke-dasharray:5 4;vector-effect:non-scaling-stroke;pointer-events:none}
+.legend svg rect{vector-effect:non-scaling-stroke}
+.card{border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px}
+.card .t{font-weight:650;font-size:14px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.seg{display:flex;align-items:flex-end;gap:12px;height:84px;border-bottom:1px solid var(--border);padding:0 6px}
+.seg div{display:flex;gap:2px;align-items:flex-end}.seg i{display:block;width:16px;border-radius:4px 4px 0 0}
+.seglab{display:flex;gap:12px;padding:2px 6px;color:var(--text-muted);font-size:11px}.seglab span{width:34px;text-align:center}
+
+tr.grp td{background:var(--surface-0);border-top:1px solid var(--border);padding-top:6px}
+.key{grid-template-columns:1fr 1.25fr 1fr 1.35fr}
+.tile{cursor:default}.tile a{color:var(--text-primary);text-decoration:underline;text-decoration-color:var(--text-muted)}
+.kl{font-size:14px;margin-top:2px}
+input#esearch{font:inherit;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:14px;padding:2px 10px;width:130px}
+tr[tabindex]:focus-visible{outline:2px solid var(--down);outline-offset:-2px}
+@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ #bar{position:static}.chips,#clear,.mock{display:none}
+ section,.card{break-inside:auto}thead{display:table-header-group}tr{break-inside:avoid}
+ body{font-size:11px}main{max-width:none;padding:0}}
+</style></head><body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<pattern id="h-up" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2.4" height="5" fill="var(--up)"/></pattern>
+<pattern id="h-down" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2.4" height="5" fill="var(--down)"/></pattern>
+<pattern id="h-common" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2.4" height="5" fill="var(--common)"/></pattern>
+</defs></svg>
+<main>
+<header><div><h1>설계 변경 영향 보고서 (목업 v8 · 최종안)</h1>
+<div class="muted">기준 A: MODEL_A · 대상 B: MODEL_B · 이물 크기 선택 범위 전체 · 지도 5 µm 이물 · unit 320 × 220 µm</div></div>
+<div class="muted" id="match"></div></header>
+<div class="mock"><b>목업입니다.</b> 전극 형상, 이름, 값은 모두 가상입니다. 전극, 불량 영역, 표의 줄을 누르면 모든 절에서 함께 강조됩니다.</div>
+<div id="bar"></div>
+
+<section id="s1"><p class="q">얼마나 달라졌나</p><h2>1. 전체 비교</h2>
+<p class="lead">vi 는 불량 발생 비율입니다. 양품 수율이 아닙니다. 값이 커지면 위험이 커집니다.</p>
+<table id="kpi"></table>
+<p class="muted">vi_line 은 line 불량의 발생 비율, vi_pixel 은 pixel 불량의 발생 비율입니다(보정 후).
+이 보고서의 큰 글씨 % 는 <b>A 의 전체 vi 를 100% 로 본 값</b>입니다. line 값은 vi_line A 가, pixel 값은 vi_pixel A 가 기준입니다.
+두 기준이 다르므로 line % 와 pixel % 는 서로 더하거나 비교하지 않습니다. 작은 글씨는 원래 값(%, %p)입니다.</p>
+<h3>핵심 요약</h3><div class="key" id="key"></div>
+<h3>변화 종류 — 달라진 양이 어떤 종류의 변화에서 왔나</h3><table id="cases"></table>
+<p class="muted">줄을 누르면 2절 지도와 4절 장부에 그 종류만 남습니다. 오른쪽(빨강)은 증가 합, 왼쪽(파랑)은 감소 합입니다.
+변화 종류는 확인된 사실만 말합니다. 형상이 실제로 어떻게 달라졌는지는 2절과 5절의 지도에서 봅니다.</p>
+</section>
+
+<section id="s2"><p class="q">layout 의 어디인가</p><h2>2. layout 리스크 지도</h2>
+<p class="lead">두 지도는 위치를 맞추지 않습니다. 전극 이름으로 연결합니다. "변화" 보기는 무엇이 달라졌는지, "리스크 크기" 보기는 각 제품에서 어디가 큰지 보입니다.</p>
+<div class="chips"><span class="muted">보기</span><span id="modes"></span><span class="muted" style="margin-left:14px">레이어</span><span id="layers"></span>
+<span class="muted" style="margin-left:14px">전극 찾기</span><input id="esearch" list="elist" placeholder="전극 이름" aria-label="전극 이름으로 선택"><datalist id="elist"></datalist></div>
+<div class="maps"><div><h3>기준 A</h3><div id="mapA"></div></div><div><h3>대상 B</h3><div id="mapB"></div></div></div>
+<div class="legend" id="legend"></div>
+<p class="muted" id="mapnote"></p>
+<div class="explain" id="explain"></div>
+<h3>리스크 위치 목록 — 불량 종류별로 B 값이 큰 순서. 번호는 지도와 같습니다.</h3>
+<table id="list"></table>
+<p class="muted">CNO 는 지도가 없어 이 목록에 없습니다. 3절 전극 장부의 "그중 CNO" 열에서 봅니다.
+실제 보고서에서는 지도 번호를 불량 종류별 상위 N 개에만 붙입니다.</p>
+</section>
+
+<section id="s3"><p class="q">어느 전극인가</p><h2>3. 전극별</h2>
+<p class="lead">전극 쌍의 불량은 두 전극에 절반씩 넣습니다. CNO 는 그 전극에 전부 넣습니다. 전극 이름이 곧 기능입니다.</p>
+<div class="chips"><span class="muted">정렬</span><span id="sortE"></span><button id="exp" style="margin-left:14px">레이어별로 펼치기</button></div>
+<table id="elec"></table>
+<details id="scd" style="margin-top:10px"><summary>line 과 pixel 의 상충 보기 (점 = 전극)</summary><div id="scatter" style="margin-top:6px"></div>
+<p class="muted">가로축은 line 변화, 세로축은 pixel 변화입니다. 축마다 기준이 다릅니다. 오른쪽 아래와 왼쪽 위 칸이 상충입니다.</p></details>
+</section>
+
+<section id="s4"><p class="q">어느 전극 쌍, 어느 레이어인가</p><h2>4. 전극 쌍별</h2>
+<p class="lead">전극 쌍 한 줄이 A 와 B 의 값을 가집니다. 한 쌍이 여러 레이어나 여러 불량 방식에 걸치면 아래 줄로 펼쳐 봅니다.</p>
+<div class="chips" id="tabs4"></div>
+<div id="body4"></div>
+</section>
+
+<section id="s5"><p class="q">그 자리 주변은 어떤가</p><h2>5. 위치 상세</h2>
+<p class="lead">지도를 확대해 그 전극 쌍과 주변 10 µm 안의 다른 불량 영역을 함께 봅니다. 점선 사각형이 표의 각 줄이 집계하는 범위입니다.</p>
+<div id="cards"></div>
+</section>
+
+<section id="s6"><p class="q">공정 관점에서는 어떤가</p><h2>6. 레이어 · 이물 크기</h2>
+<p class="lead">비교는 전극으로 하고, 원인 설명은 레이어로 합니다. line 과 pixel 을 따로 봅니다.</p>
+<div id="sec6"></div>
+</section>
+
+<section id="s7"><p class="q">어떻게 계산했나</p><h2>7. 참고</h2>
+<div class="grid2"><div><h3>계산 규칙</h3><table>
+<tr><td class="l"><b>% 단위</b></td><td class="l wrap">A 의 전체 vi 를 100% 로 본 값입니다. line 은 vi_line A, pixel 은 vi_pixel A 가 기준입니다. A 의 전체 vi 가 0 이면 % 를 계산하지 않고 원래 값만 보입니다.</td></tr>
+<tr><td class="l"><b>절반 분할</b></td><td class="l wrap">전극 쌍의 값을 두 전극에 1/2 씩 넣습니다.</td></tr>
+<tr><td class="l"><b>공유 영역 분담</b></td><td class="l wrap">여러 쌍이 함께 덮는 영역은 덮는 쌍 수 n 으로 1/n 씩 나눕니다.</td></tr>
+<tr><td class="l"><b>합계 관계</b></td><td class="l wrap">불량 종류마다: 전극 쌍 합 + CNO = 전극 장부 합. 전극 장부 합 + CRP 차이 = 1절 전체. 1절 전체는 장부와 따로 계산한 값과 대조합니다.</td></tr>
+<tr><td class="l"><b>A 값 · B 값</b></td><td class="l wrap">전체 변화를 나눈 것과 같은 방식으로 각 제품의 값을 나눈 값입니다(근사). CRP 차이는 전극에 나누지 않고 1절에 한 줄로 둡니다.</td></tr>
+<tr><td class="l"><b>주변 범위</b></td><td class="l wrap">5절 표의 범위는 그 쌍의 불량 영역에서 10 µm 안쪽입니다. 다른 쌍은 범위 안에 든 부분만 셉니다. line 과 pixel 을 따로 셉니다.</td></tr>
+<tr><td class="l"><b>같은 좌표 비교</b></td><td class="l wrap">같은 쌍, 같은 레이어이고 A 와 B 의 위치가 대응될 때만 범위 합계를 A → B 로 비교합니다. 그 밖에는 있는 쪽의 값만 보입니다.</td></tr>
+<tr><td class="l"><b>가장자리</b></td><td class="l wrap">범위가 입력 밖으로 나가면 같은 위치의 안쪽 반복을 씁니다. 반복이 같은 패턴인지 확인된 경우에만 씁니다. 아니면 범위 밖을 빗금으로 칠하고 비교에서 뺍니다.</td></tr>
+<tr><td class="l"><b>지도</b></td><td class="l wrap">불량 영역은 5 µm 이물의 중심이 놓이면 불량이 되는 위치입니다. 값은 선택한 이물 크기 전체의 합이라 넓이와 값이 비례하지 않습니다. 색과 진하기는 쌍 전체의 값이고, 그 위치만의 값이 아닙니다.</td></tr>
+<tr><td class="l"><b>표시</b></td><td class="l wrap">"없음" 은 그 제품에 그 전극이나 쌍이 없다는 뜻입니다. "0%" 는 있지만 값이 0 이라는 뜻입니다. "해당 없음" 은 그 불량 종류와 관계가 없다는 뜻입니다.</td></tr></table></div>
+<div><h3>용어</h3><table>
+<tr><td class="l"><b>불량 종류</b></td><td class="l wrap">line 또는 pixel</td></tr>
+<tr><td class="l"><b>불량 방식</b></td><td class="l wrap">측면(같은 레이어의 두 전극), 상하(다른 레이어의 두 전극, "위/아래 레이어"로 표기), CNO(전극 접촉 열림)</td></tr>
+<tr><td class="l"><b>같은 쌍 증감</b></td><td class="l wrap">같은 두 전극, 같은 레이어. 불량 값만 달라졌습니다.</td></tr>
+<tr><td class="l"><b>레이어 변경</b></td><td class="l wrap">같은 두 전극. 불량이 있는 레이어가 달라졌습니다.</td></tr>
+<tr><td class="l"><b>새 쌍 · 사라진 쌍</b></td><td class="l wrap">두 전극은 A 와 B 에 모두 있습니다. 둘 사이의 불량이 새로 생기거나 없어졌습니다.</td></tr>
+<tr><td class="l"><b>전극 추가·제거</b></td><td class="l wrap">전극이 새로 생기거나 없어져서 함께 생기거나 없어진 불량입니다.</td></tr>
+<tr><td class="l"><b>변화 없음</b></td><td class="l wrap">같은 두 전극, 같은 레이어. 값이 같습니다.</td></tr>
+<tr><td class="l"><b>방향</b></td><td class="l wrap">가로, 세로, 블록. 분명하지 않으면 "복합"으로 적습니다.</td></tr>
+<tr><td class="l"><b>분포</b></td><td class="l wrap">불량 영역이 몇 곳에 모여 있으면 점형, 배선을 따라 띠로 이어지면 선형</td></tr></table>
+<h3>그 밖에 이 절에 두는 것</h3><p class="muted">제품 정보 · caa 지표 · 입력과 설정 · 경고 · 계산 불가 항목 · 이름 변경 의심 쌍 (지금 보고서의 참고 절과 같음)</p></div></div>
+</section>
+</main>
+<script>
+const LAYERS=['GAT1','GAT2','SD1','SD2','PXL'];
+const EL=[
+ {n:'Scan1',A:{l:'GAT1',r:[10,36,300,8]},B:{l:'GAT2',r:[10,36,300,8]}},
+ {n:'EM',A:{l:'GAT1',r:[10,54,300,8]},B:{l:'GAT2',r:[10,54,300,8]}},
+ {n:'Data',A:{l:'SD1',r:[40,10,8,200]},B:{l:'SD1',r:[40,10,8,200]}},
+ {n:'ELVDD',A:{l:'SD1',r:[62,10,8,200]},B:{l:'SD1',r:[58,10,8,200]}},
+ {n:'Gnode',A:{l:'SD1',r:[110,90,44,30]},B:{l:'SD2',r:[110,90,44,30]}},
+ {n:'Anode',A:{l:'PXL',r:[180,84,96,70]},B:{l:'PXL',r:[180,84,96,70]}},
+ {n:'Vint',A:{l:'SD1',r:[290,10,8,200]},B:{l:'SD1',r:[284,10,8,200]}},
+ {n:'Scan2',A:{l:'GAT1',r:[10,176,300,8]},B:{l:'SD1',r:[300,10,8,200]}},
+ {n:'Vinit2',A:{l:'GAT1',r:[10,194,300,8]},B:null},
+ {n:'Scan3',A:null,B:{l:'GAT2',r:[10,180,270,8]}},
+ {n:'Vref',A:null,B:{l:'SD2',r:[190,160,70,12]}}];
+// pair = upper row; items = pair x layer x defect mode rows. l = layer label ("upper/lower" for vertical shorts)
+const PAIRS=[
+ {p:['Data','ELVDD'],c:'line',items:[{m:'측면',l:'SD1',A:{r:[53,10,4,200],v:.0120},B:{r:[49,10,8,200],v:.0150}}]},
+ {p:['Scan1','EM'],c:'line',items:[{m:'측면',l:'GAT1',A:{r:[10,47,300,4],v:.0060},B:null},{m:'측면',l:'GAT2',A:null,B:{r:[10,46,300,6],v:.0078}}]},
+ {p:['Anode','Vint'],c:'pixel',items:[{m:'측면',l:'PXL',A:{r:[279,84,8,70],v:.0200},B:{r:[276,84,8,70],v:.0200}}]},
+ {p:['Gnode','Anode'],c:'pixel',items:[{m:'상하',l:'SD1/PXL',A:{r:[158,92,18,26],v:.0090},B:null},{m:'상하',l:'SD2/PXL',A:null,B:{r:[160,94,14,22],v:.0050}}]},
+ {p:['Scan2','Vint'],c:'line',items:[{m:'측면',l:'SD1',A:null,B:{r:[293,10,6,200],v:.0065}}]},
+ {p:['Scan3','Data'],c:'line',items:[{m:'상하',l:'GAT2/SD1',A:null,B:{r:[35,175,18,18],v:.0040}}]},
+ {p:['Scan3','Vref'],c:'line',items:[{m:'상하',l:'GAT2/SD2',A:null,B:{r:[190,172,70,7],v:.0025}}]},
+ {p:['Scan2','Vinit2'],c:'line',items:[{m:'측면',l:'GAT1',A:{r:[10,185,300,8],v:.0050},B:null}]}];
+const CNO=[{e:'Anode',A:{l:'PXL',v:.0050},B:{l:'PXL',v:.0060}},{e:'Gnode',A:{l:'SD1',v:.0020},B:{l:'SD2',v:.0020}},{e:'Vref',A:null,B:{l:'SD2',v:.0015}}];
+const CASE={K1:'같은 쌍 증감',K2:'레이어 변경',K3:'새 쌍 · 사라진 쌍',K4:'전극 추가·제거',K6:'CNO',K0:'변화 없음'};
+const CASED={K1:'같은 두 전극, 같은 레이어입니다. 불량 값만 달라졌습니다.',
+ K2:'같은 두 전극입니다. 불량이 있는 레이어가 달라졌습니다.',
+ K3:'두 전극은 A 와 B 에 모두 있습니다. 둘 사이의 불량이 새로 생기거나 없어졌습니다.',
+ K4:'전극이 새로 생기거나 없어져서 함께 생기거나 없어진 불량입니다.',
+ K6:'전극 접촉 열림입니다. 전극 하나의 값이고 지도가 없습니다.',
+ K0:'같은 두 전극, 같은 레이어입니다. 값이 같습니다.'};
+// rows: same -> [label, pair delta, [[other, kind, delta]], [lineA,lineB], [pixelA,pixelB], highlight, text]
+//       none -> [label, pair value, [[other, kind, value]], line total, pixel total, highlight, text]
+const CARDS=[
+ {p:'Scan2–Vint',match:'none',side:'B',vb:[200,0,120,220],regs:[[283,10,26,70,'①'],[283,80,26,70,'②'],[283,150,26,60,'③']],rows:[
+  ['① 구간 0–70 µm',.0022,[['Scan1–EM','line',.0004]],.0026,0,0,'line 불량이 새로 생겼습니다.'],
+  ['② 구간 70–140 µm',.0023,[['Anode–Vint','pixel',.0025]],.0023,.0025,1,'pixel 불량(Anode–Vint)이 있는 구간에 line 불량이 새로 생겼습니다.'],
+  ['③ 구간 140–200 µm',.0020,[],.0020,0,0,'line 불량이 새로 생겼습니다.']]},
+ {p:'Scan2–Vinit2',match:'none',side:'A',vb:[0,150,320,70],regs:[[10,175,100,28,'①'],[110,175,100,28,'②'],[210,175,100,28,'③']],rows:[
+  ['① 구간 0–100 µm',.0017,[['Data–ELVDD','line',.0012]],.0029,0,0,'A 에만 있던 불량입니다.'],
+  ['② 구간 100–200 µm',.0017,[],.0017,0,0,'A 에만 있던 불량입니다.'],
+  ['③ 구간 200–300 µm',.0016,[],.0016,0,0,'A 에만 있던 불량입니다.']]},
+ {p:'Scan3–Data',match:'none',side:'B',vb:[0,140,110,80],regs:[[25,165,38,38,'①']],rows:[
+  ['① 위치 (44, 184) µm',.0040,[['Data–ELVDD','line',.0012]],.0052,0,1,'Data–ELVDD 불량과 같은 자리에 새로 생겼습니다.']]},
+ {p:'Data–ELVDD',match:'same',vb:[0,0,130,220],regs:[[39,10,28,70,'①'],[39,80,28,70,'②'],[39,150,28,60,'③']],rows:[
+  ['① 구간 0–70 µm',.0010,[['Scan1–EM','line',.0004]],[.0048,.0062],[0,0],0,'이 구간의 line 불량이 늘었습니다. 대부분 이 쌍입니다.'],
+  ['② 구간 70–140 µm',.0010,[],[.0040,.0050],[0,0],0,'이 쌍만 늘었습니다.'],
+  ['③ 구간 140–200 µm',.0010,[['Scan3–Data (새 쌍)','line',.0040],['Scan2–Vinit2 (사라진 쌍)','line',-.0012]],[.0052,.0090],[0,0],1,'새 쌍이 더해져 line 불량이 가장 많이 늘었습니다.']]}];
+const KINDS=['line','pixel'];
+const $=id=>document.getElementById(id);
+const Z=1e-9;
+const pct=x=>x==null?'없음':x?x.toFixed(4)+'%':'0%';
+const pp=x=>(x>Z?'+':x<-Z?'−':'')+Math.abs(x).toFixed(4)+'%p';
+const chip=k=>`<span class="chip" style="background:var(--${k})"></span>`;
+const dir=r=>!r?'없음':r[2]>3*r[3]?'가로':r[3]>3*r[2]?'세로':'블록';
+const al=l=>l.split('/')[0];
+function dv(up,down,peak,tip){const w=v=>peak?Math.round(40*Math.abs(v)/peak):0;
+ return `<span class="dv" title="${tip||''}">${down?`<i class="d" style="width:${w(down)}px"></i>`:''}${up?`<i class="u" style="width:${w(up)}px"></i>`:''}</span>`;}
+const E=n=>EL.find(e=>e.n===n);
+const estate=e=>!e.A?'new':!e.B?'gone':'both';
+for(const h of PAIRS){h.name=h.p.join('–');h.a=0;h.b=0;h.la=[];h.lb=[];
+ for(const it of h.items){if(it.A){h.a+=it.A.v;h.la.push(it.l);}if(it.B){h.b+=it.B.v;h.lb.push(it.l);}}
+ h.hasA=h.la.length>0;h.hasB=h.lb.length>0;h.d=h.b-h.a;
+ h.st=!h.hasA?'new':!h.hasB?'gone':h.la.join()!==h.lb.join()?'layer':'same';
+ const odd=h.p.filter(n=>estate(E(n))!=='both').length;
+ h.k=odd?'K4':h.st==='new'||h.st==='gone'?'K3':h.st==='layer'?'K2':Math.abs(h.d)<Z?'K0':'K1';
+ h.word=h.st==='new'?'신규':h.st==='gone'?'소멸':Math.abs(h.d)<Z?'':h.d>0?'증가':'감소';
+ h.modes=[...new Set(h.items.map(i=>i.m))].join('·');
+ const rr=s=>{const it=h.items.find(i=>i[s]);return it?it[s].r:null;};h.rA=rr('A');h.rB=rr('B');
+ h.dist=dir(h.rB||h.rA)==='블록'?'점형':'선형';}
+for(const k of KINDS)PAIRS.filter(h=>h.c===k).sort((x,y)=>y.b-x.b||y.a-x.a).forEach((h,i)=>{h.rank=i+1;h.no=(k==='line'?'L':'P')+(i+1);});
+// totals (identity: pairs + CNO = total; CRP difference row is 0 in the mockup)
+const tot={line:[0,0],pixel:[0,0]},gross={line:[0,0],pixel:[0,0]},byCase={};
+function addCase(k,kind,a,b){tot[kind][0]+=a;tot[kind][1]+=b;const d=b-a;const r=byCase[k]=byCase[k]||{n:0,line:[0,0],pixel:[0,0]};r.n++;
+ if(d>0){r[kind][0]+=d;gross[kind][0]+=d;}else{r[kind][1]+=d;gross[kind][1]+=d;}}
+for(const h of PAIRS)addCase(h.k,h.c,h.a,h.b);
+for(const c of CNO)addCase('K6','pixel',c.A?c.A.v:0,c.B?c.B.v:0);
+const cnoT=[CNO.reduce((a,c)=>a+(c.A?c.A.v:0),0),CNO.reduce((a,c)=>a+(c.B?c.B.v:0),0)];
+// relative unit: A total of the same kind = 100%
+const r1=(v,k)=>v/tot[k][0]*100;
+const rp=(v,k)=>v==null?'없음':Math.abs(v)<Z?'0%':r1(v,k).toFixed(1)+'%';
+const sub2=t=>`<span class="sub2">${t}</span>`;
+const rab=(a,b,k)=>`${rp(a,k)} → ${rp(b,k)}`;
+const rab2=(a,b,k)=>rab(a,b,k)+sub2(`${pct(a)} → ${pct(b)}`);
+const rs=(d,k)=>Math.abs(d)<Z?'0':`<span class="sg ${d>0?'s-up':'s-down'}" title="${pp(d)}">${d>0?'+':'−'}${Math.abs(r1(d,k)).toFixed(1)}%</span>`;
+const bar=(d,k,peak)=>dv(d>0?r1(d,k):0,d<0?r1(d,k):0,peak,pp(d));
+const rs2=(d,k)=>rs(d,k)+(Math.abs(d)<Z?'':sub2(pp(d)));
+const rsb=(d,k,peak)=>rs(d,k)+bar(d,k,peak)+(Math.abs(d)<Z?'':sub2(pp(d)));
+const pa=h=>h.hasA?h.a:null,pb=h=>h.hasB?h.b:null;
+// electrode ledger
+const LG={};
+const lg=n=>LG[n]=LG[n]||{line:[0,0],pixel:[0,0],cno:[null,null],lay:{},pa:{},pb:{}};
+function addE(n,kind,i,l,v,other){const r=lg(n);r[kind][i]+=v;const y=r.lay[l]=r.lay[l]||{line:[0,0],pixel:[0,0]};y[kind][i]+=v;
+ if(other){const p=i?r.pb:r.pa;p[other]={v:(p[other]?p[other].v:0)+v*2,c:kind};}}
+for(const h of PAIRS)for(const it of h.items)for(const [s,i] of [['A',0],['B',1]])if(it[s]){addE(h.p[0],h.c,i,al(it.l),it[s].v/2,h.p[1]);addE(h.p[1],h.c,i,al(it.l),it[s].v/2,h.p[0]);}
+for(const c of CNO)for(const [s,i] of [['A',0],['B',1]])if(c[s]){addE(c.e,'pixel',i,c[s].l,c[s].v);lg(c.e).cno[i]=c[s].v;}
+for(const e of EL)lg(e.n);
+const dk=(r,k)=>r[k][1]-r[k][0];
+const ENAMES=EL.map(e=>e.n);
+const topE=k=>[...ENAMES].sort((x,y)=>Math.abs(dk(LG[y],k))-Math.abs(dk(LG[x],k)))[0];
+const MAXREL=Math.max(...PAIRS.flatMap(h=>h.items.flatMap(it=>[it.A?r1(it.A.v,h.c):0,it.B?r1(it.B.v,h.c):0])));
+
+// ---- state: sel = highlight (all sections); layer, caseF = filter (sections 2 and 4)
+let sel=location.hash==='#demo'?{t:'e',id:topE('line')}:null,layer='',caseF='',open=false,openP=false,tab4='ledger',
+    mapMode=location.hash==='#size'?'size':'change',sortE='dl',sortP='d',printing=false;
+const relSel=(h,S)=>!S||(S.t==='p'?S.id===h.name:h.p.includes(S.id));
+const partnersOf=S=>!S||S.t==='p'?new Set():new Set(PAIRS.filter(h=>h.p.includes(S.id)).flatMap(h=>h.p).filter(x=>x!==S.id));
+const onE=(n,S)=>S&&(S.t==='e'?S.id===n:S.id.split('–').includes(n));
+const hlE=n=>sel&&onE(n,sel)?'hl':'';
+const hlP=h=>sel&&relSel(h,sel)?'hl':'';
+const passes=h=>(!caseF||h.k===caseF)&&(!layer||h.items.some(it=>al(it.l)===layer));
+const kb=h=>{const t=h.k==='K3'?(h.st==='new'?'새 쌍':'사라진 쌍'):CASE[h.k]+(h.word&&h.k!=='K0'?' · '+h.word:'');
+ return `<span class="badge ${h.st==='new'?'b-new':h.st==='gone'?'b-gone':''}" title="${CASED[h.k]}">${t}</span>`;};
+const layTxt=h=>`${h.la.join(', ')||'없음'} → ${h.lb.join(', ')||'없음'}`;
+const hasCard=n=>CARDS.findIndex(c=>c.p===n);
+const cardLink=h=>hasCard(h.name)<0?'<span class="muted">상세 없음</span>':`<a href="#card${hasCard(h.name)}">카드</a>`;
+
+function draw(side,o={}){
+ const S=o.sel!==undefined?o.sel:sel,zoom=!!o.vb,L=zoom?'':layer,CF=zoom?'':caseF,vb=o.vb||[0,0,320,220],fs=zoom?Math.max(4,6.5*Math.max(vb[2],vb[3]*1.3)/320):9,M=zoom?'change':mapMode;
+ const inside=(x,y,w,h)=>x<vb[0]+vb[2]&&x+w>vb[0]&&y<vb[1]+vb[3]&&y+h>vb[1];
+ const part=partnersOf(S),dimOK=!zoom&&M==='change';
+ let s=`<svg class="map" ${zoom?'style="max-height:430px"':''} viewBox="${vb.join(' ')}" role="img" aria-label="unit layout ${side}">`;
+ for(const e of EL){const g=e[side];if(!g)continue;const [x,y,w,h]=g.r;
+  const dim=(L&&g.l!==L)||(S&&dimOK&&!onE(e.n,S)&&!part.has(e.n));
+  s+=`<rect class="el${onE(e.n,S)?' on':part.has(e.n)?' partner':''}${dim?' dim':''}" data-e="${e.n}" x="${x}" y="${y}" width="${w}" height="${h}" rx="1.5"><title>${e.n} · ${g.l} · ${dir(g.r)}</title></rect>`;
+  let tx=w>h?Math.max(x+4,vb[0]+3):x+w/2-fs/3,ty=w>h?y+h-1:Math.max(y+8,vb[1]+4);
+  s+=`<text class="${dim?'dim':''}" style="font-size:${fs}px" x="${tx}" y="${ty}" ${w>h?'':`transform="rotate(90 ${tx} ${ty})"`}>${e.n}</text>`;}
+ for(const h of PAIRS){if(CF&&h.k!==CF)continue;for(const it of h.items){const g=it[side];if(!g||(L&&al(it.l)!==L))continue;const [x,y,w,hh]=g.r;const col=Math.abs(h.d)<Z?'common':h.d>0?'up':'down';
+  let style=`fill:var(--${col});stroke:var(--${col==='common'?'text-secondary':'surface-0'})`;
+  if(M==='size')style=`fill:var(--${h.c});fill-opacity:${(.18+.82*r1(g.v,h.c)/MAXREL).toFixed(2)};stroke:var(--${h.c})`;
+  else if(h.st==='layer')style=`fill:url(#h-${col});stroke:var(--${col})`;
+  else if(h.st==='new')style=`fill:var(--up);stroke:var(--text-primary);stroke-width:1.6`;
+  else if(h.st==='gone')style=`fill:none;stroke:var(--down);stroke-width:1.6;stroke-dasharray:4 2`;
+  const on=S&&relSel(h,S);
+  s+=`<rect class="hs${on?' on':''}${S&&!on&&dimOK?' dim':''}" data-p="${h.name}" x="${x}" y="${y}" width="${w}" height="${hh}" style="${style}"><title>${h.no}. ${h.name} · ${h.c} · ${it.m} ${it.l} · ${CASE[h.k]}${h.word?' '+h.word:''} · ${rp(g.v,h.c)} (${pct(g.v)})</title></rect>`;
+  if(zoom&&!inside(x,y,w,hh))continue;
+  const tw=(fs+1)*1.5,dd=dir(g.r);let nx,ny;
+  if(dd==='세로'){nx=x+w/2-tw/2;ny=Math.max(y-2,vb[1]+fs+2);}
+  else if(dd==='가로'){nx=Math.min(x+w,vb[0]+vb[2])-(zoom?fs*5:60);ny=y-1.5;}
+  else{nx=x+w+2;ny=y+hh/2+fs/3;}
+  const top=h.rank===1&&side==='B'&&!zoom;
+  if(top)s+=`<rect class="${S&&!on&&dimOK?'dim':''}" x="${nx-2}" y="${ny-fs-1}" width="${tw+3}" height="${fs+4}" rx="3" fill="var(--text-primary)" style="pointer-events:none"/>`;
+  s+=`<text class="num${S&&!on&&dimOK?' dim':''}" style="font-size:${fs+1}px${top?';fill:var(--surface-1)':''}" x="${nx}" y="${ny}">${h.no}</text>`;}}
+ for(const [x,y,w,h,t] of o.regs||[])s+=`<rect class="win" x="${x}" y="${y}" width="${w}" height="${h}"/><text class="num" style="font-size:${fs+1}px" x="${x+w+1.5}" y="${y+h/2}">${t}</text>`;
+ const sb=zoom?20:50,sx=vb[0]+vb[2]-sb-5,sy=vb[1]+vb[3]-5;
+ s+=`<line x1="${sx}" x2="${sx+sb}" y1="${sy}" y2="${sy}" stroke="var(--text-primary)" stroke-width="1.5" style="vector-effect:non-scaling-stroke"/><text style="font-size:${fs}px" x="${sx+sb}" y="${sy-2}" text-anchor="end">${sb} µm</text>`;
+ if(o.note)s+=`<text style="font-size:10px" x="${vb[0]+vb[2]/2}" y="${vb[1]+14}" text-anchor="middle">${o.note}</text>`;
+ return s+'</svg>';}
+
+function legend(){const sw=(st,t)=>`<span><svg><rect x="1" y="1" width="24" height="10" style="${st}"/></svg>${t}</span>`;
+ const num=`<span><span class="badge" style="background:var(--text-primary);color:var(--surface-1);font-weight:700">L1</span> B 값 1위 (불량 종류별)</span>`;
+ if(mapMode==='size')return sw('fill:var(--line)','line 불량')+sw('fill:var(--pixel)','pixel 불량')
+  +sw('fill:var(--line);fill-opacity:.25;stroke:var(--line)','옅음 = 작음')+sw('fill:var(--line);stroke:var(--line)','진함 = 큼 (가장 진한 색 = '+MAXREL.toFixed(0)+'%)')
+  +sw('fill:var(--mid);stroke:var(--common)','전극 형상')+num;
+ return sw('fill:var(--up)','증가')+sw('fill:var(--down)','감소')+sw('fill:var(--common);stroke:var(--text-secondary)','변화 없음')
+  +sw('fill:var(--up);stroke:var(--text-primary);stroke-width:2','새로 생김 (B 에만)')+sw('fill:none;stroke:var(--down);stroke-width:2;stroke-dasharray:4 2','사라짐 (A 에만)')
+  +sw('fill:url(#h-up)','레이어 변경 (빗금, 색은 증감)')+sw('fill:var(--mid);stroke:var(--common)','전극 형상')+num;}
+
+function eFacts(e){const r=LG[e.n],diff=[];
+ if(e.A&&e.B){if(e.A.l!==e.B.l)diff.push(`레이어 ${e.A.l} → ${e.B.l}`);if(dir(e.A.r)!==dir(e.B.r))diff.push(`방향 ${dir(e.A.r)} → ${dir(e.B.r)}`);
+  if(Object.keys(r.pa).sort().join()!==Object.keys(r.pb).sort().join())diff.push('불량을 만드는 상대 전극이 바뀜');}
+ return diff;}
+function explain(){
+ if(sel&&sel.t==='p'){const h=PAIRS.find(x=>x.name===sel.id);
+  const txt={new:`A 에는 이 두 전극 사이의 불량이 없습니다. B 의 ${h.lb.join(', ')} 레이어에 있습니다.`,gone:`A 의 ${h.la.join(', ')} 레이어에 있던 불량입니다. B 에는 없습니다.`,
+   layer:`같은 전극 쌍의 불량이 A 에서는 ${h.la.join(', ')}, B 에서는 ${h.lb.join(', ')} 레이어에 있습니다.`,same:`같은 전극 쌍, 같은 레이어입니다.`}[h.st];
+  return `<b>${h.no}. ${h.name}</b> · ${chip(h.c)}${h.c} · ${h.modes} · ${kb(h)}<br>${txt}<br>쌍 값 ${rab(pa(h),pb(h),h.c)} (${rs(h.d,h.c)}) · 방향 ${dir(h.rA)} → ${dir(h.rB)} · <a href="#s4">4절 장부</a> · ${cardLink(h)}`;}
+ const pre=!sel,e=E(sel?sel.id:topE('line')),r=LG[e.n];
+ const list=p=>Object.entries(p).map(([n,x])=>`${n} <span class="muted">(쌍 값 ${rp(x.v,x.c)})</span>`).join(', ')||'없음';
+ const state={new:'<span class="badge b-new">신규 전극</span>',gone:'<span class="badge b-gone">제거된 전극</span>',both:'<span class="badge">공통 전극</span>'}[estate(e)];
+ const diff=eFacts(e);
+ const share=KINDS.filter(k=>r[k][0]||r[k][1]).map(k=>`${chip(k)}${k} ${rab(e.A?r[k][0]:null,e.B?r[k][1]:null,k)} (${rs(dk(r,k),k)})`).join(' · ')||'없음';
+ return (pre?'<span class="muted">선택한 것이 없습니다. line 변화가 가장 큰 전극을 미리 보입니다. 전극이나 불량 영역을 누르면 바뀝니다.</span><br>':'')
+ +`<b>${e.n}</b> ${state} ${diff.length?'· 달라진 점: <b>'+diff.join(' · ')+'</b>':estate(e)==='both'?'· 레이어, 방향, 상대 전극은 같음':''} · <a href="#s3">3절 장부</a>
+ <table><tr><td class="l muted">기준 A</td><td class="l">${e.A?e.A.l+' · '+dir(e.A.r):'없음'}</td><td class="l">상대 전극: ${list(r.pa)}</td></tr>
+ <tr><td class="l muted">대상 B</td><td class="l">${e.B?e.B.l+' · '+dir(e.B.r):'없음'}</td><td class="l">상대 전극: ${list(r.pb)}</td></tr></table>전극 몫 (쌍 값의 절반씩): ${share}`;}
+
+function scatter(){const W=420,H=230,cx=W/2,cy=H/2;const m=Math.max(...ENAMES.flatMap(n=>KINDS.map(k=>Math.abs(r1(dk(LG[n],k),k)))))*1.15;
+ const X=v=>cx+v/m*(W/2-8),Y=v=>cy-v/m*(H/2-8);
+ let s=`<svg class="map" style="max-width:520px" viewBox="0 0 ${W} ${H}" role="img" aria-label="전극별 line pixel 변화"><rect x="${cx}" y="${cy}" width="${W/2}" height="${H/2}" fill="var(--trade)"/><rect x="0" y="0" width="${cx}" height="${cy}" fill="var(--trade)"/>
+ <line x1="0" y1="${cy}" x2="${W}" y2="${cy}" stroke="var(--border)"/><line x1="${cx}" y1="0" x2="${cx}" y2="${H}" stroke="var(--border)"/>
+ <text style="font-size:10px" x="${W-4}" y="${H-5}" text-anchor="end">line 변화 증가 →</text><text style="font-size:10px" x="${cx+4}" y="11">↑ pixel 변화 증가</text>`;
+ ENAMES.forEach((n,i)=>{const r=LG[n],x=X(r1(dk(r,'line'),'line')),y=Y(r1(dk(r,'pixel'),'pixel')),on=onE(n,sel);
+  s+=`<circle data-e="${n}" cx="${x}" cy="${y}" r="${on?6.5:5}" fill="var(--${on?'text-primary':'common'})" stroke="var(--surface-1)" stroke-width="2" style="cursor:pointer"><title>${n}: line ${pp(dk(r,'line'))}, pixel ${pp(dk(r,'pixel'))}</title></circle>
+  <text style="font-size:9px" x="${x+7}" y="${y+(i%2?10:-4)}">${n}</text>`;});
+ return s+'</svg>';}
+
+function render(){
+ const D=k=>tot[k][1]-tot[k][0];
+ const nShown=PAIRS.filter(passes).length;
+ // bar
+ const hi=sel?`<b>강조</b> ${sel.t==='e'?'전극':'전극 쌍'} ${sel.id}`:'';
+ const fl=[caseF?`변화 종류 = ${CASE[caseF]}`:'',layer?`레이어 = ${layer}`:''].filter(Boolean).join(', ');
+ $('bar').innerHTML=['1. 전체 비교','2. layout 지도','3. 전극별','4. 전극 쌍별','5. 위치 상세','6. 레이어','7. 참고'].map((t,i)=>`<a href="#s${i+1}">${t}</a>`).join('')
+  +`<span style="margin-left:auto">${hi}${hi&&fl?' · ':''}${fl?`<b>걸러 내기</b> ${fl} <span class="muted">(2절·4절, ${nShown}/${PAIRS.length} 쌍)</span>`:''}${hi||fl?' <button id="clear">해제</button>':'<span class="muted">강조 없음 · 걸러 내기 없음</span>'}</span>`;
+ // 1
+ const st=EL.map(estate);
+ $('match').textContent=`전극 대응: 공통 ${st.filter(s=>s==='both').length}개 · 신규 ${st.filter(s=>s==='new').length}개 · 제거 ${st.filter(s=>s==='gone').length}개 · 전극 쌍 ${PAIRS.length}개 · 경고 0건`;
+ const gp=Math.max(...KINDS.flatMap(k=>[r1(gross[k][0],k),-r1(gross[k][1],k)]));
+ $('kpi').innerHTML=`<tr><th class="l">범위</th><th>${chip('line')}vi_line A</th><th>vi_line B</th><th>A 대비 변화</th><th>${chip('pixel')}vi_pixel A</th><th>vi_pixel B</th><th>A 대비 변화</th></tr>
+ <tr><td class="l"><b>선택한 이물 크기 범위</b></td>${KINDS.map(k=>`<td>100%${sub2(pct(tot[k][0]))}</td><td><b>${rp(tot[k][1],k)}</b>${sub2(pct(tot[k][1]))}</td><td>${rs2(D(k),k)}</td>`).join('')}</tr>
+ <tr><td class="l muted">그중 증가 합 / 감소 합</td>${KINDS.map(k=>`<td colspan="3">+${r1(gross[k][0],k).toFixed(1)}% / −${Math.abs(r1(gross[k][1],k)).toFixed(1)}%${dv(r1(gross[k][0],k),r1(gross[k][1],k),gp)}</td>`).join('')}</tr>`;
+ const conflict=D('line')*D('pixel')<0;
+ const ln=(k,body)=>`<div class="kl">${chip(k)}<span class="muted">${k}</span> ${body}</div>`;
+ const topCase=k=>Object.entries(byCase).filter(([c])=>c!=='K0').sort((a,b)=>b[1][k][0]-a[1][k][0])[0];
+ const topPair=k=>PAIRS.find(h=>h.c===k&&h.rank===1);
+ $('key').innerHTML=`<div class="tile"><div class="k">① 전체</div>${KINDS.map(k=>ln(k,`<b>${rs(D(k),k)}</b>`)).join('')}
+  <div class="muted">${conflict?'두 지표의 방향이 반대입니다. 상충 판단이 필요합니다.':'두 지표의 방향이 같습니다.'}</div></div>
+ <div class="tile"><div class="k">② 증가가 가장 큰 변화 종류 <span class="muted">(기준: 증가 합)</span></div>${KINDS.map(k=>{const [c,r]=topCase(k);
+   return ln(k,r[k][0]<Z?'증가 없음':`<a href="#s2" ${c==='K6'?'':`data-k="${c}" data-f="1"`}><b>${CASE[c]}</b></a> 증가 +${r1(r[k][0],k).toFixed(1)}%`);}).join('')}</div>
+ <div class="tile"><div class="k">③ 가장 크게 달라진 전극 <span class="muted">(기준: 변화의 크기)</span></div>${KINDS.map(k=>{const n=topE(k);return ln(k,`<a href="#s2" data-e="${n}" data-f="1"><b>${n}</b></a> ${rs(dk(LG[n],k),k)}`);}).join('')}</div>
+ <div class="tile"><div class="k">④ B 에서 가장 큰 리스크 <span class="muted">(기준: B 값)</span></div>${KINDS.map(k=>{const h=topPair(k);return ln(k,`<a href="#s2" data-p="${h.name}" data-f="1"><b>${h.name}</b></a> ${rp(h.b,k)} · ${h.k==='K0'?'변화 없음':rs(h.d,k)}`);}).join('')}</div>`;
+ const cpk=Math.max(...Object.values(byCase).flatMap(r=>KINDS.flatMap(q=>[r1(r[q][0],q),-r1(r[q][1],q)])));
+ $('cases').innerHTML=`<tr><th class="l">변화 종류</th><th class="l">뜻</th><th>건수</th><th>${chip('line')}line 변화</th><th class="l">감소 | 증가</th><th>${chip('pixel')}pixel 변화</th><th class="l">감소 | 증가</th></tr>`+
+ Object.keys(CASE).map(k=>{const r=byCase[k]||{n:0,line:[0,0],pixel:[0,0]};
+  return `<tr ${k==='K6'?'':`data-k="${k}" tabindex="0"`} class="${caseF===k?'hl':''}"><td class="l"><b>${CASE[k]}</b></td><td class="l muted">${CASED[k]}</td><td>${r.n}</td>`+KINDS.map(q=>`<td>${rs2(r[q][0]+r[q][1],q)}</td><td class="l">${dv(r1(r[q][0],q),r1(r[q][1],q),cpk,'증가 '+pp(r[q][0])+' / 감소 '+pp(r[q][1]))}</td>`).join('')+'</tr>';}).join('')
+ +`<tr><td class="l"><b>CRP 차이</b></td><td class="l muted">제품군 보정의 차이입니다. pixel 에만 있고 전극에 나누지 않습니다.</td><td>—</td><td class="muted">해당 없음</td><td></td><td>0<span class="sub2">두 제품의 CRP 가 같음</span></td><td></td></tr>
+ <tr class="sum"><td class="l">전체 (= 위 줄의 합)</td><td></td><td>${PAIRS.length+CNO.length}</td><td>${rs2(D('line'),'line')}</td><td></td><td>${rs2(D('pixel'),'pixel')}</td><td></td></tr>`;
+ // 2
+ $('modes').innerHTML=[['change','변화'],['size','리스크 크기']].map(([k,t])=>`<button data-mode="${k}" class="${mapMode===k?'on':''}">${t}</button>`).join(' ');
+ $('mapA').innerHTML=draw('A');$('mapB').innerHTML=draw('B');$('legend').innerHTML=legend();$('explain').innerHTML=explain();
+ $('mapnote').innerHTML=(mapMode==='size'?'진하기는 그 쌍 전체의 값입니다. A 지도는 A 의 값, B 지도는 B 의 값입니다. ':'색은 그 쌍 전체의 증감입니다. 그 위치만의 증감이 아닙니다. ')
+  +'불량 영역은 5 µm 이물의 중심이 놓이면 불량이 되는 위치입니다. 번호의 L 은 line, P 는 pixel 입니다.';
+ $('layers').innerHTML=['',...LAYERS].map(l=>`<button data-l="${l}" class="${l===layer?'on':''}">${l||'전체'}</button>`).join(' ');
+ $('elist').innerHTML=ENAMES.map(n=>`<option value="${n}">`).join('');$('esearch').value=sel&&sel.t==='e'?sel.id:'';
+ const cols2=8;
+ $('list').innerHTML=`<tr><th>번호</th><th class="l">전극 쌍</th><th class="l">변화 종류</th><th class="l">레이어 A → B</th><th class="l">방향 A → B</th><th>A → B</th><th class="l">변화</th><th class="l">상세</th></tr>`
+ +KINDS.map(k=>{const all=PAIRS.filter(h=>h.c===k).sort((x,y)=>x.rank-y.rank),rows=all.filter(passes);
+  return `<tr class="grp"><td colspan="${cols2}" class="l">${chip(k)}<b>${k} 불량</b> <span class="muted">${rows.length}/${all.length} 쌍 표시 · 기준 vi_${k} A = 100%</span></td></tr>`
+  +(rows.map(h=>`<tr data-p="${h.name}" tabindex="0" class="${hlP(h)}"><td>${h.no}</td><td class="l"><b>${h.name}</b></td><td class="l">${kb(h)}</td><td class="l">${layTxt(h)}</td><td class="l">${dir(h.rA)} → ${dir(h.rB)}</td>
+   <td>${rab2(pa(h),pb(h),k)}</td><td class="l">${rs2(h.d,k)}</td><td class="l">${cardLink(h)}</td></tr>`).join('')||`<tr><td colspan="${cols2}" class="l muted">걸러 내기 조건에 맞는 쌍이 없습니다.</td></tr>`);}).join('');
+ // 3
+ const sorts=[['dl','line 변화'],['dp','pixel 변화'],['bl','line B 값'],['bp','pixel B 값']];
+ $('sortE').innerHTML=sorts.map(([k,t])=>`<button data-se="${k}" class="${sortE===k?'on':''}">${t}</button>`).join(' ');
+ const sk=sortE[1]==='l'?'line':'pixel',sf=sortE[0]==='d'?n=>Math.abs(dk(LG[n],sk)):n=>LG[n][sk][1];
+ const EORD=[...ENAMES].sort((x,y)=>sf(y)-sf(x));
+ const epk=k=>Math.max(...ENAMES.map(n=>Math.abs(r1(dk(LG[n],k),k))));
+ const sb={both:'<span class="badge">공통</span>',new:'<span class="badge b-new">신규</span>',gone:'<span class="badge b-gone">제거</span>'};
+ const ev=(e,r,k)=>(!r[k][0]&&!r[k][1])?'<span class="muted">해당 없음</span>':rab2(e.A?r[k][0]:null,e.B?r[k][1]:null,k);
+ let h3=`<tr><th class="l">전극</th><th class="l">상태</th><th class="l">레이어 A → B</th><th class="l">방향 A → B</th><th>${chip('line')}line A → B</th><th class="l">line 변화</th><th>${chip('pixel')}pixel A → B</th><th class="l">pixel 변화</th><th>그중 CNO A → B</th><th class="l">상대 전극 A → B</th></tr>`;
+ for(const n of EORD){const e=E(n),r=LG[n];const qa=Object.keys(r.pa).join(', ')||'없음',qb=Object.keys(r.pb).join(', ')||'없음';
+  const tr=dk(r,'line')*dk(r,'pixel')<-1e-12?' <span class="badge b-trade">상충</span>':'';
+  const cno=r.cno[0]==null&&r.cno[1]==null?'<span class="muted">해당 없음</span>':`${rab(r.cno[0],r.cno[1],'pixel')}${sub2('변화 '+(Math.abs((r.cno[1]||0)-(r.cno[0]||0))<Z?'0':pp((r.cno[1]||0)-(r.cno[0]||0))))}`;
+  h3+=`<tr data-e="${n}" tabindex="0" class="${hlE(n)}"><td class="l"><b>${n}</b>${tr}</td><td class="l">${sb[estate(e)]}</td><td class="l">${e.A?e.A.l:'없음'} → ${e.B?e.B.l:'없음'}</td><td class="l">${dir(e.A&&e.A.r)} → ${dir(e.B&&e.B.r)}</td>
+  <td>${ev(e,r,'line')}</td><td class="l">${rsb(dk(r,'line'),'line',epk('line'))}</td><td>${ev(e,r,'pixel')}</td><td class="l">${rsb(dk(r,'pixel'),'pixel',epk('pixel'))}</td>
+  <td>${cno}</td><td class="l wrap">${qa===qb?qa:qa+' → '+qb}</td></tr>`;
+  if(open||printing)for(const l of LAYERS)if(r.lay[l]){const y=r.lay[l];
+   h3+=`<tr class="sub"><td></td><td></td><td class="l">${l}</td><td></td><td>${rab(y.line[0],y.line[1],'line')}</td><td class="l">${rs(y.line[1]-y.line[0],'line')}</td><td>${rab(y.pixel[0],y.pixel[1],'pixel')}</td><td class="l">${rs(y.pixel[1]-y.pixel[0],'pixel')}</td><td></td><td></td></tr>`;}}
+ h3+=`<tr class="sum"><td class="l">합계</td><td></td><td></td><td></td><td>${rab2(tot.line[0],tot.line[1],'line')}</td><td class="l">${rs2(D('line'),'line')}</td><td>${rab2(tot.pixel[0],tot.pixel[1],'pixel')}</td><td class="l">${rs2(D('pixel'),'pixel')}</td><td>${rab(cnoT[0],cnoT[1],'pixel')}</td><td class="l muted">= 1절 전체 (CRP 차이 0)</td></tr>`;
+ $('elec').innerHTML=h3;$('exp').classList.toggle('on',open);$('scatter').innerHTML=scatter();$('scd').open=printing||$('scd').open;
+ // 4
+ $('tabs4').innerHTML=[['ledger','전극 쌍 장부'],['matrix','전극 쌍 × 레이어']].map(([k,t])=>`<button data-tab="${k}" class="${tab4===k?'on':''}">${t}</button>`).join('')
+  +`<span class="muted" style="margin-left:14px">정렬</span>`+[['d','변화가 큰 순'],['b','B 값이 큰 순']].map(([k,t])=>`<button data-sp="${k}" class="${sortP===k?'on':''}">${t}</button>`).join(' ')
+  +`<button id="expP" class="${openP?'on':''}" style="margin-left:14px">레이어 · 불량 방식 펼치기</button>`;
+ const key=h=>sortP==='d'?Math.abs(h.d):h.b;
+ const grp=k=>{const all=PAIRS.filter(h=>h.c===k).sort((x,y)=>key(y)-key(x));return [all,all.filter(passes)];};
+ const ledger=()=>{const cols=9;let h4=`<table><tr><th>번호</th><th class="l">전극 쌍</th><th class="l">변화 종류</th><th class="l">불량 방식</th><th class="l">레이어 A → B</th><th>A → B</th><th class="l">변화</th><th class="l">분포</th><th class="l">상세</th></tr>`;
+  for(const k of KINDS){const [all,rows]=grp(k);const ppk=Math.max(...all.map(h=>Math.abs(r1(h.d,k))));
+   h4+=`<tr class="grp"><td colspan="${cols}" class="l">${chip(k)}<b>${k} 불량</b> <span class="muted">${rows.length}/${all.length} 쌍 표시 · 기준 vi_${k} A = 100%</span></td></tr>`;
+   for(const h of rows){h4+=`<tr data-p="${h.name}" tabindex="0" class="${hlP(h)}"><td>${h.no}</td><td class="l"><b>${h.name}</b></td><td class="l">${kb(h)}</td><td class="l">${h.modes}</td><td class="l">${layTxt(h)}</td>
+    <td>${rab2(pa(h),pb(h),k)}</td><td class="l">${rsb(h.d,k,ppk)}</td><td class="l">${h.dist}</td><td class="l">${cardLink(h)}</td></tr>`;
+    if(openP||printing)for(const it of h.items)h4+=`<tr class="sub"><td></td><td></td><td></td><td class="l">↳ ${it.m}</td><td class="l">${it.l}</td><td>${rab(it.A?it.A.v:null,it.B?it.B.v:null,k)}</td><td class="l">${rs((it.B?it.B.v:0)-(it.A?it.A.v:0),k)}</td><td></td><td></td></tr>`;}
+   if(!rows.length)h4+=`<tr><td colspan="${cols}" class="l muted">걸러 내기 조건에 맞는 쌍이 없습니다.</td></tr>`;
+   const sa=all.reduce((a,h)=>a+h.a,0),sbv=all.reduce((a,h)=>a+h.b,0);
+   if(k==='pixel')h4+=`<tr class="sub"><td></td><td class="l">CNO ${CNO.length}건</td><td class="l" colspan="3">전극 하나의 값입니다. 3절에 있습니다.</td><td>${rab(cnoT[0],cnoT[1],k)}</td><td class="l">${rs(cnoT[1]-cnoT[0],k)}</td><td></td><td></td></tr>`;
+   const ta=sa+(k==='pixel'?cnoT[0]:0),tb=sbv+(k==='pixel'?cnoT[1]:0);
+   h4+=`<tr class="sum"><td></td><td class="l">${k} 합계</td><td class="l muted" colspan="3">${k==='pixel'?'전극 쌍 합 + CNO':'전극 쌍 합'} = 1절 전체</td><td>${rab2(ta,tb,k)}</td><td class="l">${rs2(tb-ta,k)}</td><td></td><td></td></tr>`;}
+  return h4+`</table><p class="muted">번호는 2절 지도의 번호입니다. 실제 보고서에서는 불량 종류별 상위 N 줄을 보이고, 나머지는 "기타 k 쌍" 합계 줄로 묶어 펼쳐 보게 합니다. 합계는 묶어도 같습니다.</p>`;};
+ const matrix=()=>{const heat=(d,k)=>Math.abs(d)<Z?'':`background:color-mix(in srgb,var(--${d>0?'up':'down'}) ${Math.round(Math.abs(r1(d,k))/MAXREL*70)}%,var(--surface-1))`;
+  let h4=`<table class="hm"><tr><th class="l">전극 쌍</th><th class="l">변화 종류</th>${LAYERS.map(l=>`<th style="text-align:center">${l}</th>`).join('')}<th>쌍 전체 변화</th></tr>`;
+  for(const k of KINDS){const [all,rows]=grp(k);
+   h4+=`<tr class="grp"><td colspan="${LAYERS.length+3}" class="l">${chip(k)}<b>${k} 불량</b> <span class="muted">${rows.length}/${all.length} 쌍 표시 · 칸의 단위는 %</span></td></tr>`
+   +rows.map(h=>`<tr data-p="${h.name}" tabindex="0" class="${hlP(h)}"><td class="l"><b>${h.no}. ${h.name}</b></td><td class="l">${kb(h)}</td>`+LAYERS.map(l=>{const its=h.items.filter(it=>al(it.l)===l);
+     if(!its.length)return '<td class="muted">·</td>';const a=its.reduce((s,it)=>s+(it.A?it.A.v:0),0),b=its.reduce((s,it)=>s+(it.B?it.B.v:0),0),d=b-a;
+     return `<td style="${heat(d,k)}" title="${l}: ${rab(a,b,k)} (${pp(d)})">${Math.abs(d)<Z?'0':(d>0?'+':'−')+Math.abs(r1(d,k)).toFixed(1)}</td>`;}).join('')+`<td>${rs(h.d,k)}</td></tr>`).join('');}
+  return h4+`</table><p class="muted">레이어 변경은 한 줄에 파랑(없어진 레이어)과 빨강(새로 생긴 레이어)이 함께 보입니다. 상하 불량은 위쪽 레이어 칸에 넣습니다. · 은 그 레이어에 불량이 없다는 뜻입니다.</p>`;};
+ $('body4').innerHTML=printing?ledger()+'<h3>전극 쌍 × 레이어</h3>'+matrix():tab4==='ledger'?ledger():matrix();
+ // 5
+ const others=(list,fmt)=>list.map(n=>`${chip(n[1])}${n[0]} ${fmt(n[2],n[1])}`).join('<br>')||'<span class="muted">없음</span>';
+ $('cards').innerHTML=`<p class="muted"><b>수록 기준.</b> 불량 종류별로 변화가 큰 순서의 상위 N 쌍입니다(목업: line 4개, pixel 0개). 카드가 없는 쌍은 2절과 4절에 "상세 없음"으로 표시합니다. 이 절은 걸러 내기와 관계없이 모두 보입니다.</p>`
+ +CARDS.map((c,i)=>{const h=PAIRS.find(x=>x.name===c.p),S={t:'p',id:c.p},k=h.c,same=c.match==='same';
+  const zoomOf=s=>draw(s,{vb:c.vb,sel:S,regs:c.regs});
+  const fullOf=s=>draw(s,{sel:S,vb:[0,0,320,220]})+`<p class="muted">${s} 에는 이 전극 쌍의 불량 영역이 없습니다. 두 전극의 위치만 밝게 표시합니다.</p>`;
+  const mA=same||c.side==='A'?zoomOf('A'):fullOf('A'),mB=same||c.side==='B'?zoomOf('B'):fullOf('B');
+  const lab=h.dist==='선형'?'구간':'위치';
+  const tbl=same?`<table><tr><th class="l">${lab}</th><th>이 쌍의 변화</th><th class="l">범위 안 다른 쌍의 변화</th><th>${chip('line')}범위 합계 line A → B</th><th>${chip('pixel')}범위 합계 pixel A → B</th><th class="l">읽는 법</th></tr>`
+   +c.rows.map(r=>`<tr class="${r[5]?'hl':''}"><td class="l">${r[0]}</td><td>${rs2(r[1],k)}</td><td class="l">${others(r[2],rs)}</td><td>${rab2(r[3][0],r[3][1],'line')}</td><td>${rab2(r[4][0],r[4][1],'pixel')}</td><td class="l wrap">${r[6]}</td></tr>`).join('')
+   +`<tr class="sum"><td class="l">합계</td><td>${rs2(c.rows.reduce((a,r)=>a+r[1],0),k)}</td><td></td><td></td><td></td><td class="l muted">= 4절 이 쌍의 변화</td></tr></table>`
+  :`<table><tr><th class="l">${lab}</th><th>이 쌍의 ${c.side} 값</th><th class="l">범위 안 다른 쌍의 ${c.side} 값</th><th>${chip('line')}범위 합계 line (${c.side})</th><th>${chip('pixel')}범위 합계 pixel (${c.side})</th><th class="l">읽는 법</th></tr>`
+   +c.rows.map(r=>`<tr class="${r[5]?'hl':''}"><td class="l">${r[0]}</td><td>${rp(r[1],k)}${sub2(pct(r[1]))}</td><td class="l">${others(r[2],rp)}</td><td>${rp(r[3],'line')}${sub2(pct(r[3]))}</td><td>${rp(r[4],'pixel')}${sub2(pct(r[4]))}</td><td class="l wrap">${r[6]}</td></tr>`).join('')
+   +`<tr class="sum"><td class="l">합계</td><td>${rp(c.rows.reduce((a,r)=>a+r[1],0),k)}</td><td></td><td></td><td></td><td class="l muted">= 4절 이 쌍의 ${c.side} 값</td></tr></table>
+   <p class="muted">${c.side==='B'?'A':'B'} 에는 대응하는 자리가 없습니다. 그래서 이 범위의 ${c.side==='B'?'A':'B'} 값과 비교하지 않습니다.</p>`;
+  return `<div class="card" id="card${i}"><div class="t"><span>${h.no}. ${chip(k)}${h.name} · ${k} · ${h.modes} · ${kb(h)} · ${layTxt(h)} · ${h.dist} · ${rs(h.d,k)}</span>
+   <span><span class="badge ${same?'':'b-trade'}">${same?'같은 좌표 비교':'대응하는 자리 없음 · '+c.side+' 값만'}</span> <a href="#s2" data-p="${h.name}" data-f="1">지도에서 보기</a></span></div>
+   <div class="maps" style="margin:8px 0"><div><h3>기준 A ${same||c.side==='A'?'(확대)':'(unit 전체)'}</h3>${mA}</div><div><h3>대상 B ${same||c.side==='B'?'(확대)':'(unit 전체)'}</h3>${mB}</div></div>
+   <h3>${lab}별 집계 — 점선 사각형 안의 불량 (이 쌍의 불량 영역에서 10 µm 안쪽)</h3>${tbl}</div>`;}).join('')
+  +'<p class="muted">서로 다른 카드의 범위는 겹칠 수 있습니다. 카드끼리 범위 합계를 더하지 않습니다.</p>';
+ // 6
+ const LS={};for(const l of LAYERS)LS[l]={line:[0,0],pixel:[0,0],src:{line:[],pixel:[]}};
+ for(const h of PAIRS){const by={};for(const it of h.items){const y=by[al(it.l)]=by[al(it.l)]||[0,0];y[0]+=it.A?it.A.v:0;y[1]+=it.B?it.B.v:0;}
+  for(const [l,[a,b]] of Object.entries(by)){LS[l][h.c][0]+=a;LS[l][h.c][1]+=b;LS[l].src[h.c].push([h.name,b-a,h.name]);}}
+ for(const c of CNO)for(const [s,i] of [['A',0],['B',1]])if(c[s]){LS[c[s].l].pixel[i]+=c[s].v;LS[c[s].l].src.pixel.push([`CNO(${c.e})`,(i?1:-1)*c[s].v,null]);}
+ const lpk=k=>Math.max(...LAYERS.map(l=>Math.abs(r1(LS[l][k][1]-LS[l][k][0],k))));
+ const srcTxt=(l,k)=>{const m={};for(const [n,d,p] of LS[l].src[k]){m[n]=m[n]||[0,p];m[n][0]+=d;}
+  return Object.entries(m).filter(([,v])=>Math.abs(v[0])>Z).sort((a,b)=>Math.abs(b[1][0])-Math.abs(a[1][0])).slice(0,2)
+   .map(([n,v])=>`${v[1]?`<a href="#s4" data-p="${v[1]}" data-f="1">${n}</a>`:n} ${rs(v[0],k)}`).join(', ')||'<span class="muted">없음</span>';};
+ const sizes=[2,3,5,7,10],wt={line:[.05,.2,.35,.25,.15],pixel:[.1,.15,.3,.25,.2]};
+ const heatT=k=>{const pk=Math.max(...LAYERS.map(l=>Math.abs(r1(LS[l][k][1]-LS[l][k][0],k))))*.35;
+  return `<table class="hm"><tr><th class="l">${chip(k)}${k} · 레이어 \\ 이물 크기</th>${sizes.map(s=>`<th style="text-align:center">${s} µm</th>`).join('')}</tr>`+
+  LAYERS.map(l=>`<tr><td class="l"><b>${l}</b></td>${wt[k].map(w=>{const d=r1(LS[l][k][1]-LS[l][k][0],k)*w;return `<td style="${Math.abs(d)<Z?'':`background:color-mix(in srgb,var(--${d>0?'up':'down'}) ${Math.round(Math.abs(d)/pk*70)}%,var(--surface-1))`}">${Math.abs(d)<Z?'0':Math.abs(d)<.1?'<0.1':(d>0?'+':'−')+Math.abs(d).toFixed(1)}</td>`;}).join('')}</tr>`).join('')+'</table>';};
+ $('sec6').innerHTML=`<h3>레이어 집계 — 그 레이어의 변화와 그 변화에 가장 크게 기여한 것 (CNO 포함)</h3>
+ <table><tr><th class="l">레이어</th><th class="l">${chip('line')}line 변화</th><th class="l">line 의 주된 기여</th><th class="l">${chip('pixel')}pixel 변화</th><th class="l">pixel 의 주된 기여</th></tr>`
+ +LAYERS.map(l=>`<tr class="${layer===l?'hl':''}"><td class="l"><b>${l}</b></td>${KINDS.map(k=>`<td class="l">${rsb(LS[l][k][1]-LS[l][k][0],k,lpk(k))}</td><td class="l">${srcTxt(l,k)}</td>`).join('')}</tr>`).join('')
+ +`</table><p class="muted">상하 불량은 위쪽 레이어에 넣습니다. 기여 값은 그 레이어 안에서의 변화입니다.</p>
+ <h3>레이어 × 이물 크기별 변화 (%, 불량 종류별)</h3><div class="grid2"><div>${heatT('line')}</div><div>${heatT('pixel')}</div></div>
+ <p class="muted">절댓값이 0.1% 보다 작으면 "&lt;0.1" 로 적습니다. 목업의 이물 크기별 비율은 가상입니다.</p>`;
+}
+function act(t,fromLink){const d=t.dataset,f=d.f;
+ if(t.id==='clear'){sel=null;caseF='';layer='';}else if(t.id==='exp')open=!open;else if(t.id==='expP')openP=!openP;
+ else if(d.tab)tab4=d.tab;else if(d.mode)mapMode=d.mode;else if(d.se)sortE=d.se;else if(d.sp)sortP=d.sp;
+ else if(d.k){caseF=!f&&caseF===d.k?'':d.k;if(f){sel=null;layer='';}}
+ else if(d.l!==undefined)layer=d.l;
+ else if(d.e){sel=!f&&sel&&sel.t==='e'&&sel.id===d.e?null:{t:'e',id:d.e};if(f){caseF='';layer='';}}
+ else if(d.p){sel=!f&&sel&&sel.t==='p'&&sel.id===d.p?null:{t:'p',id:d.p};if(f){caseF='';layer='';}}
+ render();}
+const SELQ='[data-e],[data-p],[data-l],[data-k],[data-tab],[data-mode],[data-se],[data-sp],#clear,#exp,#expP';
+document.body.addEventListener('click',ev=>{if(ev.target.closest('a[href^="#card"]'))return;const t=ev.target.closest(SELQ);if(t)act(t);});
+document.body.addEventListener('keydown',ev=>{if(ev.key!=='Enter'||ev.target.tagName!=='TR')return;const t=ev.target.closest(SELQ);if(t)act(t);});
+$('esearch').addEventListener('change',ev=>{const n=ev.target.value.trim();if(E(n)){sel={t:'e',id:n};render();}else if(!n&&sel&&sel.t==='e'){sel=null;render();}});
+window.addEventListener('beforeprint',()=>{printing=true;render();});
+window.addEventListener('afterprint',()=>{printing=false;render();});
+if(location.hash==='#print')printing=true;
+render();
+</script></body></html>
