@@ -545,6 +545,9 @@ def _pair_row(ctx, pair, kind, row_kind):
     link = ''
     if getattr(ctx, 'maps', None) is not None:
         link = '<br><a class="maplink" href="#s2" data-map-pair="%s">지도에서 보기</a>' % esc(pair['pair_id'])
+        card_link = _card_link(ctx, pair['pair_id'])
+        if card_link:
+            link += ' · ' + card_link
     return ('<tr%s %s><td>%s</td><td class="l"><b>%s</b>%s</td><td class="l">%s</td><td class="l">%s</td><td class="l">%s</td>'
             '<td>%s</td><td>%s</td><td class="l">%s</td><td class="l wrap">%s</td></tr>' % (
                 anchor, _data_attrs(row_kind, pair['a'], pair['b'], pair['delta']), esc(pair['rank']), esc(name), link,
@@ -914,7 +917,8 @@ def _maps_payload(ctx):
         rows = _sorted_electrodes(ctx, kind)
         if rows and demo is None:
             demo = rows[0]['electrode']
-    return {'pairs': pairs, 'sides': sides, 'electrodes': electrodes, 'max_pct': max_pct, 'demo_electrode': demo}
+    return {'pairs': pairs, 'sides': sides, 'electrodes': electrodes, 'max_pct': max_pct, 'demo_electrode': demo,
+            'cards': _cards_payload(ctx)}
 
 
 def _legend(mode):
@@ -934,7 +938,7 @@ def _legend(mode):
 def _map_list(ctx):
     out = []
     head = ('<tr><th>번호</th><th class="l">전극 쌍</th><th class="l">변화 종류</th><th>A</th><th>B</th><th class="l">Δ</th>'
-            '<th class="l">A 지도</th><th class="l">B 지도</th></tr>')
+            '<th class="l">A 지도</th><th class="l">B 지도</th><th class="l">위치 카드</th></tr>')
     for kind, rows in _maps_top(ctx).items():
         out.append('<h3>%s<b>%s</b> <span class="muted">%d 쌍 · 기준 vi_%s A = 100%%</span></h3>' % (chip(kind), kind, len(rows), kind))
         if not rows:
@@ -943,11 +947,11 @@ def _map_list(ctx):
         out.append('<table class="ledger mlist" id="mlist-%s">%s' % (kind, head))
         for p in rows:
             out.append('<tr data-sel-p="%s" tabindex="0"><td>%s</td><td class="l"><b>%s</b></td><td class="l">%s</td><td>%s</td><td>%s</td>'
-                       '<td class="l">%s</td><td class="l muted">%s</td><td class="l muted">%s</td></tr>' % (
+                       '<td class="l">%s</td><td class="l muted">%s</td><td class="l muted">%s</td><td class="l">%s</td></tr>' % (
                            esc(p['pair_id']), esc(p['rank']), esc('–'.join(p['electrodes'])), ctx.change_badge(p['change_kind']),
                            vcell(p['a'], p['pct_a'], p['present_a']), vcell(p['b'], p['pct_b'], p['present_b']),
                            dcell(p['delta'], p['pct_delta']), esc(_pair_map_state(ctx, p, 'reference')),
-                           esc(_pair_map_state(ctx, p, 'target'))))
+                           esc(_pair_map_state(ctx, p, 'target')), _card_link(ctx, p['pair_id'])))
         out.append('</table>')
     return ''.join(out)
 
@@ -993,6 +997,326 @@ def _section2(ctx):
     return ''.join(out)
 
 
+# ---- section 5: location cards (needs --maps-dir) -----------------------------------------------------------------------
+
+BAND_TEXT = {
+    'coords_no_candidates': '04(candidates-change) 결과 폴더를 주지 않아 좌표를 맞추지 않았습니다. 모든 줄을 제품별 "있는 쪽 값만" 으로 보입니다.',
+    'coords_not_applied': '04 가 좌표 정렬을 적용하지 않았습니다(진단 모드). 모든 줄을 제품별 "있는 쪽 값만" 으로 보입니다.',
+    'coords_stale': '04 결과가 지금 입력과 다릅니다(지문이 맞지 않음). 좌표 대응을 끄고 제품별 값만 보입니다.',
+    'coords_unavailable': '04 결과의 모드·정렬 자료·지문을 확인할 수 없어 좌표 대응을 끄고 제품별 값만 보입니다.',
+    'coords_resolution_too_coarse': '분석 타일이 대응 허용치보다 커서 좌표 대응과 가장자리 판정을 하지 않습니다. 가장자리 줄은 비교 제외입니다.'}
+REASON_TEXT = dict(BAND_TEXT, **{
+    'layer_change': '레이어가 바뀐 쌍이라 같은 좌표로 비교하지 않습니다',
+    'items_not_on_both_sides': '한쪽 제품에만 있는 항목이 있어 비교하지 않습니다',
+    'not_comparable': '같은 좌표로 비교할 수 없는 쌍입니다',
+    'new_pair': 'B 에만 있는 쌍입니다', 'gone_pair': 'A 에만 있는 쌍입니다',
+    'b_conflict': '앞 줄이 차지한 B 자리와 겹쳐 대응하지 않았습니다',
+    'outside_b_frame': '옮긴 자리가 B frame 밖입니다',
+    'low_membership_overlap': '옮긴 자리의 불량 영역이 B 와 충분히 겹치지 않습니다',
+    'offset_spread': '범위 안 정렬 이동량이 서로 달라 대응하지 않았습니다',
+    'no_field_cell': '범위와 겹치는 정렬 칸이 없습니다',
+    'no_row_matched': '대응된 줄이 없습니다',
+    'edge_no_dl1': 'frame 가장자리 밖이고 DL1 자료가 없어 비교 제외',
+    'edge_no_repeat_position': 'frame 가장자리 밖이고 반복 위치가 없어 비교 제외',
+    'edge_mismatch': '가장자리 반복 동등성이 맞지 않아 비교 제외',
+    'edge_unverifiable': '가장자리 반복 동등성을 확인할 수 없어 비교 제외'})
+ROW_TYPE = {'linear': '구간', 'point': '위치'}
+STATUS_LABEL = {'matched': '같은 좌표 비교', 'a_only': 'A 값만', 'b_only': 'B 값만', 'not_compared': '비교하지 않음'}
+
+
+def _init_cards(ctx):
+    ctx.pair_by_id = {p['pair_id']: p for p in ctx.doc['pairs']}
+    ctx.cards = [c for c in (ctx.maps['doc'].get('cards') or []) if isinstance(c, dict) and c.get('pair_id')]
+    ctx.card_of = {}
+    for index, card in enumerate(ctx.cards):
+        ctx.card_of.setdefault(card['pair_id'], index)
+    ctx.cards_payload = None
+
+
+def _card_link(ctx, pair_id):
+    """'위치 보기' link of a pair that has a card; nothing for a pair without one."""
+    if getattr(ctx, 'maps', None) is None or pair_id not in getattr(ctx, 'card_of', {}):
+        return ''
+    return '<a class="cardlink" href="#card-%s">위치 보기</a>' % esc(pair_id)
+
+
+def _reason_text(ctx, text):
+    if not text:
+        return ''
+    parts = []
+    for code in str(text).split(','):
+        code = code.strip()
+        parts.append(REASON_TEXT.get(code) or ctx.change_labels.get(code) or code)
+    return ' · '.join(parts)
+
+
+def _pair_name(ctx, pair_id):
+    pair = ctx.pair_by_id.get(pair_id)
+    return '–'.join(pair['electrodes']) if pair else pair_id
+
+
+def _card_state(ctx, card, role):
+    """absent = the pair is not in that product; pending = its ledger value is null; ok."""
+    pair = ctx.pair_by_id.get(card['pair_id'])
+    if pair is not None and not pair['present_a' if role == 'reference' else 'present_b']:
+        return 'absent'
+    return 'pending' if card.get('a' if role == 'reference' else 'b') is None else 'ok'
+
+
+def _card_val(ctx, card, role, value):
+    state = _card_state(ctx, card, role)
+    if state == 'absent':
+        return muted('없음')
+    if state == 'pending' or value is None:
+        return muted('대기')
+    return vcell(value, ctx.pct(value, card['kind']))
+
+
+def _card_others(ctx, card, role, row):
+    others = row.get('others')
+    if row.get('edge') == 'excluded' or not isinstance(others, dict) or _card_state(ctx, card, role) != 'ok':
+        return '—'
+    kind = card['kind']
+    lines = ['%s %s' % (esc(_pair_name(ctx, o['pair_id'])), esc(_plain_val(o['value'], ctx.pct(o['value'], kind))))
+             for o in others.get('top') or []]
+    if others.get('others_n'):
+        lines.append('외 %d 쌍 %s' % (others['others_n'], esc(_plain_val(others.get('others_value'), ctx.pct(others.get('others_value'), kind)))))
+    return '<br>'.join(lines) or '—'
+
+
+def _card_total(ctx, card, role, row):
+    if row.get('edge') == 'excluded':
+        return muted('비교 제외')
+    return _card_val(ctx, card, role, row.get('range_total'))
+
+
+def _repeat_note(row):
+    """repeat_used: the row's tiles (and value) include image tiles one period inside the frame; `rect` is only the original box."""
+    count = row.get('image_tiles')
+    return '안쪽 반복 사용 — 안쪽 반복 타일 %d개 포함' % count if isinstance(count, int) and count > 0 else '안쪽 반복 사용'
+
+
+def _row_notes(ctx, card, row):
+    notes = []
+    match = row.get('match') or {}
+    if row['edge'] == 'excluded':
+        return _reason_text(ctx, row.get('edge_reason')) or '비교 제외'
+    if row['edge'] == 'repeat_used':
+        notes.append(_repeat_note(row))
+    if match.get('partial_matched'):
+        notes.append('대응 부분 제외')
+    reason = _reason_text(ctx, match.get('reason'))
+    if reason:
+        notes.append(reason)
+    elif not notes:
+        side_only = {'a_only': 'A 에만 있는 쌍', 'b_only': 'B 에만 있는 쌍'}.get((card.get('match') or {}).get('status'))
+        notes.append(side_only or '대응하지 않은 줄')
+    return ' · '.join(notes)
+
+
+def _same_table(ctx, card, a_rows, by_id):
+    kind = card['kind']
+    pairs_ = []
+    for arow in a_rows:
+        brow = by_id.get((arow.get('match') or {}).get('counterpart'))
+        if arow.get('match', {}).get('status') == 'matched' and brow is not None:
+            pairs_.append((arow, brow))
+    if not pairs_:
+        return pairs_, '<p class="muted">같은 좌표로 대응된 줄이 없습니다.%s</p>' % (
+            esc(' — ' + _reason_text(ctx, (card.get('match') or {}).get('reason'))) if (card.get('match') or {}).get('reason') else '')
+    out = ['<table class="ledger"><tr><th class="l">줄</th><th class="l">종류</th><th>A 값</th><th>B 값</th><th class="l">Δ</th>'
+           '<th class="l">다른 쌍 A</th><th class="l">다른 쌍 B</th><th>범위 합계 A</th><th>범위 합계 B</th><th class="l">표시</th></tr>']
+    for arow, brow in pairs_:
+        a, b = arow.get('pair'), brow.get('pair')
+        pending = _card_state(ctx, card, 'reference') != 'ok' or _card_state(ctx, card, 'target') != 'ok'
+        delta = None if pending or a is None or b is None else b - a
+        notes = ' · '.join(_repeat_note(r) for r in (arow, brow) if r['edge'] == 'repeat_used')
+        out.append('<tr><td class="l rowid">%s ↔ %s</td><td class="l">%s</td><td>%s</td><td>%s</td><td class="l">%s</td>'
+                   '<td class="l wrap">%s</td><td class="l wrap">%s</td><td>%s</td><td>%s</td><td class="l">%s</td></tr>' % (
+                       esc(arow['id']), esc(brow['id']), esc(ROW_TYPE.get(arow['type'], arow['type'])),
+                       _card_val(ctx, card, 'reference', a), _card_val(ctx, card, 'target', b),
+                       muted('대기') if delta is None else dcell(delta, ctx.pct(delta, kind)),
+                       _card_others(ctx, card, 'reference', arow), _card_others(ctx, card, 'target', brow),
+                       _card_total(ctx, card, 'reference', arow), _card_total(ctx, card, 'target', brow), esc(notes)))
+    out.append('</table>')
+    return pairs_, ''.join(out)
+
+
+def _only_table(ctx, card, rows, skip_ids):
+    rest = [r for r in rows if r['id'] not in skip_ids]
+    if not rest:
+        return '<p class="muted">없습니다.</p>'
+    out = ['<table class="ledger"><tr><th class="l">줄</th><th class="l">제품</th><th class="l">종류</th><th>이 쌍 값</th>'
+           '<th class="l">다른 쌍</th><th>범위 합계</th><th class="l">설명</th></tr>']
+    for row in rest:
+        role = row['side']
+        value = muted('비교 제외') if row['edge'] == 'excluded' else _card_val(ctx, card, role, row.get('pair'))
+        out.append('<tr><td class="l rowid">%s</td><td class="l">%s</td><td class="l">%s</td><td>%s</td><td class="l wrap">%s</td><td>%s</td>'
+                   '<td class="l wrap">%s</td></tr>' % (
+                       esc(row['id']), 'A' if role == 'reference' else 'B', esc(ROW_TYPE.get(row['type'], row['type'])), value,
+                       _card_others(ctx, card, role, row), _card_total(ctx, card, role, row), esc(_row_notes(ctx, card, row))))
+    out.append('</table>')
+    return ''.join(out)
+
+
+def _not_listed(card):
+    listed = (card.get('match') or {}).get('not_listed') or {}
+    parts = ['%s %d 곳' % (key, (listed.get(role) or {})['n']) for role, key in ROLE_KEYS if (listed.get(role) or {}).get('n')]
+    if not parts:
+        return ''
+    return '<p class="muted not-listed">그 밖 %s — 줄 수 상한에 들지 못한 점형 자리라 표에 없습니다.</p>' % esc(' · '.join(parts))
+
+
+def _totals_table(ctx, card):
+    kind = card['kind']
+
+    def cell(role, group, final=False):
+        state = _card_state(ctx, card, role)
+        if state == 'absent':
+            return muted('없음')
+        if state == 'pending':
+            return muted('대기')
+        value = (card.get(group) or {}).get(role)
+        return muted('대기') if value is None else vcell(value, ctx.pct(value, kind))
+    rows = (('범위 안 합 (줄의 이 쌍 값을 더한 값)', 'rows_sum', ''),
+            ('이 쌍 관찰 영역 값 (창 ∪ 쓴 범위)', 'observed', ''),
+            ('4절 쌍 값 (참고)', 'section4_ref', 'unit 한 장 기준이라 4절 값과 다릅니다'))
+    out = ['<table class="ledger"><tr><th class="l">합계 줄</th><th>A</th><th>B</th><th class="l">비고</th></tr>']
+    for label, group, note in rows:
+        out.append('<tr class="%s"><td class="l">%s</td><td>%s</td><td>%s</td><td class="l muted">%s</td></tr>' % (
+            'sum' if group == 'rows_sum' else '', esc(label), cell('reference', group), cell('target', group), esc(note)))
+    out.append('</table>')
+    error = card.get('rounding_error_um')
+    if isinstance(error, (int, float)) and error:
+        out.append('<p class="muted">좌표 반올림 오차 최대 %s µm</p>' % esc('%g' % error))
+    return ''.join(out)
+
+
+def _card_geo(ctx, role):
+    """Map pixel geometry of one product: frame µm of map pixel (0, 0), µm per map pixel, map size. None if unknown."""
+    side = _side_maps(ctx, role)
+    frame = side.get('frame') or {}
+    maps = sorted(side.get('maps') or [], key=lambda m: m['file'])
+    origin, pitch = frame.get('origin_um'), frame.get('pitch_um')
+    if not maps or not origin or not pitch:
+        return None
+    entry = maps[0]
+    px, op, shape = entry.get('px_um'), entry.get('origin_px'), entry.get('shape_yx')
+    if not px or not op or not shape:
+        return None
+    return {'ox': origin[0] + op[0] * pitch, 'oy': origin[1] + op[1] * pitch, 'px': px, 'w': shape[1], 'h': shape[0]}
+
+
+def _card_side_view(rows, geo):
+    """{'vb', 'z', 'rows'} of one product's card map: the crop around the rows in map pixels, zoom, rows in crop-free map pixels."""
+    if geo is None or not rows:
+        return None
+    boxes = []
+    for row in rows:
+        x0, y0, x1, y1 = row['rect']
+        boxes.append((row, [(x0 - geo['ox']) / geo['px'], (y0 - geo['oy']) / geo['px'],
+                            (x1 - geo['ox']) / geo['px'], (y1 - geo['oy']) / geo['px']]))
+    inside = [b for r, b in boxes if b[2] > 0 and b[0] < geo['w'] and b[3] > 0 and b[1] < geo['h']]
+    live = [b for r, b in boxes if r['edge'] != 'excluded' and b[2] > 0 and b[0] < geo['w'] and b[3] > 0 and b[1] < geo['h']]
+    use = live or inside
+    if not use:
+        return None
+    bx0, by0 = min(b[0] for b in use), min(b[1] for b in use)
+    bx1, by1 = max(b[2] for b in use), max(b[3] for b in use)
+    pad = max(10.0, 0.25 * max(bx1 - bx0, by1 - by0))
+    vx0, vy0 = max(0, int(math.floor(bx0 - pad))), max(0, int(math.floor(by0 - pad)))
+    vx1, vy1 = min(geo['w'], int(math.ceil(bx1 + pad))), min(geo['h'], int(math.ceil(by1 + pad)))
+    if vx1 - vx0 < 2 or vy1 - vy0 < 2:
+        return None
+    return {'vb': [vx0, vy0, vx1, vy1], 'z': max(1, min(8, 520 // (vx1 - vx0))),
+            'rows': [{'id': r['id'], 'e': r['edge'], 'n': int(r.get('image_tiles') or 0), 'b': [round(v, 2) for v in b]}
+                     for r, b in boxes]}
+
+
+def _cards_payload(ctx):
+    if ctx.cards_payload is not None:
+        return ctx.cards_payload
+    out = []
+    geo = {role: _card_geo(ctx, role) for role, _key in ROLE_KEYS}
+    for index, card in enumerate(ctx.cards):
+        sides = {}
+        for role, key in ROLE_KEYS:
+            view = _card_side_view([r for r in card.get('rows') or [] if r.get('side') == role], geo[role])
+            if view is not None:
+                sides[key] = view
+        out.append({'i': index, 'p': card['pair_id'], 'sides': sides})
+    ctx.cards_payload = out
+    return out
+
+
+def _card_html(ctx, index, card, view):
+    kind, pair_id = card['kind'], card['pair_id']
+    pair = ctx.pair_by_id.get(pair_id)
+    name = _pair_name(ctx, pair_id)
+    rank = card.get('rank') if pair is None else pair.get('rank')
+    shown = {k: [p['pair_id'] for p in ctx.doc['pairs'] if p['kind'] == k][:ctx.top_pairs] for k in KINDS}
+    href = '#pair-%s' % esc(rank) if pair is not None and pair_id in shown.get(kind, []) and rank else '#s4'
+    rows = card.get('rows') or []
+    by_id = {r['id']: r for r in rows}
+    a_rows = [r for r in rows if r.get('side') == 'reference']
+    status = (card.get('match') or {}).get('status')
+    a, b, d = card.get('a'), card.get('b'), card.get('delta')
+    state_a, state_b = _card_state(ctx, card, 'reference'), _card_state(ctx, card, 'target')
+    head_a = muted('없음') if state_a == 'absent' else vcell(a, ctx.pct(a, kind))
+    head_b = muted('없음') if state_b == 'absent' else vcell(b, ctx.pct(b, kind))
+    maps_html = []
+    for role, key in ROLE_KEYS:
+        state = _card_state(ctx, card, role)
+        side_view = view.get(key)
+        if state == 'absent':
+            body = '<p class="muted mnote">이 제품에 없음</p>'
+        elif side_view is None:
+            body = '<p class="muted mnote">%s</p>' % ('이 제품에 이 쌍의 줄이 없습니다' if not [r for r in rows if r.get('side') == role]
+                                                      else '이 제품의 지도에 줄이 보이지 않습니다')
+        else:
+            body = '<canvas class="cardmap" id="cv-%d-%s" width="1" height="1" hidden role="img" aria-label="%s 카드 %s 확대 지도"></canvas>' % (
+                index, key, key, esc(name))
+        maps_html.append('<div><h3>%s</h3>%s</div>' % ('기준 A (확대)' if key == 'A' else '대상 B (확대)', body))
+    pairs_, same = _same_table(ctx, card, a_rows, by_id)
+    matched_ids = {r['id'] for pair_ in pairs_ for r in pair_}
+    return ''.join([
+        '<details class="card" id="card-%s" data-card-pair="%s"%s><summary class="t"><span>%s %s<b>%s</b> · %s · %s · A %s → B %s · %s</span>'
+        '<span><span class="badge%s">%s</span></span></summary>' % (
+            esc(pair_id), esc(pair_id), ' open' if index == 0 else '', esc(rank or ''), chip(kind), esc(name), esc(kind),
+            ctx.change_badge(card.get('change_kind')), head_a, head_b, dcell(d, ctx.pct(d, kind)),
+            '' if status == 'matched' else ' b-trade', esc(STATUS_LABEL.get(status, status or '—'))),
+        '<p class="muted"><a href="%s">4절 장부</a> · <a href="#s2" data-map-pair="%s">2절 지도에서 보기</a> · 점선 = 줄 범위(번호는 아래 표의 줄), '
+        '빗금 = 비교 제외, 진한 색 = 이 쌍, 옅은 색 = 다른 쌍</p>' % (href, esc(pair_id)),
+        '<div class="maps cardmaps">%s</div>' % ''.join(maps_html),
+        '<h3>같은 좌표 비교 — A 줄을 04 정렬 이동량으로 B 에 옮긴 자리의 값</h3>', same,
+        '<h3>있는 쪽 값만 — 대응하지 않은 줄 (제품을 밝혀 보입니다)</h3>', _only_table(ctx, card, rows, matched_ids),
+        _not_listed(card),
+        '<h3>합계</h3>', _totals_table(ctx, card), '</details>'])
+
+
+def _section5(ctx):
+    mdoc = ctx.maps['doc']
+    top_cards = (mdoc.get('options') or {}).get('top_cards')
+    out = ['<section id="s5"><p class="q">그 자리 주변은 어떤가</p><h2>5. 위치 상세</h2>',
+           '<p class="lead">불량 종류별로 변화(|Δ|)가 큰 순서의 쌍마다 카드가 하나 있습니다%s. 카드는 그 쌍의 줄(점선 범위)과 범위 안 다른 쌍의 값을 '
+           '보입니다. 서로 다른 카드의 범위는 겹칠 수 있어 카드끼리 더하지 않습니다.</p>' % (
+               ' (종류별 상위 %d 쌍)' % top_cards if isinstance(top_cards, int) else '')]
+    for band in mdoc.get('bands') or []:
+        code = band.get('code') if isinstance(band, dict) else str(band)
+        detail = band.get('detail') if isinstance(band, dict) else None
+        out.append('<div class="band" data-band="%s">%s%s</div>' % (
+            esc(code), esc(BAND_TEXT.get(code) or code), ' <span class="muted">(%s)</span>' % esc(detail) if detail else ''))
+    out.append('<p class="muted">5절 값은 창 면적 × 밀도 근사인 07 위치 Δvi 와 다를 수 있습니다. 표시 구분: "대기" = 값 없음(계산 대기), '
+               '"없음" = 그 제품에 없음, "0%" = 값이 0 입니다.</p>')
+    if not ctx.cards:
+        out.append('<p class="muted">카드가 없습니다. 위치를 볼 쌍이 없거나 ledger-maps 가 카드를 만들지 않았습니다.</p>')
+    payload = {c['i']: c for c in _cards_payload(ctx)}
+    for index, card in enumerate(ctx.cards):
+        out.append(_card_html(ctx, index, card, payload[index]['sides']))
+    out.append('</section>')
+    return ''.join(out)
+
+
 MAPS_CSS = """
 [hidden]{display:none!important}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;align-items:center}
@@ -1009,7 +1333,15 @@ table.mlist tr[data-sel-p]{cursor:pointer}table.mlist tr.hl td{background:var(--
 tr[tabindex]:focus-visible{outline:2px solid var(--down);outline-offset:-2px}
 #mtip{position:fixed;z-index:9;pointer-events:none;background:var(--surface-1);color:var(--text-primary);border:1px solid var(--border);
 border-radius:6px;padding:3px 8px;font-size:12px;max-width:420px}
-@media print{.chips button:not(.on),#mclear,#esearch{display:none}.maps{break-inside:avoid}}
+details.card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:10px;background:var(--surface-1)}
+details.card>summary{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-weight:650;font-size:14px;color:var(--text-primary);
+list-style:none}details.card>summary::-webkit-details-marker{display:none}
+details.card>summary::before{content:"▸";margin-right:6px;color:var(--text-muted)}details.card[open]>summary::before{content:"▾"}
+canvas.cardmap{display:block;width:100%;height:auto;background:var(--surface-0);border:1px solid var(--border);border-radius:6px;image-rendering:pixelated}
+body[data-map-check="failed"] canvas.cardmap{display:none}
+details.card>summary .sub2{display:inline;margin-left:4px}
+.card .maps{margin:8px 0}.card table{margin:2px 0 6px}.card td.rowid{font-weight:650}
+@media print{.chips button:not(.on),#mclear,#esearch{display:none}.maps{break-inside:avoid}details.card{break-inside:auto}}
 """
 
 MAPS_SCRIPT = r"""
@@ -1036,11 +1368,12 @@ function related(p){var s=st.sel;if(!s)return true;if(s.t==='p')return p.id===s.
 function elState(name){var s=st.sel;if(!s)return 0;
  if(s.t==='e'){if(name===s.id)return 1;if(partners(s.id)[name])return 2;return 3;}
  var p=P[s.id];if(p&&p.e.indexOf(name)>=0)return 1;return 3;}
-function build(r){var o=S[r],w=o.w,h=o.h,item=new Uint16Array(w*h),el=new Uint16Array(w*h),bb={};
- o.maps.forEach(function(m){if(st.layer&&m.meta.layer!==st.layer)return;var isItem=m.meta.kind==='it',dst=isItem?item:el,n=m.num;
+function build(r){S[r].comp=mk(r,st.layer);}
+function mk(r,layer){var o=S[r],w=o.w,h=o.h,item=new Uint16Array(w*h),el=new Uint16Array(w*h),bb={};
+ o.maps.forEach(function(m){if(layer&&m.meta.layer!==layer)return;var isItem=m.meta.kind==='it',dst=isItem?item:el,n=m.num;
   for(var i=0;i<n.length;i++){var v=n[i];if(v&&!dst[i]){dst[i]=v;
    if(isItem){var x=i%w,y=(i/w)|0,b=bb[v];if(!b){bb[v]=[x,y,x,y];}else{if(x<b[0])b[0]=x;if(x>b[2])b[2]=x;if(y<b[1])b[1]=y;if(y>b[3])b[3]=y;}}}}});
- o.comp={item:item,el:el,bb:bb};}
+ return {item:item,el:el,bb:bb};}
 function style(r,n){var it=S[r].items[n];if(!it)return null;var p=P[it.p];if(!p)return null;
  var s={rel:related(p),fill:true,hatch:false,bold:false,dash:false,col:null,a:1};
  if(st.mode==='size'){var mx=D.max_pct[it.k]||0;var q=(it.pct==null||!mx)?0:Math.min(1,Math.abs(it.pct)/mx);
@@ -1079,6 +1412,32 @@ function draw(r){var o=S[r];if(!o.comp||!o.w)return;var w=o.w,h=o.h,cv=o.cv,g=cv
   var ly=Math.max(fs+1,u[1]-2);g.strokeText(p.no,u[0],ly);g.fillText(p.no,u[0],ly);});
  g.globalAlpha=1;}
 function drawAll(){colors();R.forEach(function(r){if(S[r].ok){build(r);draw(r);}});}
+var cardComps={};
+function cardComp(r){if(!cardComps[r]){cardComps[r]=mk(r,'');}return cardComps[r];}
+function drawCards(){if(!D.cards||!D.cards.length)return;colors();var count=0;
+ D.cards.forEach(function(c){R.forEach(function(r){var s=c.sides[r];if(!s||!S[r].ok||!S[r].w)return;var cv=$('cv-'+c.i+'-'+r);if(!cv)return;
+  var v=s.vb,z=s.z,W=(v[2]-v[0])*z,H=(v[3]-v[1])*z,o=S[r],comp=cardComp(r),w=o.w,own=P[c.p],dd=own?own.d:null;
+  var col=(dd==null||dd===0)?CC.common:(dd>0?CC.up:CC.down);
+  cv.width=W;cv.height=H;var g=cv.getContext('2d'),img=g.createImageData(W,H),d=img.data,dx,dy;
+  for(dy=0;dy<H;dy++){var sy=v[1]+((dy/z)|0);
+   for(dx=0;dx<W;dx++){var i=sy*w+v[0]+((dx/z)|0),q=(dy*W+dx)*4,rr=CC.bg[0],gg=CC.bg[1],bb=CC.bg[2];
+    if(comp.el[i]){rr=CC.mid[0];gg=CC.mid[1];bb=CC.mid[2];}
+    var n=comp.item[i];
+    if(n&&o.items[n]){var mine=o.items[n].p===c.p,cl=mine?col:CC.common,a=mine?.85:.22;
+     rr=rr*(1-a)+cl[0]*a;gg=gg*(1-a)+cl[1]*a;bb=bb*(1-a)+cl[2]*a;}
+    d[q]=rr;d[q+1]=gg;d[q+2]=bb;d[q+3]=255;}}
+  g.putImageData(img,0,0);
+  var fs=Math.max(11,Math.round(W/36)),ink='rgb('+CC.text.join(',')+')',paper='rgb('+CC.bg.join(',')+')';
+  s.rows.forEach(function(rw){var b=rw.b,x=(b[0]-v[0])*z,y=(b[1]-v[1])*z,ww=(b[2]-b[0])*z,hh=(b[3]-b[1])*z,k;
+   if(rw.e==='excluded'){g.save();g.beginPath();g.rect(x,y,ww,hh);g.clip();g.strokeStyle=ink;g.globalAlpha=.55;g.lineWidth=1;
+    for(k=-hh;k<ww;k+=8){g.beginPath();g.moveTo(x+k,y+hh);g.lineTo(x+k+hh,y);g.stroke();}g.restore();}
+   g.save();g.setLineDash([6,4]);g.lineWidth=2;g.strokeStyle=ink;g.strokeRect(x,y,ww,hh);g.restore();
+   var label=rw.id+(rw.e==='excluded'?' 비교 제외':(rw.e==='repeat_used'?(rw.n>0?' 안쪽 반복 타일 '+rw.n+'개 포함':' 안쪽 반복 사용'):''));
+   g.font='bold '+fs+'px sans-serif';g.textBaseline='top';g.lineWidth=Math.max(2,fs/5);g.strokeStyle=paper;g.fillStyle=ink;
+   var lx=Math.max(2,Math.min(W-4,x+3)),ly=Math.max(2,Math.min(H-fs-2,y+3));g.strokeText(label,lx,ly);g.fillText(label,lx,ly);});
+  cv.hidden=false;count++;});});
+ document.body.setAttribute('data-card-drawn',String(count));}
+function openCard(id){var e=$(id);if(e&&e.tagName==='DETAILS'){e.open=true;}}
 function txt(parent,text,bold){var n=document.createElement(bold?'b':'span');n.textContent=text;parent.appendChild(n);return n;}
 function note(r){var s=st.sel;if(!s)return '';var k=r==='A'?'pa':'pb';
  if(s.t==='p'){var p=P[s.id];if(!p)return '';if(!p[k])return '이 제품에 없음';
@@ -1126,10 +1485,11 @@ function start(){colors();var total=0,left=0,good=true;
   R.forEach(function(r){S[r].maps.sort(function(a,b){return a.meta.file<b.meta.file?-1:1;});S[r].ok=!failed&&S[r].w>0;
    S[r].cv.hidden=failed||S[r].w===0;if(S[r].w>0){S[r].cv.width=S[r].w;S[r].cv.height=S[r].h;}});
   $('mapwarn').hidden=!failed;document.body.setAttribute('data-map-check',failed?'failed':'passed');
-  refresh();document.body.setAttribute('data-map-drawn','1');}
+  refresh();drawCards();document.body.setAttribute('data-map-drawn','1');}
  if(!total){good=true;fin();return;}
  R.forEach(function(r){D.sides[r].maps.forEach(function(meta){decode(r,meta,function(ok){if(!ok)good=false;left--;if(left===0)fin();});});});}
 document.addEventListener('click',function(ev){var t=ev.target;
+ var cl=t.closest?t.closest('a[href^="#card-"]'):null;if(cl){openCard(cl.getAttribute('href').slice(1));return;}
  if(t.getAttribute&&t.getAttribute('data-mode')){st.mode=t.getAttribute('data-mode');refresh();return;}
  if(t.getAttribute&&t.getAttribute('data-layer')!==null&&t.parentNode&&t.parentNode.id==='mlayers'){st.layer=t.getAttribute('data-layer');refresh();return;}
  if(t.id==='mclear'){st.sel=null;refresh();return;}
@@ -1138,8 +1498,10 @@ document.addEventListener('click',function(ev){var t=ev.target;
 document.addEventListener('keydown',function(ev){if(ev.key==='Enter'){var row=ev.target.closest?ev.target.closest('[data-sel-p]'):null;if(row)select({t:'p',id:row.getAttribute('data-sel-p')});}});
 $('esearch').addEventListener('change',function(){var v=this.value.trim();if(D.electrodes[v]){st.sel={t:'e',id:v};refresh();}});
 R.forEach(wire);
-window.addEventListener('beforeprint',function(){drawAll();});
-if(location.hash==='#print'){window.addEventListener('load',drawAll);}
+window.addEventListener('beforeprint',function(){var ds=document.querySelectorAll('details.card');for(var i=0;i<ds.length;i++){ds[i].open=true;}drawAll();drawCards();});
+window.addEventListener('hashchange',function(){if(location.hash.indexOf('#card-')===0){openCard(location.hash.slice(1));}});
+if(location.hash.indexOf('#card-')===0){openCard(location.hash.slice(1));}
+if(location.hash==='#print'){window.addEventListener('load',function(){drawAll();drawCards();});}
 start();
 })();
 """
@@ -1204,6 +1566,8 @@ def _json_embed(value):
 def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None):
     ctx = Ctx(doc, top_pairs, top_electrodes)
     ctx.maps = maps
+    if maps is not None:
+        _init_cards(ctx)
     products = doc['inputs']['products']
     embed = {'schema_version': SCHEMA_VERSION, 'ledger_json_sha256': ledger_sha, 'ledger_status': doc.get('status'),
              'options': {'top_pairs': top_pairs, 'top_electrodes': top_electrodes},
@@ -1228,7 +1592,7 @@ def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None):
 
 def _render_with_maps(ctx, embed, nav, products, top_pairs, top_electrodes):
     """The same page with section 2 filled from the ledger-maps folder (sections 1, 3, 4, 6, 7 as without maps, plus
-    the 'show on map' links in section 4). Section 5 stays a placeholder."""
+    the 'show on map' and 'location' links in section 4) and section 5 filled with the location cards."""
     doc = ctx.doc
     body = [
         '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>설계 변경 영향 보고서 (장부)</title><style>%s%s</style></head><body><main>' % (CSS, MAPS_CSS),
@@ -1237,7 +1601,7 @@ def _render_with_maps(ctx, embed, nav, products, top_pairs, top_electrodes):
             esc(products['reference'].get('model_group')), esc(products['target'].get('model_group')), esc(doc.get('status')),
             top_pairs, top_electrodes),
         _head_band(ctx), _maps_band(ctx), '<div id="bar">%s</div>' % nav,
-        _section1(ctx), _section2(ctx), _section3(ctx), _section4(ctx), _placeholder(5, '위치 상세'),
+        _section1(ctx), _section2(ctx), _section3(ctx), _section4(ctx), _section5(ctx),
         _section6(ctx), _section7(ctx),
         '<div id="mtip" hidden></div></main><script type="application/json" id="report-data">%s</script>'
         '<script type="application/json" id="maps-data">%s</script><script>%s</script><script>%s</script></body></html>\n' % (
@@ -1304,7 +1668,7 @@ def run_ledger_report(ledger_dir, out, top_pairs=DEFAULT_TOP, top_electrodes=DEF
     if maps is not None:
         report['ledger_maps_json_sha256'] = maps['sha']
         report['ledger_maps_status'] = maps['doc'].get('status')
-        report['sections'] = {'present': [1, 2, 3, 4, 6, 7], 'placeholders': [5]}
+        report['sections'] = {'present': [1, 2, 3, 4, 5, 6, 7], 'placeholders': []}
     record = {'command': COMMAND, 'status': status, 'reasons': reasons,
               'outputs': [str(output / name) for name in (HTML_NAME, 'report.json')],
               'ledger_dir': str(ledger_dir), 'options': report['options'],
