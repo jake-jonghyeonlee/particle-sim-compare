@@ -39,7 +39,7 @@ VERTICAL_CASE = 'vertical_short-A-L1-C-L2'     # only in the target's (and the m
 STAGE_ARGS = {'--align-search-um': '3', '--align-min-dice': '0.3', '--align-layer-tolerance-um': '0.5',
               '--change-tolerance-um': '0.2', '--top-k': '3'}   # small synthetic world (40 x 42 um); --window-um comes from compare2.yaml
 FLOW_COMMANDS = ['import-hotspots', 'import-hotspots', 'import-electrode-assets', 'import-electrode-assets', 'compare2',
-                 'validate-data', 'compare', 'candidates-change', 'compare-windows', 'compare2-report']
+                 'validate-data', 'compare', 'candidates-change', 'compare-windows', 'compare2-report', 'ledger', 'ledger-report']
 
 
 def _stages():
@@ -280,14 +280,14 @@ def _build_chain(python, tmp, with_models=False):
         logs[label or name], results[label or name] = _run_stage(python, base, tmp, name, jobs, label)
 
     if not with_models:
-        flow('main')            # 01, 03, 02, diag, 04, 06, 07 of one runner: no file is copied or edited between the steps
+        flow('main')            # 01, 03, 02, diag, 04, 06, 07, 08 of one runner: no file is copied or edited between the steps
     else:
         flow('01', STEPS=['01'])
         _write_models_yaml(base, with_assets=False)
         stage('models_01_import', _jobs('models_01_import'))
         stage('models_02_import_assets', _jobs('models_02_import_assets'))
         _write_models_yaml(base, with_assets=True)      # the 03 output stays where models_02 wrote it: no copy, no sha256
-        flow('rest', STEPS=['03', '02', 'diag', '04', '06', '07'])
+        flow('rest', STEPS=['03', '02', 'diag', '04', '06', '07'])      # 08 is not part of this run (no ledger yet)
     # the DL2 path: a synthetic NCC JSON, then confirm-pairs --list only (decisions need the human: the second job stops with exit 2)
     models = {side: SimpleNamespace(spec=SimpleNamespace(shape=SHAPE, product_id=PRODUCTS[side])) for side in MODELS}
     (base / 'data/dl2').mkdir()
@@ -306,6 +306,13 @@ def _build_chain(python, tmp, with_models=False):
     else:
         # re-run only 02: the previous data/compare2 is moved to data/_runs/AGAIN/, not deleted, and a new one is written
         flow('again', STEPS=['02'], RUN_TAG='AGAIN')
+        # step 08 only (the 02 output is there): both 08 folders of the main run are moved to data/_runs/L08A, the new ones are written
+        flow('ledger_again', STEPS=['08'], RUN_TAG='L08A')
+        # ledger succeeds, ledger-report cannot create its folder (a plain file blocks the parent): exit != 0, the ledger folder is kept
+        (base / 'data/blocker').write_text('a file, not a folder\n', encoding='utf-8')
+        flow('ledger_fail', STEPS=['08'], RUN_TAG='L08B', LEDGER_REPORT_DIR='data/blocker/report')
+        # recovery: STEPS = ['08'] again with the default folders (the half-made ledger folder is moved, not deleted)
+        flow('ledger_recover', STEPS=['08'], RUN_TAG='L08C')
     # a wrong DL1 root in compare2.yaml: the 04 log alone must say which argument and which path is wrong
     _write_compare2_yaml(base, 'compare2_typo.yaml', dl1_root='data/input/dl1_TYPO')
     # a later step (06) is chosen to show that the runner stops at exit 2 and never starts it; it writes to its own folders
@@ -340,7 +347,7 @@ def test_the_integrated_log_identifies_the_run_and_every_command_exits_zero_or_t
     assert [name for name, _ in codes] == FLOW_COMMANDS, (codes, text[-2500:])
     assert all(int(code) in (0, 3) for _, code in codes), (codes, text[-2500:])
     assert chain.results['main'].returncode in (0, 3), chain.results['main'].stderr[-2500:]
-    assert 'flow: 10 job(s):' in text and 'flow: no previous output folder to move' in text      # a first run has nothing to move
+    assert 'flow: 12 job(s):' in text and 'flow: no previous output folder to move' in text      # a first run has nothing to move
     if chain.python != sys.executable:
         assert 'python 3.9.' in text
 
@@ -466,7 +473,7 @@ def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_p
         assert [name for name, _ in codes] == commands, (stage, codes, text[-1500:])
         assert all(int(code) in (0, 3) for _, code in codes), (stage, codes, text[-1500:])
     assert [name for name, _ in _exit_codes(chain.logs['01'])] == ['import-hotspots'] * 2
-    assert [name for name, _ in _exit_codes(chain.logs['rest'])] == FLOW_COMMANDS[2:]
+    assert [name for name, _ in _exit_codes(chain.logs['rest'])] == FLOW_COMMANDS[2:-2]
     base = chain.base
     assert (base / f'data/models/{MODEL_FOLDER}/manifest.json').is_file() and (base / f'data/assets/models/{MODEL_FOLDER}/review_assets.json').is_file()
     assert (base / f'data/confirmed/models/{MODEL_PRODUCT}/roi_correspondence.json').is_file()
@@ -485,6 +492,65 @@ def test_multiproduct_stages_run_with_the_runners_and_join_reference_and_model_p
     print(f'\netx-chain-models[{Path(chain.python).name}] elapsed {chain.seconds:.1f}s')
     for stage in MODEL_COMMANDS:
         print('  ', stage, [(n, c, s) for n, c, s in re.findall(r'^\[simcompare_job\] \S+ \S+ (\S+) exit (\d+) in (\d+)s$', chain.logs[stage], re.M)])
+
+
+def test_step_08_writes_the_ledger_and_the_single_file_report_after_02(chain):
+    base = chain.base
+    for name in ('ledger.json', 'ledger_pairs.csv', 'ledger_electrodes.csv', 'execution.json'):
+        assert (base / 'data/ledger' / name).is_file(), name
+    page = base / 'data/ledger_report/ledger_report.html'
+    assert page.is_file() and page.stat().st_size > 0
+    text = chain.logs['main']
+    assert ' start ledger --compare2-dir data/compare2 --config compare2.yaml --out data/ledger' in text
+    assert ' start ledger-report --ledger-dir data/ledger --out data/ledger_report' in text
+    assert [name for name, _ in _exit_codes(text)][-2:] == ['ledger', 'ledger-report']
+
+
+def test_step_08_alone_moves_its_old_folders_and_rewrites_them(chain):
+    base, text = chain.base, chain.logs['ledger_again']
+    assert [name for name, _ in _exit_codes(text)] == ['ledger', 'ledger-report'] and chain.results['ledger_again'].returncode in (0, 3)
+    assert (base / 'data/_runs/L08A/data/ledger/ledger.json').is_file()
+    assert (base / 'data/_runs/L08A/data/ledger_report/ledger_report.html').is_file()
+    assert (base / 'data/ledger_report/ledger_report.html').is_file()
+    assert (base / 'data/compare2/compare2.json').is_file()         # 02 is not a chosen step: untouched
+
+
+def test_step_08_recovers_after_ledger_report_failed(chain):
+    base = chain.base
+    failed = [(name, int(code)) for name, code in _exit_codes(chain.logs['ledger_fail'])]
+    assert failed[0][0] == 'ledger' and failed[0][1] in (0, 3) and failed[-1][0] == 'ledger-report' and failed[-1][1] not in (0, 3)
+    assert chain.results['ledger_fail'].returncode not in (0, 3)
+    assert (base / 'data/_runs/L08C/data/ledger/ledger.json').is_file()      # the ledger of the failed run was kept (moved), not deleted
+    assert [name for name, _ in _exit_codes(chain.logs['ledger_recover'])] == ['ledger', 'ledger-report']
+    assert chain.results['ledger_recover'].returncode in (0, 3)
+    assert not (base / 'data/blocker/report').exists() and (base / 'data/ledger_report/ledger_report.html').is_file()
+
+
+@pytest.mark.parametrize('python', _python_params())
+def test_step_08_continues_with_ledger_report_after_a_partial_ledger(tmp_path, python):
+    """The synthetic chain world has no computable values, so the partial ledger comes from the test_ledger mockup (a compare2.json whose
+    condition deltas are tampered so the totals check fails): ledger exits 3, the runner goes on, ledger-report exits 3 with the band."""
+    from test_ledger import ELECTRODES_A, ELECTRODES_B, MOCKUP_CNO, make_world, mockup_pairs
+    if python is None:
+        pytest.fail('SIMCOMPARE_REQUIRE_ETX_PY=1 but SIMCOMPARE_ETX_PY is not set')
+
+    def tamper(doc):
+        doc['delta']['indicators']['delta_vi_line'] += 0.01
+
+    def config(cfg):
+        cfg.update(numeric_config='real.yaml', output_dir='data/compare2')
+
+    base = tmp_path / 'work'
+    base.mkdir()
+    world = make_world(base, mockup_pairs(), dl1={'reference': ELECTRODES_A, 'target': ELECTRODES_B}, cno=MOCKUP_CNO,
+                       mutate=tamper, config_mutate=config)
+    (base / 'data').mkdir()
+    shutil.move(str(world.c2), str(base / 'data/compare2'))
+    _write_real_yaml(base)
+    text, result = _run_flow(python, base, tmp_path, 'partial', STEPS=['08'])
+    assert _exit_codes(text) == [('ledger', '3'), ('ledger-report', '3')] and result.returncode in (0, 3), text[-2000:]
+    page = (base / 'data/ledger_report/ledger_report.html').read_text(encoding='utf-8')
+    assert 'class="band partial"' in page and '부분 결과' in page
 
 
 def test_chain_elapsed_time_is_reported(chain):

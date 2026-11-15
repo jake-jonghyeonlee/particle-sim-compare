@@ -10,8 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-STEP_ORDER = ('01', '03', '02', 'diag', '04', '05', '06', '07')     # 실행 순서(STEPS 의 순서가 아니다)
-DEFAULT_STEPS = ('01', '03', '02', 'diag', '04', '06', '07')       # 05(DL2 확정)는 단계로 남기되 기본에서 뺀다
+STEP_ORDER = ('01', '03', '02', 'diag', '04', '05', '06', '07', '08')     # 실행 순서(STEPS 의 순서가 아니다)
+DEFAULT_STEPS = ('01', '03', '02', 'diag', '04', '06', '07', '08')       # 05(DL2 확정)는 단계로 남기되 기본에서 뺀다
 RUNS_DIR = 'data/_runs'
 SOURCE_VERSION = 'LAYOUT_V1'
 ASSET_MANIFEST_NAME = 'review_assets.json'
@@ -35,6 +35,8 @@ DEFAULTS = {
     'confirmed_dir': 'data/confirmed',
     'local_dir': 'data/local',
     'report_dir': 'data/compare2_report',
+    'ledger_dir': 'data/ledger',
+    'ledger_report_dir': 'data/ledger_report',
 }
 
 
@@ -249,6 +251,13 @@ def plan_jobs(base_dir, settings):
             if '05' in steps:
                 args += ['--confirm', rel(confirmed)]
             jobs.append(('compare2-report', args + ['--out', rel(report)]))
+        elif step == '08':
+            if '02' not in steps and not (c2.output_dir / 'compare2.json').is_file():
+                raise FlowError('etx_compare2_output_missing', 'step 08 needs the 02 output: %s is missing; add 02 to STEPS '
+                                '(STEPS = ["02", "08"]) or run 02 first' % (c2.output_dir / 'compare2.json'))
+            ledger, ledger_report = _under(base, cfg['ledger_dir']), _under(base, cfg['ledger_report_dir'])
+            jobs.append(('ledger', ['--compare2-dir', rel(c2.output_dir), '--config', compare2_arg, '--out', rel(ledger)]))
+            jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--out', rel(ledger_report)]))
     return jobs
 
 
@@ -277,6 +286,8 @@ def output_folders(ctx, steps):
             found.append((step, _under(base, cfg['local_dir'])))
         elif step == '07':
             found.append((step, _under(base, cfg['report_dir'])))
+        elif step == '08':
+            found += [(step, _under(base, cfg['ledger_dir'])), (step, _under(base, cfg['ledger_report_dir']))]
     return found
 
 

@@ -130,7 +130,7 @@ def test_every_runner_job_parses_with_the_real_cli_parser(tmp_path):
                 assert parsed.command == command, (flow, stage)
     base = template_base(tmp_path)
     for step in etx_flow.STEP_ORDER:        # the integrated runner: every step's jobs parse (05 needs its DL2 arguments)
-        jobs = etx_flow.plan_jobs(base, edit_settings(steps=[step]))
+        jobs = etx_flow.plan_jobs(base, edit_settings(steps=[step] if step != '08' else ['08', '02']))      # 08 alone needs the 02 output
         assert jobs, step
         for command, args in jobs:
             assert parser.parse_args([command, *args]).command == command, step

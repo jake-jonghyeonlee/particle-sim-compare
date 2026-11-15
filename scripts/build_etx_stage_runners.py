@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ETX(Linux 서버) 단일 파일 실행기를 bundles/etx/ 에 만든다.
-- bundles/etx/simcompare_job_etx.py: 기본 흐름(01·03·02·diag·04·05·06·07)을 실행기 하나로 돌리는 통합 실행기.
+- bundles/etx/simcompare_job_etx.py: 기본 흐름(01·03·02·diag·04·05·06·07·08)을 실행기 하나로 돌리는 통합 실행기.
   JOBS 를 직접 적지 않는다. EDIT 블록의 STEPS 와 설정 파일 두 개(real.yaml, compare2.yaml)에서 simcompare.etx_flow 가 JOBS 를 만든다.
 - bundles/etx/simcompare_job_models_01~05_*.py: 다제품(모델별 리포트) 회차별 실행기.
 - bundles/etx/dv/simcompare_job_NN_*.py: ΔV·위험도 흐름 회차별 실행기.
@@ -22,16 +22,17 @@ CONFIG = "real.yaml"
 FLOW_NAME = "etx"      # 통합 실행기 파일 이름: simcompare_job_etx.py
 
 FLOW_HEADER = [
-    "ETX 기본 흐름 통합 실행기. 01(hotspot import) → 03(전극 PNG import) → 02(compare2) → diag(검사·비교) → 04(변경점 ROI) → 05(DL2 확정, 선택) → 06(창별 국부 ΔCA) → 07(보고서)를 한 파일로 돌린다.",
+    "ETX 기본 흐름 통합 실행기. 01(hotspot import) → 03(전극 PNG import) → 02(compare2) → diag(검사·비교) → 04(변경점 ROI) → 05(DL2 확정, 선택) → 06(창별 국부 ΔCA) → 07(보고서) → 08(장부·장부 보고서)를 한 파일로 돌린다.",
     "모델 이름·hotspot 입력 root·DL1 root·지름·창은 설정 파일(real.yaml, compare2.yaml)에서 읽는다. 이 파일의 EDIT 블록에는 그 밖의 값만 둔다.",
     "순서·준비물·재실행 방법은 docs/usage.md \"ETX(Linux GPU 서버) 실행 순서\"에 있다.",
 ]
 
-FLOW_EDIT = '''# 돌릴 단계. 순서는 여기 적은 순서가 아니라 항상 01, 03, 02, diag, 04, 05, 06, 07 이다. 모르는 이름은 실행 전에 오류로 멈춘다.
-#   01 hotspot import   03 전극 PNG import   02 compare2(vi)   diag 검사·비교   04 변경점 ROI   05 DL2 확정(기본에서 뺌)   06 창별 ΔCA   07 보고서
+FLOW_EDIT = '''# 돌릴 단계. 순서는 여기 적은 순서가 아니라 항상 01, 03, 02, diag, 04, 05, 06, 07, 08 이다. 모르는 이름은 실행 전에 오류로 멈춘다.
+#   01 hotspot import   03 전극 PNG import   02 compare2(vi)   diag 검사·비교   04 변경점 ROI   05 DL2 확정(기본에서 뺌)   06 창별 ΔCA   07 보고서   08 장부+장부 보고서
 # 이전 결과 보관: 고른 단계의 출력 폴더가 이미 있으면 실행 전에 data/_runs/<RUN_TAG>/ 로 옮긴다(삭제하지 않는다). 대상이 이미 있으면 아무것도 옮기지 않고 멈춘다.
-# 단계를 고르는 법: 전체 다시 = 아래 기본값. 02 부터 = ["02", "diag", "04", "06", "07"] (01·03 결과를 그대로 쓴다). 07 만 = ["07"].
-STEPS = ["01", "03", "02", "diag", "04", "06", "07"]
+# 단계를 고르는 법: 전체 다시 = 아래 기본값. 02 부터 = ["02", "diag", "04", "06", "07", "08"] (01·03 결과를 그대로 쓴다). 07 만 = ["07"].
+# 기존 결과가 있고 장부만 새로 보려면 ["02", "08"] (02 를 이 번들로 다시 돌려야 장부 입력이 만들어진다). 08 만 다시 = ["08"].
+STEPS = ["01", "03", "02", "diag", "04", "06", "07", "08"]
 RUN_TAG = None                                # None 이면 UTC 시각 YYYYMMDD-HHMMSS. 문자열이면 그 이름(/ 와 \\ 금지)
 DRY_RUN = False                               # True 이면 만든 JOBS 와 옮길 폴더만 로그에 찍고 아무것도 실행·이동하지 않는다. 처음에는 True 로 확인한다
 
@@ -58,6 +59,10 @@ CHANGES_DIR = "data/changes"
 CONFIRMED_DIR = "data/confirmed"
 LOCAL_DIR = "data/local"
 REPORT_DIR = "data/compare2_report"
+# 08: 장부(ledger)와 장부 보고서(ledger-report). 02 가 만든 data/compare2/compare2.json 을 읽으므로 02 를 이 번들로 다시 돌린 뒤 08 을 돌린다.
+# 02 없이 08 만 고르면 02 출력 폴더의 compare2.json 이 있어야 한다(없으면 실행 전에 종료 2). 08 은 두 폴더를 만든다.
+LEDGER_DIR = "data/ledger"
+LEDGER_REPORT_DIR = "data/ledger_report"
 
 LOG_FILE = "runs/simcompare_job_etx.log"      # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None
 WORK_DIR = None                               # 패키지를 풀 폴더. None이면 이 파일 옆, 쓸 수 없으면 임시 폴더
@@ -71,7 +76,7 @@ FLOW_FUNC = '''def _flow_jobs():
                     include_cno=INCLUDE_CNO, max_asset_memory_mb=MAX_ASSET_MEMORY_MB, align_args=ALIGN_ARGS,
                     extra_window_sizes_um=EXTRA_WINDOWS_UM, jitter_um=JITTER_UM, dl2_match_args=DL2_MATCH_ARGS,
                     dl2_decision_args=DL2_DECISION_ARGS, changes_dir=CHANGES_DIR, confirmed_dir=CONFIRMED_DIR,
-                    local_dir=LOCAL_DIR, report_dir=REPORT_DIR)
+                    local_dir=LOCAL_DIR, report_dir=REPORT_DIR, ledger_dir=LEDGER_DIR, ledger_report_dir=LEDGER_REPORT_DIR)
     try:
         return etx_flow.prepare(os.getcwd(), settings, dry_run=DRY_RUN)
     except etx_flow.FlowError as exc:

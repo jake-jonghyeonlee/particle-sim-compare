@@ -193,12 +193,13 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 ## 11. 출력 폴더 규약과 08 단계 (X4)
 
-- 폴더: `ledger` → `data/ledger`, `ledger-report` → `data/ledger_report`. 02·07 과 겹치지 않는다. 실행기 상수 `LEDGER_DIR`, `LEDGER_REPORT_DIR` 를 `output_folders` 의 08 항목에 둔다(실행 전 `data/_runs/<RUN_TAG>/` 로 이동).
+- 폴더: `ledger` → `data/ledger`, `ledger-report` → `data/ledger_report`. 02·07 과 겹치지 않는다. 실행기 상수 `LEDGER_DIR`, `LEDGER_REPORT_DIR`(설정 이름 `ledger_dir`, `ledger_report_dir`)를 `output_folders` 의 08 항목에 둔다(실행 전 `data/_runs/<RUN_TAG>/` 로 이동). 이미 있는 두 폴더는 소유 여부와 관계없이 이동하므로 `--out` 거부(남의 파일)는 08 에서 보관 위치가 이미 있을 때(`etx_archive_target_exists`, 종료 2)로 나타난다.
+- 작업(`etx_flow.plan_jobs`): `ledger --compare2-dir <02 output_dir> --config <compare2.yaml> --out <LEDGER_DIR>` → `ledger-report --ledger-dir <LEDGER_DIR> --out <LEDGER_REPORT_DIR>`. 상위 N 옵션은 기본값. 02 가 STEPS 에 없으면 02 출력 폴더의 `compare2.json` 이 있어야 하고 없으면 실행 전 종료 2(`etx_compare2_output_missing`).
 - 두 명령은 compare2 규약을 따른다. `--out` 은 새 폴더이거나 그 명령이 만든 폴더(OWNED_NAMES 만 있음)만 허용한다. 결과는 임시 파일에 쓴 뒤 rename 으로 게시한다. 오류면 자기 소유 결과 파일을 지우고 `error.json`·`execution.json` 만 남긴다(종료 2).
 - `ledger` 종료 3(partial)이면 실행기는 계속하고 `ledger-report` 는 맨 위에 "부분 결과" 띠와 사유를 보인다. 종료 2 면 실행기가 멈춘다(`CONTINUE_CODES` 그대로).
 - 재시도: `STEPS = ['08']` 로 08 만 다시 돈다. `ledger` 성공 뒤 `ledger-report` 만 실패해도 08 전체를 다시 돈다.
 - `ledger-report` 는 `ledger.json` 의 sha256 과 `ledger` 의 `execution.json` 상태를 `report.json` 에 기록한다. `ledger.json` 이 없거나 execution 이 error 면 종료 2 `ledger_input_missing`.
-- 08 은 기본 STEPS 에 포함한다.
+- 08 은 기본 STEPS 에 포함한다(`STEPS` 기본 = 01, 03, 02, diag, 04, 06, 07, 08).
 
 ## 12. 보고서 구성
 
@@ -266,7 +267,7 @@ CNO (종류 CNO, 목업에서 K6):
 
 ## 15. ETX 재실행 범위
 
-- 02 → 08. 01·03·04·06 은 필요 없다.
+- 기존 결과가 있으면 `STEPS = ['02', '08']`(02 를 새 번들로 다시). 08 만 다시는 `STEPS = ['08']`. 01·03·04·06 은 필요 없다.
 - 07 은 선택이다. 07 의 값은 같다. 07 `report.json` 의 compare2.json sha256 기록을 맞추려 할 때만 다시 돈다(검증하는 소비자는 src 에 없음). `docs/usage.md` 에 그대로 적는다(T6).
 - Python 3.9.14(numpy 1.23.5, Pillow 10.1.0)로 bundle 을 확인한다. ETX 화면은 EUC-KR 이고 환경 변수를 넘길 수 없다.
 - 실자료는 폐쇄망에만 있다. 이 호스트에서는 합성 자료와 fixture 로 확인한다.

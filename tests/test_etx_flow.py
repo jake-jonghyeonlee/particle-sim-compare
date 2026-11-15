@@ -37,7 +37,7 @@ def edit_settings(**overrides):
             'include_cno': 'INCLUDE_CNO', 'max_asset_memory_mb': 'MAX_ASSET_MEMORY_MB', 'align_args': 'ALIGN_ARGS',
             'extra_window_sizes_um': 'EXTRA_WINDOWS_UM', 'jitter_um': 'JITTER_UM', 'dl2_match_args': 'DL2_MATCH_ARGS',
             'dl2_decision_args': 'DL2_DECISION_ARGS', 'changes_dir': 'CHANGES_DIR', 'confirmed_dir': 'CONFIRMED_DIR',
-            'local_dir': 'LOCAL_DIR', 'report_dir': 'REPORT_DIR'}
+            'local_dir': 'LOCAL_DIR', 'report_dir': 'REPORT_DIR', 'ledger_dir': 'LEDGER_DIR', 'ledger_report_dir': 'LEDGER_REPORT_DIR'}
     settings = {name: namespace[constant] for name, constant in keys.items()}
     settings.update(overrides)
     return settings
@@ -81,7 +81,11 @@ def code_of(excinfo):
 
 # ---- JOBS from the templates ----------------------------------------------------------------------------------------------
 
-def expected_default_jobs(align):
+LEDGER_JOBS = [('ledger', ['--compare2-dir', 'data/compare2', '--config', 'compare2.yaml', '--out', 'data/ledger']),
+               ('ledger-report', ['--ledger-dir', 'data/ledger', '--out', 'data/ledger_report'])]
+
+
+def expected_default_jobs(align, with_08=True):
     kinds = [('reference', 'QA4_R00', 'QA4_T00'), ('target', 'QA4_T00', 'QA4_R00')]
     jobs = []
     for side, model, other in kinds:
@@ -101,17 +105,75 @@ def expected_default_jobs(align):
                                      '--window-sizes', '10', '--jitter-um', '0.5', '--sort-diameter-um', '3', '--out', 'data/local']))
     jobs.append(('compare2-report', ['--compare2-dir', 'data/compare2', '--config', 'compare2.yaml', '--candidates', 'data/changes',
                                      '--windows', 'data/local', '--out', 'data/compare2_report']))
-    return jobs
+    return jobs + (LEDGER_JOBS if with_08 else [])
 
 
 def test_template_configs_give_the_expected_jobs_in_the_fixed_order(tmp_path):
     base = template_base(tmp_path)
     settings = edit_settings()
-    assert list(settings['steps']) == ['01', '03', '02', 'diag', '04', '06', '07']      # 05 stays a step but is not a default
+    assert list(settings['steps']) == ['01', '03', '02', 'diag', '04', '06', '07', '08']      # 05 stays a step but is not a default
     jobs = etx_flow.plan_jobs(base, settings)
     assert [(c, a) for c, a in jobs] == expected_default_jobs(settings['align_args'])
-    reordered = etx_flow.plan_jobs(base, dict(settings, steps=['07', 'diag', '04', '01', '06', '02', '03']))
+    reordered = etx_flow.plan_jobs(base, dict(settings, steps=['08', '07', 'diag', '04', '01', '06', '02', '03']))
     assert reordered == jobs            # the order of STEPS does not matter
+
+
+def test_steps_without_08_plan_exactly_the_jobs_and_folders_of_the_baseline(tmp_path):
+    """The step 08 addition changes nothing of 01-07 and diag: the jobs are the literal baseline list (commit 40234b4), the output
+    folders of every older step are the same list as before."""
+    base = template_base(tmp_path)
+    settings = edit_settings(steps=['01', '03', '02', 'diag', '04', '06', '07'])
+    assert etx_flow.plan_jobs(base, settings) == expected_default_jobs(settings['align_args'], with_08=False)
+    ctx = etx_flow.load_context(base, edit_settings())
+    root = base.resolve()
+    older = [step for step in etx_flow.STEP_ORDER if step != '08']
+    assert [(s, p.relative_to(root).as_posix()) for s, p in etx_flow.output_folders(ctx, older)] == [
+        ('01', 'data/imported/reference'), ('01', 'data/imported/target'), ('03', 'data/assets/reference'), ('03', 'data/assets/target'),
+        ('02', 'data/compare2'), ('diag', 'outputs/numeric_real'), ('04', 'data/changes'), ('05', 'data/confirmed'),
+        ('06', 'data/local'), ('07', 'data/compare2_report')]
+    assert [(s, p.relative_to(root).as_posix()) for s, p in etx_flow.output_folders(ctx, ['08'])] == [
+        ('08', 'data/ledger'), ('08', 'data/ledger_report')]
+
+
+def test_step_08_needs_the_02_output_unless_02_is_chosen(tmp_path):
+    base = template_base(tmp_path)
+    with pytest.raises(FlowError) as caught:
+        etx_flow.plan_jobs(base, edit_settings(steps=['08']))
+    assert code_of(caught) == 'etx_compare2_output_missing' and 'compare2.json' in str(caught.value)
+    assert etx_flow.plan_jobs(base, edit_settings(steps=['02', '08']))[-2:] == LEDGER_JOBS        # 02 in STEPS: no check
+    (base / 'data/compare2').mkdir(parents=True)
+    with pytest.raises(FlowError):                       # the folder alone is not enough: compare2.json must be there
+        etx_flow.plan_jobs(base, edit_settings(steps=['08']))
+    (base / 'data/compare2/compare2.json').write_text('{}', encoding='utf-8')
+    assert etx_flow.plan_jobs(base, edit_settings(steps=['08'])) == LEDGER_JOBS
+    edit_yaml(base / 'compare2.yaml', lambda d: d.update(output_dir='cmp'))      # the 02 folder follows compare2.yaml
+    with pytest.raises(FlowError):
+        etx_flow.plan_jobs(base, edit_settings(steps=['08']))
+    jobs = etx_flow.plan_jobs(base, edit_settings(steps=['02', '08'], ledger_dir='led', ledger_report_dir='ledrep'))
+    assert jobs[-2:] == [('ledger', ['--compare2-dir', 'cmp', '--config', 'compare2.yaml', '--out', 'led']),
+                         ('ledger-report', ['--ledger-dir', 'led', '--out', 'ledrep'])]
+
+
+def test_step_08_outputs_are_moved_before_the_run_and_a_taken_archive_name_refuses(tmp_path):
+    base = template_base(tmp_path)
+    populate(base, ['data/ledger', 'data/ledger_report', 'data/compare2'])
+    (base / 'data/ledger/foreign.txt').write_text('not ours\n', encoding='utf-8')
+    (base / 'data/compare2/compare2.json').write_text('{}', encoding='utf-8')
+    settings = edit_settings(steps=['08'], run_tag='L1')
+    moves = etx_flow.plan_archive(base, settings)
+    root = base.resolve()
+    assert [(s.relative_to(root).as_posix(), d.relative_to(root).as_posix()) for s, d in moves] == [
+        ('data/ledger', 'data/_runs/L1/data/ledger'), ('data/ledger_report', 'data/_runs/L1/data/ledger_report')]
+    (base / 'data/_runs/L1/data/ledger_report').mkdir(parents=True)
+    with pytest.raises(FlowError) as caught:          # the archive name is taken: stop before moving anything
+        etx_flow.prepare(base, settings, echo=lambda line: None)
+    assert code_of(caught) == 'etx_archive_target_exists'
+    assert (base / 'data/ledger/foreign.txt').is_file() and (base / 'data/compare2/file.txt').is_file()
+    (base / 'data/_runs/L1/data/ledger_report').rmdir()
+    jobs = etx_flow.prepare(base, settings, echo=lambda line: None)
+    assert jobs == LEDGER_JOBS and not (base / 'data/ledger').exists()
+    assert (base / 'data/_runs/L1/data/ledger/foreign.txt').is_file()       # moved with the foreign file, nothing deleted
+    assert (base / 'data/compare2/file.txt').is_file()                      # 02 is not chosen: untouched
 
 
 def test_one_edit_in_the_config_files_changes_every_stage_argument(tmp_path):
@@ -199,7 +261,7 @@ def test_include_cno_false_drops_the_flag_from_both_01_jobs(tmp_path):
 
 # ---- errors before anything runs ------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize('steps, code', [(['01', '08'], 'etx_unknown_step'), (['1'], 'etx_unknown_step'), ([], 'etx_steps_invalid'),
+@pytest.mark.parametrize('steps, code', [(['01', '09'], 'etx_unknown_step'), (['1'], 'etx_unknown_step'), ([], 'etx_steps_invalid'),
                                         ('01', 'etx_steps_invalid')])
 def test_unknown_or_empty_steps_are_an_error_before_anything_is_planned(tmp_path, steps, code):
     base = template_base(tmp_path)
@@ -451,7 +513,7 @@ def test_runner_file_edit_block_carries_the_agreed_names_and_no_jobs_list():
     text = _builder().FLOW_EDIT
     for name in ('STEPS', 'RUN_TAG', 'DRY_RUN', 'REAL_CONFIG', 'COMPARE2_CONFIG', 'INCLUDE_CNO', 'MAX_ASSET_MEMORY_MB', 'ALIGN_ARGS',
                  'EXTRA_WINDOWS_UM', 'JITTER_UM', 'DL2_MATCH_ARGS', 'DL2_DECISION_ARGS', 'CHANGES_DIR', 'CONFIRMED_DIR', 'LOCAL_DIR',
-                 'REPORT_DIR', 'LOG_FILE', 'WORK_DIR', 'BASE_DIR'):
+                 'REPORT_DIR', 'LEDGER_DIR', 'LEDGER_REPORT_DIR', 'LOG_FILE', 'WORK_DIR', 'BASE_DIR'):
         assert re.search(rf'^{name} = ', text, re.M), name
     assert 'JOBS = [' not in text
     committed = (ROOT / 'bundles/etx/simcompare_job_etx.py').read_text(encoding='utf-8')
