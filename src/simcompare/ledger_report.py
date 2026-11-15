@@ -12,6 +12,7 @@ import html
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -799,6 +800,8 @@ def _section7(ctx):
 
 MAPS_SCHEMA = 'ledger_maps_v1'
 ROLE_KEYS = (('reference', 'A'), ('target', 'B'))
+# the PNG names ledger-maps writes (one folder, no path separator, no ..)
+MAP_FILE_NAME = re.compile(r'map_(reference|target)_\d{3}_(el|it)\.png')
 
 
 def _read_maps(maps_dir, ledger_sha):
@@ -825,7 +828,10 @@ def _read_maps(maps_dir, ledger_sha):
     pngs = {}
     for role, _key in ROLE_KEYS:
         for entry in ((doc.get('sides') or {}).get(role) or {}).get('maps') or []:
-            png = folder / entry['file']
+            name = entry.get('file') if isinstance(entry, dict) else None
+            if not isinstance(name, str) or not MAP_FILE_NAME.fullmatch(name):
+                raise NumericContractError('ledger_maps_input_missing', f'{folder}: 지도 파일 이름 {name!r} 이 폴더 직속 map_*.png 가 아닙니다')
+            png = folder / name
             if not png.is_file():
                 raise NumericContractError('ledger_maps_input_missing', f'{png}: 지도 PNG 가 없습니다')
             pngs[entry['file']] = png.read_bytes()
@@ -1119,7 +1125,7 @@ def _same_table(ctx, card, a_rows, by_id):
     pairs_ = []
     for arow in a_rows:
         brow = by_id.get((arow.get('match') or {}).get('counterpart'))
-        if arow.get('match', {}).get('status') == 'matched' and brow is not None:
+        if (arow.get('match') or {}).get('status') == 'matched' and brow is not None:
             pairs_.append((arow, brow))
     if not pairs_:
         return pairs_, '<p class="muted">같은 좌표로 대응된 줄이 없습니다.%s</p>' % (
@@ -1369,9 +1375,11 @@ function elState(name){var s=st.sel;if(!s)return 0;
  if(s.t==='e'){if(name===s.id)return 1;if(partners(s.id)[name])return 2;return 3;}
  var p=P[s.id];if(p&&p.e.indexOf(name)>=0)return 1;return 3;}
 function build(r){S[r].comp=mk(r,st.layer);}
-function mk(r,layer){var o=S[r],w=o.w,h=o.h,item=new Uint16Array(w*h),el=new Uint16Array(w*h),bb={};
+function mk(r,layer,prio){var o=S[r],w=o.w,h=o.h,item=new Uint16Array(w*h),el=new Uint16Array(w*h),bb={};
  o.maps.forEach(function(m){if(layer&&m.meta.layer!==layer)return;var isItem=m.meta.kind==='it',dst=isItem?item:el,n=m.num;
-  for(var i=0;i<n.length;i++){var v=n[i];if(v&&!dst[i]){dst[i]=v;
+  for(var i=0;i<n.length;i++){var v=n[i];
+   if(v&&dst[i]&&isItem&&prio&&o.items[v]&&o.items[v].p===prio&&!(o.items[dst[i]]&&o.items[dst[i]].p===prio)){dst[i]=v;continue;}
+   if(v&&!dst[i]){dst[i]=v;
    if(isItem){var x=i%w,y=(i/w)|0,b=bb[v];if(!b){bb[v]=[x,y,x,y];}else{if(x<b[0])b[0]=x;if(x>b[2])b[2]=x;if(y<b[1])b[1]=y;if(y>b[3])b[3]=y;}}}}});
  return {item:item,el:el,bb:bb};}
 function style(r,n){var it=S[r].items[n];if(!it)return null;var p=P[it.p];if(!p)return null;
@@ -1413,10 +1421,10 @@ function draw(r){var o=S[r];if(!o.comp||!o.w)return;var w=o.w,h=o.h,cv=o.cv,g=cv
  g.globalAlpha=1;}
 function drawAll(){colors();R.forEach(function(r){if(S[r].ok){build(r);draw(r);}});}
 var cardComps={};
-function cardComp(r){if(!cardComps[r]){cardComps[r]=mk(r,'');}return cardComps[r];}
+function cardComp(r,p){var k=r+'|'+p;if(!cardComps[k]){cardComps[k]=mk(r,'',p);}return cardComps[k];}
 function drawCards(){if(!D.cards||!D.cards.length)return;colors();var count=0;
  D.cards.forEach(function(c){R.forEach(function(r){var s=c.sides[r];if(!s||!S[r].ok||!S[r].w)return;var cv=$('cv-'+c.i+'-'+r);if(!cv)return;
-  var v=s.vb,z=s.z,W=(v[2]-v[0])*z,H=(v[3]-v[1])*z,o=S[r],comp=cardComp(r),w=o.w,own=P[c.p],dd=own?own.d:null;
+  var v=s.vb,z=s.z,W=(v[2]-v[0])*z,H=(v[3]-v[1])*z,o=S[r],comp=cardComp(r,c.p),w=o.w,own=P[c.p],dd=own?own.d:null;
   var col=(dd==null||dd===0)?CC.common:(dd>0?CC.up:CC.down);
   cv.width=W;cv.height=H;var g=cv.getContext('2d'),img=g.createImageData(W,H),d=img.data,dx,dy;
   for(dy=0;dy<H;dy++){var sy=v[1]+((dy/z)|0);
@@ -1474,10 +1482,10 @@ function check(m,num){var cnt={},i,bad=0;
  if(kc.length!==kw.length)return false;
  for(i=0;i<kw.length;i++){if(cnt[kw[i]]!==want[kw[i]])return false;}return true;}
 function decode(r,meta,done){var im=new Image();
- im.onload=function(){try{var c=document.createElement('canvas');c.width=meta.w;c.height=meta.h;var g=c.getContext('2d');g.drawImage(im,0,0);
+ im.onload=function(){var ok=false;try{var c=document.createElement('canvas');c.width=meta.w;c.height=meta.h;var g=c.getContext('2d');g.drawImage(im,0,0);
   var d=g.getImageData(0,0,meta.w,meta.h).data,num=new Uint16Array(meta.w*meta.h),blue=0;
   for(var i=0;i<num.length;i++){num[i]=d[i*4]|(d[i*4+1]<<8);if(d[i*4+2]!==0||d[i*4+3]!==255)blue++;}
-  var m={meta:meta,num:num};S[r].maps.push(m);done(blue===0&&check(m,num));}catch(e){done(false);}};
+  var m={meta:meta,num:num};S[r].maps.push(m);ok=blue===0&&check(m,num);}catch(e){ok=false;}done(ok);};
  im.onerror=function(){done(false);};im.src=meta.png;}
 function start(){colors();var total=0,left=0,good=true;
  R.forEach(function(r){total+=D.sides[r].maps.length;});left=total;
@@ -1485,7 +1493,8 @@ function start(){colors();var total=0,left=0,good=true;
   R.forEach(function(r){S[r].maps.sort(function(a,b){return a.meta.file<b.meta.file?-1:1;});S[r].ok=!failed&&S[r].w>0;
    S[r].cv.hidden=failed||S[r].w===0;if(S[r].w>0){S[r].cv.width=S[r].w;S[r].cv.height=S[r].h;}});
   $('mapwarn').hidden=!failed;document.body.setAttribute('data-map-check',failed?'failed':'passed');
-  refresh();drawCards();document.body.setAttribute('data-map-drawn','1');}
+  try{refresh();drawCards();document.body.setAttribute('data-map-drawn','1');}
+  catch(e){$('mapwarn').hidden=false;document.body.setAttribute('data-map-check','failed');document.body.setAttribute('data-map-drawn','0');}}
  if(!total){good=true;fin();return;}
  R.forEach(function(r){D.sides[r].maps.forEach(function(meta){decode(r,meta,function(ok){if(!ok)good=false;left--;if(left===0)fin();});});});}
 document.addEventListener('click',function(ev){var t=ev.target;

@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -467,6 +468,43 @@ def money(doc, kind, value):
     """What the report shows for a value: the % of vi_A and the raw value."""
     vi_a = doc['kinds'][kind]['vi_a']
     return ledger_report.pct_txt(ledger_report.pct_of(value, vi_a)), ledger_report.raw_pct(value)
+
+
+def test_r3_decode_calls_done_outside_try_and_a_draw_error_is_shown_as_failed():
+    script = ledger_report.MAPS_SCRIPT
+    decode = script[script.index('function decode('):script.index('function start(')]
+    assert 'ok=blue===0&&check(m,num);}catch(e){ok=false;}done(ok);' in decode
+    assert decode.count('done(') == 2                                    # the decode call and the image error call
+    fin = script[script.index('function fin()'):script.index('if(!total)')]
+    assert 'try{refresh();drawCards();' in fin and "'data-map-drawn','0'" in fin and "'data-map-check','failed'" in fin
+    assert 'function cardComp(r,p)' in script and 'mk(r,\'\',p)' in script      # R3:2 the card's own pair wins the cell
+
+
+def test_r3_map_file_names_must_be_plain_map_pngs_in_the_folder(tmp_path):
+    for bad in ('../map_reference_001_it.png', 'sub/map_reference_001_it.png', 'other.png', '/etc/passwd'):
+        sub = tmp_path / ('case%d' % abs(hash(bad)))
+        doc, folder, maps = setup(sub)
+        saved = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+        saved['sides']['reference']['maps'][0]['file'] = bad
+        (maps / 'ledger_maps.json').write_text(json.dumps(saved), encoding='utf-8')
+        code, out = report(sub, folder, maps)
+        assert code == 2 and json.loads((out / 'error.json').read_text(encoding='utf-8'))['code'] == 'ledger_maps_input_missing', bad
+
+
+def test_r3_same_table_accepts_a_row_whose_match_is_null():
+    ctx = SimpleNamespace(maps=None)
+    rows = [{'match': None, 'edge': 'none'}, {'id': 'A2', 'match': {'status': 'only'}, 'edge': 'none'}]
+    pairs_, text = ledger_report._same_table(ctx, {'kind': 'line', 'match': None}, rows, {})
+    assert pairs_ == [] and '같은 좌표로 대응된 줄이 없습니다' in text
+
+
+def test_r3_markup_in_card_names_is_escaped_in_section_5(tmp_path):
+    cards = sample_cards()
+    cards[0]['pair_id'] = 'P<b>1'
+    cards[0]['rows'][0]['id'] = 'A<i>1'
+    page = card_page(tmp_path, cards=cards[:1])
+    s5 = section5(page)
+    assert '<b>1' not in s5 and '<i>1' not in s5 and ('P&lt;b&gt;1' in s5 or 'A&lt;i&gt;1' in s5)
 
 
 def test_cards_follow_the_json_order_with_header_values_like_section_4(tmp_path):

@@ -844,7 +844,7 @@ def test_a_broken_range_total_partition_or_pair_bound_ends_with_exit_3_and_the_o
     assert doc['checks']['range_sum']['status'] == 'failed' and doc['checks']['range_sum']['failed_count'] >= 1
     assert doc['checks']['status'] == 'failed' and doc['cards']
     monkeypatch.setattr(lm, '_fill_values', real_fill)
-    monkeypatch.setattr(lm, '_pair_total', lambda ctx, pair_id, ids: 1e9)
+    monkeypatch.setattr(lm, '_pair_total', lambda ctx, budget, pair_id, ids: 1e9)
     code, doc = run_cards(tmp_path, *args, out='m2')
     assert code == 3 and doc['checks']['pair_bound']['status'] == 'failed'
     monkeypatch.undo()
@@ -892,3 +892,41 @@ def test_card_data_of_the_first_product_is_reserved_until_the_second_product_is_
     freed = [c for c in calls if c[0] == 'release' and c[1] == 'cards carried from the first product']
     assert len(freed) == 1 and freed[0][2] == carried[0][2]
     assert calls.index(freed[0]) > calls.index(carried[0])
+
+
+# ---- astra D1 (lmap/T9): the pair-array merge of the card stage is reserved before it runs ---------------------------------
+
+def _pair_ctx(n_items, entries):
+    sparse, items = {}, []
+    for i in range(n_items):
+        tiles = np.arange(i * 7, i * 7 + entries, dtype=np.int32)
+        sparse[i] = {'tiles': tiles, 'values': np.ones(entries), 'member': tiles[:10].copy()}
+        items.append({'item_id': i, 'pair_id': 'p'})
+    return SimpleNamespace(role='target', items=items, sparse=sparse)
+
+
+def test_pair_array_merge_of_many_small_items_is_refused_before_anything_is_allocated(monkeypatch):
+    ctx = _pair_ctx(40, 25000)                         # 1,000,000 value tiles in one pair, 25,000 per item
+    budget = lm._Budget(5 * 10 ** 7)                   # one item (1.6 MB) passes; the pair (64 MB) does not
+    calls = []
+
+    def boom(*args, **kwargs):
+        calls.append(1)
+        raise AssertionError('allocated before the reservation')
+    monkeypatch.setattr(lm.np, 'concatenate', boom)
+    monkeypatch.setattr(lm.np, 'unique', boom)
+    with pytest.raises(lm.NumericContractError) as error:
+        lm._pair_arrays_reserved(ctx, budget, 'p')
+    assert error.value.code == 'oversized_real_operation' and 'pair arrays' in str(error.value)
+    assert not calls and budget.used == 0
+
+
+def test_pair_array_merge_reserves_the_peak_then_only_the_returned_arrays():
+    ctx = _pair_ctx(40, 25000)
+    budget = lm._Budget(10 ** 10)
+    member, vt, vv, held = lm._pair_arrays_reserved(ctx, budget, 'p')
+    assert held == member.nbytes + vt.nbytes + vv.nbytes and budget.used == held
+    assert budget.peak >= lm.MERGE_BYTES_PER_ENTRY * 40 * 25000          # the merge peak was reserved
+    assert len(vt) == 39 * 7 + 25000 and member.dtype == np.int64
+    budget.release(held, 'x')
+    assert budget.used == 0

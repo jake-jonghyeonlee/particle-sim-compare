@@ -16,6 +16,7 @@ ETX 08 이 `ledger` → `ledger-maps` → `ledger-report --maps-dir` 를 돈다(
 - 실측(폐쇄망 ETX): 08 시간(hotspot 재읽기), `ledger_maps.json`·HTML 크기, `edge_reason` 분포(`edge_unverifiable` 비율, R2b:1), ETX numpy 에서 병합 예약 상수(R2b:3), 04 지문 대조로 좌표 대응이 켜지는지(C2), 폐쇄망 브라우저 canvas 자기 검사·큰 PNG 성능.
 - 설정값 조정: `--range-um`·`--segment-um`·`--linear-*`·`--edge-repeat-min-match`·`--coord-*`(`LEDGER_MAPS_ARGS` 로 넘긴다).
 - CNO 지도 표시(D3: 지금은 제외). 대각선 배선은 점형으로 다룬다(한계).
+- 04 의 CNT·Layer 원본 파일 목록 해시는 ledger-maps 가 대조하지 않는다(04 가 CNT root 를 기록하지 않음). 원본만 바뀐 오래된 04 는 대응이 허용될 수 있다 — 04 가 입력 root 를 기록하게 한 뒤 대조 추가(astra D2).
 
 ## Ledger report Run (20261115-ledger-report, 2026-11-15)
 

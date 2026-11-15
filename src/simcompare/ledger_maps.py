@@ -808,6 +808,24 @@ def _owner_index(rows):
     return ids[order], owner[order]
 
 
+def _pair_arrays_reserved(ctx, budget, pair_id):
+    """`_pair_arrays` with the budget (astra D1): the concurrent peak of the concatenate / np.unique / bincount / int64
+    copies is reserved BEFORE any of them runs (the merge constants of `_merge_sparse`), then replaced by the returned
+    arrays. Returns (member, tiles, values, held_bytes); the caller releases held_bytes when it drops the arrays."""
+    recs = [rec for rec in ctx.items if rec['pair_id'] == pair_id]
+    tile_entries = sum(len(ctx.sparse[rec['item_id']]['tiles']) for rec in recs)
+    member_entries = sum(len(ctx.sparse[rec['item_id']]['member']) for rec in recs)
+    peak = MERGE_BYTES_PER_ENTRY * tile_entries + MERGE_MEMBER_BYTES_PER_ENTRY * member_entries
+    budget.reserve(peak, f'pair arrays {ctx.role} {pair_id} ({tile_entries}+{member_entries} entries)')
+    try:
+        member, vt, vv = _pair_arrays(ctx, pair_id)
+    finally:
+        budget.release(peak, 'pair arrays merge copy')
+    held = member.nbytes + vt.nbytes + vv.nbytes
+    budget.reserve(held, f'pair arrays held {ctx.role} {pair_id}')
+    return member, vt, vv, held
+
+
 def _pair_arrays(ctx, pair_id):
     """The pair's membership tiles (sorted unique) and its summed sparse values (tile ids, values)."""
     recs = [rec for rec in ctx.items if rec['pair_id'] == pair_id]
@@ -932,7 +950,17 @@ def _edge_env(ctx, run, member, layers):
 
 def _side_rows(ctx, run, plan):
     """Rows of one pair on this product (README 18.4 steps 1 and 4 before the A-B split)."""
-    member, vt, vv = _pair_arrays(ctx, plan['pair_id'])
+    member, vt, vv, held = _pair_arrays_reserved(ctx, run.budget, plan['pair_id'])
+    try:
+        side = _side_rows_planned(ctx, run, plan, member, vt, vv)
+    except BaseException:
+        run.budget.release(held, 'pair arrays held')
+        raise
+    side['held'] = held
+    return side
+
+
+def _side_rows_planned(ctx, run, plan, member, vt, vv):
     tile_um = ctx.tile_px * ctx.info['pitch']
     win = _window_box(ctx)
     # the component labelling holds the window as a bool picture and 16 B per run plus the sort/cut temporaries of
@@ -991,13 +1019,16 @@ def _fill_values(ctx, plan, rows):
                     'range_total': _fsum_array(grid[row['tiles']]) if len(row['tiles']) else 0.0})
 
 
-def _pair_total(ctx, pair_id, ids):
+def _pair_total(ctx, budget, pair_id, ids):
     """The pair's value on the tile set `ids` (sorted unique)."""
-    _m, vt, vv = _pair_arrays(ctx, pair_id)
-    if not len(vt) or not len(ids):
-        return 0.0
-    sums, _c = _row_sums((ids, np.zeros(len(ids), dtype=np.int64)), vt, vv, 1)
-    return float(sums[0])
+    _m, vt, vv, held = _pair_arrays_reserved(ctx, budget, pair_id)
+    try:
+        if not len(vt) or not len(ids):
+            return 0.0
+        sums, _c = _row_sums((ids, np.zeros(len(ids), dtype=np.int64)), vt, vv, 1)
+        return float(sums[0])
+    finally:
+        budget.release(held, 'pair arrays held')
 
 
 def _window_ids(ctx):
@@ -1325,7 +1356,7 @@ def _side_final_values(ctx, run, plan, rows, role):
             run.checks['range_sum'].append({'card': rid, 'row': i, 'range_total': row['range_total'],
                                             'pair_plus_others': total})
     ids = np.unique(np.concatenate([_window_ids(ctx)] + [row['tiles'] for row in live]))
-    observed = _pair_total(ctx, plan['pair_id'], ids)
+    observed = _pair_total(ctx, run.budget, plan['pair_id'], ids)
     del ids                                 # the observed area is not kept: it is reserved only while it is built
     section4 = plan['a'] if role == 'reference' else plan['b']
     row_sum = math.fsum(row['pair'] for row in live)
@@ -1358,9 +1389,18 @@ def _cards_reference(ctx, run):
     carried = 0
     for plan in run.plans:
         side = _side_rows(ctx, run, plan)
-        rows = side['rows']
-        final = _side_final(ctx, run, plan, rows, 'reference')
-        a_member = [np.intersect1d(side['member'], row['tiles'], assume_unique=True) for row in rows]
+        try:
+            rows = side['rows']
+            final = _side_final(ctx, run, plan, rows, 'reference')
+            # the intersect1d copies of the member tiles with each row (concatenate + sort, 24 B per id), reserved first
+            temp = 24 * sum(len(side['member']) + len(row['tiles']) for row in rows)
+            run.budget.reserve(temp, f'card membership split {ctx.role} {plan["pair_id"]}')
+            try:
+                a_member = [np.intersect1d(side['member'], row['tiles'], assume_unique=True) for row in rows]
+            finally:
+                run.budget.release(temp, 'card membership split')
+        finally:
+            run.budget.release(side['held'], 'pair arrays held')
         run.carried[plan['pair_id'], plan['kind']] = {'rows': rows, 'final': final, 'a_member': a_member,
                                                        'planned': side['planned'], 'ntx': ctx.ntx}
         carried += sum(row['tiles'].nbytes for row in rows) + sum(a.nbytes for a in a_member)
@@ -1382,6 +1422,11 @@ def _cards_target(ctx, run):
         a_rows = carried['rows'] if carried else []
         ntx_a = carried['ntx'] if carried else ctx.ntx
         member_b = side['member']
+        # the matching, the shifted copies, the partition check (concatenate / unique / isin / sort of the rows' tile ids)
+        # hold up to 64 B per id of both products' rows and memberships at once: reserved before they run
+        plan_temp = 64 * (sum(len(r['tiles']) for r in a_rows) + sum(len(r['tiles']) for r in b_rows) + len(member_b)
+                          + (sum(len(m) for m in carried['a_member']) if carried else 0))
+        run.budget.reserve(plan_temp, f'card matching {ctx.role} {plan["pair_id"]}')
         for arow in a_rows:
             arow['match'] = {'status': 'only', 'reason': arow['edge_reason']}
         confirmed = _NO_IDS
@@ -1474,6 +1519,8 @@ def _cards_target(ctx, run):
         if bad:
             run.checks['partition'].append({'card': f'{plan["kind"]}:{plan["pair_id"]}', 'sides': bad})
         cards.append(_card_json(run, plan, carried, a_rows, final_b, final, side, absorbed, rounding, tile_um))
+        run.budget.release(plan_temp, 'card matching')
+        run.budget.release(side['held'], 'pair arrays held')
     run.budget.release(run.carried_bytes, 'cards carried from the first product')
     run.carried_bytes = 0
     return cards
