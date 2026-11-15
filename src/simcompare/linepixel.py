@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 import copy
 import hashlib
 import json
+import math
 from typing import Iterable, NamedTuple
 
 import numpy as np
@@ -231,6 +232,7 @@ class GroupArea:
     failure_piece_packed: dict[str, PackedMask]
     fractions: dict[str, FractionMetric] = field(default_factory=dict)
     condition_stats: dict | None = None  # opt-in (compute_areas(condition_stats=True)); integer cell counts
+    ledger_shares: dict | None = None  # opt-in with condition_stats: 1/n pair shares split by item; never serialized
 
     @property
     def line_mask(self) -> np.ndarray:
@@ -533,6 +535,77 @@ def _validate_case(case: NumericCase) -> None:
                 raise NumericContractError('invalid_not_applicable_height')
 
 
+def _count_dtype(count: int):
+    """Per-cell counter dtype: uint16 up to 65535 pairs (or items), int32 beyond."""
+    return np.uint16 if count <= 0xFFFF else np.int32
+
+
+def _item_layers(case, analysis_layer):
+    """(upper, lower) of an item. No stack order is available here: analysis_layer is the upper layer and the other
+    endpoint layer the lower one (a lateral short has both = analysis_layer)."""
+    if case.failure_type != 'vertical_short':
+        return analysis_layer, analysis_layer
+    others = sorted(ep.actual_layer for ep in case.endpoints if ep.actual_layer != analysis_layer)
+    return analysis_layer, (others[0] if others else analysis_layer)
+
+
+def _ledger_kind(pair_masks, items, keep, size, expected_cells, stats, transfer_keep):
+    """1/n pair shares of one class split over the pair's items (docs/plan/ledger_report/README.md sections 3-4).
+
+    Arrays are built per class and dropped on return: one counter array (n) plus short-lived unpacked masks."""
+    pair_ids = sorted(pair_masks)
+    n = np.zeros(size, dtype=_count_dtype(len(pair_ids)))
+    for pid in pair_ids:
+        n += _unpack_flat(pair_masks[pid], size) & keep
+    pair_hist = {}
+    for pid in pair_ids:
+        pm = _unpack_flat(pair_masks[pid], size) & keep
+        counts = np.bincount(n[pm]) if pm.any() else []
+        pair_hist[pid] = {int(i): int(v) for i, v in enumerate(counts) if i and v}
+    by_pair = {}
+    for ikey in sorted(items):
+        by_pair.setdefault(ikey[0], []).append(ikey)
+    out_items, overlap = [], 0
+    for pid in pair_ids:
+        keys = by_pair.get(pid, [])
+        k = len(keys)
+        m = None
+        if k > 1:
+            m = np.zeros(size, dtype=_count_dtype(k))
+            for ikey in keys:
+                m += _unpack_flat(items[ikey]['bits'], size) & keep
+            overlap += int(np.count_nonzero(m >= 2))
+        for ikey in keys:
+            full = _unpack_flat(items[ikey]['bits'], size)
+            im = full & keep
+            if m is None:
+                counts = np.bincount(n[im]) if im.any() else []
+                terms = [int(v) / i for i, v in enumerate(counts) if i and v]
+            else:
+                code = n[im].astype(np.int64) * (k + 1) + m[im]
+                uniq, cnt = np.unique(code, return_counts=True)
+                terms = [int(c) / ((int(u) // (k + 1)) * (int(u) % (k + 1))) for u, c in zip(uniq, cnt)]
+            out_items.append({
+                'pair_id': ikey[0], 'failure_type': ikey[1], 'upper_layer': ikey[2], 'lower_layer': ikey[3],
+                'endpoints': copy.deepcopy(items[ikey]['endpoints']),
+                'share_cells': math.fsum(terms), 'own_cells': int(np.count_nonzero(im)),
+                'transferred_out_cells': 0 if transfer_keep is None else int(np.count_nonzero(full & transfer_keep))})
+        m = None
+    hist = {}
+    for per_pair in pair_hist.values():
+        for count, cells in per_pair.items():
+            hist[count] = hist.get(count, 0) + cells
+    share_sum = math.fsum(item['share_cells'] for item in out_items)
+    checks = {
+        'exclusive_ok': all(pair_hist[pid].get(1, 0) == stats['exclusive_cells'][pid] for pid in pair_ids),
+        'divisible_ok': all(cells % count == 0 for count, cells in hist.items() if count >= 2),
+        'shared_ok': sum(cells // count for count, cells in hist.items() if count >= 2) == stats['shared_cells'],
+        'expected_cells': int(expected_cells), 'share_sum': share_sum,
+        'sum_ok': abs(share_sum - expected_cells) <= 1e-9 * max(1, expected_cells),
+        'n_hist': {count: hist[count] for count in sorted(hist)}}
+    return {'items': out_items, 'pair_hist': pair_hist, 'multi_item_overlap_cells': overlap, 'checks': checks}
+
+
 class _UnionMeta(NamedTuple):
     """What check_union_compatible needs from the first source of a pair; never its mask."""
     frame: Frame
@@ -558,6 +631,7 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
     pair_bits = {LINE: {}, PIXEL: {}}   # pid -> packed OR of its sources (shares the source array if only one)
     pair_check = {LINE: {}, PIXEL: {}}  # pid -> [first-source metadata, first compatibility error]
     source_bits = {}                    # computable source_key -> packed raw mask
+    item_info = {LINE: {}, PIXEL: {}}   # condition_stats only: item key -> {'bits': packed OR, 'endpoints': [...]}
     type_bits = {name: np.zeros_like(valid_bits) for name in ('lateral_short', 'vertical_short')}
     observed = missing = na = unmapped = rejected = computable = 0
     reasons = set()
@@ -614,6 +688,16 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
                     except NumericContractError as error:
                         checks[1] = error
                 type_bits[case.failure_type] |= bits & valid_bits
+                if condition_stats:
+                    upper, lower = _item_layers(case, key.analysis_layer)
+                    ikey = (pid, case.failure_type, upper, lower)
+                    known = item_info[kind].get(ikey)
+                    if known is None:
+                        item_info[kind][ikey] = {'bits': bits, 'endpoints': [
+                            {'electrode_id': ep.electrode_id, 'actual_layer': ep.actual_layer}
+                            for ep in sorted(case.endpoints, key=lambda e: e.electrode_id)]}
+                    else:
+                        known['bits'] = known['bits'] | bits
     record = None  # release the last loaded mask
     coverage = Coverage(len(entries), observed, missing, na, unmapped, rejected, computable,
                         size, int(np.count_nonzero(valid_flat)))
@@ -746,6 +830,13 @@ def _group(key, entries, chunk_cells, table_version, *, raw_copies=None,
         group.condition_stats = {
             'line': stats[LINE], 'pixel': stats[PIXEL], 'transfer_by_line_pair_cells': by_pair,
             'transfer_shared_cells': packed(transfer).count() - sum(by_pair.values())}
+        line_flat = _unpack_flat(line, size)
+        group.ledger_shares = {
+            LINE: _ledger_kind(pair_bits[LINE], item_info[LINE], valid_flat, size, packed(line).count(),
+                               group.condition_stats[LINE], None),
+            PIXEL: _ledger_kind(pair_bits[PIXEL], item_info[PIXEL], valid_flat & ~line_flat, size,
+                                packed(effective).count(), group.condition_stats[PIXEL], valid_flat & line_flat)}
+        line_flat = None
     return group
 
 

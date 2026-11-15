@@ -87,6 +87,8 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 - 표기 `위/아래`(stack 순서). 집계 레이어 = analysis_layer(위).
 - 출처 `NumericCase.endpoints[].actual_layer`. item 에 `endpoints: [{electrode_id, actual_layer}]` 를 둔다.
+- T2 구현(`linepixel._item_layers`): `_group` 안에서는 stack 순서를 얻을 수 없다. 상하 short 는 `upper = GroupKey.analysis_layer`, `lower = 그 밖의 끝 레이어`(둘 다 analysis_layer 와 같으면 analysis_layer, 여럿이면 이름순 첫째)다. 측면은 upper = lower = analysis_layer 다. 어댑터가 상하 short 의 analysis_layer 를 stack order 가 높은 끝으로 정하므로(`real_hotspot.py:1707`) 위 레이어와 같다.
+- T2 구현의 `GroupArea.ledger_shares`(`condition_stats=True` 일 때만, 직렬화 제외) 구조: `{line|pixel: {items: [{pair_id, failure_type, upper_layer, lower_layer, endpoints, share_cells, own_cells, transferred_out_cells}], pair_hist: {pair_id: {n: cells}}, multi_item_overlap_cells, checks: {exclusive_ok, divisible_ok, shared_ok, sum_ok, expected_cells, share_sum, n_hist}}}`. items 는 (pair_id, failure_type, upper, lower) 순이다. `n_hist`·`pair_hist` 의 n 키는 정수다.
 
 ## 8. 변화 종류 판정 Q5
 
@@ -100,7 +102,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 - 쌍 "있음" = compare2 그 제품에 조건이 있음(면적 0 포함). 폴더 없는 기대 case 만 가진 쌍은 없음이다.
 - 쌍 줄은 우선순위 최상 종류 하나. item 줄은 각자 both / new / gone. 건수는 쌍 하나에 한 번.
-- 계산 불가 조건의 쌍은 판정하지 않고 7절 "계산 불가 항목"에 둔다(6절의 값 대기와 구분: 값 대기는 있음·값 없음, 계산 불가는 조건 자체가 계산되지 않음).
+- 계산 불가 조건(`computable=false`)의 쌍은 "있음, 값 없음"이다. 관측 사실 판정(전극 추가·제거, 새 쌍·사라진 쌍, 레이어 변경)은 하고, 값이 필요한 판정은 "값 대기"로 둔다. 그 쌍은 7절 "계산 불가 항목" 목록에도 올린다.
 - CNO 는 (electrode_id, density_layer) 단위의 별도 종류 "CNO"이다.
 
 전극 목록 완전성 (X3):
