@@ -38,17 +38,19 @@ def make_ledger(pairs, cno=(), extra_electrodes=(), status='ok', reasons=(), vi=
     items_sum, cno_sum, pair_rows = {}, {}, []
     for kind in KINDS:
         rows = [p for p in pairs if p['kind'] == kind]
-        items_sum[kind] = {f: math.fsum(p[f2] or 0.0 for p in rows) for f, f2 in (('a', 'a'), ('b', 'b'))}
-        items_sum[kind]['delta'] = math.fsum(((p['b'] or 0.0) - (p['a'] or 0.0)) for p in rows)
+        # like the real ledger (ledger.py): one null part makes the sum null
+        items_sum[kind] = {f: (None if any(p[f] is None for p in rows) else math.fsum(p[f] for p in rows)) for f in ('a', 'b')}
+        items_sum[kind]['delta'] = (None if any(p['a'] is None or p['b'] is None for p in rows)
+                                    else math.fsum(p['b'] - p['a'] for p in rows))
     cno_sum = {'a': math.fsum(c[2] for c in cno), 'b': math.fsum(c[3] for c in cno)}
     cno_sum['delta'] = cno_sum['b'] - cno_sum['a']
     crp_d = crp or 0.0
     totals, kinds = {}, {}
     for kind in KINDS:
         it = items_sum[kind]
-        a = it['a'] + intercept + (cno_sum['a'] - crp_d if kind == 'pixel' else 0.0)
-        b = it['b'] + intercept + (cno_sum['b'] if kind == 'pixel' else 0.0)
-        d = it['delta'] + ((cno_sum['delta'] + crp_d) if kind == 'pixel' else 0.0)
+        a = None if it['a'] is None else it['a'] + intercept + (cno_sum['a'] - crp_d if kind == 'pixel' else 0.0)
+        b = None if it['b'] is None else it['b'] + intercept + (cno_sum['b'] if kind == 'pixel' else 0.0)
+        d = None if it['delta'] is None else it['delta'] + ((cno_sum['delta'] + crp_d) if kind == 'pixel' else 0.0)
         totals[kind] = {'items': it, 'intercept': {'a': intercept, 'b': intercept, 'delta': 0.0}, 'a': a, 'b': b,
                         'delta': d, 'vi_a': a, 'vi_b': b}
         if kind == 'pixel':
@@ -273,6 +275,29 @@ def test_rest_rows_hold_the_remaining_pairs_in_a_details_block(tmp_path):
     assert page.count('data-row="restitem"') >= 4
 
 
+def test_pending_row_outside_the_top_n_makes_the_other_row_and_total_pending(tmp_path):
+    pairs = [spec('P1', ['A', 'B'], 'line', 0.0120, 0.0150), spec('P2', ['B', 'C'], 'line', 0.0060, 0.0078),
+             spec('W1', ['W', 'X'], 'line', None, 0.0001, change='value_pending')]
+    code, out = run_report(tmp_path, make_ledger(pairs), top_pairs=1, top_electrodes=1000)
+    page = html_of(out)
+    rows = rows_between(page, '<table id="pairs-line"', '<table id="pairs-pixel"' if '<table id="pairs-pixel"' in page else None)
+    rest = [r for r in rows if r[0] == 'rest'][0]
+    total = [r for r in rows if r[0] == 'total'][0]
+    assert rest[1] == '' and rest[3] == '' and total[1] == '' and total[3] == ''   # A and Δ wait; B is known
+    line = page[page.index('<table id="pairs-line"'):]
+    rest_tr = line[line.index('<tr class="rest"'):]
+    rest_tr = rest_tr[:rest_tr.index('</tr>')]
+    assert '값 대기 1 줄 포함' in rest_tr and '대기' in rest_tr
+    sum_tr = line[line.index('<tr class="sum"'):]
+    sum_tr = sum_tr[:sum_tr.index('</tr>')]
+    assert '대기' in sum_tr and '줄 포함' not in sum_tr
+
+
+def test_other_row_without_pending_rows_has_no_pending_note(tmp_path):
+    code, out = run_report(tmp_path, sample_doc(), top_pairs=1, top_electrodes=1)
+    assert '줄 포함' not in html_of(out)
+
+
 def test_absent_zero_not_applicable_and_pending_are_told_apart(tmp_path):
     pairs = [spec('Z1', ['Zed', 'Eff'], 'line', 0.0, 0.0, change='no_change'),
              spec('N1', ['New', 'Eff'], 'line', 0.0, 0.0030, present_a=False, change='new_pair'),
@@ -291,7 +316,8 @@ def test_absent_zero_not_applicable_and_pending_are_told_apart(tmp_path):
         assert m, name
         return m.group(2)
 
-    assert '0%' in cells('Zed–Eff')                           # present, value 0
+    # present, value 0 (the pending W1 makes the line vi null, so there is no % base: plain 0)
+    assert '<td>0</td>' in cells('Zed–Eff')
     assert '없음' in cells('New–Eff') and '0%' not in cells('New–Eff').split('없음')[0]   # absent in A
     assert '없음' in cells('Gone–Eff')                         # absent in B
     assert '대기' in cells('Wait–Eff')                         # present, value null

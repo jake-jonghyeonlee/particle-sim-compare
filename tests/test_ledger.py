@@ -898,7 +898,27 @@ def test_filtered_on_a_and_valued_on_b_is_a_value_change_not_a_layer_change(tmp_
                   [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], .004, 'SD2')])]
     world = make_world(tmp_path, pairs)
     assert go(world) == 0
-    assert by_pair(result(world))['P1']['change_kind'] != 'layer_change'
+    assert by_pair(result(world))['P1']['change_kind'] == 'same_pair_change'
+
+
+def test_filtered_on_b_and_valued_on_a_is_a_value_change_not_a_layer_change(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], .004, 'SD2')],
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    row = by_pair(result(world))['P1']
+    assert row['change_kind'] == 'same_pair_change'
+    assert [(i['a_filtered'], i['b_filtered']) for i in row['items'] if i['analysis_layer'] == 'SD2'] == [(False, True)]
+
+
+def test_filtered_on_b_and_missing_on_a_is_left_out_of_the_keys(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1')],
+                  [lateral(['A', 'B'], .02, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    assert by_pair(result(world))['P1']['change_kind'] == 'same_pair_change'
 
 
 def test_filtered_on_a_and_missing_on_b_is_left_out_of_the_keys(tmp_path):

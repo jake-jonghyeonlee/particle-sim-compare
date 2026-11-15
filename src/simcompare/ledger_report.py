@@ -105,15 +105,22 @@ def dcell(delta, pct):
     return '<span class="sg %s">%s</span>%s' % (cls, esc(main), sub(raw_pp(delta)) if pct is not None else '')
 
 
-def fsum_skip(values):
-    """Exact sum of the rows folded into an "other" row; a null row adds nothing (the ledger totals count it as 0)."""
-    nums = [v for v in values if v is not None]
-    return math.fsum(nums) if nums else None
-
-
 def osum(values):
+    """Exact sum with the ledger rule (ledger.py): one null part makes the whole sum null (대기)."""
     values = list(values)
     return None if any(v is None for v in values) else math.fsum(values)
+
+
+def rest_sums(rows, getters):
+    """Sums of the rows folded into an "other" row, one per getter, with the ledger null rule, plus the number of
+    rows that have a null in any of the three values (shown as "값 대기 n 줄 포함")."""
+    sums = [osum(g(r) for r in rows) for g in getters]
+    pending = sum(1 for r in rows if any(g(r) is None for g in getters))
+    return sums[0], sums[1], sums[2], pending
+
+
+def pending_note(pending):
+    return '<span class="sub2">값 대기 %d 줄 포함</span>' % pending if pending else ''
 
 
 def attr_num(value):
@@ -254,9 +261,10 @@ def _group_sums(ctx):
     result = {}
     for kind in KINDS:
         for code, values in groups[kind].items():
-            known = [v for v in values if v is not None]
-            result[(kind, code)] = {'delta': math.fsum(known) if known else None,
-                                    'inc': math.fsum(v for v in known if v > 0) if known else None}
+            # ledger null rule: one pending row makes the group sum pending
+            result[(kind, code)] = {'delta': osum(values),
+                                    'inc': osum(v if v > 0 else 0.0 for v in values if v is not None)
+                                    if all(v is not None for v in values) else None}
     return result
 
 
@@ -450,9 +458,10 @@ def _section3(ctx):
         out.append('<table id="el-%s" class="ledger">%s' % (kind, _electrode_head(kind)))
         out.extend(_electrode_row(ctx, row, kind, i, 'top') for i, row in enumerate(shown, 1))
         if rest:
-            a, b, d = (fsum_skip(r[kind][f] for r in rest) for f in ('a', 'b', 'delta'))
-            out.append('<tr class="rest" %s><td class="l"><b>기타 %d 전극</b></td><td></td><td></td>%s%s<td colspan="%d"></td></tr>' % (
-                _data_attrs('rest', a, b, d), len(rest), _abc_cells(ctx, kind, a, b, d), '<td></td>' if kind == 'pixel' else '', 2))
+            a, b, d, pend = rest_sums(rest, [(lambda r, f=f: r[kind][f]) for f in ('a', 'b', 'delta')])
+            out.append('<tr class="rest" %s><td class="l"><b>기타 %d 전극</b>%s</td><td></td><td></td>%s%s<td colspan="%d"></td></tr>' % (
+                _data_attrs('rest', a, b, d), len(rest), pending_note(pend), _abc_cells(ctx, kind, a, b, d),
+                '<td></td>' if kind == 'pixel' else '', 2))
         out.append('<tr class="sum" %s><td class="l">합계</td><td colspan="2" class="l muted">%s</td>%s<td colspan="%d"></td></tr>' % (
             _data_attrs('total', total['a'], total['b'], total['delta']),
             '전극 쌍 합 + CNO' if kind == 'pixel' else '전극 쌍 합', _abc_cells(ctx, kind, total['a'], total['b'], total['delta']),
@@ -558,9 +567,9 @@ def _section4(ctx):
         out.append('<table id="pairs-%s" class="ledger">%s' % (kind, PAIR_HEAD))
         out.extend(_pair_row(ctx, p, kind, 'top') for p in shown)
         if rest:
-            a, b, d = (fsum_skip(r[f] for r in rest) for f in ('a', 'b', 'delta'))
-            out.append('<tr class="rest" %s><td></td><td class="l"><b>기타 %d 쌍</b></td><td colspan="3"></td>%s<td></td></tr>' % (
-                _data_attrs('rest', a, b, d), len(rest), _abc_cells(ctx, kind, a, b, d)))
+            a, b, d, pend = rest_sums(rest, [(lambda r, f=f: r[f]) for f in ('a', 'b', 'delta')])
+            out.append('<tr class="rest" %s><td></td><td class="l"><b>기타 %d 쌍</b>%s</td><td colspan="3"></td>%s<td></td></tr>' % (
+                _data_attrs('rest', a, b, d), len(rest), pending_note(pend), _abc_cells(ctx, kind, a, b, d)))
         out.append('<tr class="sum" %s><td></td><td class="l">합계</td><td class="l muted" colspan="3">전극 쌍 item 합</td>%s<td></td></tr>' % (
             _data_attrs('total', t['a'], t['b'], t['delta']), _abc_cells(ctx, kind, t['a'], t['b'], t['delta'])))
         out.append('</table>')
@@ -589,9 +598,9 @@ def _cno_block(ctx):
         '<table id="cno" class="ledger">%s' % head]
     out.extend(_cno_rows(ctx, shown, 'top'))
     if rest:
-        a, b, d = (fsum_skip(r[f] for r in rest) for f in ('a', 'b', 'delta'))
-        out.append('<tr class="rest" %s><td class="l"><b>기타 %d 줄</b></td><td colspan="2"></td>%s</tr>' % (
-            _data_attrs('rest', a, b, d), len(rest), _abc_cells(ctx, 'pixel', a, b, d)))
+        a, b, d, pend = rest_sums(rest, [(lambda r, f=f: r[f]) for f in ('a', 'b', 'delta')])
+        out.append('<tr class="rest" %s><td class="l"><b>기타 %d 줄</b>%s</td><td colspan="2"></td>%s</tr>' % (
+            _data_attrs('rest', a, b, d), len(rest), pending_note(pend), _abc_cells(ctx, 'pixel', a, b, d)))
     out.append('<tr class="sum" %s><td class="l">CNO 합계</td><td colspan="2"></td>%s</tr></table>' % (
         _data_attrs('total', t['a'], t['b'], t['delta']), _abc_cells(ctx, 'pixel', t['a'], t['b'], t['delta'])))
     if rest:
