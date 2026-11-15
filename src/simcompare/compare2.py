@@ -449,7 +449,10 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
 
 
 def _item_id(pid, failure_type, upper, lower, ekey):
-    return '|'.join((pid, failure_type, upper, lower, ','.join(f'{electrode}@{layer}' for electrode, layer in ekey)))
+    """Collision-free item id: the structural value [pair_id, failure_type, upper, lower, [[electrode, layer], ...]]
+    as compact JSON (no separator character in a name can merge two items). `ledger` calls this same function."""
+    return json.dumps([pid, failure_type, upper, lower, [[electrode, layer] for electrode, layer in ekey]],
+                      ensure_ascii=False, separators=(',', ':'))
 
 
 def _build_ledger(cells, entries, lam, conds, electrodes, shared, totals):
@@ -473,7 +476,7 @@ def _build_ledger(cells, entries, lam, conds, electrodes, shared, totals):
         led = rec['led']
         if rec['rows']:
             values = [value for _ck, _share, value in rec['rows']]
-            total = None if any(v is None for v in values) else sum(values)
+            total = None if any(v is None for v in values) else math.fsum(values)
             reasons = sorted(rec['notes'])
         else:  # the diameter filter removed every cell of this item: a true 0, not a missing input
             total, reasons = 0.0, ['diameter_filter_removed_all']
@@ -510,7 +513,7 @@ def _ledger_check(cells, items, conds, shared, totals):
             out[f'lambda_{kind}'] = dict(empty, total=total)
             out[f'shared_{kind}'] = dict(empty, total=shared[kind])
             continue
-        lhs = sum(values)
+        lhs = math.fsum(values)
         error = lhs - total
         out[f'lambda_{kind}'] = {'status': 'passed' if _within(error, total) else 'failed', 'sum': lhs,
                                  'total': total, 'abs_error': abs(error)}
@@ -518,7 +521,7 @@ def _ledger_check(cells, items, conds, shared, totals):
         if shared[kind] is None or any(v is None for v in excl):
             out[f'shared_{kind}'] = dict(empty, total=shared[kind])
             continue
-        lhs = lhs - sum(excl)
+        lhs = math.fsum(values + [-v for v in excl])
         error = lhs - shared[kind]
         out[f'shared_{kind}'] = {'status': 'passed' if _within(error, shared[kind]) else 'failed', 'sum': lhs,
                                  'total': shared[kind], 'abs_error': abs(error)}

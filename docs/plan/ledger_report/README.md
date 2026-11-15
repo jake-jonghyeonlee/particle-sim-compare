@@ -71,7 +71,8 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 (pixel 의 Σ 는 pixel 쌍 item 의 합. line 의 c_line 은 A = B 이므로 식 3 에 나타나지 않는다.)
 
-- 주 숫자 % = 100 × 값 / vi_A(같은 종류). vi_A 가 0 또는 null 이면 % 없이 원래 값만 보인다.
+- 주 숫자 % = 100 × 값 / vi_A(같은 종류). vi_A 가 **정확히 0** 이거나 null 이면 % 없이 원래 값만 보인다. 작은 양수 vi_A 는 그대로 계산한다(compare2 의 `RATIO_EPS` 1e-15 컷을 쓰지 않는다).
+- 모든 합계(합계식 6개, 쌍 합, 전극 합, 레이어 합, 증가 합·감소 합, compare2 `ledger_check` 의 item 합)는 `math.fsum` 으로 정확히 더한다. compare2 의 다른 합은 바꾸지 않는다.
 - 쌍 Δ 는 07 과 같은 기울기 규칙이다. 그러나 공유 몫을 나눠 받으므로 쌍 Δ 는 07 의 조건 Δ(exclusive 만)와 같지 않다. 관계식: 쌍 Δ 합 = `delta.conditions` 합 + `delta.shared`.
 - 전극 몫: 쌍 값의 1/2 씩을 두 전극에 넣는다. CNO 는 그 전극에 전부 넣는다. Σ 전극 = Σ 쌍 + CNO.
 
@@ -96,13 +97,16 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 1. 두 전극 중 하나라도 한쪽 제품의 전극 목록에 없다 → **전극 추가·제거**
 2. 쌍이 B 에만 → **새 쌍**, A 에만 → **사라진 쌍**
-3. A, B 의 item 키 집합이 다르다 → **레이어 변경** (방식만, 아래 레이어만 바뀐 경우 포함)
+3. A, B 의 item 키 집합이 다르다 → **레이어 변경** (방식만, 아래 레이어만, 방향만 바뀐 경우 포함). 키 = `item_id`(9절). 거리 필터가 전부 지운 item(아래 "거리 필터 item")은 키 집합에서 뺀다.
 4. |Δ| ≤ 1e-12 + 1e-9·max(|a|,|b|) → **변화 없음**
 5. 그 밖 → **같은 쌍 증감**
 
 - 쌍 "있음" = compare2 그 제품에 조건이 있음(면적 0 포함). 폴더 없는 기대 case 만 가진 쌍은 없음이다.
 - 쌍 줄은 우선순위 최상 종류 하나. item 줄은 각자 both / new / gone. 건수는 쌍 하나에 한 번.
-- 계산 불가 조건(`computable=false`)의 쌍은 "있음, 값 없음"이다. 관측 사실 판정(전극 추가·제거, 새 쌍·사라진 쌍, 레이어 변경)은 하고, 값이 필요한 판정은 "값 대기"로 둔다. 그 쌍은 7절 "계산 불가 항목" 목록에도 올린다.
+- 계산 불가 조건(`computable=false`)의 쌍은 "있음, 값 없음"이다. 그 쌍은 12절 7절(참고) "계산 불가 항목" 목록(`ledger.json` `unavailable`)에도 올린다.
+  - 한쪽 또는 양쪽 조건이 계산 불가라 item 키를 알 수 없으면 **레이어 변경을 판정하지 않고** "값 대기"로 둔다(구현: 쌍의 `_keys_known` 이 false).
+  - 관측 사실 판정(전극 추가·제거, 새 쌍·사라진 쌍)은 그대로 한다. 그 판정은 item 키를 쓰지 않는다.
+- 거리 필터 item: compare2 `ledger_items[].reasons` 가 `diameter_filter_removed_all` 하나뿐인 item(λ 0, 이물 크기 필터가 모든 셀을 지움)은 레이어 변경 판정의 키 집합에서 뺀다. 쌍 줄 안에서는 그대로 보이고, `ledger.json` 쌍의 item 에 `filtered_out: true` 가 붙는다(표시 상태 "거리 필터로 0"). 양쪽 item 이 모두 이 사유이면 `true`, 한쪽이라도 값이 있으면 `false` 이고 그 키는 값이 있는 쪽의 키로 센다(한쪽에만 값이 있으면 키 집합이 다르다 → 레이어 변경).
 - CNO 는 (electrode_id, density_layer) 단위의 별도 종류 "CNO"이다.
 
 전극 목록 완전성 (X3):
@@ -117,14 +121,17 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 
 - `ledger` 는 `products.reference.pair_table_hash == products.target.pair_table_hash`(`compare2.py:687`)를 먼저 확인한다. 다르면 종료 2 `ledger_pair_table_mismatch`("두 모델이 같은 pairs.csv 를 쓰도록 real.yaml 을 고친 뒤 02 부터 다시").
 - 해시가 같은데 한 pair_id 가 양쪽에서 다른 class 면 종료 2 `ledger_pair_class_mismatch`(방어).
+- 어느 한쪽 `pair_table_hash` 가 null 이어도 같은 오류(`ledger_pair_table_mismatch`)다(둘 다 null 인 경우 포함).
 - `ledger_basis` 가 없으면 `ledger_compare2_stale`("02 를 새 번들로 다시 실행"). config sha256 이 다르면 `compare2_config_mismatch`.
+- 07 과 같은 stale 검사(`compare2_report.py:259-271` 와 같은 상수·같은 코드): `inputs.area_basis` 가 `compare2.AREA_BASIS` 와 다르면 `compare2_stale_area_basis`, `inputs.case_exclusions.<role>.rule` 이 `CASE_EXCLUSION_RULE` 과 다르거나 없으면 `compare2_stale_case_exclusion_rule`.
+- item 검사(9절): item_id 가 구조 필드와 맞지 않으면 `ledger_item_id_mismatch`, 한 side 에 같은 item_id 가 둘이면 합치지 않고 `ledger_duplicate_item_id`. 모두 종료 2.
 
 ## 9. `compare2.json` 추가 키
 
 기존 키·값·CSV 4개·`OWNED_NAMES` 는 불변이다. `schema_version` 은 `compare2_v1` 을 유지한다(07·compare2_link 가 문자열 비교: `compare2_report.py:257`, `compare2_link.py:64`).
 
 - `sides.<role>.ledger_items[]` — item = (pair_id, failure_type, endpoints_key, analysis_layer, class) 마다 하나. 이물 크기·density_layer 는 `by_size` 로 펼친다. 정렬은 (analysis_layer, pair_id, failure_type, endpoints_key, class). 필드(구현된 이름):
-  - `item_id`: `pair_id|failure_type|upper|lower|전극@레이어,전극@레이어`(endpoints_key 순). 한 side 안에서 유일하다.
+  - `item_id`: 구조 값 `[pair_id, failure_type, upper, lower, [[electrode_id, actual_layer], [electrode_id, actual_layer]]]` 를 `json.dumps(…, ensure_ascii=False, separators=(',', ':'))` 로 쓴 문자열(끝점은 endpoints_key 순). 이름에 `|`·`,`·`@`·`"`·한글이 있어도 두 item 이 같은 id 가 되지 않는다(예전 `|`·`,`·`@` 이음 문자열은 레이어 `Z,B@Z` 와 `Z` 의 두 방향이 같은 id 가 되었다). compare2 의 `_item_id` 가 만들고 `ledger` 가 같은 함수로 다시 계산해 일치를 검사한다. 한 side 안에서 유일하다.
   - `pair_id`, `class`(line/pixel; CNO 는 `ledger_items` 에 없다), `failure_type`, `analysis_layer`, `upper_layer`, `lower_layer`
   - `electrodes`(그 쌍의 전극 목록), `endpoints: [{electrode_id, actual_layer}]`(electrode_id 순)
   - `lambda`(item 몫 λ; 계산 불가면 null), `area_share_um2`(몫 면적 합)
@@ -138,7 +145,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
   - `integer_checks`: `{status, line: {exclusive_ok, divisible_ok, shared_ok, sum_ok, multi_item_overlap_cells}, pixel: {…}}`(3절 정수 검산 3개 + 몫 합 = 면적. 모든 그룹의 AND)
   - `lambda_line`, `lambda_pixel`: `{status, sum, total, abs_error}` — Σ item λ(종류별) = `lambda.line` / `lambda.pixel`(CNO 제외)
   - `shared_line`, `shared_pixel`: 같은 모양 — Σ item λ − Σ 쌍 `lambda_excl`(종류별 exclusive) = `shared.lambda_line/pixel`
-  - 허용 오차는 기존 `_within`. 계열 λ 가 null 이거나 item λ 가 null 이면 그 계열은 `not_evaluated`.
+  - 허용 오차는 기존 `_within`. 계열 λ 가 null 이거나 item λ 가 null 이면 그 계열은 `not_evaluated`. 위 두 합과 item λ 합은 `math.fsum` 이다.
   - failed 면 side `reasons` 에 `ledger_check_failed`, status partial, 종료 3. passed·not_evaluated 면 기존 status·종료 코드 그대로.
 - `inputs.ledger_basis = 'pair_share_v1'`.
 
@@ -163,11 +170,11 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 | `totals.<line/pixel>` | `items`(쌍 item 합 A·B·Δ), `intercept`(절편 줄), pixel 만 `cno`·`crp`(A = −d, B = 0, Δ = d; `present`), `a`·`b`·`delta`(열 합계), `vi_a`·`vi_b` |
 | `kinds.<line/pixel>` | `computable`, `vi_a`, `vi_b`, `slope`, `slope_method`, `lambda_a`, `lambda_b`, `pair_count`, `change_kinds`(코드별 건수; pixel 은 `cno` 건수 포함), `increase_sum`·`decrease_sum`, `value_pending_rows` |
 | `kinds.change_kind_counts` | 쌍 + CNO 전체의 변화 종류별 건수(건수는 쌍 하나 한 번) |
-| `pairs` | 쌍별 `rank`(L#, P#), `pair_id`, `electrodes`, `kind`, `change_kind`, `present_a/b`, `computable_a/b`, `a`·`b`·`delta`·`pct_a`·`pct_b`·`pct_delta`, `layers_a/b`, `items`[`item_id`, 방식, 레이어, `endpoints`, `presence` both/new/gone, `lambda_a/b`, `a`·`b`·`delta`]. 순서: line 순위, pixel 순위, 종류 불명 |
+| `pairs` | 쌍별 `rank`(L#, P#), `pair_id`, `electrodes`, `kind`, `change_kind`, `present_a/b`, `computable_a/b`, `a`·`b`·`delta`·`pct_a`·`pct_b`·`pct_delta`, `layers_a/b`, `items`[`item_id`, 방식, 레이어, `endpoints`, `presence` both/new/gone, `filtered_out`(거리 필터로 0, 8절), `lambda_a/b`, `a`·`b`·`delta`]. 순서: line 순위, pixel 순위, 종류 불명 |
 | `electrodes` | 전극별 `status`, `present_a/b`, `layers_a/b`, `line`·`pixel`(A·B·Δ·% ; pixel 은 CNO 포함), `cno`, `partners_a/b`, `layers`(레이어별 line·pixel 값) |
 | `cno` | (electrode_id, density_layer) 줄: `change_kind: cno`, `presence`, `lambda_a/b`, `a`·`b`·`delta`·% |
 | `layers.<line/pixel/cno>` | 레이어(analysis_layer, CNO 는 density_layer)별 `a`·`b`·`delta`, `by_size`(이물 크기별), `top_pairs`(Δ 절댓값 상위 2쌍) |
-| `checks` | `equations`(`eq1_line_a` … `eq6_pixel_delta`), `electrode_sum`(Σ 전극 = Σ 쌍 + CNO, 종류별 a/b/delta), `pair_delta_vs_compare2`(쌍 Δ 합 = `delta.conditions` + `delta.shared`; 조건 Δ 중 null 이 있으면 `not_evaluated`), `status` |
+| `checks` | `equations`(`eq1_line_a` … `eq6_pixel_delta`), `electrode_sum`(Σ 전극 = Σ 쌍 + CNO, 종류별 a/b/delta), `pair_delta_vs_compare2`(쌍 Δ 합 = `delta.conditions` + `delta.shared`; 조건 Δ 중 null 이 있으면 `not_evaluated`), `layer_size_sum`(종류 line/pixel/cno × a/b/delta: 레이어마다 이물 크기 열의 합 = 레이어 값. `status`, 검사한 레이어 수 `layers`, `max_abs_error`), `status` |
 | `warnings` | `electrode_inventory_from_hotspots`(role), `electrode_inventory_conflict`(role, electrodes) |
 | `unavailable` | 계산 불가 항목(`scope` kind/pair/item/cno) |
 
@@ -180,7 +187,9 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 - 증가 합 / 감소 합 = 그 종류의 쌍 Δ(값 있는 것) + CNO Δ(pixel) + CRP 줄 Δ(pixel) 중 양수의 합 / 음수의 합이다. 절편 줄은 0 이다.
 - 합계식과 Σ 전극 검산은 item 값으로 계산한다. 쌍 값이 null 인 쌍(조건 계산 불가)에는 item 이 없어 합계에 0 으로 들어간다.
 - 전극 값 = item 값을 두 끝점 전극(같은 이름이면 한 전극)에 1/2 씩 넣는다. 레이어별 값은 끝점의 actual_layer 에 넣는다. CNO 는 그 전극에 전부, 레이어는 density_layer 이다.
+- 이물 크기별 값: item 의 크기 줄은 (diameter, density_layer) 를 키로 모은다(한 item 이 같은 지름에서 density_layer 둘에 걸쳐도 덮어쓰지 않는다). 레이어 × 이물 크기 표의 한 칸 = 그 레이어(analysis_layer)·지름의 density_layer 들의 합이다. 그래서 크기 열의 합 = 레이어 값이고, 이를 `checks.layer_size_sum` 이 검산한다.
 - 전극 존재: 목록이 complete 면 목록 ∪ 관측(충돌은 경고), incomplete 면 관측(조건 전극, item 끝점, CNO 전극)이다.
+- 전극 레이어 A → B: 목록이 incomplete(출처 observed)일 때 레이어는 item 끝점의 actual_layer 이다. item 이 없고 CNO 에만 나오는 전극은 그 CNO 의 density_layer 로 채운다.
 
 ## 11. 출력 폴더 규약과 08 단계 (X4)
 

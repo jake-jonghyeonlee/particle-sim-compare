@@ -11,6 +11,13 @@ from test_compare2 import PAIRS, STACK, base_cases, cond_by_id, load, run, two_s
 NEW_KEYS = ('ledger_items', 'ledger_check')
 
 
+def iid(pid, failure_type, upper, lower, *ends):
+    """The expected item_id: the structure [pair, type, upper, lower, [[electrode, layer], ...]] as compact JSON.
+    ends: 'electrode@layer' strings in endpoints_key order."""
+    return json.dumps([pid, failure_type, upper, lower, [end.split('@') for end in ends]],
+                      ensure_ascii=False, separators=(',', ':'))
+
+
 def strip_new_keys(doc):
     """The compare2 document without the three keys ledger/T3 added (sides.*.ledger_items, sides.*.ledger_check,
     inputs.ledger_basis)."""
@@ -148,14 +155,14 @@ def test_hand_calculated_three_overlaps_transfer_and_split_pair(tmp_path):
     # L1 pixel (density 3.0): DE {1, 2} lie under line (transferred), {6} shared with EF; EF {6, 7}
     # L2 line (density 4.0): XY lateral {0,1,2} + vertical {1,2,3}, GH {2,3}: cell 2 and 3 shared by XY and GH
     expect = {
-        'AB|lateral_short|L1|L1|A@L1,B@L1': (1 + 1 + 1 / 2 + 1 / 3, 5.0, 'line', 0.0),
-        'AC|lateral_short|L1|L1|A@L1,C@L1': (1 / 2 + 1 / 3 + 1, 5.0, 'line', 0.0),
-        'AF|lateral_short|L1|L1|A@L1,F@L1': (1 / 3 + 1, 5.0, 'line', 0.0),
-        'DE|lateral_short|L1|L1|D@L1,E@L1': (1 / 2, 3.0, 'pixel', 2 * cell),
-        'EF|lateral_short|L1|L1|E@L1,F@L1': (1 / 2 + 1, 3.0, 'pixel', 0.0),
-        'XY|lateral_short|L2|L2|X@L2,Y@L2': (1 + 1 / 2 + 1 / 4, 4.0, 'line', 0.0),
-        'XY|vertical_short|L2|L1|X@L1,Y@L2': (1 / 2 + 1 / 4 + 1 / 2, 4.0, 'line', 0.0),
-        'GH|lateral_short|L2|L2|G@L2,H@L2': (1 / 2 + 1 / 2, 4.0, 'line', 0.0)}
+        iid('AB', 'lateral_short', 'L1', 'L1', 'A@L1', 'B@L1'): (1 + 1 + 1 / 2 + 1 / 3, 5.0, 'line', 0.0),
+        iid('AC', 'lateral_short', 'L1', 'L1', 'A@L1', 'C@L1'): (1 / 2 + 1 / 3 + 1, 5.0, 'line', 0.0),
+        iid('AF', 'lateral_short', 'L1', 'L1', 'A@L1', 'F@L1'): (1 / 3 + 1, 5.0, 'line', 0.0),
+        iid('DE', 'lateral_short', 'L1', 'L1', 'D@L1', 'E@L1'): (1 / 2, 3.0, 'pixel', 2 * cell),
+        iid('EF', 'lateral_short', 'L1', 'L1', 'E@L1', 'F@L1'): (1 / 2 + 1, 3.0, 'pixel', 0.0),
+        iid('XY', 'lateral_short', 'L2', 'L2', 'X@L2', 'Y@L2'): (1 + 1 / 2 + 1 / 4, 4.0, 'line', 0.0),
+        iid('XY', 'vertical_short', 'L2', 'L1', 'X@L1', 'Y@L2'): (1 / 2 + 1 / 4 + 1 / 2, 4.0, 'line', 0.0),
+        iid('GH', 'lateral_short', 'L2', 'L2', 'G@L2', 'H@L2'): (1 / 2 + 1 / 2, 4.0, 'line', 0.0)}
     assert set(got) == set(expect)
     for item_id, (cells, density, kind, transferred) in expect.items():
         item = got[item_id]
@@ -166,7 +173,7 @@ def test_hand_calculated_three_overlaps_transfer_and_split_pair(tmp_path):
         used = [r for r in item['by_size'] if r['area_share_um2'] > 0]   # the other sizes have zero-area rows
         assert [r['diameter_um'] for r in used] == ([1.0] if cells else []) and (
             {r['density_layer'] for r in item['by_size']} == {'P2' if item['analysis_layer'] == 'L2' else 'P1'})
-    vertical = got['XY|vertical_short|L2|L1|X@L1,Y@L2']
+    vertical = got[iid('XY', 'vertical_short', 'L2', 'L1', 'X@L1', 'Y@L2')]
     assert (vertical['upper_layer'], vertical['lower_layer'], vertical['analysis_layer']) == ('L2', 'L1', 'L2')
     assert vertical['endpoints'] == [{'electrode_id': 'X', 'actual_layer': 'L1'},
                                      {'electrode_id': 'Y', 'actual_layer': 'L2'}]
@@ -226,7 +233,8 @@ def test_swapped_direction_pair_items_split_the_overlap(tmp_path):
     code, out = run(tmp_path, (cases, pairs), (cases, pairs), thk=THK)
     assert code == 0, (out / 'compare2.json').read_text()
     items = items_of(load(out))
-    assert [i['item_id'] for i in items] == ['XY|vertical_short|L2|L1|X@L1,Y@L2', 'XY|vertical_short|L2|L1|X@L2,Y@L1']
+    assert [i['item_id'] for i in items] == [iid('XY', 'vertical_short', 'L2', 'L1', 'X@L1', 'Y@L2'),
+                                             iid('XY', 'vertical_short', 'L2', 'L1', 'X@L2', 'Y@L1')]
     for item in items:   # pair covers 0,1,2 (n=1); cell 1 is in both items (m=2): 1 + 1/2
         assert item['lambda'] == pytest.approx(1.5 * 0.01 * 4.0, abs=1e-15)
     assert load(out)['sides']['reference']['ledger_check']['status'] == 'passed'
@@ -304,3 +312,44 @@ def test_failed_ledger_check_is_partial_with_exit_3(tmp_path, monkeypatch):
         assert side['conservation_check']['status'] == 'passed' and 'conservation_check_failed' not in side['reasons']
         assert f'{role}:ledger_check_failed' in execution['reasons']
     assert execution['exit_code'] == 3 and execution['status'] == 'partial'
+
+
+# ---- ledger/T7: item_id is the structure as JSON; the check sums are exact ----------------------------------------------
+
+def test_item_id_never_merges_two_structures():
+    # the Astra counterexample: with '|' ',' '@' joined as text both directions gave 'P|vertical_short|Z,B@Z|Z|A@Z,B@Z,B@Z'
+    up, low = 'Z,B@Z', 'Z'
+    one = compare2._item_id('P', 'vertical_short', up, low, (('A', up), ('B', low)))
+    two = compare2._item_id('P', 'vertical_short', up, low, (('A', low), ('B', up)))
+    assert one != two
+    names = ['a|b', 'c,d', 'e@f', 'g"h', '한글', 'x\\y', '']
+    seen = {}
+    for first in names:
+        for second in names:
+            for layer in names:
+                text = compare2._item_id(first, 'lateral_short', layer, layer, ((first, layer), (second, layer)))
+                assert json.loads(text) == [first, 'lateral_short', layer, layer, [[first, layer], [second, layer]]]
+                assert seen.setdefault(text, (first, second, layer)) == (first, second, layer)
+    assert '한글' in compare2._item_id('한글', 'lateral_short', 'L', 'L', ())      # ensure_ascii=False
+    assert ' ' not in compare2._item_id('P', 'f', 'U', 'L', (('A', 'U'),))         # compact separators
+
+
+@pytest.mark.parametrize('name', sorted(FIXTURES))
+def test_item_id_of_every_real_item_is_its_own_structure(tmp_path, name):
+    ref, tgt, kwargs = FIXTURES[name]()
+    code, out = run(tmp_path, ref, tgt, **kwargs)
+    doc = load(out)
+    for role in ('reference', 'target'):
+        for item in items_of(doc, role):
+            ends = tuple((e['electrode_id'], e['actual_layer']) for e in item['endpoints'])
+            assert item['item_id'] == compare2._item_id(item['pair_id'], item['failure_type'], item['upper_layer'],
+                                                        item['lower_layer'], ends)
+            assert json.loads(item['item_id'])[0] == item['pair_id']
+
+
+def test_ledger_check_sums_are_exact_not_running_float_sums():
+    items = [{'class': 'line', 'lambda': value} for value in (1e16, 1.0, -1e16)]
+    check = compare2._ledger_check({}, items, {}, {'line': 1.0, 'pixel': None}, {'line': 1.0, 'pixel': None})
+    assert check['lambda_line'] == {'status': 'passed', 'sum': 1.0, 'total': 1.0, 'abs_error': 0.0}
+    assert check['shared_line']['status'] == 'passed' and check['shared_line']['sum'] == 1.0
+    assert check['lambda_pixel']['status'] == 'not_evaluated'

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -19,7 +20,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .compare2 import LEDGER_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _csv_text, _json_text, _ratio, _within
+from .adapters.real_hotspot import CASE_EXCLUSION_RULE
+from .compare2 import (AREA_BASIS, LEDGER_BASIS, SCHEMA_VERSION as COMPARE2_SCHEMA, _csv_text, _item_id, _json_text,
+                       _within)
 from .compare2_inputs import load_compare2_config
 from .numeric_schema import NumericContractError
 
@@ -43,8 +46,9 @@ STATUS_LABELS = (('common', '공통'), ('new', '신규'), ('removed', '제거'),
 # ---- small helpers -------------------------------------------------------------------------------------------------
 
 def _osum(values):
+    """Exact (math.fsum) sum; null as soon as one part is null."""
     values = list(values)
-    return None if any(v is None for v in values) else sum(values, 0.0)
+    return None if any(v is None for v in values) else math.fsum(values)
 
 
 def _sub(b, a):
@@ -56,8 +60,10 @@ def _times(s, x):
 
 
 def _pct(value, vi_a):
-    ratio = _ratio(value, vi_a)
-    return None if ratio is None else 100.0 * ratio
+    """100 x value / vi_a. Null only for a null part or an exactly 0 denominator; a small positive vi_a is computed."""
+    if value is None or vi_a is None or vi_a == 0:
+        return None
+    return 100.0 * (value / vi_a)
 
 
 def _sha256_json(value):
@@ -65,20 +71,20 @@ def _sha256_json(value):
 
 
 class _Acc(object):
-    """A running sum that stays null once one part is null."""
-    __slots__ = ('total', 'null')
+    """An exact (math.fsum) sum that stays null once one part is null."""
+    __slots__ = ('parts', 'null')
 
     def __init__(self):
-        self.total, self.null = 0.0, False
+        self.parts, self.null = [], False
 
     def add(self, value):
         if value is None:
             self.null = True
         else:
-            self.total += value
+            self.parts.append(value)
 
     def value(self, computable=True):
-        return None if self.null or not computable else self.total
+        return None if self.null or not computable else math.fsum(self.parts)
 
 
 class _Tri(object):
@@ -142,6 +148,20 @@ def _read_compare2(compare2_dir, cfg2):
             'ledger_compare2_stale',
             f'compare2.json ledger_basis is {inputs.get("ledger_basis")!r}, this code needs {LEDGER_BASIS!r}: '
             '02(compare2)를 새 번들로 다시 실행')
+    # the same stale checks as 07 (compare2_report._read_compare2): same constants, same codes
+    if inputs.get('area_basis') != AREA_BASIS:
+        raise NumericContractError(
+            'compare2_stale_area_basis',
+            f'compare2.json area_basis is {inputs.get("area_basis")!r}, this code uses {AREA_BASIS!r}: '
+            '02(compare2)를 새 번들로 다시 실행')
+    exclusions = inputs.get('case_exclusions')
+    rules = {role: (exclusions.get(role) or {}).get('rule') if isinstance(exclusions, dict) else None
+             for role in ROLES}
+    if any(rule != CASE_EXCLUSION_RULE for rule in rules.values()):
+        raise NumericContractError(
+            'compare2_stale_case_exclusion_rule',
+            f'compare2.json case_exclusions rule is {rules!r}, this code uses {CASE_EXCLUSION_RULE!r}: '
+            '02(compare2)를 새 번들로 다시 실행')
     recorded = (inputs.get('compare2_config') or {}).get('sha256')
     if recorded != cfg2.config_sha256:
         raise NumericContractError(
@@ -149,7 +169,7 @@ def _read_compare2(compare2_dir, cfg2):
             f'compare2.json was made with config sha256 {recorded}, this config is {cfg2.config_sha256}')
     products = doc.get('products') or {}
     hashes = {role: (products.get(role) or {}).get('pair_table_hash') for role in ROLES}
-    if hashes['reference'] != hashes['target']:
+    if hashes['reference'] is None or hashes['target'] is None or hashes['reference'] != hashes['target']:
         raise NumericContractError(
             'ledger_pair_table_mismatch',
             f'pair table hash differs between the products ({hashes}): 두 모델이 같은 pairs.csv 를 쓰도록 real.yaml 을 '
@@ -178,11 +198,20 @@ class _Side(object):
             if item.get('electrodes') and not rec['electrodes']:
                 rec['electrodes'] = list(item['electrodes'])
             rec['classes'].add(item['class'])
-            known = rec['items'].get(item['item_id'])
-            if known is None:
-                rec['items'][item['item_id']] = dict(item)
-            else:  # an item id is unique per side; if it is not, the lambdas add (null stays null)
-                known['lambda'] = _osum([known.get('lambda'), item.get('lambda')])
+            item_id = item['item_id']
+            expected = _item_id(item['pair_id'], item['failure_type'], item['upper_layer'], item['lower_layer'],
+                                [(e['electrode_id'], e['actual_layer']) for e in item['endpoints']])
+            if item_id != expected:
+                raise NumericContractError(
+                    'ledger_item_id_mismatch',
+                    f'{role}: item_id {item_id!r} does not match its structure ({expected!r}): '
+                    '02(compare2)를 새 번들로 다시 실행')
+            if item_id in rec['items']:  # an item id is unique per side; two equal ids are never merged
+                raise NumericContractError('ledger_duplicate_item_id', f'{role}: item_id {item_id!r} appears twice')
+            stored = dict(item)
+            # the distance filter removed every cell of this item: a true 0 that no longer has a layer key (README 8)
+            stored['filtered_out'] = set(item.get('reasons') or ()) == {'diameter_filter_removed_all'}
+            rec['items'][item_id] = stored
         self.cno = {}
         for row in sorted(side.get('cno') or [], key=lambda r: str(r.get('case_name'))):
             key = (row['electrode_id'], row['density_layer'])
@@ -209,12 +238,16 @@ class _Side(object):
         return self.pairs.setdefault(pid, {'electrodes': [], 'classes': set(), 'items': {}, 'noncomputable': False})
 
     def electrode_layers(self):
-        """{electrode: {layer}} from the item endpoints."""
+        """{electrode: {layer}} from the item endpoints; an electrode seen only in CNO takes its CNO density layers."""
         out = {}
         for rec in self.pairs.values():
             for item in rec['items'].values():
                 for end in item.get('endpoints') or ():
                     out.setdefault(end['electrode_id'], set()).add(end['actual_layer'])
+        from_items = set(out)
+        for electrode, layer in self.cno:
+            if electrode not in from_items:
+                out.setdefault(electrode, set()).add(layer)
         return out
 
 
@@ -320,6 +353,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             ib = recs['target']['items'].get(item_id) if recs['target'] else None
             base = ib or ia
             ikind = base['class']
+            filtered = all(item['filtered_out'] for item in (ia, ib) if item is not None)
             lam_a = None if ia is None else ia.get('lambda')
             lam_b = None if ib is None else ib.get('lambda')
             a = None if slope[ikind] is None else (0.0 if ia is None else value(ikind, lam_a))
@@ -333,6 +367,7 @@ def build_ledger(doc, doc_sha256, cfg2):
                 'upper_layer': base['upper_layer'], 'lower_layer': base['lower_layer'],
                 'endpoints': base.get('endpoints') or [], 'class': ikind,
                 'presence': 'both' if ia is not None and ib is not None else ('new' if ib is not None else 'gone'),
+                'filtered_out': filtered,
                 'lambda_a': lam_a, 'lambda_b': lam_b, 'a': a, 'b': b, 'delta': d})
             for role, item in (('reference', ia), ('target', ib)):
                 if item is not None and item.get('lambda') is None:
@@ -349,10 +384,11 @@ def build_ledger(doc, doc_sha256, cfg2):
             layer_acc[ikind].setdefault(base['analysis_layer'], _Tri()).add(a, b, d)
             pair_layer[ikind].setdefault((base['analysis_layer'], pid), _Tri()).add(a, b, d)
             sizes_a, sizes_b = _size_map(ia), _size_map(ib)
-            for diameter in sorted(set(sizes_a) | set(sizes_b)):
-                va = _size_value(slope[ikind], ia, sizes_a, diameter)
-                vb = _size_value(slope[ikind], ib, sizes_b, diameter)
-                size_acc[ikind].setdefault((base['analysis_layer'], diameter), _Tri()).add(va, vb, _sub(vb, va))
+            for size_key in sorted(set(sizes_a) | set(sizes_b), key=lambda k: (k[0], str(k[1]))):
+                # key = (diameter, density_layer): one item at one diameter in two density layers never overwrites
+                va = _size_value(slope[ikind], ia, sizes_a, size_key)
+                vb = _size_value(slope[ikind], ib, sizes_b, size_key)
+                size_acc[ikind].setdefault((base['analysis_layer'], size_key[0]), _Tri()).add(va, vb, _sub(vb, va))
         for a_name in names:
             electrode(a_name)
             for b_name in names:
@@ -385,7 +421,9 @@ def build_ledger(doc, doc_sha256, cfg2):
             'layers_b': sorted({i['analysis_layer'] for i in (recs['target'] or {'items': {}})['items'].values()}),
             'items': item_rows,
             '_keys_known': not any(recs[role] is not None and recs[role]['noncomputable'] for role in ROLES),
-            '_keys': {role: set(recs[role]['items']) if recs[role] is not None else set() for role in ROLES}}
+            # the layer-change key set leaves out items the distance filter removed entirely (a true 0, README 8)
+            '_keys': {role: {item_id for item_id, item in recs[role]['items'].items() if not item['filtered_out']}
+                      if recs[role] is not None else set() for role in ROLES}}
 
     # change kinds (README 8)
     for pid in sorted(pair_rows):
@@ -538,7 +576,7 @@ def build_ledger(doc, doc_sha256, cfg2):
         entry = {}
         for field, name in (('a', 'a'), ('b', 'b'), ('delta', 'd')):
             parts = [row[kind][field] for row in electrode_rows]
-            lhs = None if not fam[kind] or any(v is None for v in parts) else sum(parts)
+            lhs = None if not fam[kind] or any(v is None for v in parts) else math.fsum(parts)
             rhs = getattr(pair_sum[kind], name).value(fam[kind])
             if kind == 'pixel':
                 rhs = _osum([rhs, getattr(cno_total, name).value(fam[kind])])
@@ -550,13 +588,10 @@ def build_ledger(doc, doc_sha256, cfg2):
         conds = [c.get(f'delta_vi_{kind}') for c in delta.get('conditions') or []]
         shared = (delta.get('shared') or {}).get(f'delta_vi_{kind}')
         # a condition whose delta is null (not computable) has no value to compare: the relation cannot be evaluated
-        rhs = None if not fam[kind] or shared is None or any(v is None for v in conds) else sum(conds) + shared
+        rhs = (None if not fam[kind] or shared is None or any(v is None for v in conds)
+               else math.fsum(conds + [shared]))
         pair_vs_compare2[kind] = _check(lhs, rhs)
     checks = {'equations': equations, 'electrode_sum': electrode_sum, 'pair_delta_vs_compare2': pair_vs_compare2}
-    states = [e['status'] for e in equations.values()]
-    states += [e['status'] for kind in KINDS for e in electrode_sum[kind].values()]
-    states += [e['status'] for e in pair_vs_compare2.values()]
-    checks['status'] = _worst(states)
 
     # kinds block
     ordered = {}
@@ -578,8 +613,8 @@ def build_ledger(doc, doc_sha256, cfg2):
             'slope_method': (slopes.get(kind) or {}).get('method'),
             'lambda_a': side_a.lam[kind], 'lambda_b': side_b.lam[kind], 'pair_count': len(members),
             'change_kinds': counts,
-            'increase_sum': sum(v for v in known if v > 0) if fam[kind] else None,
-            'decrease_sum': sum(v for v in known if v < 0) if fam[kind] else None,
+            'increase_sum': math.fsum(v for v in known if v > 0) if fam[kind] else None,
+            'decrease_sum': math.fsum(v for v in known if v < 0) if fam[kind] else None,
             'value_pending_rows': len(rows_delta) - len(known)}
         if not fam[kind]:
             unavailable.append({'scope': 'kind', 'id': kind, 'reasons': ['kind_not_computable']})
@@ -607,6 +642,23 @@ def build_ledger(doc, doc_sha256, cfg2):
                           by_size=[dict({'diameter_um': diameter}, **tri.out(fam['pixel']))
                                    for (lay, diameter), tri in sorted(cno_size.items()) if lay == layer])
                      for layer in sorted(cno_layer)]
+
+    # layer x size table: the sizes of one layer add up to the layer value (a size row is never overwritten or lost)
+    layer_size_sum = {}
+    for kind in ('line', 'pixel', 'cno'):
+        entry = {}
+        for field in ('a', 'b', 'delta'):
+            per_layer = [_check(_osum(s[field] for s in row['by_size']), row[field]) for row in layers[kind]]
+            entry[field] = {'status': _worst(c['status'] for c in per_layer) if per_layer else 'passed',
+                            'layers': len(per_layer),
+                            'max_abs_error': max([c['abs_error'] for c in per_layer if c['abs_error'] is not None] or [0.0])}
+        layer_size_sum[kind] = entry
+    checks['layer_size_sum'] = layer_size_sum
+    states = [e['status'] for e in equations.values()]
+    states += [e['status'] for kind in KINDS for e in electrode_sum[kind].values()]
+    states += [e['status'] for e in pair_vs_compare2.values()]
+    states += [e['status'] for kind in layer_size_sum for e in layer_size_sum[kind].values()]
+    checks['status'] = _worst(states)
 
     status, reasons = 'ok', []
     if checks['status'] == 'failed':
@@ -637,10 +689,14 @@ def _public_pair(row):
 
 
 def _size_map(item):
-    """{diameter_um: lambda} of one item (CNO row sizes are already such a dict)."""
+    """{(diameter_um, density_layer): lambda} of one item. One item can reach two density layers at one diameter, so
+    the density layer is part of the key (an equal key adds up, null stays null)."""
     if item is None:
         return {}
-    return {entry['diameter_um']: entry['lambda'] for entry in item.get('by_size') or ()}
+    parts = {}
+    for entry in item.get('by_size') or ():
+        parts.setdefault((entry['diameter_um'], entry.get('density_layer')), []).append(entry['lambda'])
+    return {key: _osum(values) for key, values in parts.items()}
 
 
 def _size_value(s, item, sizes, diameter):

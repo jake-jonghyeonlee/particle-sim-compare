@@ -12,7 +12,8 @@ import yaml
 
 from simcompare import ledger
 from simcompare.cli import main
-from simcompare.compare2 import VI_LINE_DIVISOR, VI_PIXEL_DIVISOR, _g, _slope_g
+from simcompare.adapters.real_hotspot import CASE_EXCLUSION_RULE
+from simcompare.compare2 import AREA_BASIS, VI_LINE_DIVISOR, VI_PIXEL_DIVISOR, _g, _item_id, _slope_g
 from simcompare.compare2_inputs import load_compare2_config
 
 ROLES = ('reference', 'target')
@@ -20,10 +21,12 @@ ROLES = ('reference', 'target')
 
 # ---- builder ---------------------------------------------------------------------------------------------------------
 
-def item(ftype, ends, lam, layer=None, upper=None, lower=None, sizes=None):
-    """One item definition. Lateral: give layer. Vertical: give upper and lower."""
+def item(ftype, ends, lam, layer=None, upper=None, lower=None, sizes=None, reasons=None):
+    """One item definition. Lateral: give layer. Vertical: give upper and lower.
+    sizes: by_size lambdas (floats at diameter 3, 4, ...) or (lambda, density_layer, diameter) tuples; [] = no size row."""
     upper = upper or layer
-    return {'ftype': ftype, 'ends': ends, 'lam': lam, 'upper': upper, 'lower': lower or upper, 'sizes': sizes}
+    return {'ftype': ftype, 'ends': ends, 'lam': lam, 'upper': upper, 'lower': lower or upper, 'sizes': sizes,
+            'reasons': list(reasons or ())}
 
 
 def lateral(ends, lam, layer, **kw):
@@ -41,15 +44,17 @@ def pair(pid, electrodes, cls, a, b, **kw):
 
 def _item_doc(p, d, kind):
     ends = sorted(d['ends'])
-    item_id = '|'.join((p['pid'], d['ftype'], d['upper'], d['lower'], ','.join(f'{e}@{l}' for e, l in ends)))
-    sizes = d['sizes'] or [d['lam']]
+    item_id = _item_id(p['pid'], d['ftype'], d['upper'], d['lower'], ends)
+    sizes = d['sizes'] if d['sizes'] is not None else [d['lam']]
+    rows = []
+    for i, entry in enumerate(sizes):
+        lam, dlayer, diameter = entry if isinstance(entry, tuple) else (entry, d['upper'], float(3 + i))
+        rows.append({'diameter_um': diameter, 'density_layer': dlayer, 'area_share_um2': 1.0, 'lambda': lam})
     return {'item_id': item_id, 'pair_id': p['pid'], 'class': kind, 'failure_type': d['ftype'],
             'analysis_layer': d['upper'], 'upper_layer': d['upper'], 'lower_layer': d['lower'],
             'electrodes': list(p['electrodes']), 'endpoints': [{'electrode_id': e, 'actual_layer': l} for e, l in ends],
-            'lambda': d['lam'], 'area_share_um2': 1.0,
-            'by_size': [{'diameter_um': float(3 + i), 'density_layer': d['upper'], 'area_share_um2': 1.0, 'lambda': lam}
-                        for i, lam in enumerate(sizes)],
-            'transferred_out_area_um2': 0.0, 'computable': d['lam'] is not None, 'reasons': []}
+            'lambda': d['lam'], 'area_share_um2': 1.0, 'by_size': rows,
+            'transferred_out_area_um2': 0.0, 'computable': d['lam'] is not None, 'reasons': d['reasons']}
 
 
 def build_doc(pairs, cno=(), crp=(1.0, 1.0), pixel_null=False, line_null=False, cfg_sha='0' * 64):
@@ -121,7 +126,8 @@ def build_doc(pairs, cno=(), crp=(1.0, 1.0), pixel_null=False, line_null=False, 
              'shared': {f'delta_vi_{kind}': scaled(kind, shared['target'][kind] - shared['reference'][kind])
                         for kind in ('line', 'pixel')}, 'crp_difference': crp_diff}
     return {'schema_version': 'compare2_v1',
-            'inputs': {'compare2_config': {'sha256': cfg_sha}, 'ledger_basis': 'pair_share_v1'},
+            'inputs': {'compare2_config': {'sha256': cfg_sha}, 'ledger_basis': 'pair_share_v1', 'area_basis': AREA_BASIS,
+                       'case_exclusions': {role: {'rule': CASE_EXCLUSION_RULE} for role in ROLES}},
             'products': {role: {'model_group': 'mobile', 'pair_table_hash': 'h' * 64, 'crp': crp[i]}
                          for i, role in enumerate(ROLES)},
             'sides': sides, 'delta': delta}
@@ -672,3 +678,273 @@ def test_input_document_is_not_changed(tmp_path):
     before = copy.deepcopy(json.loads((world.c2 / 'compare2.json').read_text(encoding='utf-8')))
     assert go(world) == 0
     assert json.loads((world.c2 / 'compare2.json').read_text(encoding='utf-8')) == before
+
+
+# ---- 8. ledger/T7: R2 fixes ------------------------------------------------------------------------------------------
+
+def old_style_id(item_id_parts, ends):
+    """The id format before ledger/T7 (separators joined as plain text): it could collide."""
+    pid, ftype, upper, lower = item_id_parts
+    return '|'.join((pid, ftype, upper, lower, ','.join(f'{e}@{l}' for e, l in ends)))
+
+
+# change 1 (astra:X1) ------------------------------------------------------------------------------------------------
+
+ASTRA_UP, ASTRA_LOW = 'Z,B@Z', 'Z'
+ASTRA_ENDS_1 = [('A', ASTRA_UP), ('B', ASTRA_LOW)]       # direction 1: A on the upper layer
+ASTRA_ENDS_2 = [('A', ASTRA_LOW), ('B', ASTRA_UP)]       # direction 2: B on the upper layer
+
+
+def test_astra_counterexample_old_ids_collided_new_ids_do_not():
+    parts = ('P1', 'vertical_short', ASTRA_UP, ASTRA_LOW)
+    assert old_style_id(parts, ASTRA_ENDS_1) == old_style_id(parts, ASTRA_ENDS_2)
+    assert _item_id(*parts, ASTRA_ENDS_1) != _item_id(*parts, ASTRA_ENDS_2)
+
+
+def test_item_id_is_compact_json_of_the_structure_and_round_trips():
+    ekey = [('A|1', 'S@1"'), ('B,2', '한글')]
+    text = _item_id('P|1', 'vertical_short', 'S@1"', '한글', ekey)
+    assert text == '["P|1","vertical_short","S@1\\"","한글",[["A|1","S@1\\""],["B,2","한글"]]]'
+    assert json.loads(text) == ['P|1', 'vertical_short', 'S@1"', '한글', [['A|1', 'S@1"'], ['B,2', '한글']]]
+
+
+def test_astra_two_directions_are_two_items_with_their_own_electrode_layers(tmp_path):
+    def vert(ends, lam):
+        return vertical(ends, lam, ASTRA_UP, ASTRA_LOW)
+    pairs = [pair('P1', ['A', 'B'], 'line', [vert(ASTRA_ENDS_1, .01), vert(ASTRA_ENDS_2, .03)],
+                  [vert(ASTRA_ENDS_1, .02), vert(ASTRA_ENDS_2, .03)])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    s = doc['kinds']['line']['slope']
+    row = by_pair(doc)['P1']
+    assert len(row['items']) == 2 and len({i['item_id'] for i in row['items']}) == 2
+    assert row['change_kind'] == 'same_pair_change'
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    # direction 1 puts A on the upper layer and B on the lower one; direction 2 the other way round
+    assert elec['A']['layers'][ASTRA_UP]['line']['a'] == pytest.approx(s * .01 / 2)
+    assert elec['A']['layers'][ASTRA_LOW]['line']['a'] == pytest.approx(s * .03 / 2)
+    assert elec['B']['layers'][ASTRA_LOW]['line']['a'] == pytest.approx(s * .01 / 2)
+    assert elec['B']['layers'][ASTRA_UP]['line']['a'] == pytest.approx(s * .03 / 2)
+    assert elec['A']['layers'][ASTRA_UP]['line']['delta'] == pytest.approx(s * .01 / 2)
+    assert_all_passed(doc)
+
+
+def test_astra_direction_change_is_a_layer_change(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line', [vertical(ASTRA_ENDS_1, .01, ASTRA_UP, ASTRA_LOW)],
+                  [vertical(ASTRA_ENDS_2, .01, ASTRA_UP, ASTRA_LOW)]),
+             pair('P2', ['B', 'C'], 'line', [lateral(['B', 'C'], .01, 'SD1')], [lateral(['B', 'C'], .02, 'SD1')])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    assert by_pair(doc)['P1']['change_kind'] == 'layer_change'     # the old ids made both sides one "same" item
+    assert len(by_pair(doc)['P1']['items']) == 2
+    assert {i['presence'] for i in by_pair(doc)['P1']['items']} == {'gone', 'new'}
+
+
+def test_names_with_separators_quotes_and_korean_keep_items_apart(tmp_path):
+    e1, e2, layer, low = 'A|1', 'B,2', 'S@1"', '한글'
+    pairs = [pair('P|1', [e1, e2], 'line',
+                  [lateral([e1, e2], .01, layer), vertical([(e1, low), (e2, layer)], .02, layer, low)],
+                  [lateral([e1, e2], .02, layer), vertical([(e1, low), (e2, layer)], .02, layer, low)])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    row = by_pair(doc)['P|1']
+    ids = [i['item_id'] for i in row['items']]
+    assert len(set(ids)) == 2 and row['change_kind'] == 'same_pair_change'
+    for text in ids:
+        assert json.loads(text)[0] == 'P|1'
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert set(elec) == {e1, e2} and set(elec[e1]['layers']) == {layer, low}
+    assert_all_passed(doc)
+
+
+def test_duplicate_item_id_on_one_side_exits_2(tmp_path):
+    def tamper(doc):
+        items = doc['sides']['target']['ledger_items']
+        items.append(copy.deepcopy(items[0]))
+    world = mockup(tmp_path, mutate=tamper)
+    assert go(world) == 2
+    assert error_code(world.out) == 'ledger_duplicate_item_id'
+    assert not (world.out / 'ledger.json').exists()
+
+
+def test_item_id_that_does_not_match_its_structure_exits_2(tmp_path):
+    def tamper(doc):
+        doc['sides']['reference']['ledger_items'][0]['item_id'] = 'P1|lateral_short|SD1|SD1|Data@SD1,ELVDD@SD1'
+    world = mockup(tmp_path, mutate=tamper)
+    assert go(world) == 2
+    assert error_code(world.out) == 'ledger_item_id_mismatch'
+
+
+# change 2 (astra:A1) ------------------------------------------------------------------------------------------------
+
+def test_pct_is_null_only_for_an_exact_zero_or_null_denominator():
+    assert ledger._pct(1e-20, 1e-16) == pytest.approx(1e-2)          # a small positive vi_a is computed
+    assert ledger._pct(-3e-17, 1e-16) == pytest.approx(-30.0)
+    assert ledger._pct(5.0, 0.0) is None and ledger._pct(5.0, None) is None and ledger._pct(None, 1.0) is None
+    assert ledger._pct(0.0, 1e-16) == 0.0
+
+
+def test_percent_columns_use_a_tiny_vi_a(tmp_path):
+    def tamper(doc):
+        doc['sides']['reference']['vi_line'] = 1e-16
+    world = mockup(tmp_path, mutate=tamper)
+    assert go(world) in (0, 3)                                         # the equations no longer hold: only the % is read
+    doc = result(world)
+    row = by_pair(doc)['P1']
+    assert row['pct_a'] == pytest.approx(100 * row['a'] / 1e-16)
+    assert row['pct_delta'] is not None
+
+
+# change 4 (opus adv:3) ----------------------------------------------------------------------------------------------
+
+def test_sums_are_exact_fsum():
+    assert ledger._osum([1e16, 1.0, -1e16]) == 1.0 and ledger._osum([1.0, None]) is None
+    acc = ledger._Acc()
+    for part in (1e16, 1.0, -1e16):
+        acc.add(part)
+    assert acc.value() == 1.0
+    tri = ledger._Tri()
+    for part in (1e16, 1.0, -1e16):
+        tri.add(part, part, part)
+    assert tri.out() == {'a': 1.0, 'b': 1.0, 'delta': 1.0}
+
+
+# change 5 (opus adv:4) ----------------------------------------------------------------------------------------------
+
+def test_two_density_layers_at_one_diameter_are_both_kept_in_the_layer_size_table(tmp_path):
+    split_a = [(.004, 'SD1', 3.0), (.006, 'SD2', 3.0)]        # one item, one diameter, two density layers
+    split_b = [(.012, 'SD1', 3.0), (.008, 'SD2', 3.0)]
+    pairs = [pair('P1', ['A', 'B'], 'line', [lateral(['A', 'B'], .01, 'SD1', sizes=split_a)],
+                  [lateral(['A', 'B'], .02, 'SD1', sizes=split_b)])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    layer = doc['layers']['line'][0]
+    assert [e['diameter_um'] for e in layer['by_size']] == [3.0]
+    s = doc['kinds']['line']['slope']
+    assert layer['by_size'][0]['a'] == pytest.approx(s * .010) and layer['by_size'][0]['b'] == pytest.approx(s * .020)
+    assert layer['by_size'][0]['delta'] == pytest.approx(layer['delta'])
+    sums = doc['checks']['layer_size_sum']
+    assert set(sums) == {'line', 'pixel', 'cno'}
+    assert sums['line']['delta']['status'] == 'passed' and sums['line']['delta']['layers'] == 1
+    assert doc['checks']['status'] == 'passed'
+
+
+def test_layer_size_sum_passes_on_the_mockup_and_fails_when_a_size_row_is_lost(tmp_path):
+    world = mockup(tmp_path)
+    assert go(world) == 0
+    sums = result(world)['checks']['layer_size_sum']
+    assert all(e['status'] == 'passed' for kind in sums.values() for e in kind.values())
+
+    def tamper(doc):         # drop one size row of an item: its lambda no longer equals the sum of its sizes
+        doc['sides']['target']['ledger_items'][0]['by_size'] = [{'diameter_um': 3.0, 'density_layer': 'SD1',
+                                                                 'area_share_um2': 1.0, 'lambda': 0.0}]
+    (tmp_path / 'bad').mkdir()
+    world = mockup(tmp_path / 'bad', mutate=tamper)
+    assert go(world) == 3
+    bad = result(world)['checks']['layer_size_sum']
+    assert any(e['status'] == 'failed' for kind in bad.values() for e in kind.values())
+
+
+# change 6 (opus adv:5) ----------------------------------------------------------------------------------------------
+
+FILTERED = ['diameter_filter_removed_all']
+
+
+def test_item_removed_by_the_distance_filter_does_not_make_a_layer_change(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
+                  [lateral(['A', 'B'], .02, 'SD1')]),
+             # control: a real extra item on one side is a layer change
+             pair('P2', ['B', 'C'], 'line', [lateral(['B', 'C'], .01, 'SD1')],
+                  [lateral(['B', 'C'], .01, 'SD1'), lateral(['B', 'C'], .005, 'SD2')])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    pairs_out = by_pair(doc)
+    assert pairs_out['P1']['change_kind'] == 'same_pair_change'
+    assert pairs_out['P2']['change_kind'] == 'layer_change'
+    flags = {i['analysis_layer']: (i['filtered_out'], i['presence']) for i in pairs_out['P1']['items']}
+    assert flags == {'SD1': (False, 'both'), 'SD2': (True, 'gone')}     # the filtered line stays visible, as a true 0
+    assert all(i['filtered_out'] is False for i in pairs_out['P2']['items'])
+    assert_all_passed(doc)
+
+
+def test_filtered_item_on_both_sides_and_one_side_only_with_a_value(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line',
+                  [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
+                  [lateral(['A', 'B'], .02, 'SD1'), lateral(['A', 'B'], 0.0, 'SD2', sizes=[], reasons=FILTERED)]),
+             # filtered on A, a real value on B: the key sets differ
+             pair('P2', ['B', 'C'], 'line',
+                  [lateral(['B', 'C'], .01, 'SD1'), lateral(['B', 'C'], 0.0, 'SD2', sizes=[], reasons=FILTERED)],
+                  [lateral(['B', 'C'], .01, 'SD1'), lateral(['B', 'C'], .004, 'SD2')])]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    assert by_pair(doc)['P1']['change_kind'] == 'same_pair_change'
+    assert [i['filtered_out'] for i in by_pair(doc)['P1']['items'] if i['analysis_layer'] == 'SD2'] == [True]
+    assert by_pair(doc)['P2']['change_kind'] == 'layer_change'
+    assert [i['filtered_out'] for i in by_pair(doc)['P2']['items'] if i['analysis_layer'] == 'SD2'] == [False]
+
+
+# change 7 (opus adv:6) ----------------------------------------------------------------------------------------------
+
+def test_noncomputable_condition_on_one_side_waits_for_a_value_instead_of_layer_change(tmp_path):
+    # P1's target condition is not computable and carries no item: the item keys are unknown, so no layer change
+    pairs = [pair('P1', ['A', 'B'], 'line', [lateral(['A', 'B'], .01, 'SD1')], [], noncomp_b=True),
+             pair('P2', ['B', 'C'], 'line', [lateral(['B', 'C'], .01, 'SD1')], [lateral(['B', 'C'], .01, 'SD2')]),
+             pair('P3', ['C', 'D'], 'line', [lateral(['C', 'D'], .01, 'SD1')], None, noncomp_a=True)]
+    world = make_world(tmp_path, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    kinds = {pid: row['change_kind'] for pid, row in by_pair(doc).items()}
+    assert kinds['P1'] == 'value_pending' and kinds['P2'] == 'layer_change'
+    assert kinds['P3'] == 'gone_pair'                  # an observed fact (the pair is only on A) needs no value
+    assert {'scope': 'pair', 'id': 'P1', 'side': 'target', 'reasons': ['condition_not_computable']} in doc['unavailable']
+
+
+# change 8 (opus adv:7) ----------------------------------------------------------------------------------------------
+
+def test_stale_area_basis_exits_2(tmp_path):
+    def tamper(doc):
+        doc['inputs']['area_basis'] = 'older_basis'
+    world = mockup(tmp_path, mutate=tamper)
+    assert go(world) == 2
+    assert error_code(world.out) == 'compare2_stale_area_basis'
+
+
+def test_stale_case_exclusion_rule_exits_2(tmp_path):
+    def tamper(doc):
+        doc['inputs']['case_exclusions']['target'] = {'rule': 'older_rule'}
+    world = mockup(tmp_path, mutate=tamper)
+    assert go(world) == 2
+    assert error_code(world.out) == 'compare2_stale_case_exclusion_rule'
+    (tmp_path / 'gone').mkdir()
+    gone = mockup(tmp_path / 'gone', mutate=lambda doc: doc['inputs'].pop('case_exclusions'))
+    assert go(gone) == 2 and error_code(gone.out) == 'compare2_stale_case_exclusion_rule'
+
+
+# change 9 (opus adv:8) ----------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize('roles', [('reference',), ('target',), ('reference', 'target')])
+def test_missing_pair_table_hash_exits_2(tmp_path, roles):
+    def tamper(doc):
+        for role in roles:
+            doc['products'][role]['pair_table_hash'] = None
+    world = mockup(tmp_path, mutate=tamper)
+    assert go(world) == 2
+    assert error_code(world.out) == 'ledger_pair_table_mismatch'
+
+
+# change 10 (opus adv:9) ---------------------------------------------------------------------------------------------
+
+def test_observed_inventory_gives_a_cno_only_electrode_its_cno_density_layer(tmp_path):
+    pairs = [pair('P1', ['A', 'B'], 'line', [lateral(['A', 'B'], .01, 'SD1')], [lateral(['A', 'B'], .02, 'SD1')])]
+    world = make_world(tmp_path, pairs, cno=[('C', 'PXL', .005, .006), ('A', 'PXL', .001, .001)])
+    assert go(world) == 0
+    elec = {r['electrode']: r for r in result(world)['electrodes']}
+    assert elec['C']['layers_a'] == ['PXL'] and elec['C']['layers_b'] == ['PXL']     # seen only in CNO
+    assert elec['A']['layers_a'] == ['SD1'] and elec['B']['layers_a'] == ['SD1']     # item layers win
