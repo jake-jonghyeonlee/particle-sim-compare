@@ -67,6 +67,22 @@ def test_roi_outside_the_unit_window_is_shifted_by_whole_periods_and_the_field_i
     assert inside['shifted'] is False and inside['shift_px'] == [0, 0]
 
 
+def test_periodic_shift_uses_the_real_unit_period_not_the_rounded_window_size():
+    """R2:2: U = 12.345 um at pitch 0.1 is 123.45 px, the window is 123 px; 20 periods away the rounded shift is 9 px off."""
+    window = {'origin_px': [2938, 0], 'size_px': [123, 100], 'unit_um': [12.345, 10.0]}
+    geo_side = dict(side(shape=(100, 6000)), window=window)
+    geo = {'reference': geo_side, 'target': geo_side}
+    out = lm.roi_map_rects(roi(center=(49.9, 5.0)), geo, corr_ok(), SPREAD_PX)        # centre px 499 = 20 periods left
+    assert out['status'] == 'ok' and out['shifted'] is True
+    assert out['shift_px'] == [pytest.approx(20 * 123.45), 0.0]
+    assert out['shift_px'][0] != 20 * 123                                              # not the rounded window size
+    assert out['reference']['rect_px'][0] == pytest.approx(499.0 - 10.0 + 2469.0)
+    assert out['reference']['rect_px'][2] == pytest.approx(499.0 + 10.0 + 2469.0)
+    # without a unit (a hand-made window) the window size is the period, as before
+    plain = {'reference': side(window=((50, 25), (100, 50))), 'target': side(window=((50, 25), (100, 50)))}
+    assert lm.roi_map_rects(roi(center=(2.0, 1.0)), plain, corr_ok(), SPREAD_PX)['shift_px'] == [100, 50]
+
+
 def test_roi_outside_a_window_that_is_the_whole_frame_is_only_listed():
     geo = {'reference': side(), 'target': side()}
     out = lm.roi_map_rects(roi(center=(50.0, 5.0)), geo, corr_ok(), SPREAD_PX)        # px x = 500 > 200

@@ -624,6 +624,7 @@ null 규칙:
 - **A 카드 결과·검산은 카드별로 임시 보관**한다(`_Card.acc_a`, B 부분은 `acc_b`). B 까지 끝난 카드만 `_CardRun.finish` 로 전역 집계(검산 3–6 의 `checked`·실패 목록)에 더한다. 버린 카드의 검산·줄·값은 집계와 출력 어디에도 없다.
 - **B 읽기 전·중 부족(E2)**: 카드 밖의 `reserve`(읽기·병합·지도 단계 전부)는 `_Budget.reserve(nbytes, what, evict=…)` 로 부른다. 기본 콜백 `_CardRun.evict_one` 이 이미 끝난 A 카드 하나를 버리고(순위가 가장 낮은 카드: `drop_key` = 가장 좋은 탭 순위가 큰 것, 같으면 탭이 적은 것) `used` 를 줄인다. `used + nbytes ≤ limit` 이 될 때까지 되풀이하고, 버릴 카드가 없으면 종료 2(`oversized_real_operation`)다. 그래서 B 읽기 전 판정 `required = used(A 카드·PNG 포함 실제 전체) + B 추정`(compute_areas 추정, B 밀집 격자, 지도 canvas)이 상한을 넘으면 낮은 순위 카드부터 버리고 다시 판정하고, 읽는 중에 생기는 데이터 의존 임시(sink·병합·PNG)가 모자라도 같은 규칙이다. 카드 안(`begin` 와 `end` 사이)에서는 다른 카드를 버리지 않는다.
 - 버린 카드 기록: `cards_dropped_for_budget[] = {kind, pair_id, rank, tabs, stage, reason, detail}`. `stage` = `reference`(A 부분 예약 실패), `target`(B 부분 예약 실패), `reference_held`(A 부분을 끝낸 뒤 B 쪽 부족으로 버림). `reason` = `card_reserve_failed` / `evicted_for_budget`. 카드가 하나라도 빠지면 `status = partial`, `reasons` 에 `cards_budget_reduced`, 종료 3, 띠 `{code: cards_budget_reduced, count, detail}`. 지도·item 값·검산 1–2 는 그대로 남는다.
+- 타일 전극 격자는 만드는 도중(PNG 디코드 예약 실패 등) 중단되면 그 격자 예약과 `ctx.el_bytes` 를 함께 되돌린다(astra D1, mrep/T10). 캐시에 있는 격자 수 × 격자 크기 = 격자 예약 합이 항상 성립한다.
 - 카드 소유 예약의 잔액은 카드가 끝나거나 버려지면 0 이다. 비카드 예약(번호 PNG 바이트, 타일 전극 격자 등)은 유지된다(`tests/test_ledger_maps_v2.py` 가 실행 끝의 `budget.used` 를 정상 실행과 비교한다).
 - `ledger-report` 와 ETX 안내: 종료 3 이어도 실행기는 계속한다. 예산 때문에 카드가 빠지면 `LEDGER_MAPS_ARGS = ["--tile-um", "2"]`(B3, 기존 안내)로 타일을 키우거나 `--top-cards` 를 줄인다.
 
@@ -663,7 +664,7 @@ null 규칙:
 
 - `reference = {rect_px, rect_map, clipped}`, `target = {status: ok / no_offset / outside_b_window, reason, rect_px, rect_map, clipped}`. `rect_px` 는 해당 제품 frame px 사각형 `[x0, y0, x1, y1]`, `rect_map` 은 그 제품 지도 그림의 표시 px 이다.
 - 변환(C7): `pA = (x_um − g_A_um) / pitch`, `pB = pA + offset_px`(frame 원점을 다시 더하지 않는다), `rect_map = (p − region.origin_px) / region.block_px`(제품별). A 원점 0 · B 원점 10 µm · offset 0 이면 B 사각형은 A 와 같다.
-- field 는 원래 ROI 사각형으로 `pick_offset` 을 먼저 고른 뒤(spread 기준 `--coord-offset-spread-um`) 표시용 주기 이동을 적용한다. 사각형이 창(18.3)과 겹치면 이동 0, 겹치지 않고 창이 frame 보다 작으면(주기가 있으면) 중심이 창에 들어오는 정수 주기만큼 옮긴다(`shifted`). 창 경계를 넘으면 창 안만 그리고 `clipped`, 창보다 크면 창 테두리까지 그리고 `larger_than_window`. 옮겨도 창 밖(창이 frame 전체여서 주기가 없을 때)이면 `outside_map`(사각형 없음, `changes.outside_map` 목록에만).
+- field 는 원래 ROI 사각형으로 `pick_offset` 을 먼저 고른 뒤(spread 기준 `--coord-offset-spread-um`) 표시용 주기 이동을 적용한다. 사각형이 창(18.3)과 겹치면 이동 0, 겹치지 않고 창이 frame 보다 작으면(주기가 있으면) 중심이 창에 들어오는 정수 주기만큼 옮긴다(`shifted`). **이동량은 반올림한 창 px 가 아니라 실수 주기 `k × unit_um / pitch`** 다(mrep/T10 R2:2; 창 크기를 정수 px 로 반올림한 값의 k 배를 쓰면 k × 반올림 오차(예 U/pitch = 123.45 px 에서 20 주기 = 9 px)만큼 어긋난다). `shift_px` 는 그래서 실수이고, `unit_um` 이 없는 손으로 만든 창은 창 크기를 주기로 쓴다. 창 경계를 넘으면 창 안만 그리고 `clipped`, 창보다 크면 창 테두리까지 그리고 `larger_than_window`. 옮겨도 창 밖(창이 frame 전체여서 주기가 없을 때)이면 `outside_map`(사각형 없음, `changes.outside_map` 목록에만).
 - 좌표 대응이 없으면(`coords_status` ≠ `ok`) B 는 `no_offset`(사유 = 좌표 코드, 또는 `no_field_cell` / `offset_spread`), A 사각형은 그린다. 이동한 B 사각형이 B 창 밖이면 `outside_b_window`.
 
 ### 29.3 `overlay`

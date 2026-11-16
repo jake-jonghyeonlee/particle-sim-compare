@@ -60,6 +60,13 @@ def _number(value):
 
 def _check_query(query, where):
     """C1: the structure _build_rois and the map rectangle need; -> a problem text or None."""
+    # R2:1: the types are checked before `_query_regions` builds a set from them (a list region_id is unhashable, an
+    # int merged_from is not iterable)
+    region_id, merged = query.get('region_id'), query.get('merged_from')
+    if region_id is not None and not isinstance(region_id, str):
+        return f'{where}: region_id {region_id!r} is not a string (query_id {query.get("query_id")!r})'
+    if merged is not None and not (isinstance(merged, (list, tuple)) and all(isinstance(r, str) for r in merged)):
+        return f'{where}: merged_from {merged!r} is not a list of strings (query_id {query.get("query_id")!r})'
     regions = _query_regions(query)
     if not regions or not all(isinstance(r, str) and r for r in regions):
         return f'{where}: region_id / merged_from names no region (query_id {query.get("query_id")!r})'
@@ -232,7 +239,19 @@ def _case_row(case, kinds, one_sided, present_in, link):
 
 def build_changes(candidates, led_doc, c2_doc):
     """The link of the 04 change locations to the ledger. ``candidates``: the 04 folder (or file) path, the parsed
-    candidate_queries_v1 payload, or None. Never raises on bad input: the problem is ``link_status``."""
+    candidate_queries_v1 payload, or None. Never raises on bad input: the problem is ``link_status`` (R2:1: a shape
+    the checks did not foresee is ``invalid`` with the exception in ``detail``)."""
+    try:
+        return _build_changes(candidates, led_doc, c2_doc)
+    except Exception as exc:
+        apply_align = None
+        if isinstance(candidates, dict):
+            change_args = candidates.get('change_args')
+            apply_align = (change_args.get('apply_align') or 'diagnostic') if isinstance(change_args, dict) else 'diagnostic'
+        return _empty('invalid', f'{type(exc).__name__}: {exc}', apply_align)
+
+
+def _build_changes(candidates, led_doc, c2_doc):
     payload, status, detail = _load(candidates)
     if status != 'ok':
         return _empty(status, detail)

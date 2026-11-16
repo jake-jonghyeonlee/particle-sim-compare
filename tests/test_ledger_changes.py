@@ -243,7 +243,9 @@ def test_query_with_only_contributing_cases_is_invalid_and_makes_no_empty_roi_ke
     ('window_um', -3.0, 'window_um'), ('window_um', True, 'window_um'), ('window_um', '10', 'window_um'),
     ('contributing_cases', None, 'contributing_cases'), ('contributing_cases', 'x', 'contributing_cases'),
     ('contributing_cases', ['x'], 'contributing_cases'), ('one_sided_cases', {'a': 1}, 'one_sided_cases'),
-    ('region_id', None, 'region'), ('region_id', '', 'region')])
+    ('region_id', None, 'region'), ('region_id', '', 'region'), ('region_id', ['R1'], 'region_id'),
+    ('merged_from', 5, 'merged_from'), ('merged_from', 'R2', 'merged_from'), ('merged_from', [1], 'merged_from'),
+    ('merged_from', [['R2']], 'merged_from')])
 def test_each_missing_or_wrong_query_field_is_named(field, value, word):
     q = query('R1', [case('lateral_short|A|SD1|B|SD1|SD1')])
     q[field] = value
@@ -251,6 +253,14 @@ def test_each_missing_or_wrong_query_field_is_named(field, value, word):
         q['merged_from'] = []
     result = build_changes(payload([q]), led_doc(), c2_doc())
     assert result['link_status'] == 'invalid' and word in result['detail'] and result['rois'] == []
+
+
+def test_an_unforeseen_shape_is_invalid_with_the_exception_and_never_raises(monkeypatch):
+    def boom(*_args):
+        raise TypeError('unforeseen')
+    monkeypatch.setattr(ledger_changes, '_link_case', boom)
+    result = build_changes(payload([query('R1', [case('lateral_short|A|SD1|B|SD1|SD1')])]), led_doc(), c2_doc())
+    assert result['link_status'] == 'invalid' and 'TypeError: unforeseen' in result['detail'] and result['rois'] == []
 
 
 def test_the_other_direction_is_not_checked_because_it_makes_no_roi():

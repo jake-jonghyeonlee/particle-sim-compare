@@ -510,7 +510,11 @@ def _merge_sparse(chunks, budget, what):
             member = np.unique(member).astype(np.int32)
     finally:
         budget.release(phase_two, 'merge membership copy')
-    budget.reserve(member.nbytes, f'merged membership {what}')
+    try:
+        budget.reserve(member.nbytes, f'merged membership {what}')
+    except NumericContractError:
+        budget.release(merged, 'merged sparse')
+        raise
     return tiles, values, member
 
 
@@ -929,26 +933,32 @@ def _tile_electrodes(ctx, run, layer):
     # not owned by the running card: the grid is cached for the later cards of this product and released after the last
     run.budget.reserve(grid_bytes, f'tile electrode grid {role} {layer}', owned=False)
     ctx.el_bytes += grid_bytes
-    grid = np.zeros((ctx.nty, ctx.ntx), dtype=np.uint16)
-    cy = np.minimum(np.arange(ctx.nty) * tp + tp // 2, height - 1)
-    cx = np.minimum(np.arange(ctx.ntx) * tp + tp // 2, width - 1)
-    for number, name in enumerate(sorted(available), start=1):
-        fs_rel = available[name].get(layer)
-        if fs_rel is None:
-            continue
-        run.budget.reserve(height * width * 3, f'electrode PNG decode {role} {name} {layer}')
-        try:
-            mask = load_electrode_layer(root, model, frame, [fs_rel], [])
-            if mask is None:
+    try:
+        grid = np.zeros((ctx.nty, ctx.ntx), dtype=np.uint16)
+        cy = np.minimum(np.arange(ctx.nty) * tp + tp // 2, height - 1)
+        cx = np.minimum(np.arange(ctx.ntx) * tp + tp // 2, width - 1)
+        for number, name in enumerate(sorted(available), start=1):
+            fs_rel = available[name].get(layer)
+            if fs_rel is None:
                 continue
-            sample = mask[cy[:, None], cx[None, :]]
-            del mask
-        except (NumericContractError, OSError, ValueError):
-            continue
-        finally:
-            run.budget.release(height * width * 3, 'electrode PNG decode')
-        new = sample & (grid == 0)
-        grid[new] = number
+            run.budget.reserve(height * width * 3, f'electrode PNG decode {role} {name} {layer}')
+            try:
+                mask = load_electrode_layer(root, model, frame, [fs_rel], [])
+                if mask is None:
+                    continue
+                sample = mask[cy[:, None], cx[None, :]]
+                del mask
+            except (NumericContractError, OSError, ValueError):
+                continue
+            finally:
+                run.budget.release(height * width * 3, 'electrode PNG decode')
+            new = sample & (grid == 0)
+            grid[new] = number
+    except BaseException:
+        # astra D1: a grid that is not cached must not stay reserved (the card hold does not own it)
+        run.budget.release(grid_bytes, f'tile electrode grid {role} {layer} (not cached)', owned=False)
+        ctx.el_bytes -= grid_bytes
+        raise
     cache[layer] = grid
     return grid
 
@@ -2116,14 +2126,18 @@ def _side_geometry(infos, sides_json, window_json):
     return out
 
 
-def _shift_into_window(lo, hi, w_origin, w_size, periodic):
+def _shift_into_window(lo, hi, w_origin, w_size, periodic, period=None):
     """Display shift (frame px) of the span [lo, hi): 0 when it touches the unit window, else the whole number of
-    window periods that puts its centre in the window (only when the window is smaller than the frame); None = no place."""
+    unit periods that puts its centre in the window (only when the window is smaller than the frame); None = no place.
+
+    R2:2: the period is the real `unit_um / pitch` (a float), not the rounded window size in px, so the shift of k periods
+    carries no k * rounding error. `period=None` (a hand-made window without a unit) falls back to the window size."""
     if hi > w_origin and lo < w_origin + w_size:
         return 0
     if not periodic:
         return None
-    return -int(math.floor(((lo + hi) / 2.0 - w_origin) / w_size)) * w_size
+    step = float(w_size) if not period else float(period)
+    return -int(math.floor(((lo + hi) / 2.0 - w_origin) / step)) * step
 
 
 def _clip_span(lo, hi, w_origin, w_size):
@@ -2174,13 +2188,16 @@ def roi_map_rects(roi, geo, corr, spread_px):
     out = {'status': 'ok', 'center_px': [_r6(cx), _r6(cy)], 'size_px': _r6(2 * half), 'shift_px': [0, 0],
            'shifted': False, 'clipped': False, 'larger_than_window': larger, 'offset_px': None if offset is None
            else list(offset), 'offset_reason': reason, 'reference': None, 'target': None}
-    sx = _shift_into_window(rect[0], rect[2], wx, ww, ww < width)
-    sy = _shift_into_window(rect[1], rect[3], wy, wh, wh < height)
+    unit = a['window'].get('unit_um') or (None, None)
+    period_x = unit[0] / pitch if unit[0] else None
+    period_y = unit[1] / pitch if unit[1] else None
+    sx = _shift_into_window(rect[0], rect[2], wx, ww, ww < width, period_x)
+    sy = _shift_into_window(rect[1], rect[3], wy, wh, wh < height, period_y)
     if sx is None or sy is None:
         out['status'] = 'outside_map'
         return out
     moved = [rect[0] + sx, rect[1] + sy, rect[2] + sx, rect[3] + sy]
-    out['shift_px'], out['shifted'] = [sx, sy], bool(sx or sy)
+    out['shift_px'], out['shifted'] = [_r6(sx), _r6(sy)], bool(sx or sy)
     placed, clipped = _place_on_window(moved, a)
     out['clipped'] = clipped
     out['reference'] = {'rect_px': [_r6(v) for v in placed], 'rect_map': _display(placed, a), 'clipped': clipped}

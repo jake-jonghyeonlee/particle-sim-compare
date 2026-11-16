@@ -380,3 +380,55 @@ def test_execution_json_records_the_peak_reservation_of_every_stage_of_every_pro
         assert all(isinstance(v, int) and v >= 0 for v in stages[role].values())
         assert stages[role]['read'] > 0 and stages[role]['cards'] > 0
     assert max(v for role in stages.values() for v in role.values()) == execution['max_reserved_bytes']
+
+
+# ---- astra D1: a tile electrode grid whose build stops is not left reserved ----------------------------------------------------
+
+def grid_world(monkeypatch, budget):
+    """A 10 x 10 px frame, tile 1 px: the grid is 100 tiles * 2 B = 200 B, one PNG decode is 10 * 10 * 3 = 300 B."""
+    from types import SimpleNamespace
+    from simcompare.adapters import electrode_png
+    import numpy as np
+    monkeypatch.setattr(electrode_png, 'scan_electrode_shapes', lambda root, model: {'E1': {'L1': 'e1.png'}})
+    monkeypatch.setattr(electrode_png, 'load_electrode_layer',
+                        lambda root, model, frame, rels, errors=None: np.ones((10, 10), dtype=bool))
+    side = SimpleNamespace(dl1_model='M')
+    cfg2 = SimpleNamespace(report=SimpleNamespace(dl1_root='root'), reference=side, target=side)
+    ctx = SimpleNamespace(tile_el={}, role='reference', info={'frame': SimpleNamespace(shape_yx=(10, 10))}, tile_px=1,
+                          ntx=10, nty=10, el_bytes=0)
+    return ctx, SimpleNamespace(cfg2=cfg2, budget=budget)
+
+
+def run_card(ctx, run, work):
+    """One card: its own hold, `work` bytes reserved first, then the grid; a failed card gives its hold back (as the card loop)."""
+    hold = lm._Hold()
+    run.budget.begin(hold)
+    try:
+        run.budget.reserve(work, 'card work')
+        return lm._tile_electrodes(ctx, run, 'L1')
+    except lm._BudgetExceeded:
+        return 'failed'
+    finally:
+        run.budget.end()
+        run.budget.free(hold)
+
+
+def test_a_card_that_fails_on_the_png_decode_gives_the_grid_reservation_back(monkeypatch):
+    budget = lm._Budget(1000)
+    budget.reserve(400, 'not a card')                           # e.g. the other product's pictures
+    ctx, run = grid_world(monkeypatch, budget)
+    assert run_card(ctx, run, 300) == 'failed'                  # 400 + 300 + grid 200 = 900, the decode 300 does not fit
+    assert budget.used == 400 and ctx.el_bytes == 0 and ctx.tile_el.get('L1') is None     # nothing of the card is left
+    grid = run_card(ctx, run, 100)                              # 400 + 100 + 200 + 300 = 1000 fits (it failed before the fix)
+    assert grid is not None and grid.shape == (10, 10) and int(grid[0, 0]) == 1
+    grids = [g for key, g in ctx.tile_el.items() if key != '_names']
+    assert budget.used == 400 + len(grids) * 200 and ctx.el_bytes == len(grids) * 200     # the cache and the reservation agree
+    assert run_card(ctx, run, 500) is not None                  # the cached grid is reused: no second grid, no decode
+    assert budget.used == 600
+
+
+def test_a_grid_reservation_that_does_not_fit_leaves_nothing_behind(monkeypatch):
+    budget = lm._Budget(1000)
+    budget.reserve(900, 'not a card')
+    ctx, run = grid_world(monkeypatch, budget)
+    assert run_card(ctx, run, 0) == 'failed' and budget.used == 900 and ctx.el_bytes == 0
