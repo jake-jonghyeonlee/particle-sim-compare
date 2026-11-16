@@ -20,8 +20,11 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _baseline_module():
-    source = subprocess.run(['git', 'show', f'{BASELINE_COMMIT}:src/simcompare/ledger.py'], cwd=str(REPO),
-                            stdout=subprocess.PIPE, check=True).stdout.decode('utf-8')
+    try:
+        source = subprocess.run(['git', 'show', f'{BASELINE_COMMIT}:src/simcompare/ledger.py'], cwd=str(REPO),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True).stdout.decode('utf-8')
+    except (OSError, subprocess.CalledProcessError):         # R1:6: no git, or a checkout without that commit
+        pytest.skip(f'baseline commit {BASELINE_COMMIT[:7]} is not readable with git show')
     module = types.ModuleType('simcompare._ledger_baseline')
     module.__package__ = 'simcompare'
     module.__file__ = 'ledger_baseline.py'
@@ -174,6 +177,28 @@ def test_crp_difference_is_part_of_the_kind_check(tmp_path):
     assert checks['total']['status'] == 'passed' and checks['total']['target'] == pytest.approx(
         doc['totals']['pixel']['delta'])
     assert doc['checks']['item_breakdown']['pair']['status'] == 'passed'
+
+
+def test_kind_breakdown_is_all_null_when_one_item_value_is_null(tmp_path):
+    """R1:1: totals.line.items.delta is null as soon as one item has no value; then all five parts are null (never a
+    part-null breakdown), the pixel kind is untouched and the kind check is not evaluated."""
+    pairs = [pair('P1', ['A', 'B'], 'line', [lateral(['A', 'B'], .01, 'SD1'), lateral(['A', 'B'], .02, 'GAT2')],
+                  [lateral(['A', 'B'], .02, 'SD1'), lateral(['A', 'B'], .02, 'GAT2')]),
+             pair('P2', ['B', 'C'], 'pixel', [lateral(['B', 'C'], .01, 'SD1')], [lateral(['B', 'C'], .02, 'SD1')])]
+
+    def null_one_item(doc):
+        victim = [i for i in doc['sides']['target']['ledger_items'] if i['pair_id'] == 'P1' and i['analysis_layer'] == 'GAT2'][0]
+        victim['lambda'] = None
+        victim['computable'] = False
+    world = make_world(tmp_path, pairs, mutate=null_one_item)
+    assert go(world) == 0
+    doc = result(world)
+    assert doc['totals']['line']['items']['delta'] is None
+    assert doc['kinds']['line']['item_breakdown'] == {name: None for name in ('same', 'new', 'gone', 'cno', 'crp')}
+    assert doc['checks']['item_breakdown']['kind']['line']['items']['status'] == 'not_evaluated'
+    pixel = doc['kinds']['pixel']['item_breakdown']
+    assert all(isinstance(pixel[name], float) for name in ('same', 'new', 'gone', 'cno', 'crp'))
+    assert doc['checks']['item_breakdown']['kind']['pixel']['status'] == 'passed'
 
 
 def test_pair_absent_on_one_side_splits_into_new_only(tmp_path):

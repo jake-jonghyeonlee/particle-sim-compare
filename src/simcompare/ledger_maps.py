@@ -31,6 +31,7 @@ from .compare2 import SCHEMA_VERSION as COMPARE2_SCHEMA, _item_id, _json_text, _
 from .compare2_inputs import lambda_factor, load_compare2_config, load_density, size_key
 from .compare2_report import _side_info
 from .electrode_map import _label_runs, _run_counts
+from .ledger_changes import build_changes
 from .numeric_schema import NumericContractError
 
 SCHEMA_VERSION = 'ledger_maps_v2'
@@ -2098,6 +2099,134 @@ def _publish(out, files):
         shutil.rmtree(str(tmp), ignore_errors=True)
 
 
+# ---- change locations on the maps (mrep/T4, C7) ------------------------------------------------------------------------------
+
+def _r6(value):
+    return round(float(value), 6)
+
+
+def _side_geometry(infos, sides_json, window_json):
+    """What the ROI rectangles need of each product: frame origin / pitch / size, the unit window and the map picture."""
+    out = {}
+    for role in ROLES:
+        info, side = infos[role], sides_json[role]
+        out[role] = {'origin_um': tuple(info['frame'].origin_xy_um), 'pitch': info['pitch'],
+                     'shape_yx': tuple(info['frame'].shape_yx), 'window': window_json[role],
+                     'map_origin_px': tuple(side['region']['origin_px']), 'block_px': side['region']['block_px']}
+    return out
+
+
+def _shift_into_window(lo, hi, w_origin, w_size, periodic):
+    """Display shift (frame px) of the span [lo, hi): 0 when it touches the unit window, else the whole number of
+    window periods that puts its centre in the window (only when the window is smaller than the frame); None = no place."""
+    if hi > w_origin and lo < w_origin + w_size:
+        return 0
+    if not periodic:
+        return None
+    return -int(math.floor(((lo + hi) / 2.0 - w_origin) / w_size)) * w_size
+
+
+def _clip_span(lo, hi, w_origin, w_size):
+    return max(lo, w_origin), min(hi, w_origin + w_size)
+
+
+def _display(rect, geo):
+    ox, oy = geo['map_origin_px']
+    block = geo['block_px']
+    return [_r6((rect[0] - ox) / block), _r6((rect[1] - oy) / block), _r6((rect[2] - ox) / block),
+            _r6((rect[3] - oy) / block)]
+
+
+def _place_on_window(rect, geo):
+    """Clip a frame-px rectangle to the unit window of one product -> (clipped rect or None, clipped?)."""
+    wx, wy = geo['window']['origin_px']
+    ww, wh = geo['window']['size_px']
+    if not (rect[2] > wx and rect[0] < wx + ww and rect[3] > wy and rect[1] < wy + wh):
+        return None, False
+    x0, x1 = _clip_span(rect[0], rect[2], wx, ww)
+    y0, y1 = _clip_span(rect[1], rect[3], wy, wh)
+    return [x0, y0, x1, y1], (x0, y0, x1, y1) != tuple(rect)
+
+
+def roi_map_rects(roi, geo, corr, spread_px):
+    """C7: the A and B rectangles of one 04 ROI on the numbered maps (display px of each product's map picture).
+
+    pA = (x_um - g_A_um) / pitch (A frame px); pB = pA + offset_px (the 04 field offset in frame px - the frame origins
+    are not added again); display = (p - map_origin_px) / block_px of the product. The field cell is chosen from the
+    original ROI rectangle first, then the display shift of D4 (whole unit-window periods) is applied; a rectangle that
+    is cut by the window border is drawn clipped, one larger than the window is cut at the border (larger_than_window),
+    one that has no place in the window even after the shift is only listed (outside_map)."""
+    a, b = geo['reference'], geo['target']
+    pitch = a['pitch']
+    half = roi['window_um'] / 2.0 / pitch
+    cx = (roi['center_xy_um'][0] - a['origin_um'][0]) / pitch
+    cy = (roi['center_xy_um'][1] - a['origin_um'][1]) / pitch
+    rect = [cx - half, cy - half, cx + half, cy + half]
+    height, width = a['shape_yx']
+    wx, wy = a['window']['origin_px']
+    ww, wh = a['window']['size_px']
+    larger = (rect[2] - rect[0]) > ww + 1e-9 or (rect[3] - rect[1]) > wh + 1e-9
+    offset, reason = None, corr.band
+    if corr.ok:
+        box = (max(0, int(math.floor(rect[0]))), max(0, int(math.floor(rect[1]))),
+               min(width, int(math.ceil(rect[2]))), min(height, int(math.ceil(rect[3]))))
+        offset, reason = pick_offset(corr.cells, box, spread_px)
+    out = {'status': 'ok', 'center_px': [_r6(cx), _r6(cy)], 'size_px': _r6(2 * half), 'shift_px': [0, 0],
+           'shifted': False, 'clipped': False, 'larger_than_window': larger, 'offset_px': None if offset is None
+           else list(offset), 'offset_reason': reason, 'reference': None, 'target': None}
+    sx = _shift_into_window(rect[0], rect[2], wx, ww, ww < width)
+    sy = _shift_into_window(rect[1], rect[3], wy, wh, wh < height)
+    if sx is None or sy is None:
+        out['status'] = 'outside_map'
+        return out
+    moved = [rect[0] + sx, rect[1] + sy, rect[2] + sx, rect[3] + sy]
+    out['shift_px'], out['shifted'] = [sx, sy], bool(sx or sy)
+    placed, clipped = _place_on_window(moved, a)
+    out['clipped'] = clipped
+    out['reference'] = {'rect_px': [_r6(v) for v in placed], 'rect_map': _display(placed, a), 'clipped': clipped}
+    if offset is None:
+        out['target'] = {'status': 'no_offset', 'reason': reason, 'rect_px': None, 'rect_map': None, 'clipped': False}
+        return out
+    moved_b = [moved[0] + offset[0], moved[1] + offset[1], moved[2] + offset[0], moved[3] + offset[1]]
+    placed_b, clipped_b = _place_on_window(moved_b, b)
+    if placed_b is None:
+        out['target'] = {'status': 'outside_b_window', 'reason': None, 'rect_px': None, 'rect_map': None,
+                         'clipped': False}
+    else:
+        out['target'] = {'status': 'ok', 'reason': None, 'rect_px': [_r6(v) for v in placed_b],
+                         'rect_map': _display(placed_b, b), 'clipped': clipped_b}
+    return out
+
+
+def overlay_state(corr, region_box, spread_px):
+    """The overlay (A over B) needs one field offset over the whole A map region (inside the spread rule)."""
+    if not corr.ok:
+        return {'available': False, 'offset_px': None, 'reason': corr.band}
+    offset, why = pick_offset(corr.cells, region_box, spread_px)
+    if offset is None:
+        return {'available': False, 'offset_px': None, 'reason': why}
+    return {'available': True, 'offset_px': list(offset), 'reason': None}
+
+
+def _changes_section(candidates, led_doc, c2_doc, infos, sides_json, window_json, corr, opts):
+    """-> (changes, overlay): the 04 change locations linked to the ledger + their map rectangles (D)."""
+    changes = build_changes(candidates, led_doc, c2_doc)
+    geo = _side_geometry(infos, sides_json, window_json)
+    spread_px = opts['coord_offset_spread_um'] / infos['reference']['pitch']
+    changes['coords_status'] = corr.band or 'ok'
+    outside = []
+    for roi in changes['rois']:
+        roi['map'] = roi_map_rects(roi, geo, corr, spread_px)
+        if roi['map']['status'] == 'outside_map':
+            outside.append(roi['roi_key'])
+    changes['outside_map'] = outside
+    changes['summary']['rois_outside_map'] = len(outside)
+    region = sides_json['reference']['region']
+    ox, oy = region['origin_px']
+    width, height = region['size_px']
+    return changes, overlay_state(corr, (ox, oy, ox + width, oy + height), spread_px)
+
+
 # ---- run ----------------------------------------------------------------------------------------------------------------
 
 def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candidates=None, max_operation_bytes=None):
@@ -2171,6 +2300,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     failed = [role for role in ROLES
               if checks[role]['item_sum']['status'] == 'failed'
               or any(row['status'] == 'failed' for row in checks[role]['kind_sum'].values())]
+    changes, overlay = _changes_section(candidates, led_doc, c2_doc, infos, sides_json, window_json, corr, opts)
     card_checks = {name: _card_check(run, name) for name in CARD_CHECKS}
     if any(row['status'] == 'failed' for row in card_checks.values()):
         failed.append('cards')
@@ -2200,6 +2330,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         'sides': sides_json,
         'cards': cards,
         'cards_dropped_for_budget': dropped,
+        'changes': changes, 'overlay': overlay,
         'checks': summary,
         'scale_steps': scale_steps,
         'warnings': warnings, 'bands': run.bands}

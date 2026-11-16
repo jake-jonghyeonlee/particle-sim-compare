@@ -624,6 +624,8 @@ def build_ledger(doc, doc_sha256, cfg2):
         parts = {name: split_acc[kind][name].value(fam[kind]) for name in ('same', 'new', 'gone')}
         parts['cno'] = (cno_total.d.value(fam['pixel']) if kind == 'pixel' else (0.0 if fam[kind] else None))
         parts['crp'] = crp_d if kind == 'pixel' else (0.0 if fam[kind] else None)
+        if totals[kind]['items']['delta'] is None:      # R1:1: all five null or none (never a part-null breakdown)
+            parts = {name: None for name in parts}
         item_breakdown[kind] = parts
     kind_checks = {}
     for kind in KINDS:

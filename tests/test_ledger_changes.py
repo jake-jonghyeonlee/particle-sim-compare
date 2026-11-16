@@ -224,3 +224,94 @@ def test_roi_keys_equal_the_07_build_rois_result_and_the_output_is_deterministic
 def test_unparsable_case_key_is_unlinked():
     row = only_case(build_changes(one('garbage'), led_doc(), c2_doc()))
     assert (row['status'], row['reason']) == ('unlinked', 'case_key_unparsed')
+
+
+# ---- mrep/T4: structure check (astra:C1), case merge (astra:C2), pair counts (R1:3), bad input (R1:4) -------------------------
+
+def test_query_with_only_contributing_cases_is_invalid_and_makes_no_empty_roi_key():
+    """astra:C1: no region, no centre, no window -> the link stops with the query and the missing field named."""
+    broken = {'contributing_cases': [case('lateral_short|A|SD1|B|SD1|SD1')]}
+    result = build_changes(payload([broken]), led_doc(), c2_doc())
+    assert result['link_status'] == 'invalid' and result['rois'] == [] and 'queries[0]' in result['detail']
+    assert 'region' in result['detail']
+    assert not [r for r in result['rois'] if r['roi_key'] == 'roi:']
+
+
+@pytest.mark.parametrize('field, value, word', [
+    ('center_xy_um', None, 'center_xy_um'), ('center_xy_um', [1.0], 'center_xy_um'), ('center_xy_um', 'ab', 'center_xy_um'),
+    ('center_xy_um', [1.0, float('nan')], 'center_xy_um'), ('window_um', None, 'window_um'), ('window_um', 0, 'window_um'),
+    ('window_um', -3.0, 'window_um'), ('window_um', True, 'window_um'), ('window_um', '10', 'window_um'),
+    ('contributing_cases', None, 'contributing_cases'), ('contributing_cases', 'x', 'contributing_cases'),
+    ('contributing_cases', ['x'], 'contributing_cases'), ('one_sided_cases', {'a': 1}, 'one_sided_cases'),
+    ('region_id', None, 'region'), ('region_id', '', 'region')])
+def test_each_missing_or_wrong_query_field_is_named(field, value, word):
+    q = query('R1', [case('lateral_short|A|SD1|B|SD1|SD1')])
+    q[field] = value
+    if field == 'region_id':
+        q['merged_from'] = []
+    result = build_changes(payload([q]), led_doc(), c2_doc())
+    assert result['link_status'] == 'invalid' and word in result['detail'] and result['rois'] == []
+
+
+def test_the_other_direction_is_not_checked_because_it_makes_no_roi():
+    doc = payload([query('R1', [case('lateral_short|A|SD1|B|SD1|SD1')])])
+    doc['directions'].append({'direction': 'target_to_reference', 'queries': [{'contributing_cases': []}]})
+    assert build_changes(doc, led_doc(), c2_doc())['link_status'] == 'ok'
+
+
+def test_one_case_in_both_lists_is_one_row_with_every_tag_and_a_merged_presence():
+    key = 'lateral_short|A|SD1|B|SD1|SD1'
+    q = query('R1', [case(key, 'appeared', present_in='both')],
+              one_sided=[case(key, 'shifted', present_in='target'), case('lateral_short|G|L1|H|L1|L1', 'appeared',
+                                                                         present_in='target')])
+    result = build_changes(payload([q]), led_doc(), c2_doc())
+    rows = result['rois'][0]['cases']
+    assert [r['case_key'] for r in rows] == [key, 'lateral_short|G|L1|H|L1|L1']
+    merged, alone = rows
+    assert (merged['change_kind'], merged['change_kinds']) == ('appeared', ['appeared', 'shifted'])
+    assert (merged['one_sided'], merged['present_in']) == (False, 'both')
+    assert (alone['one_sided'], alone['present_in']) == (True, 'target')
+    assert result['pairs']['P_AB']['tags'] == ['appeared', 'shifted']          # the tag of the one-sided sighting is kept
+    assert result['summary']['linked_cases'] == 2
+
+
+def test_same_case_only_one_sided_twice_stays_one_sided_and_two_presences_become_both():
+    key = 'lateral_short|A|SD1|B|SD1|SD1'
+    q = query('R1', [], one_sided=[case(key, 'appeared', present_in='reference'), case(key, 'appeared', present_in='target')])
+    (row,) = build_changes(payload([q]), led_doc(), c2_doc())['rois'][0]['cases']
+    assert (row['one_sided'], row['present_in'], row['change_kinds']) == (True, 'both', ['appeared'])
+
+
+def test_linked_no_change_pair_is_counted_apart_and_the_sum_checks():
+    doc = payload([query('R1', [case('lateral_short|E|L1|F|L1|L1'), case('lateral_short|A|SD1|B|SD1|SD1')])])
+    result = build_changes(doc, led_doc(), c2_doc())
+    summary = result['summary']
+    assert set(result['pairs']) == {'P_AB', 'P_EF'}                        # P_EF is no_change: outside the denominator
+    assert (summary['linked_pairs'], summary['linked_no_change_pairs']) == (1, 1)
+    assert (summary['unlinked_pairs'], summary['pair_denominator']) == (2, 3)
+    assert summary['linked_pairs'] + summary['unlinked_pairs'] == summary['pair_denominator']
+    empty = build_changes(None, led_doc(), c2_doc())['summary']
+    assert empty['linked_no_change_pairs'] == 0
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda d: d['inputs'].__setitem__('reference', 'text'), lambda d: d['inputs'].__setitem__('target', ['x']),
+    lambda d: d.__setitem__('change_args', 'diagnostic'), lambda d: d.__setitem__('change_args', ['apply_align']),
+    lambda d: d.__setitem__('inputs', 'text'), lambda d: d.__setitem__('directions', [None])])
+def test_wrong_typed_04_fields_are_invalid_not_an_exception(mutate):
+    doc = payload([query('R1', [case('lateral_short|A|SD1|B|SD1|SD1')])])
+    mutate(doc)
+    result = build_changes(doc, led_doc(), c2_doc())
+    assert result['link_status'] == 'invalid' and result['rois'] == []
+    assert result['apply_align'] == 'diagnostic'
+
+
+@pytest.mark.parametrize('c2', ['text', {'inputs': 'text'}, {'inputs': {'manifests': 'x'}}, None])
+def test_a_broken_compare2_document_is_stale_not_an_exception(c2):
+    result = build_changes(payload([query('R1', [])]), led_doc(), c2)
+    assert result['link_status'] == 'stale'
+
+
+@pytest.mark.parametrize('led', ['text', {'pairs': ['x']}, {'pairs': [{'no_id': 1}]}, {'pairs': [], 'cno': 'x'}])
+def test_a_broken_ledger_document_is_invalid_not_an_exception(led):
+    assert build_changes(payload([query('R1', [])]), led, c2_doc())['link_status'] == 'invalid'

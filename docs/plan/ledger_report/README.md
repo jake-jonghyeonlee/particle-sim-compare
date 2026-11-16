@@ -643,3 +643,29 @@ null 규칙:
 ### 28.6 `cards[]` 새 키 요약
 
 `tabs`, `tab_ranks`, `common_items`, `items_total`, `rows[].items[]`, 그리고 최상위 `cards_dropped_for_budget`, `checks.row_items`. 기존 키·값은 모든 item 이 양쪽에 있는 쌍에서 v1 과 같다.
+
+## 29. 변경 위치(04 ROI)와 지도 사각형 (mrep/T4)
+
+`ledger_maps.json` 최상위에 `changes` 와 `overlay` 를 더한다(스키마는 `ledger_maps_v2` 그대로, 키 추가). 연결은 `ledger_changes.build_changes`(T2), 좌표는 `ledger_maps.roi_map_rects`(T4)가 만든다.
+
+### 29.1 `changes`
+
+`link_status`(`ok` / `stale` / `no_candidates` / `invalid`, 사유는 `detail`), `coords_status`(`ok` 또는 19 절의 좌표 코드: `coords_no_candidates`, `coords_not_applied`(diagnostic), `coords_stale`, `coords_unavailable`), `apply_align`, `rois[]`, `pairs`, `items`, `cno`, `outside_map[]`(roi_key 목록), `summary`, `warnings`.
+
+- `--candidates` 가 없거나 폴더에 `candidate_queries_v1.json` 이 없으면 `link_status = no_candidates`(ROI 0). 04 의 `inputs.<role>.dataset_input_hash` 가 02 `inputs.manifests.<role>.input_hash` 와 다르거나 한쪽이 비면 `stale`(연결 0). diagnostic 모드에서도 같은 검사를 한다(`coords_status` 와 `link_status` 는 따로다).
+- C1(필수 구조): `reference_to_target` 질의마다 region 식별자(`region_id`/`merged_from`), `center_xy_um`(숫자 2개), `window_um`(0 보다 큰 숫자), `contributing_cases`(객체 목록)가 있어야 한다. 하나라도 빠지면 `link_status = invalid`, `detail` 에 어느 질의(`directions[i].queries[j]`)의 어느 필드인지 적는다. 빈 `roi_key`(`roi:`)는 만들지 않는다. `inputs.<role>`·`change_args` 가 객체가 아니어도 `invalid` 다(예외 없음).
+- C2: ROI 안에서 `contributing_cases` 와 `one_sided_cases` 를 `case_key` 로 합쳐 case 한 줄로 만든다. `change_kind` 는 처음 본 값, `change_kinds` 는 본 모든 태그(쌍 태그에도 모두 들어간다). `one_sided` 는 모든 목록에서 한쪽만일 때만 참, `present_in` 은 값이 다르면 `both`.
+- R1:3: `summary.linked_pairs` 는 분모(`no_change` 제외) 안의 쌍만 센다. 분모 밖(`no_change`)인데 연결된 쌍은 `linked_no_change_pairs` 다. `linked_pairs + unlinked_pairs = pair_denominator`. 추가 키 `rois_outside_map`.
+
+### 29.2 `rois[].map`
+
+`status`(`ok` / `outside_map`), `center_px`·`size_px`(A frame px), `shift_px`·`shifted`, `clipped`, `larger_than_window`, `offset_px`(04 field offset, frame px)·`offset_reason`, `reference`·`target`.
+
+- `reference = {rect_px, rect_map, clipped}`, `target = {status: ok / no_offset / outside_b_window, reason, rect_px, rect_map, clipped}`. `rect_px` 는 해당 제품 frame px 사각형 `[x0, y0, x1, y1]`, `rect_map` 은 그 제품 지도 그림의 표시 px 이다.
+- 변환(C7): `pA = (x_um − g_A_um) / pitch`, `pB = pA + offset_px`(frame 원점을 다시 더하지 않는다), `rect_map = (p − region.origin_px) / region.block_px`(제품별). A 원점 0 · B 원점 10 µm · offset 0 이면 B 사각형은 A 와 같다.
+- field 는 원래 ROI 사각형으로 `pick_offset` 을 먼저 고른 뒤(spread 기준 `--coord-offset-spread-um`) 표시용 주기 이동을 적용한다. 사각형이 창(18.3)과 겹치면 이동 0, 겹치지 않고 창이 frame 보다 작으면(주기가 있으면) 중심이 창에 들어오는 정수 주기만큼 옮긴다(`shifted`). 창 경계를 넘으면 창 안만 그리고 `clipped`, 창보다 크면 창 테두리까지 그리고 `larger_than_window`. 옮겨도 창 밖(창이 frame 전체여서 주기가 없을 때)이면 `outside_map`(사각형 없음, `changes.outside_map` 목록에만).
+- 좌표 대응이 없으면(`coords_status` ≠ `ok`) B 는 `no_offset`(사유 = 좌표 코드, 또는 `no_field_cell` / `offset_spread`), A 사각형은 그린다. 이동한 B 사각형이 B 창 밖이면 `outside_b_window`.
+
+### 29.3 `overlay`
+
+`{available, offset_px, reason}`. 지도 영역 전체(A 지도 그림)에서 field offset 이 spread 기준 안에서 하나로 정해질 때만 `available`. 아니면 `reason`(`offset_spread`, `no_field_cell`, 좌표 코드).
