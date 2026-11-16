@@ -232,7 +232,10 @@ def _report07_link(report07_dir, out):
         rel = os.path.relpath(str(target.resolve()), str(Path(out).resolve()))
     except ValueError:      # Windows: another drive has no relative path; the report is still made, without the link
         return {'status': 'missing', 'href': None, 'reason': 'no_relative_path'}
-    return {'status': 'linked', 'href': rel.replace(os.sep, '/')}
+    rel = rel.replace(os.sep, '/')
+    if re.match(r'^[A-Za-z][A-Za-z0-9+.\-]*:', rel):     # a scheme would make the href run code instead of opening a file
+        return {'status': 'missing', 'href': None, 'reason': 'scheme'}
+    return {'status': 'linked', 'href': quote(rel, safe='/')}
 
 
 # ---- context ------------------------------------------------------------------------------------------------------------
@@ -645,6 +648,10 @@ def _link07(ctx):
     link = ctx.report07
     if link['status'] == 'linked':
         return '<p id="link07">가정 계산과 조건 Δ 는 07 에서 → <a id="link07-a" href="%s">07 열기</a></p>' % esc(link['href'])
+    if link['status'] == 'missing' and link.get('reason') == 'no_relative_path':
+        return '<p id="link07" class="muted">07 보고서는 있지만 다른 드라이브라 상대 링크를 만들 수 없습니다 — 07 폴더에서 직접 여세요.</p>'
+    if link['status'] == 'missing' and link.get('reason') == 'scheme':
+        return '<p id="link07" class="muted">07 보고서는 있지만 경로가 링크로 쓸 수 없는 형태라 링크를 만들지 않았습니다 — 07 폴더에서 직접 여세요.</p>'
     if link['status'] == 'missing':
         return '<p id="link07" class="muted">07 보고서 없음 — --report07-dir 폴더에 report.html 이 없습니다.</p>'
     return '<p id="link07" class="muted">07 보고서 없음 — --report07-dir 를 주지 않았습니다. 가정 계산과 조건 Δ 는 07 에서 봅니다.</p>'

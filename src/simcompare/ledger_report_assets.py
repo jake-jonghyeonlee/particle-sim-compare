@@ -376,6 +376,7 @@ document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.
  if(t.hasAttribute('data-go')){ev.preventDefault();go(t.getAttribute('data-go'));return;}
  var h=t.getAttribute('data-href');if(h){var st2=parseHash(),add={kv:{},flags:{}};
   h.replace(/^#/,'').split('&').forEach(function(p){var i=p.indexOf('=');if(i>0){var v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}add.kv[p.slice(0,i)]=v;}});
+  if(add.kv.cat!=null&&/^(line:|pixel:|tag:|kind:)/.test(add.kv.cat)){['kind','ck','tag','more','q'].forEach(function(k){delete st2.kv[k];});}   /* section 1 is a new entry: it replaces the section 3 filters */
   Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;setHash(st2);if(t.hasAttribute('data-scroll'))go(t.getAttribute('data-scroll'));}});
 document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest)return;
  var fb=t.closest('[data-f]');if(fb){var fs=parseHash(),fk=fb.getAttribute('data-f'),fv=fb.getAttribute('data-v');

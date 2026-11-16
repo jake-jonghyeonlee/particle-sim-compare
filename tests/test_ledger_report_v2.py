@@ -1160,6 +1160,23 @@ def test_chrome_section_1_rows_open_the_pair_entry_cno_points_to_section_4_and_a
     assert 'data-scroll="s3"' in s1
 
 
+def test_chrome_section_1_entry_clears_the_section_3_filters(tmp_path):
+    """R4:3 — #kind=pixel active, then a section 1 line row: only line pairs remain."""
+    doc, page = chrome_t8(tmp_path, changes=ok_changes())
+    script = ("var R=document.documentElement,o={};"
+              "setTimeout(function(){location.hash='#kind=pixel&q=zz&more=1';setTimeout(function(){"
+              "document.querySelector('#breakdown tr[data-cat=\"same\"] td[data-href]').click();setTimeout(function(){o.h=location.hash;"
+              "o.n=document.documentElement.getAttribute('data-pl-count');"
+              "R.setAttribute('data-nav',JSON.stringify(o));},300);},300);},200);")
+    dom, text = run_in_page(page, '#', script)
+    assert 'data-err' not in dom.root
+    nav = json.loads(dom.root['data-nav'])
+    assert 'cat=line%3Asame' in nav['h'] and 'kind=' not in nav['h'] and 'q=' not in nav['h'] and 'more=' not in nav['h']
+    assert int(nav['n']) > 0
+    rows = re.findall(r'<tr class="plrow[^>]*data-kind="([^"]*)"', text)
+    assert 'pixel' in rows and 0 < int(nav['n']) <= rows.count('line')                           # line "same" pairs only; kind=pixel / q=zz would have left 0
+
+
 def test_report07_link_survives_a_path_without_a_relative_form(tmp_path, monkeypatch):
     """R3:6 — Windows: os.path.relpath raises ValueError for another drive; the report is made, without the link."""
     seven = tmp_path / 'compare2_report'
@@ -1174,6 +1191,25 @@ def test_report07_link_survives_a_path_without_a_relative_form(tmp_path, monkeyp
     page = html_of(out)
     assert bundle_of(page)['report07']['status'] == 'missing' and bundle_of(page)['report07']['href'] is None
     assert json.loads((out / 'report.json').read_text(encoding='utf-8'))['report07'] == 'missing'
+    assert '다른 드라이브라 상대 링크를 만들 수 없습니다' in page and '07 폴더에서 직접 여세요' in page          # R4:1 — the reason is shown
+
+
+def test_report07_href_is_percent_encoded_and_a_scheme_path_gets_no_link(tmp_path, monkeypatch):
+    """R4:2"""
+    seven = tmp_path / 'r #1 100%'
+    seven.mkdir()
+    (seven / 'report.html').write_text('<html></html>', encoding='utf-8')
+    code, out = run_report(tmp_path, sample_doc(), report07_dir=str(seven))
+    assert code == 0
+    page = html_of(out)
+    href = bundle_of(page)['report07']['href']
+    assert href == '../r%20%231%20100%25/report.html' and '#' not in href and ' ' not in href
+    assert 'href="../r%20%231%20100%25/report.html"' in page
+    assert (out / href.replace('%20', ' ').replace('%23', '#').replace('%25', '%')).resolve().is_file()
+    monkeypatch.setattr(ledger_report.os.path, 'relpath', lambda *a, **k: 'javascript:x/report.html')
+    code, out = run_report(tmp_path, sample_doc(), report07_dir=str(seven))
+    page = html_of(out)
+    assert bundle_of(page)['report07']['status'] == 'missing' and 'href="javascript' not in page and 'id="link07-a"' not in page
 
 
 def test_old_wording_and_dead_code_are_gone():
