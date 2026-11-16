@@ -9,6 +9,7 @@ import test_compare2 as tc
 import test_compare2_expected_zero as ez
 from simcompare import ledger, ledger_report
 from simcompare.cli import main
+from test_ledger_report import bundle_of
 
 GHX = ('lateral_short', 'GH', 'L1', 'X', 'L1', {1: {1, 2}, 2: {1}, 3: {1}})      # registered GH-X (line): stays
 GHY = ('lateral_short', 'GH', 'L1', 'Y', 'L1', {1: {2, 3}, 2: {2}, 3: {2}})      # unregistered GH-Y: left out
@@ -87,16 +88,18 @@ def test_mixed_fixture_07_ledger_and_ledger_report(tmp_path, monkeypatch):
     # ledger.json copies the blocks as they are
     ledger_out, doc = run_ledger(world)
     assert doc['inputs']['pair_exclusions'] == blocks
-    # ledger-report: 4 has GH-X (registered) and no GH-Y, 7 has one row per block pair, 3 has no "only excluded" mark
+    # ledger-report (mrep/T5): the data bundle has GH-X (registered) and no GH-Y; section 5 has one row per block pair and
+    # section 1 counts the left-out electrode pairs
     html = run_ledger_report(ledger_out)
-    s4, s7, s3, s1 = section(html, 4), section(html, 7), section(html, 3), section(html, 1)
-    assert 'GH–X' in s4 and 'GH–Y' not in s4 and 'N_NODE' not in s4
+    s1, s5 = section(html, 1), section(html, 5)
+    bundle_pairs = {tuple(p['e']) for p in bundle_of(html)['pairs']}
+    assert ('GH', 'X') in bundle_pairs and not any('Y' in names or 'N_NODE' in names for names in bundle_pairs)
     assert {tuple(row['electrodes']) for row in doc['pairs']} >= {('GH', 'X')} and not any(
         'Y' in row['electrodes'] or 'N_NODE' in row['electrodes'] for row in doc['pairs'])
-    table = re.search(r'<table id="pair-excluded">(.*?)</table>', s7, re.S).group(1)
+    table = re.search(r'<table id="pair-excluded">(.*?)</table>', s5, re.S).group(1)
     assert table.count('<tr>') - 1 == sum(len(block['pairs']) for block in blocks.values()) == 4
     assert '기준 A' in table and '대상 B' in table and 'pairs.csv' not in table
-    assert '계산에서 제외한 전극 쌍 2개 — 7절 참고' in s1
+    assert '제외 쌍 <b>2</b>' in s1
     assert '계산 제외 쌍만 있음' not in html            # GH keeps GH-X and its CNO
     assert 'GH' in {row['electrode'] for row in doc['electrodes']}
 
@@ -109,13 +112,13 @@ def test_electrode_with_only_left_out_pairs_is_marked_where_it_is_listed(tmp_pat
     ledger_out, doc = run_ledger(world)
     assert 'GH' not in {e for row in doc['pairs'] for e in row['electrodes']}
     html = run_ledger_report(ledger_out)
-    s3 = section(html, 3)
     # observed names only: a left-out electrode has no ledger row of its own (no DL1 list here)
     assert 'GH' not in {row['electrode'] for row in doc['electrodes']}
-    assert '계산 제외 쌍만 있음' not in s3
-    assert 'GHY' not in section(html, 4)
+    assert '계산 제외 쌍만 있음' not in html
+    assert 'GHY' not in {p['id'] for p in bundle_of(html)['pairs']}
 
 
+@pytest.mark.skip(reason='mrep/T5: the electrode ledger (old section 3) is gone; the "only left-out pairs" mark returns with section 4 in mrep/T6')
 def test_marked_when_the_dl1_list_keeps_the_electrode(tmp_path):
     import test_ledger as tl
     pairs = [tl.pair('P1', ['Data', 'ELVDD'], 'line', [tl.lateral(['Data', 'ELVDD'], .01, 'SD1')],
@@ -180,8 +183,8 @@ def baseline_module(name):
 
 
 def test_without_exclusions_07_ledger_and_ledger_report_bytes_equal_the_baseline_code(tmp_path, monkeypatch):
-    """Whole-file sha256 of report.html, ledger.json and ledger_report.html against the baseline modules (the existing tests
-    compare fields only). 07 and ledger-report are checked with and without a CNO row."""
+    """Whole-file sha256 of report.html (07) against the baseline module. mrep/T1 added keys to ledger.json and mrep/T5 replaced
+    ledger_report.html, so those two no longer equal the baseline code; they are only run (exit code), not compared."""
     ref, tgt = sides([GHX], [GHX])
     world = build(tmp_path, monkeypatch, 'plain', ref, tgt, ref_cno=GH_CNO, tgt_cno=GH_CNO)
     assert 'pair_exclusions' not in json.dumps(world.c2)
@@ -196,10 +199,8 @@ def test_without_exclusions_07_ledger_and_ledger_report_bytes_equal_the_baseline
         assert led.main_ledger(str(world.out), str(world.folder / 'compare2.yaml'), str(led_out), lambda record: None) == 0
         lrep_out = world.folder / ('lrep_' + tag)
         assert lrep.main_ledger_report(str(led_out), str(lrep_out), lambda record: None) in (0, 3)
-        digests[tag] = {
-            'report.html': hashlib.sha256((out07 / 'report.html').read_bytes()).hexdigest(),
-            'ledger.json': hashlib.sha256((led_out / 'ledger.json').read_bytes()).hexdigest(),
-            'ledger_report.html': hashlib.sha256((lrep_out / 'ledger_report.html').read_bytes()).hexdigest()}
+        assert (led_out / 'ledger.json').is_file() and (lrep_out / 'ledger_report.html').is_file()
+        digests[tag] = {'report.html': hashlib.sha256((out07 / 'report.html').read_bytes()).hexdigest()}
     assert digests['old'] == digests['new']
 
 
@@ -219,7 +220,7 @@ def test_table_exclusion_and_expected_only_counts(tmp_path, monkeypatch):
     world = build(tmp_path, monkeypatch, 'union', ref, tgt, inventory='union')
     ledger_out, doc = run_ledger(world)
     html = run_ledger_report(ledger_out)
-    table = re.search(r'<table id="pair-excluded">(.*?)</table>', section(html, 7), re.S).group(1)
+    table = re.search(r'<table id="pair-excluded">(.*?)</table>', section(html, 5), re.S).group(1)
     rows = re.findall(r'<tr><td class="l">(.*?)</tr>', table, re.S)
     assert len(rows) == 2
     assert '<td>1 / 0</td>' in rows[0] and '<td>0 / 1</td>' in rows[1]       # reference: found; target: expected only

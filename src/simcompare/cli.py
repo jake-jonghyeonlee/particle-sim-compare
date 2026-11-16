@@ -256,12 +256,13 @@ def _parser() -> argparse.ArgumentParser:
     led.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger 가 이전에 만든 폴더만 덮어씀")
     lrep = _korean_help(sub.add_parser(
         "ledger-report", add_help=False,
-        help="ledger 결과(ledger.json)로 장부 보고서(ledger_report.html, 단일 파일)를 만든다. 1·3·4·6·7절, 2·5절은 자리 표시"))
+        help="ledger 결과(ledger.json)로 합친 비교 보고서(ledger_report.html, 단일 파일)를 만든다. ①·⑤ 구성, ②③④ 는 다음 단계"))
     lrep.add_argument("--ledger-dir", required=True, help="ledger 출력 폴더(ledger.json 이 있는 곳)")
     lrep.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-report 가 이전에 만든 폴더만 덮어씀")
     lrep.add_argument("--top-pairs", type=int, default=30, help="불량 종류별 상위 쌍 수(기본 30). 나머지는 '기타 k 쌍' 합계 줄")
     lrep.add_argument("--top-electrodes", type=int, default=30, help="불량 종류별 상위 전극 수(기본 30). 나머지는 '기타 k 전극' 합계 줄")
-    lrep.add_argument("--maps-dir", default=None, help="ledger-maps 출력 폴더(ledger_maps.json 이 있는 곳). 있으면 2절에 layout 리스크 지도를 넣음")
+    lrep.add_argument("--maps-dir", default=None, help="ledger-maps 출력 폴더(ledger_maps.json 이 있는 곳). 있으면 지도·카드·변경 위치 자료를 넣음")
+    lrep.add_argument("--report07-dir", default=None, help="07(compare2-report) 출력 폴더(report.html 이 있는 곳). 있으면 출력 폴더 기준 상대 링크를 넣음")
     lmaps = _korean_help(sub.add_parser(
         "ledger-maps", add_help=False,
         help="ledger 값을 타일·번호 PNG 로 만든다(ledger_maps.json, map_*.png). hotspot 과 DL1 을 한 번 다시 읽음"))
@@ -413,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare import ledger_report
             return ledger_report.main_ledger_report(args.ledger_dir, args.out, _print,
                                                     top_pairs=args.top_pairs, top_electrodes=args.top_electrodes,
-                                                    maps_dir=args.maps_dir)
+                                                    maps_dir=args.maps_dir, report07_dir=args.report07_dir)
         if args.command == "ledger-maps":
             # 새 폴더 또는 ledger-maps 가 이전에 만든 폴더만 쓴다. 오류는 error.json·execution.json 만 남기고 종료 코드 2, 검산 실패는 3.
             from simcompare import ledger_maps
