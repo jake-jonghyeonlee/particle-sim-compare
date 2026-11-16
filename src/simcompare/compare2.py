@@ -30,6 +30,7 @@ from .compare2_inputs import (CNO_FACTOR, CRP_DEFAULT_OTHER, CRP_ONE_GROUPS, ROU
 from .adapters.real_hotspot import CASE_EXCLUSION_RULE
 from .interlayer_distance import record_block
 from .numeric_schema import NumericContractError, has_short_cases
+from .pair_exclusion import PAIR_EXCLUSION_RULE, record_block as pair_exclusion_block
 
 SCHEMA_VERSION = 'compare2_v1'
 AREA_BASIS = 'crop_observed_area_legacy_team_factor_user_approved_2026_11_10'
@@ -59,6 +60,16 @@ def stale_reason(doc):
     if any(rule != CASE_EXCLUSION_RULE for rule in rules.values()):
         return ('compare2_stale_case_exclusion_rule',
                 f'compare2.json case_exclusions rule is {rules!r}, this code uses {CASE_EXCLUSION_RULE!r}: '
+                '02(compare2)를 새 번들로 다시 실행')
+    manifests = inputs.get('manifests')
+    recorded = {}
+    for role in ROLES:
+        block = (manifests.get(role) or {}).get('pair_exclusions') if isinstance(manifests, dict) else None
+        if block is not None:
+            recorded[role] = block.get('rule') if isinstance(block, dict) else None
+    if any(rule != PAIR_EXCLUSION_RULE for rule in recorded.values()):
+        return ('compare2_stale_pair_exclusion_rule',
+                f'compare2.json pair_exclusions rule is {recorded!r}, this code uses {PAIR_EXCLUSION_RULE!r}: '
                 '02(compare2)를 새 번들로 다시 실행')
     return None
 
@@ -250,7 +261,12 @@ def _load_side(cfg, role, top_buckets, share_sink=None):
         raise NumericContractError('compare2_condition_assignment_required', f'{role}: condition_assignment needed')
     dataset = configured[1]
     if not has_short_cases(dataset.cases):
-        raise NumericContractError('compare2_side_without_cases', f'{role}: {CASE_EXCLUSION_RULE}')
+        left_out = pair_exclusion_block(dataset.provenance)
+        note = ''
+        if left_out is not None:
+            count = left_out['excluded_cases'] + left_out['excluded_expected_cases']
+            note = f'; {left_out["rule"]}: {count} cases left out'
+        raise NumericContractError('compare2_side_without_cases', f'{role}: {CASE_EXCLUSION_RULE}{note}')
     manifest = real[1]
     meta = {'source_payload_hash': manifest['source_payload_hash'],
             'case_exclusions': manifest.get('case_exclusions'),
@@ -264,6 +280,9 @@ def _load_side(cfg, role, top_buckets, share_sink=None):
     block = record_block(dataset.provenance)
     if block is not None:       # key absent = filter off = nothing written (the output bytes stay the baseline's)
         meta['distance_filter'] = block
+    pair_block = pair_exclusion_block(dataset.provenance)
+    if pair_block is not None:  # no left-out case = no key = the baseline's bytes
+        meta['pair_exclusions'] = pair_block
     del result, dataset, configured, real
     return extracted, meta
 
@@ -1029,7 +1048,9 @@ def build_compare2(config_path):
             'manifests': {role: {'source_payload_hash': metas[role]['source_payload_hash'],
                                  'input_hash': metas[role]['input_hash'],
                                  **({'distance_filter': metas[role]['distance_filter']}
-                                    if 'distance_filter' in metas[role] else {})} for role in ROLES},
+                                    if 'distance_filter' in metas[role] else {}),
+                                 **({'pair_exclusions': metas[role]['pair_exclusions']}
+                                    if 'pair_exclusions' in metas[role] else {})} for role in ROLES},
             'case_exclusions': {role: metas[role].get('case_exclusions') for role in ROLES},
             'constants': {'vi_line_divisor': VI_LINE_DIVISOR, 'vi_pixel_divisor': VI_PIXEL_DIVISOR,
                           'cno_factor': CNO_FACTOR, 'crp_default_other': CRP_DEFAULT_OTHER,

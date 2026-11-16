@@ -53,6 +53,15 @@ def _distance_filter_provenance(reference, target):
     return {'distance_filter': blocks} if blocks else {}
 
 
+def _pair_exclusion_provenance(reference, target):
+    """{'pair_exclusions': {role: block}} for the sides that left a case out; {} when neither did (baseline bytes)."""
+    from simcompare.pair_exclusion import record_block
+    blocks = {role: record_block(getattr(dataset, 'provenance', None))
+              for role, dataset in (('reference', reference), ('target', target))}
+    blocks = {role: block for role, block in blocks.items() if block is not None}
+    return {'pair_exclusions': blocks} if blocks else {}
+
+
 def _write_inspection(output, prefix, payload, rows):
     import csv
     output = Path(output)
@@ -1201,6 +1210,7 @@ def run_numeric_local_delta(cfg, out, *, correspondence, window_sizes_um, jitter
                                                  'config_path': str(cfg.get('_config_path', config_path or '')) or None,
                                                  'config_sha256': cfg.get('_config_sha256'),
                                                  **_distance_filter_provenance(reference, target),
+                                                 **_pair_exclusion_provenance(reference, target),
                                                  **({'model': model} if model is not None else {}),
                                                  **({'window_cases': {'window_um': case_window_um, 'diameter_um': float(case_diameter_um),
                                                                       'file': window_cases.JSON_NAME}} if case_args else {})})

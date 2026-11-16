@@ -22,6 +22,7 @@ import numpy as np
 
 from . import alignment_report, candidates, change_map, layer_align, local_align, template_export
 from .interlayer_distance import record_block
+from .pair_exclusion import record_block as pair_exclusion_block
 from .numeric_schema import DIAMETERS_UM, NumericContractError, diameter_key, is_cno_case
 
 DIAMETER_UM = 5
@@ -2134,6 +2135,9 @@ def _run(cfg, out, track, sides, products, pitch, limit, args):
         block = record_block(getattr(side.dataset, 'provenance', None))
         if block is not None:       # filter off = no key = the baseline's bytes
             inputs[name]['distance_filter'] = block
+        pair_block = pair_exclusion_block(getattr(side.dataset, 'provenance', None))
+        if pair_block is not None:  # no left-out case = no key = the baseline's bytes
+            inputs[name]['pair_exclusions'] = pair_block
         if side.export_path is not None:
             inputs[name]['export_sha256'] = candidates._sha256_file(side.export_path)
         if side.index is not None and side.index['path'] is not None:

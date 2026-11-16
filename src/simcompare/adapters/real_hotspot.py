@@ -2042,7 +2042,9 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                                    if unfiltered_cases else {})}})
     provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw, **distance_provenance,
                   **({'pair_exclusions': pair_exclusions} if pair_exclusions else {}),
-                  'pair_table_version': next(iter(pairs.values())).table_version if pairs else None,
+                  # line/pixel rows first (unchanged value); a table of excluded rows only still has a version
+                  'pair_table_version': (next(iter(pairs.values())).table_version if pairs else
+                                         next(iter(excluded_rows.values()))[1] if excluded_rows else None),
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),
                   'configured_assignment_hash': assignment_hash, 'input_hash': configured_hash,
                   'unresolved_same_name_cases': unresolved,
