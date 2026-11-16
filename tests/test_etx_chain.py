@@ -504,7 +504,8 @@ def test_step_08_writes_the_ledger_and_the_single_file_report_after_02(chain):
     assert ' start ledger --compare2-dir data/compare2 --config compare2.yaml --out data/ledger' in text
     assert (' start ledger-maps --compare2-dir data/compare2 --config compare2.yaml --ledger-dir data/ledger '
             '--candidates data/changes --out data/ledger_maps') in text
-    assert ' start ledger-report --ledger-dir data/ledger --maps-dir data/ledger_maps --out data/ledger_report' in text
+    assert (' start ledger-report --ledger-dir data/ledger --maps-dir data/ledger_maps --report07-dir data/compare2_report '
+            '--out data/ledger_report') in text
     assert [name for name, _ in _exit_codes(text)][-3:] == ['ledger', 'ledger-maps', 'ledger-report']
     assert (base / 'data/ledger_maps/ledger_maps.json').is_file()
     html = page.read_text(encoding='utf-8')
@@ -559,7 +560,8 @@ def test_step_08_continues_with_ledger_report_after_a_partial_ledger(tmp_path, p
     _write_real_yaml(base)
     text, result = _run_flow(python, base, tmp_path, 'partial', STEPS=['08'], LEDGER_MAPS=False)      # the old two-job 08
     assert _exit_codes(text) == [('ledger', '3'), ('ledger-report', '3')] and result.returncode in (0, 3), text[-2000:]
-    assert ' start ledger-report --ledger-dir data/ledger --out data/ledger_report' in text and 'ledger-maps' not in text
+    assert (' start ledger-report --ledger-dir data/ledger --report07-dir data/compare2_report --out data/ledger_report' in text
+            and 'ledger-maps' not in text)
     assert not (base / 'data/ledger_maps').exists()
     page = (base / 'data/ledger_report/ledger_report.html').read_text(encoding='utf-8')
     assert 'class="band partial"' in page and '부분 결과' in page

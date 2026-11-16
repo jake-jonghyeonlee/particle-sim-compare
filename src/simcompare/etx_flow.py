@@ -267,9 +267,10 @@ def plan_jobs(base_dir, settings):
                 if '04' in steps or changes.is_dir():
                     maps_args += ['--candidates', rel(changes)]
                 jobs.append(('ledger-maps', maps_args + ['--out', rel(maps)] + maps_extra))
-                jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--maps-dir', rel(maps), '--out', rel(ledger_report)]))
+                jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--maps-dir', rel(maps), '--report07-dir', rel(report),
+                                               '--out', rel(ledger_report)]))
             else:
-                jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--out', rel(ledger_report)]))
+                jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--report07-dir', rel(report), '--out', rel(ledger_report)]))
     return jobs
 
 

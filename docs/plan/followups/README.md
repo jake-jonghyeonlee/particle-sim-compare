@@ -10,6 +10,15 @@ Orca Run run_c9825fe14b68. Base c7a2829. Reviews by Claude Opus 5.5 high (Codex 
 - F-R3 PASS-WITH-ADVISORIES. Coordinator fixed A1 (cli.py comment) and A2 (F1_report correction); bundles rebuilt.
 - Open: F-R3 A4 (pre-existing) successful inspection-only compare leaves an older comparison_masks.zip; F-R A5/A6 notes.
 
+## Merged report Run (20261116-merged-report, 2026-11-16)
+
+08 이 합친 보고서(①–⑤)를 만든다. `ledger-report` 에 `--report07-dir`(07 출력 폴더)를 넘긴다. 재실행은 새 번들로 `STEPS = ['08']` 이다(02·04·07 은 그대로). 남은 일:
+- R2:3: 카드 scope 안에서 예약이 실패하면 높은 순위 카드가 먼저 빠진다. 낮은 순위부터 빠지게 개선한다.
+- 목업 대비 제외: ③ 상위 카드 영상, 근사 값 열.
+- 지도 단계 예약 실패 시 되돌림(T10 보고): 타일 전극 격자 예약 해제는 고쳤으나 지도 단계 전체의 되돌림 규칙은 정리가 필요하다.
+- 실자료 확인(폐쇄망 ETX): 변화 종류 분포, 형상 태그, 좌표 대응이 켜지는 비율, HTML 크기, 브라우저 성능, `max_reserved_by_stage`, `cards_budget_reduced` 발생 여부.
+- `--top-electrodes` 는 합친 보고서에서 쓰지 않는다(호환용 옵션). 정리 여부는 결정이 필요하다.
+
 ## Pair excluded Run (20261116-pair-excluded, 2026-11-16)
 
 쌍 제외(`pairs.csv` `class=excluded` + 내장 GH·N_NODE·VBIAS–VINT1)를 02·04·07·08 에 넣었다(규칙은 [../../usage.md](../../usage.md) "쌍 제외" 절). 남은 일:

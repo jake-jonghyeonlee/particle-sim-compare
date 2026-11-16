@@ -83,11 +83,13 @@ def code_of(excinfo):
 # ---- JOBS from the templates ----------------------------------------------------------------------------------------------
 
 LEDGER_JOBS_OFF = [('ledger', ['--compare2-dir', 'data/compare2', '--config', 'compare2.yaml', '--out', 'data/ledger']),
-                   ('ledger-report', ['--ledger-dir', 'data/ledger', '--out', 'data/ledger_report'])]      # baseline 1ce685b (LEDGER_MAPS = False)
+                   ('ledger-report', ['--ledger-dir', 'data/ledger', '--report07-dir', 'data/compare2_report',
+                                      '--out', 'data/ledger_report'])]      # LEDGER_MAPS = False (mrep/T9: + --report07-dir)
 LEDGER_JOBS = [LEDGER_JOBS_OFF[0],
                ('ledger-maps', ['--compare2-dir', 'data/compare2', '--config', 'compare2.yaml', '--ledger-dir', 'data/ledger',
                                 '--out', 'data/ledger_maps']),
-               ('ledger-report', ['--ledger-dir', 'data/ledger', '--maps-dir', 'data/ledger_maps', '--out', 'data/ledger_report'])]
+               ('ledger-report', ['--ledger-dir', 'data/ledger', '--maps-dir', 'data/ledger_maps', '--report07-dir',
+                                  'data/compare2_report', '--out', 'data/ledger_report'])]
 LEDGER_JOBS_WITH_04 = [LEDGER_JOBS[0],
                        ('ledger-maps', LEDGER_JOBS[1][1][:6] + ['--candidates', 'data/changes'] + LEDGER_JOBS[1][1][6:]),
                        LEDGER_JOBS[2]]
@@ -165,7 +167,8 @@ def test_ledger_maps_candidates_follow_the_07_rule_and_extra_args_are_appended(t
     assert etx_flow.plan_jobs(base, edit_settings(steps=['02', '08']))[-3:] == LEDGER_JOBS_WITH_04
     jobs = etx_flow.plan_jobs(base, edit_settings(steps=['02', '08'], ledger_maps_dir='maps', ledger_maps_args=['--range-um', '10']))
     assert jobs[-2] == ('ledger-maps', LEDGER_JOBS_WITH_04[1][1][:-1] + ['maps', '--range-um', '10'])
-    assert jobs[-1] == ('ledger-report', ['--ledger-dir', 'data/ledger', '--maps-dir', 'maps', '--out', 'data/ledger_report'])
+    assert jobs[-1] == ('ledger-report', ['--ledger-dir', 'data/ledger', '--maps-dir', 'maps', '--report07-dir',
+                                          'data/compare2_report', '--out', 'data/ledger_report'])
     with pytest.raises(FlowError) as caught:
         etx_flow.plan_jobs(base, edit_settings(steps=['02', '08'], ledger_maps_args='--range-um'))
     assert code_of(caught) == 'etx_setting_invalid'
@@ -189,7 +192,8 @@ def test_step_08_needs_the_02_output_unless_02_is_chosen(tmp_path):
     assert jobs[-3:] == [('ledger', ['--compare2-dir', 'cmp', '--config', 'compare2.yaml', '--out', 'led']),
                          ('ledger-maps', ['--compare2-dir', 'cmp', '--config', 'compare2.yaml', '--ledger-dir', 'led',
                                           '--out', 'data/ledger_maps']),
-                         ('ledger-report', ['--ledger-dir', 'led', '--maps-dir', 'data/ledger_maps', '--out', 'ledrep'])]
+                         ('ledger-report', ['--ledger-dir', 'led', '--maps-dir', 'data/ledger_maps', '--report07-dir',
+                                            'data/compare2_report', '--out', 'ledrep'])]
 
 
 def test_step_08_outputs_are_moved_before_the_run_and_a_taken_archive_name_refuses(tmp_path):
