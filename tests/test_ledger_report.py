@@ -255,9 +255,10 @@ def test_five_sections_in_order_slots_for_2_3_4_and_one_data_bundle(tmp_path):
     titles = ['① 한눈 요약', '② 제품 대응', '③ 탐색', '④ 분포', '⑤ 근거 · 검산']
     positions = [page.index('<h2>%s</h2>' % t) for t in titles]
     assert positions == sorted(positions)
-    for number in (2, 3, 4):
+    for number in (3,):                                 # sections 2 and 4 are built (mrep/T6); 3 is T7-T8
         part = section(page, number)
         assert '다음 단계에서 추가됩니다' in part and '<table' not in part
+    assert '<table id="corr-table">' in section(page, 2) and '<table id="ledger-table">' in section(page, 4)
     assert page.count('id="report-data"') == 1 and page.count('<script type="application/json"') == 1
     for old in ('<section id="s6">', '<section id="s7">', 'id="pairs-line"', 'id="el-line"'):
         assert old not in page

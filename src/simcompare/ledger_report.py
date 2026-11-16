@@ -708,6 +708,179 @@ def _section5(ctx):
     return ''.join(out)
 
 
+# ---- section 2: product correspondence (electrode x layer table) ------------------------------------------------------------
+
+LAYER_SYMBOLS = {'both': ('●', '양쪽', 'st-both'), 'a_only': ('◀', 'A 만', 'st-a'), 'b_only': ('▶', 'B 만', 'st-b')}
+MOVE_TEXT = {'a_only': '레이어 이동: A 에만 있음(B 는 다른 레이어로 옮김)', 'b_only': '레이어 이동: B 에만 있음(A 에서 옮겨 옴)'}
+# darkness steps of the electrode name colour: |change| against A, in %, upper bounds of steps 1..3 (step 4 = above)
+SHADE_BOUNDS = (1.0, 5.0, 20.0)
+SHADE_LEGEND = '진하기: A 대비 |Δ| 1% 미만 · 1–5% · 5–20% · 20% 이상'
+
+
+def _shade(row):
+    """('up'|'dn'|'', step 1-4) of the electrode name: the larger |A-relative change| of line and pixel; no colour for a null or
+    0 change."""
+    best = None
+    for kind in KINDS:
+        p = (row.get(kind) or {}).get('pct_delta')
+        if isinstance(p, (int, float)) and p != 0 and (best is None or abs(p) > abs(best)):
+            best = p
+    if best is None:
+        return '', 0
+    step = 1 + sum(1 for bound in SHADE_BOUNDS if abs(best) >= bound)
+    return ('up' if best > 0 else 'dn'), step
+
+
+def _el_attrs(name):
+    return 'data-el="%s" data-href="%s" tabindex="0"' % (esc(name), esc(_href('electrode:' + name)))
+
+
+def _layer_cell(row, layer, verified):
+    state = (row.get('layer_state') or {}).get(layer)
+    def attrs(cls):
+        return 'class="c %s" data-layer="%s"' % (cls, esc(layer))
+    if state is None:
+        if verified:
+            return '<td %s></td>' % attrs('st-none')
+        return '<td %s title="DL1 이 없어 이 레이어를 확인할 수 없습니다">%s</td>' % (attrs('st-unk'), muted('확인 불가'))
+    symbol, text, cls = LAYER_SYMBOLS[state]
+    if row.get('moved') and state in MOVE_TEXT:
+        return '<td %s title="%s">⇄<sub>%s</sub></td>' % (attrs(cls + ' st-mv'), esc(MOVE_TEXT[state]), 'A' if state == 'a_only' else 'B')
+    return '<td %s title="%s">%s</td>' % (attrs(cls), esc(text), symbol)
+
+
+def _section2(ctx):
+    doc = ctx.doc
+    rows = doc['electrodes']
+    layers = sorted({layer for row in rows for layer in (row.get('layer_state') or {})})
+    unverified = [row for row in rows if row.get('layer_state_status') != 'verified']
+    counts = {code: sum(1 for row in rows if row.get('status') == code) for code in ('common', 'new', 'removed')}
+    moved = sum(1 for row in rows if row.get('moved'))
+    out = ['<section id="s2"><p class="q">전극은 어떻게 대응되나</p><h2>② 제품 대응</h2>',
+           '<p class="lead" id="corr-summary">공통 <b>%d</b> · 신규 <b>%d</b> · 제거 <b>%d</b> · 레이어 이동 <b>%d</b>%s'
+           '<span class="muted"> — 대응은 전극 이름 기준입니다. 이름이 바뀐 전극은 \'제거 + 신규\' 로 보입니다.</span></p>' % (
+               counts['common'], counts['new'], counts['removed'], moved,
+               (' · 확인 불가 <b>%d</b>' % sum(1 for row in rows if row.get('status') == 'unverifiable')) if any(
+                   row.get('status') == 'unverifiable' for row in rows) else '')]
+    if unverified:
+        out.append('<div class="band info" id="band-no-dl1"><b>확인 불가</b> — DL1 전극 목록이 없어 %d 개 전극의 레이어 대응(공통·신규·제거·이동)을 '
+                   '확인하지 못했습니다. 빈 칸은 없다는 뜻이 아니라 알 수 없다는 뜻입니다.</div>' % len(unverified))
+    out.append('<p class="legend" id="corr-legend"><span class="st-both">●</span> 양쪽 · <span class="st-a">◀</span> A 만 · '
+               '<span class="st-b">▶</span> B 만 · <span class="st-mv">⇄</span> 레이어 이동(A 전용 칸 ⇄<sub>A</sub> → B 전용 칸 ⇄<sub>B</sub>)'
+               ' &nbsp;|&nbsp; 전극 이름 칸 색: <span class="hd-up3">증가</span> <span class="hd-dn3">감소</span> '
+               '(line·pixel 중 A 대비 |Δ%%| 큰 쪽) · %s</p>' % esc(SHADE_LEGEND))
+    out.append('<p class="searchrow"><label>전극 검색 <input type="search" id="el-q" autocomplete="off" placeholder="이름 일부"></label> '
+               '<span id="el-count" class="muted">%d / %d</span></p>' % (len(rows), len(rows)))
+    head = ''.join('<th data-layer="%s" data-href="%s" title="이 레이어를 선택">%s</th>' % (esc(layer), esc(_href('layer:' + layer)), esc(layer))
+                   for layer in layers)
+    body = []
+    for row in rows:
+        dirn, step = _shade(row)
+        shade = ' hd-%s%d' % (dirn, step) if dirn else ''
+        verified = row.get('layer_state_status') == 'verified'
+        badge = esc(next((c['label'] for c in doc.get('electrode_status') or [] if c['code'] == row.get('status')), row.get('status')))
+        body.append('<tr %s data-row="corr"><td class="l nm%s"><b>%s</b></td><td class="l"><span class="badge">%s</span></td>%s</tr>' % (
+            _el_attrs(row['electrode']), shade, esc(row['electrode']), badge,
+            ''.join(_layer_cell(row, layer, verified) for layer in layers)))
+    out.append('<div class="scrl"><table id="corr-table"><thead><tr><th class="l">전극</th><th class="l">상태</th>%s</tr></thead><tbody>%s</tbody></table></div>' % (
+        head, ''.join(body)))
+    out.append('<div id="el-partners" class="partners"><p class="muted">전극 이름이나 칸을 누르면 그 전극의 상대 전극과 쌍 Δ 가 이 자리에 나옵니다. '
+               '이 목록은 스크립트가 그립니다.</p></div></section>')
+    return ''.join(out)
+
+
+# ---- section 4: electrode ledger and layer x size ----------------------------------------------------------------------------
+
+def _excluded_only_electrodes(doc):
+    """Electrodes that appear in a left-out pair and keep no calculated item (no registered pair, no CNO)."""
+    kept = {r['electrode_id'] for r in doc.get('cno') or []}
+    for row in doc['pairs']:
+        kept.update(row['electrodes'])
+    named = set()
+    for _name, electrodes, _pid, _reason, _a, _e, _layers in _pair_exclusion_rows(doc):
+        named.update(electrodes)
+    return named - kept
+
+
+def _ab_cell(ctx, kind, v):
+    if v is None:
+        return muted('—')
+    return '%s → %s' % (esc(vi_txt(v.get('a'))), esc(vi_txt(v.get('b'))))
+
+
+def _delta_cell(ctx, kind, v):
+    if v is None:
+        return muted('—')
+    return pp_cell(v.get('delta'), ctx.pct(v.get('delta'), kind))
+
+
+def _ledger_total(doc, kind):
+    t = doc['totals'][kind]
+    if kind == 'line':
+        return {k: t['items'][k] for k in ('a', 'b', 'delta')}
+    return {k: osum([t['items'][k], t['cno'][k]]) for k in ('a', 'b', 'delta')}
+
+
+def _ledger_rank(row):
+    values = [abs(row[kind]['pct_delta']) for kind in KINDS if isinstance((row.get(kind) or {}).get('pct_delta'), (int, float))]
+    return (0 if values else 1, -max(values or [0.0]), row['electrode'])
+
+
+def _electrode_ledger(ctx):
+    doc = ctx.doc
+    only = _excluded_only_electrodes(doc)
+    cno_names = {r['electrode_id'] for r in doc.get('cno') or []}
+    rows = sorted(doc['electrodes'], key=_ledger_rank)
+    body = []
+    for row in rows:
+        name = row['electrode']
+        mark = ' <span class="muted">(계산 제외 쌍만 있음)</span>' if name in only else ''
+        if name in cno_names:
+            cno = '<td>%s%s</td>' % (esc(vi_txt((row.get('cno') or {}).get('a'))) + ' → ' + esc(vi_txt((row.get('cno') or {}).get('b'))),
+                                     sub('Δ ' + pp_txt((row.get('cno') or {}).get('delta'))))
+        else:
+            cno = '<td>%s</td>' % muted('해당 없음')
+        body.append('<tr %s data-row="ledger"><td class="l"><b>%s</b>%s</td><td>%s</td><td class="l">%s</td><td>%s</td><td class="l">%s</td>%s</tr>' % (
+            _el_attrs(name), esc(name), mark, _ab_cell(ctx, 'line', row.get('line')), _delta_cell(ctx, 'line', row.get('line')),
+            _ab_cell(ctx, 'pixel', row.get('pixel')), _delta_cell(ctx, 'pixel', row.get('pixel')), cno))
+    tl, tp = _ledger_total(doc, 'line'), _ledger_total(doc, 'pixel')
+    total = ('<tr class="sum" id="ledger-total"><td class="l">합계</td><td>%s</td><td class="l">%s</td><td>%s</td><td class="l">%s</td><td></td></tr>' % (
+        esc(vi_txt(tl['a'])) + ' → ' + esc(vi_txt(tl['b'])), _delta_cell(ctx, 'line', tl),
+        esc(vi_txt(tp['a'])) + ' → ' + esc(vi_txt(tp['b'])), _delta_cell(ctx, 'pixel', tp)))
+    return ('<h3>전극 장부 <span class="muted" style="font-weight:400">(전극 쌍의 값은 두 전극에 절반씩, CNO 는 그 전극에 전부 · vi 는 %% 로 씀 · A 대비 %% 는 각 종류의 vi A 기준)</span></h3>'
+            '<div class="scrl"><table id="ledger-table"><thead><tr><th class="l">전극</th><th>line A → B</th><th class="l">line Δ</th>'
+            '<th>pixel A → B</th><th class="l">pixel Δ</th><th>그중 pixel CNO A → B</th></tr></thead><tbody>%s</tbody><tfoot>%s</tfoot></table></div>'
+            '<p class="muted" id="ledger-total-note">합계 줄은 전극 장부의 합입니다(line = 전극 쌍 합, pixel = 전극 쌍 합 + CNO). 곡선 보정·CRP 차이는 전극에 나누지 않으므로 '
+            '종류 전체 vi(① 요약)와 다를 수 있습니다.</p>' % (''.join(body), total))
+
+
+def _size_table(ctx, kind):
+    rows = (ctx.doc.get('layers') or {}).get(kind) or []
+    if not rows:
+        return ''
+    pct_kind = 'pixel' if kind == 'cno' else kind
+    sizes = sorted({s['diameter_um'] for row in rows for s in row.get('by_size') or []})
+    head = ''.join('<th>%s µm Δ</th>' % esc(num(d)) for d in sizes)
+    body = []
+    for row in rows:
+        by = {s['diameter_um']: s for s in row.get('by_size') or []}
+        cells = ''.join('<td>%s</td>' % (pp_cell(by[d]['delta'], ctx.pct(by[d]['delta'], pct_kind)) if d in by else muted('—')) for d in sizes)
+        body.append('<tr data-layer="%s" data-href="%s" tabindex="0"><td class="l"><b>%s</b></td><td>%s → %s</td><td class="l">%s</td>%s</tr>' % (
+            esc(row['layer']), esc(_href('layer:' + row['layer'])), esc(row['layer']), esc(vi_txt(row['a'])), esc(vi_txt(row['b'])),
+            pp_cell(row['delta'], ctx.pct(row['delta'], pct_kind)), cells))
+    title = {'line': 'line', 'pixel': 'pixel', 'cno': 'pixel CNO (pixel 의 일부)'}[kind]
+    return ('<h4>%s%s</h4><div class="ovx"><table id="size-%s"><thead><tr><th class="l">레이어</th><th>A → B</th><th class="l">Δ</th>%s</tr></thead>'
+            '<tbody>%s</tbody></table></div>' % (chip(pct_kind), esc(title), kind, head, ''.join(body)))
+
+
+def _section4(ctx):
+    out = ['<section id="s4"><p class="q">전극·레이어·이물 크기별로는</p><h2>④ 분포</h2>', _electrode_ledger(ctx),
+           '<h3>레이어 × 이물 크기 <span class="muted" style="font-weight:400">(레이어를 누르면 그 레이어를 선택)</span></h3>']
+    out.extend(_size_table(ctx, kind) for kind in ('line', 'pixel', 'cno'))
+    out.append('</section>')
+    return ''.join(out)
+
+
 # ---- the data bundle ----------------------------------------------------------------------------------------------------
 
 def _item_label(item):
@@ -783,7 +956,8 @@ def _bundle(ctx, ledger_sha):
         'labels': {'change_kinds': ctx.change_labels, 'checks': CHECK_TEXT},
         'pairs': [_pair_bundle(ctx, p) for p in doc['pairs']],
         'electrodes': [{'n': e['electrode'], 's': e.get('status'), 'la': e.get('layers_a'), 'lb': e.get('layers_b'),
-                        'pa': bool(e.get('present_a')), 'pb': bool(e.get('present_b'))} for e in doc['electrodes']],
+                        'pa': bool(e.get('present_a')), 'pb': bool(e.get('present_b')), 'ls': e.get('layer_state'),
+                        'lss': e.get('layer_state_status'), 'mv': e.get('moved')} for e in doc['electrodes']],
         'cno': [{'e': r['electrode_id'], 'l': r['density_layer'], 'a': r['a'], 'b': r['b'], 'd': r['delta'], 'pres': r['presence']} for r in doc['cno']],
         'checks': doc.get('checks'), 'top': {'changed': changed, 'risk': risk}, 'demo_pair': demo,
         'maps': _maps_bundle(ctx), 'changes': _changes_bundle(ctx), 'cards': _cards_bundle(ctx), 'report07': ctx.report07}
@@ -813,7 +987,7 @@ def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None, report07=
         '<h1>설계 변경 영향 보고서 — 합친 비교 <span class="muted" style="font-size:13px;font-weight:400">기준 A: %s · 대상 B: %s · ledger %s</span></h1>' % (
             esc(products['reference'].get('model_group')), esc(products['target'].get('model_group')), esc(doc.get('status'))),
         _bands(ctx, size_warning), _bar(), _section1(ctx),
-        _slot(2, '② 제품 대응', '전극은 어떻게 대응되나'), _slot(3, '③ 탐색', '어디가 얼마나 달라졌나'), _slot(4, '④ 분포', '전극·레이어·이물 크기별로는'),
+        _section2(ctx), _slot(3, '③ 탐색', '어디가 얼마나 달라졌나'), _section4(ctx),
         _section5(ctx),
         '</main><script type="application/json" id="report-data">%s</script><script>%s</script></body></html>\n' % (data, SCRIPT)]
     return ''.join(body), len(data.encode('utf-8'))

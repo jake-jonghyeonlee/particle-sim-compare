@@ -398,3 +398,159 @@ def test_chrome_real_chain_page_draws_without_errors(tmp_path, big):
         dom, text = dump_dom(out / 'ledger_report.html', fragment)
         assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
     assert selected(dom, 'data-pair') == sorted([first] * len(selected(dom, 'data-pair')))
+
+
+# ---- mrep/T6: section 2 (electrode x layer table) and section 4 (electrode ledger, layer x size) -------------------------------
+
+def _el(doc, name):
+    return next(r for r in doc['electrodes'] if r['electrode'] == name)
+
+
+def corr_doc(complete=True, **kwargs):
+    pairs = [spec('P1', ['Data', 'ELVDD'], 'line', 0.0120, 0.0150), spec('P2', ['Scan1', 'EM'], 'line', 0.0060, 0.0078),
+             spec('P3', ['Anode', 'Vint'], 'pixel', 0.0200, 0.0210, layer='PXL'), spec('P5', ['Scan2', 'Vint'], 'line', 0.0, 0.0065,
+                                                                                    present_a=False, change='new_pair', layer='SD1')]
+    doc = make_ledger(pairs, cno=[('Anode', 'PXL', 0.0050, 0.0060)], extra_electrodes=('Gone', 'Fresh', 'Shift'), complete=complete, **kwargs)
+    for row in doc['electrodes']:
+        row['layer_state'] = {layer: 'both' for layer in row['layers_a']}
+        row['layer_state_status'] = 'verified' if complete else 'unverified'
+        row['moved'] = False if complete else None
+    if complete:
+        _el(doc, 'Gone').update(status='removed', present_b=False, layer_state={'L1': 'a_only'})
+        _el(doc, 'Fresh').update(status='new', present_a=False, layer_state={'PXL': 'b_only'})
+        _el(doc, 'Shift').update(layer_state={'L1': 'a_only', 'PXL': 'b_only'}, moved=True)
+    else:
+        _el(doc, 'Data')['layer_state'] = {'L1': 'a_only'}
+    return doc
+
+
+def s2_row(page, name):
+    return re.search(r'<tr data-el="%s"[^>]*data-row="corr">(.*?)</tr>' % re.escape(name), section(page, 2), re.S).group(1)
+
+
+def s2_cell(page, name, layer):
+    return re.search(r'<td class="c ([^"]*)" data-layer="%s"[^>]*>(.*?)</td>' % re.escape(layer), s2_row(page, name), re.S).groups()
+
+
+def test_section_2_cell_states_summary_and_legend(tmp_path):
+    doc = corr_doc()
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+    common = sum(1 for r in doc['electrodes'] if r['status'] == 'common')
+    assert '공통 <b>%d</b> · 신규 <b>1</b> · 제거 <b>1</b> · 레이어 이동 <b>1</b>' % common in s2
+    assert "이름이 바뀐 전극은 '제거 + 신규' 로 보입니다" in s2 and 'id="corr-legend"' in s2
+    assert 'id="band-no-dl1"' not in s2 and '확인 불가' not in s2
+    assert 'st-both' in s2_cell(page, 'Data', 'L1')[0] and '●' in s2_cell(page, 'Data', 'L1')[1]
+    assert 'st-a' in s2_cell(page, 'Gone', 'L1')[0] and '◀' in s2_cell(page, 'Gone', 'L1')[1] and 'st-mv' not in s2_cell(page, 'Gone', 'L1')[0]
+    assert 'st-b' in s2_cell(page, 'Fresh', 'PXL')[0] and '▶' in s2_cell(page, 'Fresh', 'PXL')[1]
+    assert 'st-mv' in s2_cell(page, 'Shift', 'L1')[0] and '⇄<sub>A</sub>' in s2_cell(page, 'Shift', 'L1')[1]
+    assert 'st-mv' in s2_cell(page, 'Shift', 'PXL')[0] and '⇄<sub>B</sub>' in s2_cell(page, 'Shift', 'PXL')[1]
+    assert 'st-none' in s2_cell(page, 'Data', 'SD1')[0] and s2_cell(page, 'Data', 'SD1')[1] == ''
+    # clicks select the electrode (cells and name) or the layer (column head)
+    assert 'data-href="#sel=electrode:Shift"' in s2 and 'data-href="#sel=layer:PXL"' in s2
+
+
+def test_section_2_without_dl1_says_unknown_once_in_a_band(tmp_path):
+    doc = corr_doc(complete=False)
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+    assert s2.count('id="band-no-dl1"') == 1 and 'DL1 전극 목록이 없어' in s2
+    assert '확인 불가' in s2_cell(page, 'ELVDD', 'SD1')[1] and 'st-unk' in s2_cell(page, 'ELVDD', 'SD1')[0]
+    assert '◀' in s2_cell(page, 'Data', 'L1')[1]
+    assert '확인 불가 <b>' in s2                                  # the status of the rows is `unverifiable`
+
+
+def test_electrode_name_colour_is_red_for_up_blue_for_down_with_four_steps(tmp_path):
+    doc = corr_doc()
+    for name, line, pixel in (('Data', 0.5, None), ('Scan1', -7.0, None), ('Scan2', 30.0, 0.0), ('EM', 0.0, 0.0), ('Anode', None, None),
+                              ('Vint', 2.0, -8.0), ('ELVDD', 0.99, 0.0), ('Gone', 5.0, None), ('Fresh', -25.0, 3.0)):
+        _el(doc, name)['line']['pct_delta'] = line
+        _el(doc, name)['pixel']['pct_delta'] = pixel
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+
+    def klass(name):
+        return re.search(r'<tr data-el="%s"[^>]*><td class="l nm([^"]*)"' % re.escape(name), s2).group(1).strip()
+    assert klass('Data') == 'hd-up1' and klass('ELVDD') == 'hd-up1'
+    assert klass('Scan1') == 'hd-dn3' and klass('Scan2') == 'hd-up4' and klass('Gone') == 'hd-up3'
+    assert klass('Vint') == 'hd-dn3'                     # the larger |change| of line and pixel decides: pixel -8 beats line +2
+    assert klass('Fresh') == 'hd-dn4'                    # |-25| > |3|
+    assert klass('EM') == '' and klass('Anode') == ''    # 0 or null: no colour
+    assert 'hd-up3' in s2 and 'hd-dn3' in s2 and '진하기' in s2
+
+
+def test_search_box_scroll_box_and_names_are_escaped(tmp_path):
+    doc = corr_doc()
+    _el(doc, 'Shift')['electrode'] = '<i>Shift&'
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+    assert 'id="el-q"' in s2 and 'class="scrl"' in s2 and '<i>Shift' not in page.replace('\\u003c', '')
+    assert '&lt;i&gt;Shift&amp;' in s2 and '%d / %d' % (len(doc['electrodes']), len(doc['electrodes'])) in s2
+
+
+def test_section_4_ledger_total_is_the_ledger_sum_not_the_kind_vi(tmp_path):
+    doc = corr_doc(crp=0.003, crp_a=1.0, crp_b=2.92)
+    t = doc['totals']
+    assert t['pixel']['intercept']['a'] != 0 and t['pixel']['crp']['present']
+    page = html_of(run_report(tmp_path, doc)[1])
+    s4 = section(page, 4)
+    total = re.search(r'<tr class="sum" id="ledger-total">(.*?)</tr>', s4, re.S).group(1)
+    line_a, line_b = t['line']['items']['a'], t['line']['items']['b']
+    pix_a, pix_b = t['pixel']['items']['a'] + t['pixel']['cno']['a'], t['pixel']['items']['b'] + t['pixel']['cno']['b']
+    assert '%s → %s' % (ledger_report.raw_pct(line_a), ledger_report.raw_pct(line_b)) in total
+    assert '%s → %s' % (ledger_report.raw_pct(pix_a), ledger_report.raw_pct(pix_b)) in total
+    # the whole-kind vi (intercept + curve) is another number
+    assert ledger_report.raw_pct(doc['kinds']['pixel']['vi_a']) not in total and ledger_report.raw_pct(doc['kinds']['line']['vi_a']) not in total
+    assert ledger_report.raw_pp(t['pixel']['items']['delta'] + t['pixel']['cno']['delta']) in total
+    assert '곡선 보정' in s4 and 'CRP' in s4 and 'id="ledger-total-note"' in s4
+    # one row per electrode; a pixel CNO column only for an electrode with a CNO row
+    rows = re.findall(r'<tr data-el="([^"]*)"[^>]*data-row="ledger">(.*?)</tr>', s4, re.S)
+    assert sorted(n for n, _ in rows) == sorted(r['electrode'] for r in doc['electrodes'])
+    cno_cells = {n: body.rsplit('<td', 1)[1] for n, body in rows}
+    assert '해당 없음' not in cno_cells['Anode'] and '해당 없음' in cno_cells['Data']
+    assert 'data-href="#sel=electrode:Anode"' in s4
+
+
+def test_section_4_layer_by_size_tables_per_kind_select_the_layer(tmp_path):
+    doc = corr_doc()
+    s4 = section(html_of(run_report(tmp_path, doc)[1]), 4)
+    for kind in ('line', 'pixel', 'cno'):
+        table = re.search(r'<table id="size-%s">(.*?)</table>' % kind, s4, re.S).group(1)
+        assert [m for m in re.findall(r'<tr data-layer="([^"]*)"', table)] == [r['layer'] for r in doc['layers'][kind]]
+        assert table.count('µm Δ</th>') == len(doc['layers'][kind][0]['by_size'])
+    assert 'data-href="#sel=layer:PXL"' in s4
+
+
+def test_chrome_section_2_and_4_hash_states(tmp_path):
+    doc = corr_doc()
+    folder = write_ledger(tmp_path / 'led', doc)
+    out = tmp_path / 'chrome_out'
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None) == 0
+    page = out / 'ledger_report.html'
+    for fragment in ('', '#', '#print', '#sel=electrode:Anode', '#sel=layer:PXL', '#q=Sc'):
+        dom, text = dump_dom(page, fragment)
+        assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
+    dom, text = dump_dom(page, '#sel=electrode:Anode')
+    assert dom.root['data-sel'] == 'electrode:Anode' and selected(dom, 'data-el') == ['Anode', 'Anode']      # section 2 and section 4 rows
+    start = text.index('id="partner-table"')
+    block = text[start:text.index('</table>', start)]
+    assert 'Vint' in block and '<td class="l">pixel</td>' in block                                         # Anode's partner Vint (P3)
+    dom, text = dump_dom(page, '#sel=layer:PXL')
+    marked = selected(dom, 'data-layer')
+    assert marked.count('PXL') >= len(doc['electrodes']) + 1 and set(marked) == {'PXL'}                    # head + cells + section 4 row
+    dom, text = dump_dom(page, '#q=Sc')
+    assert '<span id="el-count" class="muted">2 / %d</span>' % len(doc['electrodes']) in text
+    hidden = [a['data-el'] for t, a in dom.elements if t == 'tr' and 'hide' in (a.get('class') or '').split() and a.get('data-row') == 'corr']
+    assert len(hidden) == len(doc['electrodes']) - 2 and 'Scan1' not in hidden and 'Scan2' not in hidden
+    dom, text = dump_dom(page, '#sel=electrode:Shift&q=shi')
+    assert selected(dom, 'data-el') == ['Shift', 'Shift'] and 'data-err' not in dom.root
+
+
+def test_chrome_unverified_page_draws_without_errors(tmp_path):
+    doc = corr_doc(complete=False)
+    folder = write_ledger(tmp_path / 'led', doc)
+    out = tmp_path / 'chrome_out'
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None) in (0, 3)
+    for fragment in ('', '#print', '#sel=electrode:Data'):
+        dom, text = dump_dom(out / 'ledger_report.html', fragment)
+        assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root and '확인 불가' in text

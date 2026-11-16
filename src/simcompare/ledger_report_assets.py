@@ -50,6 +50,17 @@ tr.sum td{font-weight:650;border-top:1px solid var(--border)}
 .slot{border:1px dashed var(--common);border-radius:6px;background:var(--surface-0);padding:10px;text-align:center;color:var(--text-muted);margin-top:6px}
 details{margin-top:6px}summary{cursor:pointer;color:var(--text-secondary)}
 .ovx{overflow-x:auto}
+.scrl{max-height:420px;overflow:auto;border:1px solid var(--grid)}.scrl thead th{position:sticky;top:0;background:var(--surface-1);z-index:2}
+.scrl tfoot td{position:sticky;bottom:0;background:var(--surface-1)}
+#corr-table th[data-layer]{text-align:center;cursor:pointer}#corr-table td.c{text-align:center;min-width:34px}
+.st-both{color:var(--text-secondary)}.st-a{color:var(--line)}.st-b{color:var(--pixel)}.st-mv{color:var(--ok);font-weight:700}
+.st-unk{font-size:11px}.legend{margin:4px 0;color:var(--text-secondary)}.searchrow{margin:6px 0}
+.searchrow input{font:inherit;border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--surface-1);color:var(--text-primary)}
+td.nm{font-weight:600}
+.hd-up1{background:rgba(208,59,59,.10)}.hd-up2{background:rgba(208,59,59,.20)}.hd-up3{background:rgba(208,59,59,.32)}.hd-up4{background:rgba(208,59,59,.46)}
+.hd-dn1{background:rgba(42,120,214,.10)}.hd-dn2{background:rgba(42,120,214,.20)}.hd-dn3{background:rgba(42,120,214,.32)}.hd-dn4{background:rgba(42,120,214,.46)}
+.partners{margin-top:8px}h4{font-size:12px;margin:8px 0 3px;color:var(--text-secondary)}
+tr.hide{display:none}
 @media (max-width:1180px){.g3,.g2,.kpis{grid-template-columns:1fr}}
 @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}}
 """
@@ -76,7 +87,7 @@ function layersOfPair(p){var out={};p.items.forEach(function(it){[it.ul,it.ll].f
  (p.la||[]).concat(p.lb||[]).forEach(function(l){out[l]=true;});return out;}
 function related(sel){var r={pairs:{},els:{},layers:{},rois:{}};if(!sel)return r;
  if(sel.t==='pair'&&PB[sel.id]){r.pairs[sel.id]=1;}
- else if(sel.t==='electrode'){D.pairs.forEach(function(p){if(p.e.indexOf(sel.id)>=0)r.pairs[p.id]=1;});}
+ else if(sel.t==='electrode'){r.els[sel.id]=1;D.pairs.forEach(function(p){if(p.e.indexOf(sel.id)>=0)r.pairs[p.id]=1;});}
  else if(sel.t==='layer'){D.pairs.forEach(function(p){if(layersOfPair(p)[sel.id])r.pairs[p.id]=1;});}
  else if(sel.t==='roi'&&D.changes&&D.changes.pairs){Object.keys(D.changes.pairs).forEach(function(id){if(D.changes.pairs[id].roi_keys.indexOf(sel.id)>=0)r.pairs[id]=1;});r.rois[sel.id]=1;}
  Object.keys(r.pairs).forEach(function(id){var p=PB[id];if(!p)return;p.e.forEach(function(e){if(sel.t==='pair'||sel.t==='electrode'&&e===sel.id)r.els[e]=1;});
@@ -103,7 +114,19 @@ function drawCond(sel,pr,state){var box=$('cond'),all=$('cond-all');if(!box)retu
 function mark(sel,pr){var i,els,k,keys={'data-pair':pr.pairs,'data-el':pr.els,'data-layer':pr.layers,'data-roi':pr.rois};
  els=document.querySelectorAll('.sel');for(i=0;i<els.length;i++)els[i].classList.remove('sel');
  for(k in keys){els=document.querySelectorAll('['+k+']');for(i=0;i<els.length;i++){var v=els[i].getAttribute(k);if(keys[k][v])els[i].classList.add('sel');}}}
-function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel);
+function drawPartners(sel){var box=$('el-partners');if(!box)return;
+ if(!sel||sel.t!=='electrode'){box.innerHTML='<p class="muted">전극 이름이나 칸을 누르면 그 전극의 상대 전극과 쌍 Δ 가 이 자리에 나옵니다. 이 목록은 스크립트가 그립니다.</p>';return;}
+ var rows=[];D.pairs.forEach(function(p){var i=p.e.indexOf(sel.id);if(i<0)return;var other=p.e.filter(function(x,j){return j!==i;}).join('–')||sel.id;
+  rows.push('<tr data-pair="'+esc(p.id)+'" data-href="#sel=pair:'+encodeURIComponent(p.id)+'"><td class="l">'+esc(other)+'</td><td class="l">'+esc(p.kind)+'</td><td class="l">'+esc(D.labels.change_kinds[p.ck]||p.ck)+
+  '</td><td>'+f4(p.a)+' → '+f4(p.b)+'</td><td class="l">'+(p.d==null?'대기':(p.d===0?'0%p':(p.d>0?'+':'−')+Math.abs(p.d*100).toFixed(4)+'%p'))+'</td></tr>');});
+ box.innerHTML='<h3>선택한 전극 <b>'+esc(sel.id)+'</b> 의 상대 전극과 쌍 Δ <span class="muted" style="font-weight:400">(전극 장부 값 · 쌍 전체 값, 전극에 절반씩 나누기 전)</span></h3>'+
+  (rows.length?'<div class="scrl"><table id="partner-table"><thead><tr><th class="l">상대 전극</th><th class="l">종류</th><th class="l">변화</th><th>A → B</th><th class="l">Δ</th></tr></thead><tbody>'+rows.join('')+'</tbody></table></div>':'<p class="muted">이 전극이 들어 있는 계산 쌍이 없습니다.</p>');}
+function filterRows(st){var q=(st.kv.q||'').toLowerCase(),inp=$('el-q'),n=0,tot=0,rows=document.querySelectorAll('tr[data-el]'),i;
+ if(inp&&inp.value!==(st.kv.q||''))inp.value=st.kv.q||'';
+ for(i=0;i<rows.length;i++){var hit=!q||rows[i].getAttribute('data-el').toLowerCase().indexOf(q)>=0;rows[i].classList.toggle('hide',!hit);
+  if(rows[i].getAttribute('data-row')==='corr'){tot++;if(hit)n++;}}
+ var c=$('el-count');if(c)c.textContent=n+' / '+tot;}
+function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel);filterRows(st);drawPartners(sel);
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
  var lab=$('sel-label');if(lab)lab.innerHTML=label(sel);var clr=$('sel-clear');if(clr)clr.disabled=!sel;
  mark(sel,pr);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');}
@@ -115,6 +138,8 @@ document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.
   h.replace(/^#/,'').split('&').forEach(function(p){var i=p.indexOf('=');if(i>0){var v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}add.kv[p.slice(0,i)]=v;}});
   Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;setHash(st2);}});
 document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&ev.target.getAttribute&&ev.target.getAttribute('data-href'))ev.target.click();});
+var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.q=qi.value;else delete st.kv.q;
+ var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
 var ca=$('cond-all');if(ca)ca.addEventListener('toggle',function(){apply();});
 window.addEventListener('hashchange',apply);
 apply();document.documentElement.setAttribute('data-ready','1');

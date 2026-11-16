@@ -118,7 +118,6 @@ def test_electrode_with_only_left_out_pairs_is_marked_where_it_is_listed(tmp_pat
     assert 'GHY' not in {p['id'] for p in bundle_of(html)['pairs']}
 
 
-@pytest.mark.skip(reason='mrep/T5: the electrode ledger (old section 3) is gone; the "only left-out pairs" mark returns with section 4 in mrep/T6')
 def test_marked_when_the_dl1_list_keeps_the_electrode(tmp_path):
     import test_ledger as tl
     pairs = [tl.pair('P1', ['Data', 'ELVDD'], 'line', [tl.lateral(['Data', 'ELVDD'], .01, 'SD1')],
@@ -140,10 +139,11 @@ def test_marked_when_the_dl1_list_keeps_the_electrode(tmp_path):
     doc = tl.result(world)
     assert [row['electrode'] for row in doc['electrodes']] == ['Data', 'ELVDD', 'GH']
     html = run_ledger_report(world.out)
-    s3 = section(html, 3)
-    assert 'GH (계산 제외 쌍만 있음)' in s3
-    assert 'Data (계산 제외 쌍만 있음)' not in s3 and 'ELVDD (계산 제외 쌍만 있음)' not in s3
-    assert s3.count('계산 제외 쌍만 있음') == 2          # GH is listed once per kind (line, pixel) in the "no pair" fold
+    s4 = section(html, 4)
+    assert '<b>GH</b> <span class="muted">(계산 제외 쌍만 있음)</span>' in s4
+    assert 'Data</b> <span class="muted">(계산 제외' not in s4 and 'ELVDD</b> <span class="muted">(계산 제외' not in s4
+    assert s4.count('계산 제외 쌍만 있음') == 1          # one electrode ledger row per electrode (section 4)
+    assert '계산 제외 쌍만 있음' not in section(html, 2)
 
 
 # ---- ledger.json key and no-exclusion bytes ------------------------------------------------------------------------------
