@@ -22,6 +22,8 @@ EDIT 블록의 `STEPS`로 돌릴 단계를 고른다. 실행 순서는 항상 01
 | 06 | `compare-windows` | `report.map_window_um`(+ `EXTRA_WINDOWS_UM`), `report.diameter_um`(`--sort-diameter-um`) | 기본 입력은 `data/changes/direct/roi_correspondence.json`. `data/local/local_delta.html`에서 쌍별 ΔCA 확인 |
 | 07 (선택, 02 뒤, 최종 보고서) | `compare2-report` | `compare2.yaml` 전체 | 04·06이 STEPS 에 있거나 출력 폴더가 있으면 `--candidates data/changes --windows data/local`을 붙인다. 지도·overlay 는 `report.dl1_root`(DL1 Layer PNG)가 있어야 그려진다. `data/compare2_report/report.html`을 연다 |
 
+**쌍 제외**: `pairs.csv`의 `class`는 `line`/`pixel`/`excluded`이고, `GH`·`N_NODE`가 들어간 쌍과 `VBIAS`–`VINT1`은 내장 규칙으로 뺀다(등록된 `line`/`pixel` 쌍이 우선). 제외가 생기는 자료는 `STEPS = ['03', '02', 'diag', '04', '06', '07', '08']`(05 를 쓰면 05 도)로 다시 돈다. 옛 번들의 `compare2.json`으로 08 만 돌리면 제외가 반영되지 않는다. 상세는 `docs/usage.md`의 "쌍 제외" 절.
+
 ## 다제품 (`bundles/etx/`, `_models_`)
 
 | 회차 | 실행 파일 | 필요한 설정 파일 | 회차 뒤 할 일 |

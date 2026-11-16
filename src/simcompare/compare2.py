@@ -48,7 +48,10 @@ def stale_reason(doc):
     """Shared stale check of a compare2.json document (07 compare2-report and ledger).
 
     Returns None when area_basis and the case-exclusion rules match this code, otherwise (error code, message).
-    Check order: area_basis, then case_exclusions rules."""
+    Check order: (1) area_basis (compare2_stale_area_basis), (2) case_exclusions rules (compare2_stale_case_exclusion_rule),
+    (3) the pair_exclusions rule of every manifests.<role> that carries a block (compare2_stale_pair_exclusion_rule).
+    A role entry or block that is not a dict counts as a rule mismatch (error code, no traceback). A document without any
+    pair_exclusions block (no case was left out) passes step 3."""
     inputs = doc.get('inputs') or {}
     basis = inputs.get('area_basis')
     if basis != AREA_BASIS:
@@ -64,7 +67,11 @@ def stale_reason(doc):
     manifests = inputs.get('manifests')
     recorded = {}
     for role in ROLES:
-        block = (manifests.get(role) or {}).get('pair_exclusions') if isinstance(manifests, dict) else None
+        entry = manifests.get(role) if isinstance(manifests, dict) else None
+        if entry is not None and not isinstance(entry, dict):
+            recorded[role] = None
+            continue
+        block = entry.get('pair_exclusions') if entry else None
         if block is not None:
             recorded[role] = block.get('rule') if isinstance(block, dict) else None
     if any(rule != PAIR_EXCLUSION_RULE for rule in recorded.values()):

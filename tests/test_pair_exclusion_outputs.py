@@ -134,7 +134,6 @@ def test_compare_provenance_helper_writes_a_key_only_for_blocks():
 
 
 def test_no_exclusion_outputs_keep_the_baseline_bytes(tmp_path):
-    ref, tgt = ez.two_one_sided()
     code, out = tc.run(tmp_path, (tc.base_cases(), tc.PAIRS), (tc.base_cases(), tc.PAIRS))
     assert code == 0
     text = (out / 'compare2.json').read_text(encoding='utf-8')

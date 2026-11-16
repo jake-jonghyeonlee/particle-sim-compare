@@ -117,6 +117,27 @@ def _link_side(name, side, dv):
     return grade_of, sorted(case_id for case_id in cases if case_id not in grade_of)
 
 
+def _without_excluded_cases(dv, side):
+    """(dv without the rows of cases the pair rule left out of the dataset, sorted names of the rows removed).
+
+    Only the exact case names recorded in the dataset provenance (pair_exclusions.cases) are removed; any other case that
+    the dataset does not know is still refused by _link_side. dv-template and dv-grade are not changed (they still list the
+    excluded case)."""
+    from .pair_exclusion import record_block
+    block = record_block(getattr(getattr(side, 'dataset', None), 'provenance', None))
+    names = {item['case'] for item in (block or {}).get('cases', ())}
+    if not names:
+        return dv, []
+    by_case = [row for row in dv['by_case'] if row['case_name'] not in names]
+    skipped = sorted(row['case_name'] for row in dv['by_case'] if row['case_name'] in names)
+    if not skipped:
+        return dv, []
+    still_used = {row['pair_key'] for row in by_case}
+    dropped_keys = {row['pair_key'] for row in dv['by_case'] if row['case_name'] in names} - still_used
+    pairs = [row for row in dv['pairs'] if row['pair_key'] not in dropped_keys]
+    return {**dv, 'by_case': by_case, 'pairs': pairs}, skipped
+
+
 def _dv_record(dv):
     manifest = dv['manifest']
     return {'dir': dv['dir'], 'manifest_sha256': dv['manifest_sha256'], 'sheet_sha256': (manifest.get('sheet') or {}).get('sha256'),
@@ -268,6 +289,11 @@ def run_candidates_dv(cfg, out, *, dv_grades_reference, dv_grades_target, min_co
     sides = {name: candidates.prepare_side(cfg, name, diameter_um) for name in ('reference', 'target')}
     notes, links = [], {}
     for name, side in sides.items():
+        dv[name], skipped = _without_excluded_cases(dv[name], side)
+        if skipped:
+            notes.append({'code': 'dv_grade_pair_excluded_cases_skipped', 'product': name, 'severity': 'info', 'count': len(skipped),
+                          'cases': skipped[:UNGRADED_SAMPLE],
+                          'detail': '쌍 제외 규칙(pair_exclusions)이 데이터셋에서 뺀 case 의 dv-grade 행입니다. 등급 연결·집계에서 뺍니다.'})
         links[name] = _link_side(name, side, dv[name])
         recorded_root = Path(str(dv[name]['manifest'].get('root', ''))).name
         source_root = (side.real[1] or {}).get('source_root_name') if side.real else None

@@ -175,7 +175,6 @@ def _build(config, config_sha, base: Path, config_path: Path, stage: Path, final
     # the layer check follows the filtered manifest: a layer used only by an excluded SD2/SD3/PXL vertical case is not required
     manifest = _apply_case_exclusions(json.loads((data / 'manifest.json').read_text(encoding='utf-8')))
     order = {row['actual_layer']: row['stack_order'] for row in config['layer_stack']}
-    _check_layer_stack(manifest, order)
     assignment = {k: config[k] for k in _ID_FIELDS}
     assignment['layer_stack'] = [{**row, 'density_process_layer': _DENSITY_SENTINEL} for row in config['layer_stack']]
     pair_sha = None
@@ -186,6 +185,12 @@ def _build(config, config_sha, base: Path, config_path: Path, stage: Path, final
         (data / 'pairs.csv').write_bytes(pair_bytes)
         pair_sha = _sha(pair_bytes)
         assignment['pair_table_path'] = 'pairs.csv'
+    # the layer check follows the pair rule too: a layer used only by a left-out (GH / N_NODE / excluded) case is not required
+    from simcompare.adapters.real_hotspot import _read_pair_table, _split_pair_exclusions
+    pairs, excluded_rows, _ids = _read_pair_table(data / 'pairs.csv' if config.get('pair_table_path') else None)
+    kept_manifest, _block, _count = _split_pair_exclusions(
+        manifest, {layer: (value,) for layer, value in order.items()}, pairs, excluded_rows)
+    _check_layer_stack(kept_manifest, order)
     if config.get('electrode_role_policy') is not None:
         assignment['electrode_role_policy'] = config['electrode_role_policy']
     assignment_path = work / 'assignment.json'

@@ -223,6 +223,19 @@ vertical short(층 사이 단락)는 두 끝점 층 사이 거리 d보다 지름
 
 `comparison.json`은 약 380 MB, `comparison.csv`는 약 52 MB이고 한 번에 디스크는 중간 산출물까지 약 3.5~3.8 GB다. 출처: `docs/plan/scale_compare/T5_benchmark.md`, `docs/plan/scale_stage46/T5_benchmark.md`. 6회차에서 `comparison_masks.zip`이 없으면 쌍 200개에 14~23분(최대 3.4 GiB)이 걸린다.
 
+### 쌍 제외 (pairs.csv `class`, 내장 규칙)
+
+일부 전극 쌍은 계산에서 뺀다. 뺀 case 는 데이터셋에 들어가지 않는다(합집합·1/n 분담·coverage·그룹 수에 없다). CNO case 는 빼지 않는다.
+
+- `pairs.csv`의 `class` 값은 `line`, `pixel`, `excluded` 셋이다. 그 밖의 값은 `invalid_pair`다. `excluded` 행도 `pair_id`·`pair_table_version`·전극 검사를 `line` 행과 같게 받는다.
+- 내장 제외 규칙: 전극 이름이 `GH` 또는 `N_NODE`인 쌍, 그리고 `VBIAS`–`VINT1` 쌍. 전극 이름은 **정확 일치**(대소문자 구분, 쌍의 순서는 무관)다.
+- 판정 순서(먼저 맞는 줄이 이긴다): `pairs.csv`에 `line`/`pixel`로 **등록된 쌍은 계산한다**(겹치는 내장 규칙은 기록만 한다) → `excluded`로 등록된 쌍은 뺀다 → 내장 규칙에 걸리면 뺀다 → 그 밖은 여기서 판정하지 않는다(case 가 `unmapped_pair` 로 남는다).
+- 기록 위치: `compare2.json`의 `inputs.manifests.<role>.pair_exclusions`(제외가 있는 쪽만 키가 생긴다. 제외가 0건이면 키가 없고 출력 바이트가 같다), 07 보고서의 입력 표, `ledger.json`의 `inputs.pair_exclusions`와 `ledger-report` 1·3·7절. `candidates-change`(04)와 `compare` 출력의 입력 기록에도 같은 블록이 들어간다. 제외 case 가 하나라도 있으면 규칙 버전이 `input_hash`에 들어가므로 규칙 이전에 만든 자산·결과는 거부된다.
+- 규칙 버전이 다른 `compare2.json`은 07·`ledger`가 `compare2_stale_pair_exclusion_rule`(종료 코드 2)로 거부한다. 02(compare2)를 새 번들로 다시 돈다.
+- `export-template-rois`(03 템플릿)의 layer 검사는 제외 뒤 목록으로 한다. 제외 case 의 layer 가 `layer_stack`에 없어도 실패하지 않는다. 등록된 case 의 layer 가 없으면 지금처럼 `template_layer_missing_from_stack`이다.
+- `candidates-dv`는 데이터셋 provenance 의 `pair_exclusions.cases`에 적힌 **정확한 case 이름**의 dv-grade 행만 등급 연결·집계에서 뺀다(노트 `dv_grade_pair_excluded_cases_skipped`). 그 밖에 데이터셋에 없는 case 는 `dv_grade_product_mismatch`로 멈춘다. `dv-template`·`dv-grade`는 바꾸지 않아 제외 case 를 계속 나열한다.
+- **다시 돌릴 범위**: 제외가 생기는 자료(내장 규칙에 걸리는 전극이 있거나 `excluded` 행을 더했다)는 `STEPS = ['03', '02', 'diag', '04', '06', '07', '08']`(05 를 쓰면 05 도 넣는다). 입력 해시가 달라지므로 03부터 돈다. 제외가 없는 자료는 그대로 둔다. **옛 번들이 만든 `compare2.json`으로 08 만 돌리면 제외가 반영되지 않는다**(블록이 없어 stale 검사도 통과한다). 02 를 새 번들로 다시 돈 뒤 08 을 돈다.
+
 ### 자주 나는 오류
 
 | 오류 | 의미와 대처 |
@@ -233,6 +246,7 @@ vertical short(층 사이 단락)는 두 끝점 층 사이 거리 d보다 지름
 | `real_hotspot_output_exists`, `electrode_output_exists`, `output_dir_exists`(종료 코드 2) | `--out`이 이미 있다. 통합 실행기는 고른 단계의 출력 폴더를 실행 전에 `data/_runs/<RUN_TAG>/`로 옮기므로 보통 나지 않는다(`STEPS`에 없는 단계의 폴더가 남아 있을 때 난다). `models_`·dv 실행기는 기존 폴더를 직접 옮기거나 이름을 바꾸고 다시 돌린다. 기존 폴더는 건드리지 않았다 |
 | `input_location_conflict`(종료 코드 2) | 설정 폴더 기준 경로와 `data_dir` 기준 경로에 같은 입력 파일이 둘 다 있다(예 BASE_DIR에 옛 `pairs.csv`). 옛 위치 파일을 지우거나 옮긴다 |
 | `interlayer_distance_path_required`, `interlayer_distance_*`(종료 코드 2) | 02에서 남은 vertical short가 있는데 `interlayer_distance_path` 키가 없거나, thk 파일 형식·조합이 틀렸다. 위 "층간 거리 필터" 절 |
+| `compare2_stale_pair_exclusion_rule`(종료 코드 2) | `compare2.json`의 쌍 제외 규칙 버전이 이 코드와 다르다. 위 "쌍 제외" 절. 02 를 새 번들로 다시 돈다 |
 | `compare2_input_hash_mismatch`(종료 코드 2) | 02 뒤에 `real.yaml`의 `condition_assignment` 값(`max_operation_bytes` 포함)이나 thk·pair 파일을 바꿨다. 02부터 다시 돈다 |
 | `etx_unknown_step`, `etx_asset_folder_mismatch`, `etx_archive_target_exists` 등 `etx_*`(종료 코드 2) | 통합 실행기가 실행 전에 설정을 검사해 멈췄다. 아무것도 실행하거나 옮기지 않았다. 메시지의 안내대로 EDIT 블록이나 설정 파일을 고친다 |
 | `expected_case_folder_missing` | 오류가 아니라 진단이다(종료 코드 3). 기대 case 목록(두 모델 root에서 발견된 case 이름의 합집합)에 있는데 이 모델에는 case 폴더가 없다는 뜻이다. 그 case의 모든 지름이 누락으로 기록된다. 두 모델 모두에 없는 case는 찾을 수 없다 |

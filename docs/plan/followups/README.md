@@ -10,6 +10,13 @@ Orca Run run_c9825fe14b68. Base c7a2829. Reviews by Claude Opus 5.5 high (Codex 
 - F-R3 PASS-WITH-ADVISORIES. Coordinator fixed A1 (cli.py comment) and A2 (F1_report correction); bundles rebuilt.
 - Open: F-R3 A4 (pre-existing) successful inspection-only compare leaves an older comparison_masks.zip; F-R A5/A6 notes.
 
+## Pair excluded Run (20261116-pair-excluded, 2026-11-16)
+
+쌍 제외(`pairs.csv` `class=excluded` + 내장 GH·N_NODE·VBIAS–VINT1)를 02·04·07·08 에 넣었다(규칙은 [../../usage.md](../../usage.md) "쌍 제외" 절). 남은 일:
+- D5: `dv-template`·`dv-grade`에는 쌍 제외를 적용하지 않았다. 제외 case 도 시트·등급표에 남고, `candidates-dv`만 기록된 정확한 case 이름을 뺀다(노트 `dv_grade_pair_excluded_cases_skipped`). 시트 단계에서도 뺄지 결정이 필요하다.
+- R1:4: `compare`/04 에서 모든 case 가 제외되면 나오는 메시지에 규칙 이름·건수가 없다(02 의 `compare2_side_without_cases`에는 있다).
+- R1:6: 옛 번들이 만든 `compare2.json`(제외 블록 없음)과 `ledger`를 단독으로 돌리면 제외 미반영을 탐지하지 못한다. 02 를 새 번들로 다시 돌려야 한다(문서에만 경고).
+
 ## Ledger maps Run (20261116-ledger-maps, 2026-11-16)
 
 ETX 08 이 `ledger` → `ledger-maps` → `ledger-report --maps-dir` 를 돈다(실행기 상수 `LEDGER_MAPS`, `LEDGER_MAPS_DIR`, `LEDGER_MAPS_ARGS`; 규칙은 [../ledger_report/README.md](../ledger_report/README.md) 16절 이후). 남은 일:

@@ -22,7 +22,7 @@
 
 `demo_data/numeric_outputs/`에서 `comparison.json`, CSV들과 `comparison.html`, `electrode_map.json`과 PNG/sidecar를 확인한다. line / pixel, pair shared, transfer와 failure pieces는 서로 다른 지표이며 합쳐 단일 숫자로 만들지 않는다. 누락은 관측 0과 다르다.
 
-- [실행 가이드](docs/usage.md)
+- [실행 가이드](docs/usage.md) — ETX 흐름의 쌍 제외(`pairs.csv` `class=excluded`, GH·N_NODE·VBIAS–VINT1 내장 규칙)와 다시 돌릴 범위는 "쌍 제외" 절
 - [수치 명세](SPEC.md)
 - [데이터 계약](docs/data_contract.md)
 - [numeric_v2 합성 예제](docs/domain-input-example/numeric_v2/README.md)
