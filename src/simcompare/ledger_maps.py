@@ -1,4 +1,4 @@
-"""ledger-maps: value tiles, membership tiles, unit window and numbered map PNGs of one ledger (`ledger_maps_v1`).
+"""ledger-maps: value tiles, membership tiles, unit window and numbered map PNGs of one ledger (`ledger_maps_v2`).
 
 Input: compare2.json (02) + its compare2.yaml + ledger.json (08) [+ the 04 folder, existence only in T3].
 The command reads every product's hotspot masks once (through `compare2._load_side(..., share_sink=...)`, the same code
@@ -33,8 +33,12 @@ from .compare2_report import _side_info
 from .electrode_map import _label_runs, _run_counts
 from .numeric_schema import NumericContractError
 
-SCHEMA_VERSION = 'ledger_maps_v1'
+SCHEMA_VERSION = 'ledger_maps_v2'
 LEDGER_SCHEMA = 'ledger_v1'
+# ledger item presence (both / new / gone) -> the card row wording (mrep E4): an item of A only is `a_only`
+ROW_PRESENCE = {'both': 'both', 'gone': 'a_only', 'new': 'b_only'}
+TABS = ('same', 'comp', 'all')
+STAGES = ('read', 'merge', 'maps', 'cards')
 COMMAND = 'ledger-maps'
 ROLES = ('reference', 'target')
 KINDS = ('line', 'pixel')
@@ -107,26 +111,73 @@ def validate_options(given=None):
 
 # ---- memory budget (README 18.2) -----------------------------------------------------------------------------------
 
+class _BudgetExceeded(NumericContractError):
+    """`oversized_real_operation` raised by `_Budget.reserve` (the card step catches it to drop one card, README 28.4)."""
+
+
+class _Hold(object):
+    """The bytes of the budget one part (reference or target stage) of one card owns (README 28.4)."""
+
+    def __init__(self):
+        self.bytes = 0
+
+
 class _Budget(object):
-    """One accounting object for every large allocation of the command. reserve BEFORE allocating."""
+    """One accounting object for every large allocation of the command. reserve BEFORE allocating.
+
+    mrep/T3 (README 28.4): while a card is processed (`scope` is its `_Hold`) every owned reserve/release is added to the
+    hold, so a failed card gives back exactly what it holds (`free`). Outside a card, a failing reserve first evicts
+    finished reference cards one by one (`evict` callback, worst rank first) and raises only when none is left."""
 
     def __init__(self, limit):
         self.limit = int(limit)
         self.used = 0
         self.peak = 0
+        self.scope = None                # the _Hold of the card part being processed
+        self.evictor = None              # () -> True when it freed one reference card, False when none is left
+        self.stage = None                # (role, stage): the peak of `used` is kept per stage (execution.json)
+        self.stage_peak = {}
 
-    def reserve(self, nbytes, what):
+    def set_stage(self, role, stage):
+        self.stage = (role, stage)
+        self.stage_peak[self.stage] = max(self.stage_peak.get(self.stage, 0), self.used)
+
+    def reserve(self, nbytes, what, evict=None, owned=True):
+        """evict: callback that frees one card (default `self.evictor`, False = never evict). owned=False keeps the
+        bytes out of the running card's hold (a reservation that outlives the card, e.g. the tile electrode grids)."""
         nbytes = int(nbytes)
-        if self.used + nbytes > self.limit:
-            raise NumericContractError(
+        if evict is None:
+            evict = self.evictor
+        while self.used + nbytes > self.limit:
+            if self.scope is None and evict and evict():
+                continue
+            raise _BudgetExceeded(
                 'oversized_real_operation',
                 f'ledger-maps: {what}: estimated {self.used + nbytes} bytes ({nbytes} more on top of {self.used} '
                 f'in use) exceed the limit {self.limit} (max_operation_bytes); {REMEDY}')
         self.used += nbytes
         self.peak = max(self.peak, self.used)
+        if self.stage is not None:
+            self.stage_peak[self.stage] = max(self.stage_peak.get(self.stage, 0), self.used)
+        if self.scope is not None and owned:
+            self.scope.bytes += nbytes
 
-    def release(self, nbytes, what):
-        self.used = max(0, self.used - int(nbytes))
+    def release(self, nbytes, what, owned=True):
+        nbytes = int(nbytes)
+        self.used = max(0, self.used - nbytes)
+        if self.scope is not None and owned:
+            self.scope.bytes -= nbytes
+
+    def begin(self, hold):
+        self.scope = hold
+
+    def end(self):
+        self.scope = None
+
+    def free(self, hold):
+        """Give back everything a hold still owns (a dropped or finished card part)."""
+        self.used = max(0, self.used - hold.bytes)
+        hold.bytes = 0
 
 
 def guard_stage_ledger_maps(limit, estimates):
@@ -234,6 +285,7 @@ def _side_items(led_doc, role):
             rec = {'item_id': item['item_id'], 'pair_id': pair['pair_id'], 'kind': item['class'],
                    'layer': item['analysis_layer'], 'upper_layer': item.get('upper_layer'),
                    'lower_layer': item.get('lower_layer'), 'number': number, 'value': item.get(key),
+                   'presence': ROW_PRESENCE[item['presence']],
                    'rank': (0 if item['class'] == 'line' else 1) * (MAX_NUMBER + 1) + number}
             items.append(rec)
             by_id[rec['item_id']] = rec
@@ -475,6 +527,8 @@ IDS_UNIQUE_BYTES_PER_ID = 40
 CAND_FILE, ALIGN_FILE, STRETCH_FILE = 'candidate_queries_v1.json', 'alignment.json', 'stretch_map.json'
 APPLIED_MODES = ('unit', 'local', 'stretch')
 COMPARABLE_CHANGE_KINDS = ('same_pair_change', 'no_change')
+# mrep/T3: the kinds whose A-B correspondence is tried; a pair with a changed item set uses the items on both products
+MATCHABLE_CHANGE_KINDS = COMPARABLE_CHANGE_KINDS + ('layer_change',)
 _NO_IDS = np.zeros(0, dtype=np.int64)
 
 
@@ -871,7 +925,8 @@ def _tile_electrodes(ctx, run, layer):
     height, width = frame.shape_yx
     tp = ctx.tile_px
     grid_bytes = ctx.ntx * ctx.nty * 2
-    run.budget.reserve(grid_bytes, f'tile electrode grid {role} {layer}')
+    # not owned by the running card: the grid is cached for the later cards of this product and released after the last
+    run.budget.reserve(grid_bytes, f'tile electrode grid {role} {layer}', owned=False)
     ctx.el_bytes += grid_bytes
     grid = np.zeros((ctx.nty, ctx.ntx), dtype=np.uint16)
     cy = np.minimum(np.arange(ctx.nty) * tp + tp // 2, height - 1)
@@ -993,21 +1048,29 @@ def _fill_values(ctx, plan, rows):
     kind, pair_id = plan['kind'], plan['pair_id']
     owner = _owner_index(rows)
     nrows = len(rows)
-    per_pair, hits = {}, {}
+    per_pair, hits, per_item = {}, {}, {}
+    pair_recs = [rec for rec in ctx.items if rec['kind'] == kind and rec['pair_id'] == pair_id]
     for rec in ctx.items:
         if rec['kind'] != kind:
             continue
         sp = ctx.sparse[rec['item_id']]
         if not len(sp['tiles']):
+            if rec['pair_id'] == pair_id:
+                per_item[rec['item_id']] = np.zeros(nrows)
             continue
         sums, count = _row_sums(owner, sp['tiles'].astype(np.int64), sp['values'], nrows)
         per_pair[rec['pair_id']] = per_pair.get(rec['pair_id'], np.zeros(nrows)) + sums
         hits[rec['pair_id']] = hits.get(rec['pair_id'], np.zeros(nrows, dtype=np.int64)) + count
+        if rec['pair_id'] == pair_id:
+            per_item[rec['item_id']] = sums
     grid = ctx.grids[kind]
     for i, row in enumerate(rows):
         if row['edge'] == 'excluded':
-            row.update({'pair': None, 'others': None, 'range_total': None, 'others_sum': None})
+            row.update({'pair': None, 'others': None, 'range_total': None, 'others_sum': None, 'items': None})
             continue
+        # mrep/T3 (E4): the value of every item of this pair on the tiles the row owns; presence a_only / b_only / both
+        row['items'] = [{'item_id': rec['item_id'], 'presence': rec['presence'],
+                         'value': float(per_item[rec['item_id']][i])} for rec in pair_recs]
         this = float(per_pair[pair_id][i]) if pair_id in per_pair else 0.0
         others = sorted(((float(arr[i]), pid) for pid, arr in per_pair.items() if pid != pair_id and hits[pid][i] > 0),
                         key=lambda t: (-t[0], t[1]))
@@ -1035,32 +1098,69 @@ def _window_ids(ctx):
     return _box_ids(_window_box(ctx), ctx.ntx, ctx.nty)
 
 
+def _tab_scores(pair):
+    """The score of one pair on each card tab (mrep C2), None = the pair is not on that tab.
+
+    same: pairs with an item on both products, |same_delta|. comp: composition change pairs, new_value + gone_value
+    (both >= 0, so a new 100 and a gone 100 count 200 although the delta is 0). all: |delta|. A pair without a usable
+    breakdown (waiting, no value) is not on same / comp."""
+    brk = pair.get('breakdown') or {}
+    items = pair.get('items') or []
+    has_both = any(item.get('presence') == 'both' for item in items)
+    scores = {'all': abs(pair['delta'])}
+    if brk.get('same_delta') is not None and has_both:
+        scores['same'] = abs(brk['same_delta'])
+    if (pair.get('change_kind') == 'layer_change' and brk.get('new_value') is not None
+            and brk.get('gone_value') is not None):
+        scores['comp'] = brk['new_value'] + brk['gone_value']
+    return scores
+
+
 def _select_cards(led_doc, top_cards):
-    """README 17/18.1: per kind the top |delta| pairs with a value on both sides (pending pairs and CNO are not cards)."""
+    """README 17/18.1/28: per kind and per tab (same / comp / all) the `top_cards` pairs with a value on both sides
+    (pending pairs and CNO are not cards). A pair on several tabs is one card (`tabs`, `tab_ranks`); `rank` is the rank by
+    |delta| among all candidates of the kind (the `all` tab). Plans of one kind are in that order."""
     plans = []
     for kind in KINDS:
         pairs = [p for p in led_doc.get('pairs') or [] if p.get('kind') == kind
                  and p.get('a') is not None and p.get('b') is not None and p.get('delta') is not None]
-        pairs.sort(key=lambda p: (-abs(p['delta']), p['pair_id']))
-        for rank, pair in enumerate(pairs[:top_cards], start=1):
+        scored = {p['pair_id']: _tab_scores(p) for p in pairs}
+        full_rank, tab_ranks = {}, {}
+        for tab in TABS:
+            ordered = sorted((p for p in pairs if tab in scored[p['pair_id']]),
+                             key=lambda p: (-scored[p['pair_id']][tab], p['pair_id']))
+            for rank, pair in enumerate(ordered, start=1):
+                if tab == 'all':
+                    full_rank[pair['pair_id']] = rank
+                if rank <= top_cards:
+                    tab_ranks.setdefault(pair['pair_id'], {})[tab] = rank
+        by_id = {p['pair_id']: p for p in pairs}
+        for pair_id in sorted(tab_ranks, key=lambda pid: (full_rank[pid], pid)):
+            pair = by_id[pair_id]
             items = pair.get('items') or []
-            comparable = (pair.get('change_kind') in COMPARABLE_CHANGE_KINDS and bool(items)
-                          and all(item.get('presence') == 'both' for item in items)
-                          and pair.get('present_a') and pair.get('present_b'))
+            common = [item.get('item_id') for item in items if item.get('presence') == 'both']
+            change_kind = pair.get('change_kind')
+            both_sides = bool(pair.get('present_a') and pair.get('present_b'))
+            comparable = (change_kind in COMPARABLE_CHANGE_KINDS and bool(items) and both_sides
+                          and all(item.get('presence') == 'both' for item in items))
             if pair.get('present_a') and not pair.get('present_b'):
                 match, reason = 'a_only', None
             elif pair.get('present_b') and not pair.get('present_a'):
                 match, reason = 'b_only', None
-            elif comparable:
-                match, reason = 'matched', None
-            elif (pair.get('change_kind') in COMPARABLE_CHANGE_KINDS and items and pair.get('present_a')
-                  and pair.get('present_b')):
-                match, reason = 'not_compared', 'items_not_on_both_sides'     # R2:6: an item exists on one product only
+            elif both_sides and change_kind in MATCHABLE_CHANGE_KINDS:
+                # mrep/T3: a pair whose item set differs is matched on the items both products have
+                match, reason = ('matched', None) if common else ('not_compared', 'no_common_item')
             else:
-                match, reason = 'not_compared', pair.get('change_kind') or 'not_comparable'
-            plans.append({'kind': kind, 'pair_id': pair['pair_id'], 'rank': rank, 'delta': pair['delta'],
-                          'a': pair['a'], 'b': pair['b'], 'change_kind': pair.get('change_kind'),
-                          'comparable': bool(comparable), 'match': match, 'reason': reason})
+                match, reason = 'not_compared', change_kind or 'not_comparable'
+            ranks = tab_ranks[pair_id]
+            plans.append({'kind': kind, 'pair_id': pair_id, 'rank': full_rank[pair_id], 'delta': pair['delta'],
+                          'a': pair['a'], 'b': pair['b'], 'change_kind': change_kind,
+                          'tabs': [tab for tab in TABS if tab in ranks], 'tab_ranks': dict(ranks),
+                          'comparable': bool(comparable), 'match': match, 'reason': reason,
+                          'common_ids': common, 'n_items': len(items),
+                          # the card with the largest key is dropped first: its best tab rank is the worst, then it
+                          # sits on fewer tabs
+                          'drop_key': (min(ranks.values()), -len(ranks), KINDS.index(kind), pair_id)})
     return plans
 
 
@@ -1288,15 +1388,34 @@ def _ratio_overlap(a_tiles, b_member, ntx, nty, tol_tiles):
     return float(found.sum()) / len(a_tiles)
 
 
+CARD_CHECKS = ('range_sum', 'pair_bound', 'partition', 'row_items')
+
+
+def _new_acc():
+    """The checks one card part (reference or target) collects; they reach the run only when the whole card is done."""
+    return {'stats': {name: 0 for name in CARD_CHECKS}, 'checks': {name: [] for name in CARD_CHECKS}}
+
+
+class _Card(object):
+    """One card across both products. `hold_a` = the bytes its reference part keeps reserved until the target part is
+    done (README 28.4); `carried` = the reference part's rows / values / memberships."""
+
+    def __init__(self, plan):
+        self.plan = plan
+        self.hold_a = _Hold()
+        self.acc_a = _new_acc()
+        self.carried = None
+
+
 class _CardRun(object):
     """Shared state of the card step of one run (the two products share it through ctx.run)."""
 
     def __init__(self, led_doc, opts, budget, cfg2, infos, corr):
         self.led_doc, self.opts, self.budget, self.cfg2, self.infos, self.corr = led_doc, opts, budget, cfg2, infos, corr
         self.plans = _select_cards(led_doc, opts['top_cards'])
-        self.carried = {}
-        self.carried_bytes = 0
-        self.checks = {'range_sum': [], 'pair_bound': [], 'partition': []}
+        self.carried = {}                # (pair_id, kind) -> _Card whose reference part is done (reserved, evictable)
+        self.dropped = []                # cards left out because of the memory budget (README 28.4)
+        self.checks = {name: [] for name in CARD_CHECKS}
         self.bands = []
         tile_um = None
         for role in ROLES:
@@ -1308,7 +1427,34 @@ class _CardRun(object):
             self.bands.append({'code': 'coords_resolution_too_coarse',
                                'detail': f'--tile-um {opts["tile_um"]} > --coord-tolerance-um {opts["coord_tolerance_um"]}'})
         self.coarse = any(b['code'] == 'coords_resolution_too_coarse' for b in self.bands)
-        self.stats = {'range_sum': 0, 'pair_bound': 0, 'partition': 0}
+        self.stats = {name: 0 for name in CARD_CHECKS}
+
+    # ---- card lifecycle (E2, E3) ----
+    def drop(self, card, reason, stage, detail=None):
+        """Leave the card out: give back its reference hold, remember why (cards_dropped_for_budget)."""
+        self.carried.pop((card.plan['pair_id'], card.plan['kind']), None)
+        self.budget.free(card.hold_a)
+        card.carried = None
+        plan = card.plan
+        self.dropped.append({'kind': plan['kind'], 'pair_id': plan['pair_id'], 'rank': plan['rank'],
+                             'tabs': list(plan['tabs']), 'stage': stage, 'reason': reason,
+                             'detail': None if detail is None else str(detail)})
+
+    def evict_one(self):
+        """Budget callback: drop the finished reference card that matters least. False = no card holds memory."""
+        held = [card for card in self.carried.values() if card.hold_a.bytes > 0]
+        if not held:
+            return False
+        worst = max(held, key=lambda card: card.plan['drop_key'])
+        self.drop(worst, 'evicted_for_budget', 'reference_held')
+        return True
+
+    def finish(self, card, acc_b):
+        """The card is done on both products: its checks and counts join the run totals."""
+        for acc in (card.acc_a, acc_b):
+            for name in CARD_CHECKS:
+                self.stats[name] += acc['stats'][name]
+                self.checks[name].extend(acc['checks'][name])
 
 
 def _row_json(row, info, role, ident, tile_um):
@@ -1322,11 +1468,11 @@ def _row_json(row, info, role, ident, tile_um):
             'shift_tiles': row.get('shift_tiles'), 'image_tiles': int(row.get('image_tiles', 0)),
             'image_shifts': row.get('image_shifts') or [], 'edge_rounding_um': row.get('edge_rounding_um', 0.0),
             'tiles': int(len(row['tiles'])), 'tiles_lost': int(row['lost']),
-            'pair': row['pair'], 'others': row['others'], 'range_total': row['range_total'],
+            'pair': row['pair'], 'items': row.get('items'), 'others': row['others'], 'range_total': row['range_total'],
             'match': row.get('match', {'status': 'only', 'reason': None})}
 
 
-def _side_final(ctx, run, plan, rows, role):
+def _side_final(ctx, run, plan, rows, role, acc):
     """Values, observed area and checks 3-4 of the final rows of one pair on one product."""
     # reserved before the arrays exist (R2:2): the window ids + the rows' ids (concatenate / unique / isin), the pair's
     # summed sparse values and the searchsorted temporaries of one item
@@ -1338,46 +1484,56 @@ def _side_final(ctx, run, plan, rows, role):
             + 32 * (pair_sparse + item_sparse))
     run.budget.reserve(temp, f'card values {ctx.role} {plan["pair_id"]} (window {win_cells} tiles)')
     try:
-        return _side_final_values(ctx, run, plan, rows, role)
+        return _side_final_values(ctx, run, plan, rows, role, acc)
     finally:
         run.budget.release(temp, 'card values')
 
 
-def _side_final_values(ctx, run, plan, rows, role):
+def _side_final_values(ctx, run, plan, rows, role, acc):
+    """Checks 3-4 and 6 of one card part go to `acc` (the card's own record); the run totals take them when the whole
+    card is finished (E3)."""
+    stats, failed = acc['stats'], acc['checks']
     _fill_values(ctx, plan, rows)
     rid = f'{plan["kind"]}:{plan["pair_id"]}:{role}'
     live = [row for row in rows if row['edge'] != 'excluded']
     for i, row in enumerate(rows):
         if row['edge'] == 'excluded':
             continue
-        run.stats['range_sum'] += 1
+        stats['range_sum'] += 1
         total = row['pair'] + row['others_sum']
         if not _within(total - row['range_total'], row['range_total']):
-            run.checks['range_sum'].append({'card': rid, 'row': i, 'range_total': row['range_total'],
-                                            'pair_plus_others': total})
+            failed['range_sum'].append({'card': rid, 'row': i, 'range_total': row['range_total'],
+                                        'pair_plus_others': total})
+        # check 6: the item values of a row add up to the row's value of the pair
+        stats['row_items'] += 1
+        items_sum = math.fsum(item['value'] for item in row['items'])
+        if not _within(items_sum - row['pair'], row['pair']):
+            failed['row_items'].append({'card': rid, 'row': i, 'pair': row['pair'], 'items_sum': items_sum})
     ids = np.unique(np.concatenate([_window_ids(ctx)] + [row['tiles'] for row in live]))
     observed = _pair_total(ctx, run.budget, plan['pair_id'], ids)
     del ids                                 # the observed area is not kept: it is reserved only while it is built
     section4 = plan['a'] if role == 'reference' else plan['b']
     row_sum = math.fsum(row['pair'] for row in live)
-    run.stats['pair_bound'] += 1
+    stats['pair_bound'] += 1
     slack = lambda y: CHECK_REL_TOL * max(abs(y), 1e-12)
     if row_sum > observed + slack(observed) or observed > section4 + slack(section4):
-        run.checks['pair_bound'].append({'card': rid, 'rows_sum': row_sum, 'observed': observed, 'section4': section4})
+        failed['pair_bound'].append({'card': rid, 'rows_sum': row_sum, 'observed': observed, 'section4': section4})
     return {'observed': observed, 'section4': section4, 'rows_sum': row_sum}
 
 
 def _cards(ctx):
-    """Cards of this side (lmap/T4).
+    """Cards of this side (lmap/T4, mrep/T3).
 
-    Returns (cards, carried_bytes): carried_bytes is what the caller keeps reserved while the next product is read
-    (the card pairs' rows of the first product, README 18.1). The second product returns the finished cards."""
+    Returns (cards, carried_bytes): carried_bytes is memory the caller keeps reserved outside any card while the next
+    product is read (always 0 now: the first product's card data is owned and reserved per card, README 28.4). The second
+    product returns the cards that were finished on both products."""
     run = getattr(ctx, 'run', None)
     if run is None or not run.plans:
         return [], 0
     try:
         if ctx.role == 'reference':
-            return [], _cards_reference(ctx, run)
+            _cards_reference(ctx, run)
+            return [], 0
         return _cards_target(ctx, run), 0
     finally:
         run.budget.release(ctx.el_bytes, 'tile electrode grids')
@@ -1385,145 +1541,220 @@ def _cards(ctx):
         ctx.tile_el.clear()
 
 
+def _member_reserved(ctx, budget, pair_id, item_ids):
+    """The membership tiles (sorted unique int64) of the pair's items listed in `item_ids`, reserved before they are built.
+    Returns (member, held_bytes): the caller releases held_bytes when it drops the array."""
+    recs = [rec for rec in ctx.items if rec['pair_id'] == pair_id and rec['item_id'] in item_ids]
+    entries = sum(len(ctx.sparse[rec['item_id']]['member']) for rec in recs)
+    peak = MERGE_MEMBER_BYTES_PER_ENTRY * entries
+    budget.reserve(peak, f'common-item membership {ctx.role} {pair_id} ({entries} entries)')
+    try:
+        parts = [ctx.sparse[rec['item_id']]['member'] for rec in recs if len(ctx.sparse[rec['item_id']]['member'])]
+        member = np.unique(np.concatenate(parts)).astype(np.int64) if parts else _NO_IDS
+    finally:
+        budget.release(peak, 'common-item membership copy')
+    budget.reserve(member.nbytes, f'common-item membership held {ctx.role} {pair_id}')
+    return member, member.nbytes
+
+
+def _common_member(ctx, budget, plan, member):
+    """README 28.2: the membership of the items both products have (the matching uses it). A pair whose items are all
+    common keeps `member` as it is (the result is the same as before). Returns (array, held_bytes)."""
+    common = set(plan['common_ids'])
+    if all(rec['item_id'] in common for rec in ctx.items if rec['pair_id'] == plan['pair_id']):
+        return member, 0
+    return _member_reserved(ctx, budget, plan['pair_id'], common)
+
+
 def _cards_reference(ctx, run):
-    carried = 0
+    """Every card gets its reference part inside its own budget hold. A reserve that fails drops that card alone."""
+    budget = run.budget
     for plan in run.plans:
-        side = _side_rows(ctx, run, plan)
+        card = _Card(plan)
+        budget.begin(card.hold_a)
         try:
-            rows = side['rows']
-            final = _side_final(ctx, run, plan, rows, 'reference')
-            # the intersect1d copies of the member tiles with each row (concatenate + sort, 24 B per id), reserved first
-            temp = 24 * sum(len(side['member']) + len(row['tiles']) for row in rows)
-            run.budget.reserve(temp, f'card membership split {ctx.role} {plan["pair_id"]}')
-            try:
-                a_member = [np.intersect1d(side['member'], row['tiles'], assume_unique=True) for row in rows]
-            finally:
-                run.budget.release(temp, 'card membership split')
+            _card_reference(ctx, run, card)
+        except _BudgetExceeded as exc:
+            budget.end()
+            run.drop(card, 'card_reserve_failed', 'reference', exc)
+            continue
         finally:
-            run.budget.release(side['held'], 'pair arrays held')
-        run.carried[plan['pair_id'], plan['kind']] = {'rows': rows, 'final': final, 'a_member': a_member,
-                                                       'planned': side['planned'], 'ntx': ctx.ntx}
-        carried += sum(row['tiles'].nbytes for row in rows) + sum(a.nbytes for a in a_member)
-    run.carried_bytes = carried
-    return carried
+            budget.end()
+        run.carried[plan['pair_id'], plan['kind']] = card
+
+
+def _card_reference(ctx, run, card):
+    plan = card.plan
+    side = _side_rows(ctx, run, plan)
+    try:
+        rows = side['rows']
+        # what the card keeps for the second product: the rows' tiles (reserved right away) and the common membership
+        run.budget.reserve(sum(row['tiles'].nbytes for row in rows), f'card rows carried {ctx.role} {plan["pair_id"]}')
+        final = _side_final(ctx, run, plan, rows, 'reference', card.acc_a)
+        a_member = [_NO_IDS for _row in rows]
+        if plan['match'] == 'matched':
+            common, held = _common_member(ctx, run.budget, plan, side['member'])
+            try:
+                # the intersect1d copies of the member tiles with each row (concatenate + sort, 24 B per id), reserved first
+                temp = 24 * sum(len(common) + len(row['tiles']) for row in rows)
+                run.budget.reserve(temp, f'card membership split {ctx.role} {plan["pair_id"]}')
+                try:
+                    a_member = [np.intersect1d(common, row['tiles'], assume_unique=True) for row in rows]
+                finally:
+                    run.budget.release(temp, 'card membership split')
+            finally:
+                run.budget.release(held, 'common-item membership held')
+        run.budget.reserve(sum(a.nbytes for a in a_member), f'card membership carried {ctx.role} {plan["pair_id"]}')
+    finally:
+        run.budget.release(side['held'], 'pair arrays held')
+    card.carried = {'rows': rows, 'final': final, 'a_member': a_member, 'planned': side['planned'], 'ntx': ctx.ntx}
 
 
 def _cards_target(ctx, run):
+    """The second part of every card that survived the first product, again inside its own hold: a reserve that fails drops
+    the whole card (its reference hold too). A finished card hands its checks to the run (E3)."""
+    budget = run.budget
+    cards = []
+    for plan in run.plans:
+        card = run.carried.get((plan['pair_id'], plan['kind']))
+        if card is None:                           # dropped on the first product, or evicted while it was read
+            continue
+        hold_b, acc_b = _Hold(), _new_acc()
+        budget.begin(hold_b)
+        try:
+            cards.append(_card_target(ctx, run, card, acc_b))
+        except _BudgetExceeded as exc:
+            budget.end()
+            budget.free(hold_b)
+            run.drop(card, 'card_reserve_failed', 'target', exc)
+            continue
+        finally:
+            budget.end()
+        budget.free(hold_b)
+        run.carried.pop((plan['pair_id'], plan['kind']), None)
+        budget.free(card.hold_a)                   # the first product's part is no longer needed
+        card.carried = None
+        run.finish(card, acc_b)
+    return cards
+
+
+def _card_target(ctx, run, card, acc_b):
+    """The target part of one card; returns its JSON. Everything it reserves is released before it returns."""
+    plan, carried = card.plan, card.carried
     opts, corr = run.opts, run.corr
     info_a, info_b = run.infos['reference'], run.infos['target']
     tile_um = ctx.tile_px * info_b['pitch']
     tol_tiles = _ceil_tiles(opts['coord_tolerance_um'], tile_um)
     spread_px = opts['coord_offset_spread_um'] / info_a['pitch']
-    cards = []
-    for plan in run.plans:
-        carried = run.carried.pop((plan['pair_id'], plan['kind']), None)
-        side = _side_rows(ctx, run, plan)
-        b_rows = side['rows']
-        a_rows = carried['rows'] if carried else []
-        ntx_a = carried['ntx'] if carried else ctx.ntx
-        member_b = side['member']
-        # the matching, the shifted copies, the partition check (concatenate / unique / isin / sort of the rows' tile ids)
-        # hold up to 64 B per id of both products' rows and memberships at once: reserved before they run
-        plan_temp = 64 * (sum(len(r['tiles']) for r in a_rows) + sum(len(r['tiles']) for r in b_rows) + len(member_b)
-                          + (sum(len(m) for m in carried['a_member']) if carried else 0))
-        run.budget.reserve(plan_temp, f'card matching {ctx.role} {plan["pair_id"]}')
-        for arow in a_rows:
-            arow['match'] = {'status': 'only', 'reason': arow['edge_reason']}
-        confirmed = _NO_IDS
-        moved_rows, rounding = [], []
-        if plan['match'] != 'matched':
-            row_reason = plan['reason'] or plan['match']
-        elif not corr.ok:
-            row_reason = corr.band
-        elif run.coarse:
-            row_reason = 'coords_resolution_too_coarse'
-        else:
-            row_reason = None
-        for ia, arow in enumerate(a_rows):
-            if arow['edge'] == 'excluded' or not len(arow['tiles']):
-                continue
-            if row_reason is not None:
-                arow['match'] = {'status': 'only', 'reason': row_reason}
-                continue
-            x0, y0, x1, y1 = arow['fbox']
-            if arow.get('image_bbox') is not None:          # a repeat row also stands on its image tiles (R2:1)
-                ix0, iy0, ix1, iy1 = arow['image_bbox']
-                x0, y0, x1, y1 = min(x0, ix0), min(y0, iy0), max(x1, ix1), max(y1, iy1)
-            box_px = (x0 * ctx.tile_px, y0 * ctx.tile_px, x1 * ctx.tile_px, y1 * ctx.tile_px)
-            offset, why = pick_offset(corr.cells, box_px, spread_px)
-            if offset is None:
-                arow['match'] = {'status': 'only', 'reason': why}
-                continue
-            sx, sy, err = _tile_shift(offset, info_a, info_b, tile_um)
-            ty, tx = arow['tiles'] // ntx_a, arow['tiles'] % ntx_a
-            ny, nx = ty + sy, tx + sx
-            if (ny < 0).any() or (nx < 0).any() or (ny >= ctx.nty).any() or (nx >= ctx.ntx).any():
-                arow['match'] = {'status': 'only', 'reason': 'outside_b_frame'}
-                continue
-            ids = np.sort(ny * ctx.ntx + nx)
-            a_mem = carried['a_member'][ia]
-            shifted = (a_mem // ntx_a + sy) * ctx.ntx + (a_mem % ntx_a + sx) if len(a_mem) else _NO_IDS
-            keep = np.ones(len(shifted), dtype=bool)
-            if len(shifted):
-                sty, stx = shifted // ctx.ntx, shifted % ctx.ntx
-                keep = (sty >= 0) & (sty < ctx.nty) & (stx >= 0) & (stx < ctx.ntx)
-            ratio = _ratio_overlap(np.sort(shifted[keep]), member_b, ctx.ntx, ctx.nty, tol_tiles)
-            if ratio < opts['coord_min_overlap'] - 1e-12:
-                arow['match'] = {'status': 'only', 'reason': 'low_membership_overlap', 'overlap': ratio}
-                continue
-            if len(confirmed) and np.isin(ids, confirmed, assume_unique=True).any():
-                arow['match'] = {'status': 'only', 'reason': 'b_conflict'}
-                continue
-            confirmed = np.union1d(confirmed, ids)
-            arow['match'] = {'status': 'matched', 'reason': None, 'overlap': ratio, 'offset_px': list(offset),
-                             'shift_tiles': [sx, sy], 'rounding_error_um': [err[0], err[1]]}
-            rounding.append(max(abs(err[0]), abs(err[1])))
-            moved_rows.append((ia, ids, (sx, sy)))
-        # B rows: the matched copies first (A order), then the rest of the B lines without the matched part
-        final_b, absorbed = [], []
-        for ia, ids, shift in moved_rows:
-            arow = a_rows[ia]
-            box = _shift_box(arow['fbox'], shift[0], shift[1])
-            final_b.append({'type': arow['type'], 'box': box, 'fbox': box, 'edge': 'none', 'edge_reason': None,
-                            'tiles': ids, 'lost': 0, 'match': {'status': 'matched', 'reason': None, 'with_a': ia + 1}})
-        n_matched = len(final_b)
-        for jb, brow in enumerate(b_rows):
-            if brow['edge'] == 'excluded':
-                final_b.append(dict(brow, match={'status': 'only', 'reason': brow['edge_reason']}))
-                continue
-            rest = brow['tiles'][~np.isin(brow['tiles'], confirmed, assume_unique=True)] if len(confirmed) else brow['tiles']
-            if not len(rest) and len(brow['tiles']):
-                absorbed.append(jb + 1)
-                continue
-            final_b.append(dict(brow, tiles=rest, match={'status': 'only', 'reason': row_reason,
-                                                         'partial_matched': len(rest) < len(brow['tiles'])}))
-        final = _side_final(ctx, run, plan, final_b, 'target')
-        # check 5: the partition of both products
-        run.stats['partition'] += 1
-        t_ids = [r['tiles'] for r in final_b[:n_matched]]
-        u_ids = [r['tiles'] for r in final_b[n_matched:]]
-        s_b = [r['tiles'] for r in b_rows]
-        all_b = np.concatenate(t_ids + u_ids) if (t_ids or u_ids) else _NO_IDS
-        want_b = np.unique(np.concatenate(t_ids + s_b)) if (t_ids or s_b) else _NO_IDS
-        a_live = [r['tiles'] for r in a_rows if r['edge'] != 'excluded']
-        a_matched = [a_rows[ia]['tiles'] for ia, _i, _s in moved_rows]
-        a_only = [r['tiles'] for k, r in enumerate(a_rows) if r['edge'] != 'excluded'
-                  and r['match']['status'] != 'matched']
-        all_a = np.concatenate(a_matched + a_only) if (a_matched or a_only) else _NO_IDS
-        want_a = np.concatenate(a_live) if a_live else _NO_IDS
-        bad = []
-        if len(np.unique(all_b)) != len(all_b) or not np.array_equal(np.unique(all_b), want_b):
-            bad.append('target')
-        if len(np.unique(all_a)) != len(all_a) or not np.array_equal(np.sort(all_a), np.sort(want_a)):
-            bad.append('reference')
-        if bad:
-            run.checks['partition'].append({'card': f'{plan["kind"]}:{plan["pair_id"]}', 'sides': bad})
-        cards.append(_card_json(run, plan, carried, a_rows, final_b, final, side, absorbed, rounding, tile_um))
-        run.budget.release(plan_temp, 'card matching')
-        run.budget.release(side['held'], 'pair arrays held')
-    run.budget.release(run.carried_bytes, 'cards carried from the first product')
-    run.carried_bytes = 0
-    return cards
+    side = _side_rows(ctx, run, plan)
+    b_rows = side['rows']
+    a_rows = carried['rows']
+    ntx_a = carried['ntx']
+    member_b, member_b_held = side['member'], 0
+    if plan['match'] == 'matched':
+        # the correspondence of a pair with a changed item set is measured on the items both products have (README 28.2)
+        member_b, member_b_held = _common_member(ctx, run.budget, plan, side['member'])
+    # the matching, the shifted copies, the partition check (concatenate / unique / isin / sort of the rows' tile ids)
+    # hold up to 64 B per id of both products' rows and memberships at once: reserved before they run
+    plan_temp = 64 * (sum(len(r['tiles']) for r in a_rows) + sum(len(r['tiles']) for r in b_rows) + len(member_b)
+                      + sum(len(m) for m in carried['a_member']))
+    run.budget.reserve(plan_temp, f'card matching {ctx.role} {plan["pair_id"]}')
+    for arow in a_rows:
+        arow['match'] = {'status': 'only', 'reason': arow['edge_reason']}
+    confirmed = _NO_IDS
+    moved_rows, rounding = [], []
+    if plan['match'] != 'matched':
+        row_reason = plan['reason'] or plan['match']
+    elif not corr.ok:
+        row_reason = corr.band
+    elif run.coarse:
+        row_reason = 'coords_resolution_too_coarse'
+    else:
+        row_reason = None
+    for ia, arow in enumerate(a_rows):
+        if arow['edge'] == 'excluded' or not len(arow['tiles']):
+            continue
+        if row_reason is not None:
+            arow['match'] = {'status': 'only', 'reason': row_reason}
+            continue
+        x0, y0, x1, y1 = arow['fbox']
+        if arow.get('image_bbox') is not None:          # a repeat row also stands on its image tiles (R2:1)
+            ix0, iy0, ix1, iy1 = arow['image_bbox']
+            x0, y0, x1, y1 = min(x0, ix0), min(y0, iy0), max(x1, ix1), max(y1, iy1)
+        box_px = (x0 * ctx.tile_px, y0 * ctx.tile_px, x1 * ctx.tile_px, y1 * ctx.tile_px)
+        offset, why = pick_offset(corr.cells, box_px, spread_px)
+        if offset is None:
+            arow['match'] = {'status': 'only', 'reason': why}
+            continue
+        sx, sy, err = _tile_shift(offset, info_a, info_b, tile_um)
+        ty, tx = arow['tiles'] // ntx_a, arow['tiles'] % ntx_a
+        ny, nx = ty + sy, tx + sx
+        if (ny < 0).any() or (nx < 0).any() or (ny >= ctx.nty).any() or (nx >= ctx.ntx).any():
+            arow['match'] = {'status': 'only', 'reason': 'outside_b_frame'}
+            continue
+        ids = np.sort(ny * ctx.ntx + nx)
+        a_mem = carried['a_member'][ia]
+        shifted = (a_mem // ntx_a + sy) * ctx.ntx + (a_mem % ntx_a + sx) if len(a_mem) else _NO_IDS
+        keep = np.ones(len(shifted), dtype=bool)
+        if len(shifted):
+            sty, stx = shifted // ctx.ntx, shifted % ctx.ntx
+            keep = (sty >= 0) & (sty < ctx.nty) & (stx >= 0) & (stx < ctx.ntx)
+        ratio = _ratio_overlap(np.sort(shifted[keep]), member_b, ctx.ntx, ctx.nty, tol_tiles)
+        if ratio < opts['coord_min_overlap'] - 1e-12:
+            arow['match'] = {'status': 'only', 'reason': 'low_membership_overlap', 'overlap': ratio}
+            continue
+        if len(confirmed) and np.isin(ids, confirmed, assume_unique=True).any():
+            arow['match'] = {'status': 'only', 'reason': 'b_conflict'}
+            continue
+        confirmed = np.union1d(confirmed, ids)
+        arow['match'] = {'status': 'matched', 'reason': None, 'overlap': ratio, 'offset_px': list(offset),
+                         'shift_tiles': [sx, sy], 'rounding_error_um': [err[0], err[1]]}
+        rounding.append(max(abs(err[0]), abs(err[1])))
+        moved_rows.append((ia, ids, (sx, sy)))
+    # B rows: the matched copies first (A order), then the rest of the B lines without the matched part
+    final_b, absorbed = [], []
+    for ia, ids, shift in moved_rows:
+        arow = a_rows[ia]
+        box = _shift_box(arow['fbox'], shift[0], shift[1])
+        final_b.append({'type': arow['type'], 'box': box, 'fbox': box, 'edge': 'none', 'edge_reason': None,
+                        'tiles': ids, 'lost': 0, 'match': {'status': 'matched', 'reason': None, 'with_a': ia + 1}})
+    n_matched = len(final_b)
+    for jb, brow in enumerate(b_rows):
+        if brow['edge'] == 'excluded':
+            final_b.append(dict(brow, match={'status': 'only', 'reason': brow['edge_reason']}))
+            continue
+        rest = brow['tiles'][~np.isin(brow['tiles'], confirmed, assume_unique=True)] if len(confirmed) else brow['tiles']
+        if not len(rest) and len(brow['tiles']):
+            absorbed.append(jb + 1)
+            continue
+        final_b.append(dict(brow, tiles=rest, match={'status': 'only', 'reason': row_reason,
+                                                     'partial_matched': len(rest) < len(brow['tiles'])}))
+    final = _side_final(ctx, run, plan, final_b, 'target', acc_b)
+    # check 5: the partition of both products
+    acc_b['stats']['partition'] += 1
+    t_ids = [r['tiles'] for r in final_b[:n_matched]]
+    u_ids = [r['tiles'] for r in final_b[n_matched:]]
+    s_b = [r['tiles'] for r in b_rows]
+    all_b = np.concatenate(t_ids + u_ids) if (t_ids or u_ids) else _NO_IDS
+    want_b = np.unique(np.concatenate(t_ids + s_b)) if (t_ids or s_b) else _NO_IDS
+    a_live = [r['tiles'] for r in a_rows if r['edge'] != 'excluded']
+    a_matched = [a_rows[ia]['tiles'] for ia, _i, _s in moved_rows]
+    a_only = [r['tiles'] for k, r in enumerate(a_rows) if r['edge'] != 'excluded'
+              and r['match']['status'] != 'matched']
+    all_a = np.concatenate(a_matched + a_only) if (a_matched or a_only) else _NO_IDS
+    want_a = np.concatenate(a_live) if a_live else _NO_IDS
+    bad = []
+    if len(np.unique(all_b)) != len(all_b) or not np.array_equal(np.unique(all_b), want_b):
+        bad.append('target')
+    if len(np.unique(all_a)) != len(all_a) or not np.array_equal(np.sort(all_a), np.sort(want_a)):
+        bad.append('reference')
+    if bad:
+        acc_b['checks']['partition'].append({'card': f'{plan["kind"]}:{plan["pair_id"]}', 'sides': bad})
+    out = _card_json(run, plan, carried, a_rows, final_b, final, side, absorbed, rounding, tile_um)
+    run.budget.release(plan_temp, 'card matching')
+    run.budget.release(member_b_held, 'common-item membership held')
+    run.budget.release(side['held'], 'pair arrays held')
+    return out
 
 
 def _card_json(run, plan, carried, a_rows, final_b, final_side_b, side_b, absorbed, rounding, tile_um):
@@ -1549,6 +1780,8 @@ def _card_json(run, plan, carried, a_rows, final_b, final_side_b, side_b, absorb
     final_a = carried['final'] if carried else {'observed': 0.0, 'rows_sum': 0.0}
     others_a = carried['planned'] if carried else {'others_n': 0, 'others_value': 0.0}
     return {'kind': plan['kind'], 'pair_id': plan['pair_id'], 'rank': plan['rank'], 'delta': plan['delta'],
+            'tabs': list(plan['tabs']), 'tab_ranks': dict(plan['tab_ranks']),
+            'common_items': len(plan['common_ids']), 'items_total': plan['n_items'],
             'a': plan['a'], 'b': plan['b'], 'change_kind': plan['change_kind'], 'rows': rows,
             'match': {'status': status, 'reason': reason, 'matched_rows': n_matched,
                       'absorbed_b_rows': absorbed,
@@ -1678,6 +1911,7 @@ def _check_kinds(ctx, led_doc, key):
 def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings, run=None):
     """Read one product once and return (side json, files, window json, checks, ctx-free summary)."""
     from .pipeline import _configured_real
+    budget.set_stage(role, 'read')
     product = getattr(cfg2, role)
     group = cfg2.model_groups[product.model_group]
     tables = load_density(cfg2.density_dir, product.model_group)
@@ -1722,6 +1956,7 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     budget.release(estimate, 'compute_areas holding')   # the masks and the dataset are gone
 
     # finalize items: merge the chunks of one item (np.unique + np.bincount), then drop the chunk copies
+    budget.set_stage(role, 'merge')
     entries = {}
     for rec in items:
         chunks = ctx.chunks.pop(rec['item_id'], ([], [], []))
@@ -1738,6 +1973,7 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
             'membership_tiles': int(len(member))}
 
     # numbered pictures (item maps first, then the DL1 electrode maps)
+    budget.set_stage(role, 'maps')
     files, maps, shown = [], [], {}
     for index, layer in enumerate(layers):
         num, _rank = ctx.canvas[layer]
@@ -1771,8 +2007,9 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
             'total_px': entry['total_px'], 'shown_px': shown.get(rec['item_id'], 0), 'hidden_px': hid,
             'value_tiles': entry['value_tiles'], 'membership_tiles': entry['membership_tiles'], 'status': status})
     checks = {'item_sum': _check_items(ctx, entries), 'kind_sum': _check_kinds(ctx, led_doc, key)}
+    budget.set_stage(role, 'cards')
     cards, carried = _cards(ctx)
-    budget.reserve(carried, f'cards carried to the next product ({role})')
+    budget.reserve(carried, f'cards carried to the next product ({role})')   # not card-owned (0 unless a caller adds some)
     ctx.sparse.clear()                      # this product's sparse data is dropped after its cards and checks
     budget.release(ctx.sparse_bytes, 'item sparse values')
     ctx.grids.clear()
@@ -1916,6 +2153,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
 
     corr = load_correspondence(candidates, infos, cfg, opts)
     run = _CardRun(led_doc, opts, budget, cfg2, infos, corr)
+    budget.evictor = run.evict_one          # a reserve outside a card that does not fit first drops finished cards (E2)
     if cand.get('given'):
         cand.update({'apply_align': corr.mode, 'status': 'ok' if corr.ok else corr.band, 'detail': corr.detail})
     texts_files, sides_json, window_json, checks, cards, metas = [], {}, {}, {}, [], {}
@@ -1933,12 +2171,19 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     failed = [role for role in ROLES
               if checks[role]['item_sum']['status'] == 'failed'
               or any(row['status'] == 'failed' for row in checks[role]['kind_sum'].values())]
-    card_checks = {name: _card_check(run, name) for name in ('range_sum', 'pair_bound', 'partition')}
+    card_checks = {name: _card_check(run, name) for name in CARD_CHECKS}
     if any(row['status'] == 'failed' for row in card_checks.values()):
         failed.append('cards')
-    status = 'partial' if failed else 'ok'
+    dropped = sorted(run.dropped, key=lambda d: (KINDS.index(d['kind']), d['rank'], d['pair_id']))
+    status = 'partial' if failed or dropped else 'ok'
     if failed:
         reasons.append('ledger_maps_value_check_failed')
+    if dropped:
+        # E2/E3: cards that did not fit are left out whole; maps, values and checks 1-2 stay (exit 3)
+        reasons.append('cards_budget_reduced')
+        run.bands.append({'code': 'cards_budget_reduced', 'count': len(dropped),
+                          'detail': f'{len(dropped)} card(s) left out because of the memory budget '
+                                    f'(max_operation_bytes {budget.limit}); see cards_dropped_for_budget'})
     summary = {'status': 'failed' if failed else 'passed',
                'item_sum': {role: checks[role]['item_sum'] for role in ROLES},
                'kind_sum': {role: checks[role]['kind_sum'] for role in ROLES},
@@ -1954,6 +2199,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         'window': window_json,
         'sides': sides_json,
         'cards': cards,
+        'cards_dropped_for_budget': dropped,
         'checks': summary,
         'scale_steps': scale_steps,
         'warnings': warnings, 'bands': run.bands}
@@ -1963,6 +2209,9 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
               'outputs': [str(output / 'ledger_maps.json')] + [str(output / name) for name, _data in texts_files],
               'compare2_dir': str(compare2_dir), 'ledger_dir': str(ledger_dir), 'config': str(cfg2.config_path),
               'max_reserved_bytes': budget.peak, 'max_operation_bytes': budget.limit,
+              # B3: the peak of the reservations in each stage of each product (where the 90% of a real run sits)
+              'max_reserved_by_stage': {role: {stage: budget.stage_peak.get((role, stage), 0) for stage in STAGES}
+                                        for role in ROLES},
               'started_at': datetime.fromtimestamp(started, timezone.utc).isoformat(),
               'finished_at': datetime.now(timezone.utc).isoformat(),
               'elapsed_seconds': round(time.time() - started, 3), 'exit_code': exit_code}

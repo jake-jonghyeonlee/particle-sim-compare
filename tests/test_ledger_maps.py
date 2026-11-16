@@ -125,7 +125,7 @@ def test_basic_run_passes_checks_and_records_window_tiles_and_files(tmp_path):
     code, out = run_maps(tmp_path)
     assert code == 0, (out / 'error.json').read_text() if (out / 'error.json').exists() else code
     doc = load_maps(out)
-    assert doc['schema_version'] == 'ledger_maps_v1' and doc['status'] == 'ok'
+    assert doc['schema_version'] == 'ledger_maps_v2' and doc['status'] == 'ok'     # mrep/T3: cards got tabs and item values
     assert doc['checks']['status'] == 'passed'
     for role in ('reference', 'target'):
         assert doc['checks']['item_sum'][role]['status'] == 'passed'
@@ -493,9 +493,9 @@ def test_a_large_sink_temporary_is_refused_before_it_is_allocated(tmp_path, monk
     reserved = []
     real_reserve = ledger_maps._Budget.reserve
 
-    def reserve(self, nbytes, what):
+    def reserve(self, nbytes, what, **kwargs):
         reserved.append(what)
-        return real_reserve(self, nbytes, what)
+        return real_reserve(self, nbytes, what, **kwargs)
 
     monkeypatch.setattr(ledger_maps._Budget, 'reserve', reserve)
     code, out = maps_direct(tmp_path, 'm2', max_operation_bytes=limit)
@@ -621,7 +621,8 @@ def test_card_step_arrays_are_reserved_before_they_are_built(tmp_path, monkeypat
     reserved = []
     real_reserve = ledger_maps._Budget.reserve
     monkeypatch.setattr(ledger_maps._Budget, 'reserve',
-                        lambda self, nbytes, what: (reserved.append((what, nbytes)), real_reserve(self, nbytes, what))[1])
+                        lambda self, nbytes, what, **kw: (reserved.append((what, nbytes)),
+                                                          real_reserve(self, nbytes, what, **kw))[1])
     code, out = maps_direct(tmp_path, 'm2', max_operation_bytes=limit)
     assert code == 0
     labelling = [n for what, n in reserved if what.startswith('component labelling')]
@@ -631,10 +632,18 @@ def test_card_step_arrays_are_reserved_before_they_are_built(tmp_path, monkeypat
         monkeypatch.undo()
         monkeypatch.setattr(ledger_maps, name, 10 ** 9)
         code, out = maps_direct(tmp_path, 'm3' + name[:3], max_operation_bytes=limit)
-        error = json.loads((out / 'error.json').read_text())
-        assert code == 2 and error['code'] == 'oversized_real_operation'
-        assert ('component labelling' if name.startswith('COMP') else 'card values') in error['detail']
-        assert not (out / 'ledger_maps.json').exists()
+        # mrep/T3 (E3): a card step reservation that does not fit leaves that card out (exit 3) instead of ending the run
+        # with exit 2; maps and values stay
+        doc = load_maps(out)
+        assert code == 3 and doc['status'] == 'partial' and doc['cards_dropped_for_budget']
+        assert 'cards_budget_reduced' in doc['reasons'] and not (out / 'error.json').exists()
+        word = 'component labelling' if name.startswith('COMP') else 'card values'
+        assert all(word in row['detail'] and row['reason'] == 'card_reserve_failed'
+                   for row in doc['cards_dropped_for_budget'])
+        # a card is either finished or dropped, never both (cards with nothing to label still fit)
+        left = {(c['kind'], c['pair_id']) for c in doc['cards']}
+        assert not left & {(d['kind'], d['pair_id']) for d in doc['cards_dropped_for_budget']}
+        assert (out / 'map_reference_001_it.png').is_file()
 
 
 def test_without_the_resource_estimate_the_run_goes_on_and_warns(tmp_path, monkeypatch):
@@ -660,14 +669,23 @@ def test_without_the_resource_estimate_the_run_goes_on_and_warns(tmp_path, monke
     assert not [w for w in load_maps(out)['warnings'] if w['code'] == 'maps_resource_estimate_missing']
 
 
-def test_a_same_pair_change_with_an_item_on_one_product_only_says_items_not_on_both_sides():
-    """R2:6(c): the pair exists on both products but one of its items exists on one of them: no comparison, its own code."""
+def test_a_pair_with_an_item_on_one_product_only_is_matched_on_the_items_both_products_have():
+    """mrep/T3 (replaces R2:6(c) `items_not_on_both_sides`): the pair exists on both products but one of its items exists on
+    one of them. The pair is matched through its common items, `comparable` (every item on both) stays False; no common
+    item at all = `no_common_item`; a pair that is not a matchable change kind keeps its change kind as the reason."""
     pair = {'kind': 'line', 'pair_id': 'AB', 'a': 1.0, 'b': 2.0, 'delta': 1.0, 'change_kind': 'same_pair_change',
             'present_a': True, 'present_b': True,
-            'items': [{'presence': 'both'}, {'presence': 'new'}]}
+            'items': [{'item_id': 'i1', 'presence': 'both'}, {'item_id': 'i2', 'presence': 'new'}]}
     (plan,) = ledger_maps._select_cards({'pairs': [pair]}, 5)
-    assert plan['match'] == 'not_compared' and plan['reason'] == 'items_not_on_both_sides' and not plan['comparable']
-    pair['items'] = [{'presence': 'both'}]
-    assert ledger_maps._select_cards({'pairs': [pair]}, 5)[0]['match'] == 'matched'
+    assert plan['match'] == 'matched' and plan['reason'] is None and not plan['comparable']
+    assert plan['common_ids'] == ['i1']
+    pair['items'] = [{'item_id': 'i1', 'presence': 'both'}]
+    assert ledger_maps._select_cards({'pairs': [pair]}, 5)[0]['comparable']
     pair['change_kind'] = 'layer_change'
-    assert ledger_maps._select_cards({'pairs': [pair]}, 5)[0]['reason'] == 'layer_change'
+    assert ledger_maps._select_cards({'pairs': [pair]}, 5)[0]['match'] == 'matched'
+    pair['items'] = [{'item_id': 'i1', 'presence': 'gone'}, {'item_id': 'i2', 'presence': 'new'}]
+    plan = ledger_maps._select_cards({'pairs': [pair]}, 5)[0]
+    assert plan['match'] == 'not_compared' and plan['reason'] == 'no_common_item'
+    pair['change_kind'] = 'electrode_added_removed'
+    plan = ledger_maps._select_cards({'pairs': [pair]}, 5)[0]
+    assert plan['match'] == 'not_compared' and plan['reason'] == 'electrode_added_removed'

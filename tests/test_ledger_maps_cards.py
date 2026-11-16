@@ -656,7 +656,9 @@ def test_layer_change_pair_shows_both_positions_and_values_without_a_comparison(
     write_candidates(tmp_path, shape, shape, cells=[(0, 100, 0, 200, 50, 20)])
     code, doc = run_cards(tmp_path, '--candidates', str(tmp_path / 'cand'))
     c = card(doc, 'AB')
-    assert code == 0 and c['match']['status'] == 'not_compared' and c['match']['reason'] == 'layer_change'
+    # mrep/T3: L1 -> L2 means no item exists on both products (item ids carry the layer), so the old reason `layer_change`
+    # is now `no_common_item`; a pair that keeps one item is matched (tests/test_ledger_maps_v2.py)
+    assert code == 0 and c['match']['status'] == 'not_compared' and c['match']['reason'] == 'no_common_item'
     (a1,), (b1,) = rows_of(c, 'reference'), rows_of(c, 'target')
     assert a1['pair'] == pytest.approx(c['a']) and b1['pair'] == pytest.approx(c['b']) and c['a'] != c['b']
     assert a1['rect_tiles'] == [5, 5, 10, 10] and b1['rect_tiles'] == [15, 9, 20, 14]
@@ -821,8 +823,10 @@ def test_top_cards_picks_the_largest_absolute_deltas_per_kind(tmp_path):
     doc = base.load_maps(out)
     for kind in ('line', 'pixel'):
         pairs = sorted((p for p in led['pairs'] if p['kind'] == kind), key=lambda p: (-abs(p['delta']), p['pair_id']))
-        got = [c['pair_id'] for c in doc['cards'] if c['kind'] == kind]
-        assert got == [p['pair_id'] for p in pairs[:2]] and [c['rank'] for c in doc['cards'] if c['kind'] == kind] == [1, 2]
+        # mrep/T3: the cards are the union of three tabs, so more than 2 may exist; the `all` tab is the old rule
+        cards = [c for c in doc['cards'] if c['kind'] == kind and 'all' in c['tabs']]
+        assert [c['pair_id'] for c in cards] == [p['pair_id'] for p in pairs[:2]]
+        assert [c['rank'] for c in cards] == [1, 2] and [c['tab_ranks']['all'] for c in cards] == [1, 2]
 
 
 def test_a_broken_range_total_partition_or_pair_bound_ends_with_exit_3_and_the_output(tmp_path, monkeypatch, big):
@@ -870,28 +874,32 @@ def test_two_runs_with_cards_have_identical_bytes_except_execution_json(tmp_path
 
 
 def test_card_data_of_the_first_product_is_reserved_until_the_second_product_is_done(tmp_path, big, monkeypatch):
+    """mrep/T3 (README 28.4): the first product's card data is reserved per card (owned by the card's hold), not as one
+    amount after all first-product cards; it is given back when that card is finished on the second product."""
     shape = correspondence_chain(tmp_path, big, tiles_px(6, 9, 6, 9), tiles_px(6, 9, 6, 9))
     write_candidates(tmp_path, shape, shape, cells=[(0, 100, 0, 200, 0, 0)])
-    calls, real_reserve, real_release = [], lm._Budget.reserve, lm._Budget.release
+    calls, real_reserve, real_free = [], lm._Budget.reserve, lm._Budget.free
 
-    def reserve(self, nbytes, what):
+    def reserve(self, nbytes, what, **kwargs):
         calls.append(('reserve', what, nbytes, self.used))
-        return real_reserve(self, nbytes, what)
+        return real_reserve(self, nbytes, what, **kwargs)
 
-    def release(self, nbytes, what):
-        calls.append(('release', what, nbytes, self.used))
-        return real_release(self, nbytes, what)
+    def free(self, hold):
+        calls.append(('free', 'hold', hold.bytes, self.used))
+        return real_free(self, hold)
 
     monkeypatch.setattr(lm._Budget, 'reserve', reserve)
-    monkeypatch.setattr(lm._Budget, 'release', release)
+    monkeypatch.setattr(lm._Budget, 'free', free)
     code, out = base.run_maps(tmp_path, 'r1', *MAP_OPTS, '--candidates', str(tmp_path / 'cand'))
     assert code == 0
-    carried = [c for c in calls if c[0] == 'reserve' and c[1] == 'cards carried to the next product (reference)']
+    carried = [c for c in calls if c[0] == 'reserve' and c[1].startswith('card rows carried reference')]
     assert len(carried) == 1 and carried[0][2] > 0
-    # released after the second product has used it
-    freed = [c for c in calls if c[0] == 'release' and c[1] == 'cards carried from the first product']
-    assert len(freed) == 1 and freed[0][2] == carried[0][2]
-    assert calls.index(freed[0]) > calls.index(carried[0])
+    # the card's reference hold (rows tiles + common membership) is freed once, after the target part started
+    held = [c for c in calls if c[0] == 'free' and c[2] > 0]
+    assert len(held) == 1 and held[0][2] >= carried[0][2]
+    target_started = [c for c in calls if c[0] == 'reserve' and ' target ' in c[1]]
+    assert target_started and calls.index(held[0]) > calls.index(carried[0])
+    assert calls.index(held[0]) > calls.index(target_started[0])
 
 
 # ---- astra D1 (lmap/T9): the pair-array merge of the card stage is reserved before it runs ---------------------------------

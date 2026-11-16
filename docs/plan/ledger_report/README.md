@@ -278,7 +278,7 @@ CNO (종류 CNO, 목업에서 K6):
 
 ## 16. 개요와 흐름
 
-- 새 명령 `ledger-maps` 가 hotspot 과 DL1 을 한 번 다시 읽는다. 결과는 `ledger_maps.json`(`ledger_maps_v1`)과 번호 PNG 다.
+- 새 명령 `ledger-maps` 가 hotspot 과 DL1 을 한 번 다시 읽는다. 결과는 `ledger_maps.json`(`ledger_maps_v2`, mrep/T3 에서 v1 → v2: 28절)과 번호 PNG 다.
 - `ledger-report --maps-dir <data/ledger_maps>` 가 그 결과를 읽어 2절과 5절을 그린다. 보고서는 다시 계산하지 않는다.
 - 흐름: `compare2.json`(02) + `compare2.yaml` + `ledger.json`(08) + 선택 `data/changes`(04) → `ledger-maps` → `ledger_maps.json` + PNG → `ledger-report --maps-dir`.
 - 명령: `ledger-maps --compare2-dir <02> --config <compare2.yaml> --ledger-dir <data/ledger> [--candidates <data/changes>] --out <data/ledger_maps> [옵션]`.
@@ -303,6 +303,8 @@ CNO (종류 CNO, 목업에서 K6):
   3. 줄마다 범위 합계 = 이 쌍 + 다른 쌍 전부(같은 최종 집계 타일 집합 위에서).
   4. 제품별 Σ(줄의 이 쌍 값, 최종 집합) ≤ 관찰 영역의 이 쌍 값 ≤ 4절 쌍 값(타일 값 ≥ 0, 상대 1e-9). 최종 집합이 서로 겹치지 않으므로 앞 부등식은 포함 관계다.
   5. 분할 검산(18절 G1 5단계): B 의 `{T_i} ∪ {U_j}` 는 서로 겹치지 않고 합집합 = `∪T_i ∪ ∪S_B,j`. A 의 대응 줄과 A 전용 줄 = `{S_A,i}` 전체. 누락·중복 없음.
+  6. (mrep/T3) 줄의 item 값 합 = 그 줄의 이 쌍 값(`rows[].items[].value` 의 `math.fsum` = `rows[].pair`, 상대 1e-9). `checks.row_items`.
+- 검사 3–6 은 **끝까지 완료된 카드**만 센다. 예산 때문에 빠진 카드는 3–6 의 집계와 `cards` 어디에도 없다(28.4).
 - 검사 실패(통과하지 못함)는 종료 3 `ledger_maps_value_check_failed` 다. 보고서는 부분 결과 띠를 보인다.
 - 수치 검산(상대 1e-9)과 바이트 동일은 따로 확인한다(T2). "sink 있음 = 없음"은 `tests/test_linepixel_share_sink.py` 가, "sink 없음 = 기준(1ce685b 결과의 `compare2.json`·CSV sha256)"은 기존 GOLDEN 테스트가 맡는다.
 
@@ -314,8 +316,8 @@ CNO (종류 CNO, 목업에서 K6):
 - item 희소 값: item 마다 (타일 색인 int32, 값 float64) 정렬 배열. `np.unique(tile_idx, return_inverse=True)` + `np.bincount(inverse)` 로 만든다(항목 수 비례, Python dict 금지).
 - membership(분석용): item 별 희소 타일 집합. 지도 지름 `report.diameter_um` 의 셀이 하나라도 있는 타일이다. 가림이 없다. 연결 성분·선형 판정·반복 Dice·좌표 대응 겹침은 모두 membership 으로 계산한다.
 - 번호 PNG(표시·hover 전용): 모든 item 을 넣는다. 번호 16비트 = R 하위 8비트, G 상위 8비트. gAMA·sRGB·iCCP 청크 없이 쓴다. B 는 0. `--top-pairs` 는 목록·라벨 수만 줄인다. 한 픽셀에 item 하나이고 우선순위는 line > pixel, 같은 종류는 순위가 앞선 쌍이다. 가려진 픽셀 수 `hidden_px` 를 item 에 기록하고 범례에 한 줄 적는다. 레이어별 전극 번호 그림도 같은 형식이다. 번호 → 이름 표는 JSON 에 둔다.
-- 카드 대상은 `ledger.json` 의 |Δ| 순위로 고르며 지도 순위와 무관하다.
-- 한 제품씩 차례로 처리한다. 한 제품의 희소 항목은 그 제품의 카드·검산을 낸 뒤 버린다. 다만 A→B 대응에 필요한 카드 쌍의 A 쪽 membership·희소 값은 B 처리 때까지 남긴다(카드 쌍만).
+- 카드 대상은 `ledger.json` 에서 고르며 지도 순위와 무관하다. v1 은 종류별 |Δ| 상위뿐이었고 **v2 는 탭 3개(같은 불량 증감 / 불량 구성 변경 / 전체)의 합집합**이다(28.1).
+- 한 제품씩 차례로 처리한다. 한 제품의 희소 항목은 그 제품의 카드·검산을 낸 뒤 버린다. 다만 A→B 대응에 필요한 카드 쌍의 A 쪽 줄 타일·membership 은 B 처리 때까지 남긴다(카드 쌍만). 남긴 자료는 카드마다 따로 예약하고(`_Hold`) 그 카드가 B 까지 끝나면 반환한다(28.4).
 - 분석 타일 크기 `--tile-um` 은 JSON 과 보고서 1절 조건 표에 적는다. 허용 [0.5, 2.0], 기본 1.0.
 
 ### 18.2 메모리 예산
@@ -328,10 +330,10 @@ CNO (종류 CNO, 목업에서 K6):
   3. 표시용 번호 그림·전극 그림.
   4. item 희소 값·membership 완성 배열과 정렬·병합 사본. 병합(`_merge_sparse`)은 할당 전에 **동시 생존량 최대치**를 예약한다: 1단계(타일·값 이어 붙이기 + `np.unique(return_inverse)` 의 argsort·inverse·cumsum 임시 + `bincount` 결과)는 항목 수 × `MERGE_BYTES_PER_ENTRY`(64 B, 측정 49 B), 2단계(membership 이어 붙이기·정렬)는 항목 수 × `MERGE_MEMBER_BYTES_PER_ENTRY`(40 B). 청크는 호출자가 이미 예약해 두었으므로 원본 + 병합 결과 + 임시가 모두 예산에 들어간다. 검산의 합(`math.fsum`)은 배열 조각(65,536개)씩 넘겨 전체 배열의 Python list 를 만들지 않는다(값은 같다).
   5. sink 호출마다의 임시 배열(index·몫·`unique`/`bincount` 결과).
-  6. B 처리 중 남겨 둔 A 카드 자료.
+  6. B 처리 중 남겨 둔 A 카드 자료(mrep/T3: 카드마다 `_Hold` 로 예약, B 읽기 전·중에 부족하면 순위 낮은 카드부터 버림: 28.4).
   7. 카드 단계 임시: 성분 라벨링(창 bool 그림 + 성분당 64 B, `COMPONENT_BYTES_PER_MEMBER`), 창 색인 배열·관찰 영역 합집합(`IDS_UNIQUE_BYTES_PER_ID` × (창 타일 수 + 줄 타일 수))과 쌍 희소 값 합계. 모두 만들기 전에 예약하고 끝나면 반환한다.
 - `--max-tile-entries`(기본 40,000,000 ≈ 480 MB)는 item 희소 항목 합의 상한이다. 읽는 중 넘으면 즉시 멈추고(종료 2 `oversized_real_operation`, 조치 `--tile-um` 키우기) 출력 파일을 쓰지 않는다. 표시 옵션(`--map-px-um` 등)으로 줄지 않는 비용이다.
-- 읽기 전 가드 `guard_stage_ledger_maps`: frame 셀 수·item 수·레이어 수로 dense 배열 크기를 추정해 마스크를 읽기 전에 비교한다. `compute_areas` 기존 가드는 그대로 둔다. `execution.json` 에 최대 예약량을 기록한다.
+- 읽기 전 가드 `guard_stage_ledger_maps`: frame 셀 수·item 수·레이어 수로 dense 배열 크기를 추정해 마스크를 읽기 전에 비교한다. `compute_areas` 기존 가드는 그대로 둔다. `execution.json` 에 최대 예약량 `max_reserved_bytes` 와 단계별 최대 예약량 `max_reserved_by_stage`(28.5)를 기록한다.
 
 ### 18.3 창과 타일 격자 (G6)
 
@@ -416,7 +418,7 @@ CNO (종류 CNO, 목업에서 K6):
 
 - 범위와 겹치는 **모든 field 칸**(unit 영역·stretch 타일)의 offset 을 모은다. 모두 서로 `--coord-offset-spread-um` 이내여야 한다. 쓰는 이동량 = 범위와 겹친 면적이 가장 큰 칸의 offset(같으면 색인 작은 쪽). offset 순서는 `[dx, dy]` 이고 영역은 `[y0, y1, x0, x1]` 이다.
 - 대응 조건: (1) offset 출처 상태 ok, (2) 위 spread 통과, (3) `T_i` 가 B frame 안, (4) 그 쌍의 A membership(이동 후)과 B membership 이 `--coord-tolerance-um` 허용으로 겹치는 비율 ≥ `--coord-min-overlap`. 충돌 처리는 18.4 의 G1 3단계다.
-- 비교는 change_kind 가 같은 쌍 변화·변화 없음이고 item 이 양쪽에 있는 쌍만 한다. 그 밖(B-only·A-only·레이어 변경 쌍)은 "있는 쪽 값만" 표에 side 를 밝혀 넣는다. 레이어 변경 쌍은 양쪽 위치·값을 각각 보인다.
+- 비교는 change_kind 가 같은 쌍 변화·변화 없음·**불량 구성 변경**(`layer_change`)이고 양쪽에 있는 item 이 1개 이상인 쌍만 한다(mrep/T3: 구성 변경 쌍은 양쪽에 있는 item 으로 대응, 28.2). 양쪽에 있는 item 이 없으면 `no_common_item`. 그 밖(B-only·A-only·전극 추가·삭제 쌍)은 "있는 쪽 값만" 표에 side 를 밝혀 넣는다. v1 은 구성 변경 쌍을 대응하지 않고 양쪽 위치·값을 각각 보였다.
 - 04 없음·진단 모드·stale 이면 모든 줄이 제품별 "있는 쪽 값만" 이다(A 사각형을 B 에 그대로 쓰지 않는다).
 - 띠 코드: `coords_not_applied`, `coords_stale`, `coords_unavailable`, `coords_resolution_too_coarse`, 그리고 `--candidates` 를 주지 않았을 때의 `coords_no_candidates`(T4 가 더함, D4 의 "맨 위 띠 1줄"). `doc['bands']` 는 `{code, detail}` 목록이다. 카드 `match.reason` 은 대응을 못 한 이유를 같은 코드로 적는다.
 - T4 가 정한 세부(계획에 없던 부분):
@@ -436,7 +438,7 @@ CNO (종류 CNO, 목업에서 K6):
 - "변화" 보기: 색 = 쌍 전체 Δ 부호, 무늬 = `ledger.json` 의 `change_kind` 코드.
 - 새·사라진 전극: 없는 쪽 지도 아래 "이 제품에 없음". 그 지름에 영역이 없는 item 은 "지도 영역 없음".
 - 레이어 변경 쌍: A 는 옛 레이어, B 는 새 레이어 item 을 빗금. 새 쌍은 굵은 테두리, 사라진 쌍은 점선 테두리(목업 v8).
-- 5절(위치 카드): 종류별 |Δ| 상위 `--top-cards`(기본 5). 카드 표 2종: "같은 좌표 비교" 표(A 값 = `S_A,i` 합, B 값 = `T_i` 합)와 "있는 쪽 값만" 표(side 명시, "대응 부분 제외" 표시).
+- 5절(위치 카드): (v1) 종류별 |Δ| 상위 `--top-cards`(기본 5). (v2) 탭마다 종류별 상위 `--top-cards`, 한 쌍은 카드 한 장(28.1). 카드 표 2종: "같은 좌표 비교" 표(A 값 = `S_A,i` 합, B 값 = `T_i` 합)와 "있는 쪽 값만" 표(side 명시, "대응 부분 제외" 표시).
 - **합계 줄**: "범위 안 합 / 이 쌍 관찰 영역 값"(제품별 `O_A`, `O_B` 기준). 4절 쌍 값은 참고 줄로 따로 적고 "unit 한 장 기준이라 4절 값과 다릅니다" 를 붙인다. 계획 v1 의 "unit 한 장 값" 은 v1.1 C5 에서 "관찰 영역(창 ∪ 쓴 범위) 값" 으로 바뀌었다.
 - 07 위치 Δvi(`compare2_link._pair_location`)는 창 면적 × 밀도 근사라 5절 값과 다를 수 있다고 한 줄 적는다. 07 은 바꾸지 않는다.
 - 표시 구분: "대기"(값 null) / "없음"(그 제품에 없음) / "0%"(있고 값 0) 를 서로 다르게 보인다. "해당 없음" 은 12절 규칙을 따른다. `edge: excluded` 는 "비교 제외" 로 보인다.
@@ -472,19 +474,22 @@ CNO (종류 CNO, 목업에서 K6):
 - 필수 인자: `--compare2-dir`, `--config`, `--ledger-dir`, `--out`. 선택: `--candidates`.
 - `ledger-report` 는 `--maps-dir` 를 더한다. 값은 `ledger-maps` 의 `--out` 폴더다.
 
-## 22. `ledger_maps_v1` 키 표
+## 22. `ledger_maps_v2` 키 표
+
+(v1 → v2 로 바뀐 것은 28절에 모아 두었다: 카드 `tabs`·`tab_ranks`, 줄 `items[]`, 검산 6, `cards_dropped_for_budget`, 구성 변경 쌍 대응.)
 
 | 위치 | 키 | 뜻 |
 |---|---|---|
-| 최상위 | `schema_version` | `ledger_maps_v1` |
-| | `status`, `reasons` | `ok` / `partial`(종료 3, 사유 `ledger_maps_value_check_failed`) |
+| 최상위 | `schema_version` | `ledger_maps_v2` |
+| | `status`, `reasons` | `ok` / `partial`(종료 3, 사유 `ledger_maps_value_check_failed`, `cards_budget_reduced`) |
 | | `inputs` | `compare2_json_sha256`, `ledger_json_sha256`, `config_sha256`, `candidates`(04 폴더 상태·`apply_align`·지문 대조 결과), `real_input_hash`(제품별) |
 | | `options` | 21절 옵션 값 전체(`tile_um` 포함) |
 | | `report` | `diameter_um`(지도 지름) |
 | | `window` | 제품별 `origin_px`, `size_px`, `origin_um`, `unit_um`, `unit_source`(설정/유도), `tile_origin_um`(g_r) |
 | | `sides` | `<role>` 별 항목(아래) |
 | | `cards` | 카드 목록(아래) |
-| | `checks` | 검산 1–5 결과와 `not_evaluated` 개수 |
+| | `checks` | 검산 1–6 결과와 `not_evaluated` 개수 |
+| | `cards_dropped_for_budget` | 예산 때문에 빠진 카드 목록(28.4). 없으면 `[]` |
 | | `scale_steps` | PNG 배율을 거칠게 한 횟수와 사유 |
 | | `warnings`, `bands` | 경고(`maps_dl1_not_configured`), 띠 코드(19절) |
 | `sides.<role>` | `frame`(shape, origin_um, pitch), `items[]`, `maps[]`, `electrodes`(번호 → 이름 표), `hidden` | 제품별 자료 |
@@ -494,9 +499,9 @@ CNO (종류 CNO, 목업에서 K6):
 
 **`cards[]` 세부 키(T4 확정)**: 카드 `kind`, `pair_id`, `rank`(종류별 |Δ| 순위), `delta`, `a`, `b`(쌍 값), `change_kind`, `rows`, `match`, `observed`, `section4_ref`, `rows_sum`, `rounding_error_um`.
 - `rows[]`: 제품마다 줄 하나가 항목 하나다(대응 줄은 A 줄과 B 줄 둘이 서로 `match.counterpart` 로 가리킨다). 키 `id`(`A1`…, `B1`…), `side`(`reference`/`target`), `type`(`linear`/`point`), `rect`(frame 물리 µm `[x0, y0, x1, y1]`, 세는 상자), `rect_tiles`(타일 단위), `edge`(`none`/`repeat_used`/`excluded`), `edge_reason`(`coords_resolution_too_coarse`, `edge_no_dl1`, `edge_no_repeat_position`, `edge_mismatch`, `edge_unverifiable`), `shift_tiles`(반복 줄은 첫 이동 묶음의 `[sx, sy]`), `image_tiles`(이미지 타일 수, 반복 아니면 0), `image_shifts`(이동 묶음 `[sx, sy]` 목록, 반복 아니면 `[]`), `edge_rounding_um`(주기 반올림 오차 µm), `tiles`(최종 집합 타일 수), `tiles_lost`(앞 줄이 가져간 타일 수), `pair`(이 쌍 값, `excluded` 면 null), `others`(`top`[`pair_id`, `value`] 상위 3 + `others_n`·`others_value`), `range_total`, `match`(`status` `matched`/`only`, `reason`, `counterpart`, `offset_px`, `shift_tiles`, `overlap`, `rounding_error_um`, 부분 대응이면 `partial_matched`).
-- `match`: `status`(`matched`/`a_only`/`b_only`/`not_compared`), `reason`(띠 코드·`layer_change`·`items_not_on_both_sides` 등; 변화 종류가 같은 쌍 변화·변화 없음인데 item 이 한쪽에만 있으면 `items_not_on_both_sides`), `matched_rows`, `absorbed_b_rows`(B 줄이 대응 줄에 모두 포함된 경우 그 B 줄 번호), `not_listed`(`reference`/`target` 별 최대 줄 수에 못 든 점형 "그 밖 k 곳": `n`, `value`).
+- `match`: `status`(`matched`/`a_only`/`b_only`/`not_compared`), `reason`(띠 코드·변화 종류·`no_common_item` 등; v2 에서 `items_not_on_both_sides` 는 없어지고 양쪽에 있는 item 이 없으면 `no_common_item`, 28.2), `matched_rows`, `absorbed_b_rows`(B 줄이 대응 줄에 모두 포함된 경우 그 B 줄 번호), `not_listed`(`reference`/`target` 별 최대 줄 수에 못 든 점형 "그 밖 k 곳": `n`, `value`).
 - `observed`·`rows_sum`: 제품별(`reference`/`target`) 관찰 영역 이 쌍 값, 줄 이 쌍 값 합.
-- `checks.range_sum`/`pair_bound`/`partition`: `{status, checked, failed[], failed_count}`. 확인할 줄이 없으면 `not_evaluated`.
+- `checks.range_sum`/`pair_bound`/`partition`/`row_items`: `{status, checked, failed[], failed_count}`. 확인할 줄이 없으면 `not_evaluated`.
 
 세부 키 이름은 T3·T4 가 확정하고 이 표를 고친다. 이 표의 최상위 키와 `sides.<role>.items[]`, `maps[]`, `cards[]`, `checks` 구성은 고정이다.
 
@@ -508,9 +513,10 @@ CNO (종류 CNO, 목업에서 K6):
 | 2 | `compare2_config_mismatch` | `compare2.json` 이 기록한 config sha256(`inputs.compare2_config.sha256`)이 이 `--config` 의 sha256 과 다름(02 부터 다시 실행). `ledger.json` 쪽 불일치는 `ledger_maps_stale` |
 | 2 | `ledger_maps_output_not_owned` | `--out` 에 이 명령이 만들지 않은 파일이 있음(아무것도 쓰지 않고 지우지 않는다) |
 | 2 | `ledger_maps_option_invalid` | 21절 허용 범위 밖 |
-| 2 | `oversized_real_operation` | `_Budget` 예약이나 읽기 전 가드가 `max_operation_bytes` 또는 `--max-tile-entries` 초과(출력 파일 쓰지 않음) |
+| 2 | `oversized_real_operation` | `_Budget` 예약이나 읽기 전 가드가 `max_operation_bytes` 또는 `--max-tile-entries` 초과(출력 파일 쓰지 않음). 카드 단계의 예약 실패는 그 카드만 빼고 종료 3(아래 `cards_budget_reduced`) |
 | 2 | `ledger_maps_stale`(보고서 쪽) | `ledger-report --maps-dir` 에서 `ledger_maps.json` 이 기록한 `ledger.json` sha256 이 현재와 다름 |
-| 3 | `ledger_maps_value_check_failed` | 검산 1·2·3·4·5 중 하나라도 통과하지 못함(결과 파일은 쓴다) |
+| 3 | `ledger_maps_value_check_failed` | 검산 1·2·3·4·5·6 중 하나라도 통과하지 못함(결과 파일은 쓴다) |
+| 3 | `cards_budget_reduced` | 카드 단계 메모리 예산 때문에 카드가 하나 이상 빠짐(28.4). 지도·값·검산 1–2 는 남고 `cards_dropped_for_budget` 에 목록, 띠 `cards_budget_reduced`(개수). 카드와 무관한 예산 초과(읽기·병합·지도, 모든 카드를 버려도 B 가 안 됨)는 계속 종료 2 |
 | 0 + 경고 | `maps_dl1_not_configured` | DL1 전극 폴더가 설정에 없음. 전극 그림 없이 item 지도만 만든다 |
 | 0 + 경고 | `maps_resource_estimate_missing` | 데이터셋 provenance 에 `resource_estimate` 가 없어 `compute_areas` 보유량을 예약하지 못함(예약 0 으로 진행, 제품마다 `warnings` 에 `{code, role}`) |
 
@@ -573,3 +579,67 @@ null 규칙:
 이름과 값:
 - `change_kinds` 표에서 `layer_change` 의 label 은 "불량 구성 변경" 이다. 코드 `layer_change` 와 item `presence` 값(`both/new/gone`)은 그대로다(E4). 카드 줄의 `a_only/b_only` 변환은 보고서 쪽에서 한다.
 - item 의 presence 판정은 8절 규칙이다. 한쪽이 거리 필터로 0 이고 상대에 같은 `item_id` 가 있으면 `both` 다.
+- (28.3 으로 바뀜) 위 "`a_only/b_only` 변환은 보고서 쪽에서 한다" 는 계획 v1.2 E4 로 `ledger-maps` 쪽으로 옮겼다. `ledger.json` 의 `presence` 는 그대로다.
+
+## 28. `ledger_maps_v2` 카드 규칙 (mrep/T3)
+
+근거: 계획 초안 Q3·T3, 계획 v1 D3·B3, v1.1 C2·C3·C5, v1.2 E2·E3·E4. `ledger.json` 의 새 키(27절: `pairs[].breakdown`, `items[].presence`, `change_kind`)를 입력으로 쓴다. `ledger.py`·`ledger_changes.py`·`ledger_report.py` 는 건드리지 않는다. 이 변경으로 `ledger_report.py` 의 `MAPS_SCHEMA = 'ledger_maps_v1'` 은 v2 를 거부한다(보고서 쪽은 T5 가 고친다).
+
+### 28.1 카드 대상 = 탭 3개의 합집합
+
+- 후보: 종류(line·pixel)별로 `a`·`b`·`delta` 가 모두 있는 쌍(지금과 같음).
+- 탭과 점수(탭마다 종류별로 `--top-cards` 개, 동점은 `pair_id` 순):
+
+  | 탭 | 들어가는 쌍 | 점수 |
+  |---|---|---|
+  | `same` | `breakdown.same_delta` 가 null 이 아니고 양쪽에 있는 item(presence `both`)이 1개 이상 | `|breakdown.same_delta|` |
+  | `comp` | `change_kind == "layer_change"`(불량 구성 변경)이고 `breakdown.new_value`·`gone_value` 가 null 이 아님 | `new_value + gone_value` (둘 다 ≥ 0, 상쇄 없음) |
+  | `all` | 전부 | `|delta|` (지금 규칙) |
+
+- 같은 쌍이 여러 탭에 들면 카드는 한 장이다. 카드 키: `tabs`(`same`, `comp`, `all` 중 든 탭, 이 순서), `tab_ranks`(탭별 순위, 1부터), `rank`(종류 안에서 `|delta|` 순위 — 전체 후보 기준이라 `all` 탭에 안 든 카드는 `--top-cards` 보다 클 수 있다), `common_items`(양쪽에 있는 item 수), `items_total`(쌍의 item 수).
+- `breakdown` 이 null(대기)이거나 없는 쌍은 `same`·`comp` 탭에서 빠지고 `all` 탭에만 들 수 있다.
+- 카드 순서: 종류별로 `rank` 순. 모든 카드가 `all` 탭에만 있으면 v1 과 같은 쌍·순서다.
+- 반례 fixture: 새 방식 100·없어진 방식 100 으로 Δ ≈ 0 인 구성 변경 쌍이 `comp` 탭 1위(`tests/test_ledger_maps_v2.py`).
+
+### 28.2 구성 변경 쌍의 대응
+
+- 대응 대상: 두 제품 모두에 있는 쌍이고 `change_kind` 가 `same_pair_change`·`no_change`·`layer_change` 일 때. 양쪽에 있는 item(`presence == both`)이 1개 이상이면 `matched`, 없으면 `not_compared` + 사유 `no_common_item`. 그 밖의 `change_kind`(전극 추가·삭제 등)는 지금처럼 사유 = `change_kind`.
+- v1 의 사유 `items_not_on_both_sides` 는 없어졌다. 같은 쌍 변화인데 한쪽에만 있는 item 이 섞인 쌍은 이제 양쪽 item 으로 대응하고, 양쪽 item 이 없으면 `no_common_item` 이다.
+- **대응 비율**(19.4 의 membership 겹침)은 양쪽에 있는 item 의 membership 합집합으로 잰다. 쌍의 item 이 모두 양쪽에 있으면 쌍 전체 membership 과 같으므로 결과가 v1 과 같다(같은 배열을 그대로 쓴다). 줄(타일 집합·선형 판정)은 쌍 전체 membership 으로 만들고 값도 쌍 전체로 센다(줄의 타일 집합은 바꾸지 않는다).
+- 대응하지 않는 카드(`matched` 가 아닌 것)는 A 쪽 `a_member` 를 만들지 않는다(쓰이지 않는다).
+
+### 28.3 줄의 item 값과 검산 6
+
+- 줄마다 `items[] = {item_id, presence, value}`. 그 제품에 있는 이 쌍의 item 전부이고 값은 줄이 가진 타일 위의 item 값이다(0 도 적는다). `edge == excluded` 인 줄은 `items = null`(`pair` 도 null).
+- `presence`: ledger 값 `both / new / gone` → **`both / b_only / a_only`**(`gone → a_only`, `new → b_only`, E4). A 줄에는 `both`·`a_only`, B 줄에는 `both`·`b_only` 만 있다.
+- 검산 6 `checks.row_items`: `math.fsum(items[].value)` = 줄의 `pair`(상대 1e-9). 줄마다 센다. 보고서의 표 구분은 `row.match` 가 아니라 이 `presence` 다(C5): `both` = "같은 좌표 비교", `a_only`/`b_only` = "이 제품에만 있는 불량 방식".
+- 타일 소유(G1)와 검산 3–5 는 바뀌지 않는다.
+
+### 28.4 카드 단위 원자성과 예산 처리 (E2, E3)
+
+**회계 방식(하나로 정함): 카드 내부의 기존 `reserve` 만 쓰고 카드 단위로 되돌린다.** 카드 일괄 예약은 쓰지 않는다. 이유: 줄의 타일 수·후보 상자 크기는 줄을 만들어 봐야 알아서 처리 전에 닫힌 식으로 추정할 수 없고, 일괄 예약을 하면 내부 `reserve` 와 이중으로 센다. 카드 안에서 하는 모든 할당은 지금처럼 만들기 **전에** `reserve` 한다. 달라진 것은 소유 기록이다.
+
+- `_Hold`(바이트 하나)가 카드의 한 부분(A 부분, B 부분)이다. `_Budget.begin(hold)` 와 `end()` 사이의 모든 `reserve`·`release` 는 그 hold 에 더하고 뺀다(`owned=False` 인 예약, 곧 여러 카드가 같이 쓰는 타일 전극 격자는 제외하고 `ctx.el_bytes` 로 따로 센다). 카드 안에서 예약이 실패하면(`_BudgetExceeded`, 코드 `oversized_real_operation`) 그 hold 의 남은 바이트를 `free(hold)` 로 돌려주고 **그 카드만** 건너뛴다. 다른 카드를 버리지 않는다. 카드를 건너뛴 뒤에도 같은 제품의 다음 카드는 계속 처리한다.
+- A 카드가 끝나면 hold 에는 B 부분이 쓸 자료만 남는다: 줄 타일 배열과 대응용 membership(`a_member`). 이 예약은 그 카드가 B 까지 끝나거나 버려질 때 반환한다. 예전처럼 모든 A 카드를 끝낸 뒤 한 번에 예약하지 않는다.
+- **A 카드 결과·검산은 카드별로 임시 보관**한다(`_Card.acc_a`, B 부분은 `acc_b`). B 까지 끝난 카드만 `_CardRun.finish` 로 전역 집계(검산 3–6 의 `checked`·실패 목록)에 더한다. 버린 카드의 검산·줄·값은 집계와 출력 어디에도 없다.
+- **B 읽기 전·중 부족(E2)**: 카드 밖의 `reserve`(읽기·병합·지도 단계 전부)는 `_Budget.reserve(nbytes, what, evict=…)` 로 부른다. 기본 콜백 `_CardRun.evict_one` 이 이미 끝난 A 카드 하나를 버리고(순위가 가장 낮은 카드: `drop_key` = 가장 좋은 탭 순위가 큰 것, 같으면 탭이 적은 것) `used` 를 줄인다. `used + nbytes ≤ limit` 이 될 때까지 되풀이하고, 버릴 카드가 없으면 종료 2(`oversized_real_operation`)다. 그래서 B 읽기 전 판정 `required = used(A 카드·PNG 포함 실제 전체) + B 추정`(compute_areas 추정, B 밀집 격자, 지도 canvas)이 상한을 넘으면 낮은 순위 카드부터 버리고 다시 판정하고, 읽는 중에 생기는 데이터 의존 임시(sink·병합·PNG)가 모자라도 같은 규칙이다. 카드 안(`begin` 와 `end` 사이)에서는 다른 카드를 버리지 않는다.
+- 버린 카드 기록: `cards_dropped_for_budget[] = {kind, pair_id, rank, tabs, stage, reason, detail}`. `stage` = `reference`(A 부분 예약 실패), `target`(B 부분 예약 실패), `reference_held`(A 부분을 끝낸 뒤 B 쪽 부족으로 버림). `reason` = `card_reserve_failed` / `evicted_for_budget`. 카드가 하나라도 빠지면 `status = partial`, `reasons` 에 `cards_budget_reduced`, 종료 3, 띠 `{code: cards_budget_reduced, count, detail}`. 지도·item 값·검산 1–2 는 그대로 남는다.
+- 카드 소유 예약의 잔액은 카드가 끝나거나 버려지면 0 이다. 비카드 예약(번호 PNG 바이트, 타일 전극 격자 등)은 유지된다(`tests/test_ledger_maps_v2.py` 가 실행 끝의 `budget.used` 를 정상 실행과 비교한다).
+- `ledger-report` 와 ETX 안내: 종료 3 이어도 실행기는 계속한다. 예산 때문에 카드가 빠지면 `LEDGER_MAPS_ARGS = ["--tile-um", "2"]`(B3, 기존 안내)로 타일을 키우거나 `--top-cards` 를 줄인다.
+
+### 28.5 `execution.json` 단계별 최대 예약량 (B3)
+
+`execution.json` 에 `max_reserved_by_stage = {reference: {read, merge, maps, cards}, target: {read, merge, maps, cards}}`(바이트)를 더한다. 단계 안에서 `used` 가 가장 컸던 값이다(단계가 시작할 때 이미 쥐고 있는 양도 포함).
+
+| 단계 | 구간 |
+|---|---|
+| `read` | `compute_areas` 추정 예약 → dense 격자·canvas → 마스크 읽기(sink 임시·희소 값 청크) |
+| `merge` | item 희소 값·membership 병합 |
+| `maps` | 번호 PNG(item, DL1 전극) 만들기 |
+| `cards` | 검산 1–2 뒤 카드 처리 전체(첫 제품의 A 부분, 둘째 제품의 B 부분), 희소 자료 정리까지 |
+
+실행 기록의 `max_reserved_bytes`(전체 최대)는 그대로다. 다음 ETX 실행에서 90% 가 어느 단계의 최댓값인지 이 표로 확인한다.
+
+### 28.6 `cards[]` 새 키 요약
+
+`tabs`, `tab_ranks`, `common_items`, `items_total`, `rows[].items[]`, 그리고 최상위 `cards_dropped_for_budget`, `checks.row_items`. 기존 키·값은 모든 item 이 양쪽에 있는 쌍에서 v1 과 같다.
