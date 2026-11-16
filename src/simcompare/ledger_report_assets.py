@@ -67,6 +67,12 @@ canvas.mapcv{display:block;width:100%;height:auto;background:var(--surface-0);bo
 .s2row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}.s2map{position:sticky;top:44px}
 .s3grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px;align-items:start}.s3maps{position:sticky;top:44px}
 .s3grid .slot{margin-top:0;min-height:120px}
+.s3panel{max-height:calc(100vh - 60px);overflow:auto;padding-right:4px}.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:4px 0}
+.fbtn.on{background:var(--sel);border-color:var(--text-secondary);font-weight:600}.fbar>div{margin:2px 0}
+#pl-box{max-height:360px}tr.plrow{cursor:pointer}tr.plrow:hover td,tr[data-roi]:hover td{background:var(--sel)}
+.panel{border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:8px;background:var(--surface-0)}.panel .t{font-size:14px}
+.rt th,.rt td{white-space:normal}.basis{display:inline-block;padding:0 6px;border-radius:8px;font-size:11px;border:1px solid var(--grid);color:var(--text-muted)}
+.cardtab .lst li{align-items:flex-start}.zf{margin:2px 0}
 .mbar{margin:4px 0;line-height:2}.mchip,.mtog{margin-right:4px}.mchip.on,.mtog.on{background:var(--sel);border-color:var(--text-secondary);font-weight:600}
 .mrow{display:flex;gap:12px;align-items:flex-start}.mview{flex:1;min-width:0}.mleg{flex:0 0 150px;font-size:12px;position:sticky;top:44px}
 .mleg div{margin:3px 0}.sw{display:inline-block;width:14px;height:10px;margin-right:5px;vertical-align:middle;border-radius:2px}
@@ -89,7 +95,7 @@ D.pairs.forEach(function(p){PB[p.id]=p;});
 function parseHash(){var o={kv:{},flags:{}},h=location.hash.replace(/^#/,'');if(!h)return o;
  h.split('&').forEach(function(p){if(!p)return;var i=p.indexOf('=');if(i<0){o.flags[p]=true;return;}
   var k=p.slice(0,i),v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}o.kv[k]=v;});return o;}
-function buildHash(o){var parts=[];['sel','tab','cat','q','layer','layers','ov'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
+function buildHash(o){var parts=[];['sel','entry','tab','cat','kind','ck','tag','q','more','layer','layers','ov'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
  ['print','demo'].forEach(function(k){if(o.flags[k])parts.push(k);});return parts.length?'#'+parts.join('&'):'#';}
 function setHash(o){var h=buildHash(o);if(h==='#'){if(location.hash){history.replaceState(null,'',location.pathname+location.search);}apply();}else{location.hash=h;}}
 function selOf(o){var s=o.kv.sel;if(!s&&o.flags.demo&&D.demo_pair)s='pair:'+D.demo_pair;if(!s)return null;
@@ -110,19 +116,22 @@ function label(sel){if(!sel)return '<span class="muted">선택 없음</span>';
  if(sel.t==='roi')return '변경 위치 <b>'+esc(sel.id)+'</b>';return '<span class="muted">선택 없음</span>';}
 var f4=function(v){return v==null?'대기':(v===0?'0%':(v*100).toFixed(4)+'%');};
 var n4=function(v){return v==null?'—':(v===0?'0':Number(v).toPrecision(4));};
-function condRows(pairs){var rows=[];pairs.forEach(function(p){p.items.forEach(function(it){var sizes=it.sizes||[];
+function condRows(pairs){var rows=[],zero=[];pairs.forEach(function(p){p.items.forEach(function(it){var sizes=it.sizes||[];
  if(!sizes.length)rows.push('<tr data-pair="'+esc(p.id)+'"><td class="l">'+esc(p.e.join('–'))+'</td><td class="l">'+esc(it.label)+'</td><td class="l muted" colspan="8">크기별 값 없음</td></tr>');
- sizes.forEach(function(s){rows.push('<tr data-pair="'+esc(p.id)+'"><td class="l">'+esc(p.e.join('–'))+'</td><td class="l">'+esc(it.label)+'</td><td>'+esc(s.diameter_um)+'</td><td class="l">'+esc(s.density_layer==null?'':s.density_layer)+
-  '</td><td>'+n4(s.area_a)+' / '+n4(s.area_b)+'</td><td>'+n4(s.lambda_a)+' / '+n4(s.lambda_b)+'</td><td>'+f4(s.value_a)+'</td><td>'+f4(s.value_b)+'</td></tr>');});});});return rows;}
+ sizes.forEach(function(s){(s.value_a===0&&s.value_b===0?zero:rows).push('<tr data-pair="'+esc(p.id)+'"><td class="l">'+esc(p.e.join('–'))+'</td><td class="l">'+esc(it.label)+'</td><td>'+esc(s.diameter_um)+'</td><td class="l">'+esc(s.density_layer==null?'':s.density_layer)+
+  '</td><td>'+n4(s.area_a)+' / '+n4(s.area_b)+'</td><td>'+n4(s.lambda_a)+' / '+n4(s.lambda_b)+'</td><td>'+f4(s.value_a)+'</td><td>'+f4(s.value_b)+'</td></tr>');});});});rows.zero=zero;return rows;}
+function condTable(id,pairs,open){var rows=condRows(pairs),n=rows.zero.length,h='<div class="ovx"><table id="'+id+'">'+CH+'<tbody>'+rows.join('')+'</tbody>';
+ if(n)h+='<tbody class="zrows"'+(open?'':' hidden')+'>'+rows.zero.join('')+'</tbody><tfoot><tr><td colspan="8" class="l"><button type="button" class="zf" data-n="'+n+'">값 0 인 크기 '+n+(open?'개 접기':'개 펼치기')+'</button></td></tr></tfoot>';
+ return h+'</table></div>';}
 var CH='<thead><tr><th class="l">전극 쌍</th><th class="l">item</th><th>이물 크기 µm</th><th class="l">density 레이어</th><th>면적 A / B</th><th>λ A / B</th><th>값 A</th><th>값 B</th></tr></thead>';
 function drawCond(sel,pr,state){var box=$('cond'),all=$('cond-all');if(!box)return;
  var ids=Object.keys(pr.pairs);
  if(!sel||!ids.length){box.innerHTML='<p class="muted">'+(sel?'선택한 것과 연결된 쌍이 없습니다.':'위에서 쌍을 하나 고르면 그 쌍의 조건 값이 이 자리에 나옵니다.')+'</p>';}
  else{var list=ids.sort().map(function(id){return PB[id];}).filter(Boolean);
-  box.innerHTML='<p class="headline" style="margin:4px 0">선택: '+label(sel)+(sel.t==='pair'?'':' 의 관련 쌍 '+list.length+'개')+'</p><div class="ovx"><table id="cond-table">'+CH+'<tbody>'+condRows(list).join('')+'</tbody></table></div>';}
+  box.innerHTML='<p class="headline" style="margin:4px 0">선택: '+label(sel)+(sel.t==='pair'?'':' 의 관련 쌍 '+list.length+'개')+'</p>'+condTable('cond-table',list,!!state.flags.print);}
  if(all&&(state.flags.print||all.open)&&!all.getAttribute('data-drawn')){all.setAttribute('data-drawn','1');
-  $('cond-all-body').innerHTML='<div class="ovx"><table id="cond-all-table">'+CH+'<tbody>'+condRows(D.pairs).join('')+'</tbody></table></div>';}}
-function mark(sel,pr){var i,els,k,keys={'data-pair':pr.pairs,'data-el':pr.els,'data-layer':pr.layers,'data-roi':pr.rois};
+  $('cond-all-body').innerHTML=condTable('cond-all-table',D.pairs,true);}}
+function mark(sel,pr){var i,els,k,keys={'data-pair':pr.pairs,'data-card':pr.pairs,'data-el':pr.els,'data-layer':pr.layers,'data-roi':pr.rois};
  els=document.querySelectorAll('.sel');for(i=0;i<els.length;i++)els[i].classList.remove('sel');
  for(k in keys){els=document.querySelectorAll('['+k+']');for(i=0;i<els.length;i++){var v=els[i].getAttribute(k);if(keys[k][v])els[i].classList.add('sel');}}}
 function drawPartners(sel){var box=$('el-partners');if(!box)return;
@@ -136,7 +145,77 @@ function filterRows(st){var q=(st.kv.q||'').toLowerCase(),inp=$('el-q'),n=0,tot=
  if(inp&&inp.value!==(st.kv.q||''))inp.value=st.kv.q||'';
  for(i=0;i<rows.length;i++){var hit=!q||rows[i].getAttribute('data-el').toLowerCase().indexOf(q)>=0;rows[i].classList.toggle('hide',!hit);
   if(rows[i].getAttribute('data-row')==='corr'){tot++;if(hit)n++;}}
- var c=$('el-count');if(c)c.textContent=n+' / '+tot;}
+ var c=$('el-count');if(c)c.textContent=n+' / '+tot;
+ var pq=$('pl-q');if(pq&&pq.value!==(st.kv.q||''))pq.value=st.kv.q||'';}
+/* ---- section 3 panel (mrep/T8): two entries, pair list, card tabs, detail of the selection ---- */
+var SHOW=20,TABS=['same','comp','all'],PRES={both:'양쪽',new:'B 에만',gone:'A 에만'},TAGN={};
+((D.changes&&D.changes.rois)||[]).forEach(function(r){(r.tags||[]).forEach(function(t,i){TAGN[t]=(r.tag_text||[])[i]||t;});});
+var ppx=function(v){return v==null?'대기':(v===0?'0%p':(v>0?'+':'−')+Math.abs(v*100).toFixed(4)+'%p');};
+var scl=function(v){return v==null||v===0?'':(v>0?'s-up':'s-down');};
+var sgx=function(v){return v==null?'<span class="muted">대기</span>':'<span class="sg '+scl(v)+'">'+ppx(v)+'</span>';};
+function roiNo(key){var r=(D.changes&&D.changes.rois)||[],i;for(i=0;i<r.length;i++){if(r[i].roi_key===key)return i+1;}return '?';}
+function pairRois(id){return (D.changes&&D.changes.pairs&&D.changes.pairs[id]&&D.changes.pairs[id].roi_keys)||[];}
+function link07(h){var r=D.report07;return r&&r.status==='linked'?'<a class="l07" href="'+esc(r.href+h)+'">07 에서 보기</a>':'<span class="muted l07">07 보고서 없음</span>';}
+function ckBadge(p){var cls={new_pair:' b-new',gone_pair:' b-gone',layer_change:' b-mv',value_pending:' b-mv'}[p.ck]||'';return '<span class="badge'+cls+'">'+esc(D.labels.change_kinds[p.ck]||p.ck)+'</span>';}
+function compLine(p){var c=p.comp;if(!c||p.ck!=='layer_change')return '';var a=c.added||[],r=c.removed||[];if(!a.length&&!r.length)return '';
+ return '<span class="sub2">item +'+a.length+' / −'+r.length+' ('+esc(a.map(function(x){return '+'+x.text;}).concat(r.map(function(x){return '−'+x.text;})).join(' '))+')</span>';}
+function rangeBlock(p){var st=$('card-store'),i,why;
+ if(st){for(i=0;i<st.children.length;i++){if(st.children[i].getAttribute('data-range')===p.id)return '<h3>위치 카드 범위 값</h3><div id="range-tables">'+st.children[i].innerHTML+'</div>';}}
+ if(!D.maps)why='지도 폴더(--maps-dir)가 없어 위치 카드가 없습니다.';
+ else{var dr=(D.maps.dropped_cards||[]).filter(function(d){return d.pair_id===p.id;})[0],n=(D.maps.options&&D.maps.options.top_cards)||'';
+  if(dr)why='이 쌍의 카드는 메모리 예산 때문에 빠졌습니다(cards_budget_reduced · 단계 '+dr.stage+' · '+dr.reason+'). 범위 값은 07 에서 봅니다.';
+  else if(p.d==null)why='값이 대기라 위치 카드 대상이 아닙니다.';
+  else why='이 쌍은 위치 카드 대상이 아닙니다(상위 '+n+'). 카드는 종류마다 "같은 불량 증감 상위 · 구성 변경 상위 · 전체 |Δ|" 세 기준의 상위 '+n+' 쌍만 만듭니다.';}
+ return '<h3>위치 카드 범위 값</h3><p class="muted" id="no-card">'+esc(why)+'</p>';}
+function pairDetail(p){var rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.changes.pairs[p.id]&&D.changes.pairs[p.id].tags)||[],b=p.brk,eq,h;
+ var tags=tg.map(function(t){return '<span class="badge b-tag">'+esc(TAGN[t]||t)+'</span>';}).join('');
+ if(!b||b.status==='not_evaluated'||b.same_delta==null||b.new_value==null||b.gone_value==null)eq='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
+ else eq='쌍 Δ = 같은 불량 증감 <b>'+ppx(b.same_delta)+'</b> + 새 방식 <b>'+f4(b.new_value)+'</b> − 없어진 방식 <b>'+f4(b.gone_value)+'</b>';
+ h='<div class="panel" id="pd" data-pd="'+esc(p.id)+'"><div class="t"><b>'+esc(p.no||'—')+' · '+esc(p.e.join('–'))+'</b> <span class="chip" style="background:var(--'+esc(p.kind)+')"></span>'+esc(p.kind)+'</div>'+
+  '<div style="margin:4px 0">'+ckBadge(p)+compLine(p)+tags+'</div><p class="headline" id="pd-eq" style="margin:6px 0">'+eq+'</p>'+
+  '<table id="pd-total"><thead><tr><th class="l">쌍 전체 (장부)</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody><tr><td class="l">'+esc(p.e.join('–'))+'</td><td>'+(p.pa?f4(p.a):'없음')+'</td><td>'+(p.pb?f4(p.b):'없음')+'</td><td>'+sgx(p.d)+'</td></tr></tbody></table>'+
+  '<details open><summary>item 펼침 ('+p.items.length+')</summary><table id="pd-items"><thead><tr><th class="l">방식 · 레이어</th><th class="l">구분</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody>'+
+  p.items.map(function(it){return '<tr><td class="l">'+esc(it.label)+'</td><td class="l"><span class="badge '+(it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''))+'">'+(PRES[it.pres]||esc(it.pres))+'</span></td><td>'+(it.pres==='new'?'없음':f4(it.a))+'</td><td>'+(it.pres==='gone'?'없음':f4(it.b))+'</td><td>'+(it.pres==='both'?sgx(it.d):'<span class="muted">비교 없음</span>')+'</td></tr>';}).join('')+'</tbody></table></details>'+
+  '<h3>관련 변경 위치</h3><div id="pd-rois">'+(rk.length?rk.map(function(k){return '<button type="button" data-href="#sel=roi:'+encodeURIComponent(k)+'&entry=loc">#'+roiNo(k)+'</button>';}).join(' ')+' <span class="muted">관련 쌍 전체값입니다. 위치별 합계는 없습니다.</span>':
+   (D.changes&&D.changes.link_status==='ok'?'<span class="muted">변경 위치 미연결 — 04 가 고른 상위 위치에 없음</span>':'<span class="muted">04 결과가 없어 연결을 알 수 없습니다.</span>'))+'</div>'+
+  rangeBlock(p)+'<div class="slot" id="pd-video">영상: 보고서 미포함 — '+link07('#s6')+'</div></div>';
+ return h;}
+function roiDetail(key){var rois=(D.changes&&D.changes.rois)||[],roi=null,i;for(i=0;i<rois.length;i++){if(rois[i].roi_key===key)roi=rois[i];}
+ if(!roi)return '<p class="muted">없는 변경 위치입니다.</p>';
+ var ids=Object.keys((D.changes&&D.changes.pairs)||{}).filter(function(id){return D.changes.pairs[id].roi_keys.indexOf(key)>=0&&PB[id];}).sort();
+ return '<div class="panel" id="pd" data-pd-roi="'+esc(key)+'"><div class="t">변경 위치 <b>#'+roiNo(key)+'</b> '+(roi.tag_text||[]).map(function(t){return '<span class="badge b-tag">'+esc(t)+'</span>';}).join('')+'</div>'+
+  '<p class="muted">레이어 '+esc((roi.layers||[]).join(', '))+' · 관련 쌍 '+ids.length+'개 — 관련 쌍 전체값입니다. 위치별 합계는 없습니다.</p>'+
+  (ids.length?'<table id="roi-pairs"><thead><tr><th class="l">관련 쌍</th><th class="l">변화 종류</th><th>Δ</th></tr></thead><tbody>'+ids.map(function(id){var p=PB[id];return '<tr data-pair="'+esc(id)+'" data-href="#sel=pair:'+encodeURIComponent(id)+'"><td class="l">'+esc(p.no||'')+' '+esc(p.e.join('–'))+'</td><td class="l">'+ckBadge(p)+'</td><td>'+sgx(p.d)+'</td></tr>';}).join('')+'</tbody></table>':'<p class="muted">연결된 쌍이 없습니다(미연결).</p>')+
+  '<p>'+link07('#roi'+encodeURI(key))+'</p></div>';}
+function relatedDetail(sel,pr){var ids=Object.keys(pr.pairs).sort();
+ return '<div class="panel" id="pd" data-pd-'+esc(sel.t)+'="'+esc(sel.id)+'"><div class="t">'+label(sel)+'</div><p class="muted">관련 쌍 '+ids.length+'개 — 눌러서 쌍을 고릅니다.</p>'+
+  (ids.length?'<table id="rel-pairs"><tbody>'+ids.map(function(id){var p=PB[id];return '<tr data-pair="'+esc(id)+'" data-href="#sel=pair:'+encodeURIComponent(id)+'"><td class="l">'+esc(p.no||'')+' '+esc(p.e.join('–'))+'</td><td class="l">'+ckBadge(p)+'</td><td>'+sgx(p.d)+'</td></tr>';}).join('')+'</tbody></table>':'')+'</div>';}
+function parseCat(v){var o={kind:'',cat:'',tag:'',ck:''},i;if(!v)return o;i=v.indexOf(':');if(i<0){o.cat=v;return o;}
+ var h=v.slice(0,i),r=v.slice(i+1);if(h==='line'||h==='pixel'){o.kind=h;o.cat=r;}else if(h==='tag')o.tag=r;else if(h==='kind')o.ck=r;else o.cat=v;return o;}
+function drawPanel(st,sel,pr){var pn=$('s3-panel');if(!pn)return;var root=document.documentElement,pc=parseCat(st.kv.cat),i;
+ var entry=st.kv.entry==='loc'||st.kv.entry==='pair'?st.kv.entry:(sel&&sel.t==='roi'?'loc':'pair'),tab=TABS.indexOf(st.kv.tab)>=0?st.kv.tab:'same';
+ var cur={kind:st.kv.kind||pc.kind,ck:st.kv.ck||pc.ck,cat:pc.cat,tag:st.kv.tag||pc.tag,tab:tab,entry:entry};
+ var loc=$('pn-loc'),pair=$('pn-pair');if(loc)loc.hidden=entry!=='loc';if(pair)pair.hidden=entry!=='pair';
+ var bs=pn.querySelectorAll('[data-f]');for(i=0;i<bs.length;i++){var k=bs[i].getAttribute('data-f');if(k==='more')continue;bs[i].classList.toggle('on',(cur[k]||'')===bs[i].getAttribute('data-v'));}
+ var cts=pn.querySelectorAll('.cardtab');for(i=0;i<cts.length;i++){cts[i].hidden=cts[i].getAttribute('data-tab')!==tab;}
+ var tb=$('pl-table');
+ if(tb){var rows=tb.tBodies[0].querySelectorAll('tr[data-pair]'),q=(st.kv.q||'').toLowerCase(),lim=st.kv.more==='1'?1e9:SHOW,n=0,sh=0,r,ok,show;
+  for(i=0;i<rows.length;i++){r=rows[i];
+   ok=cur.cat!=='cno'&&(!cur.kind||r.getAttribute('data-kind')===cur.kind)&&(!cur.ck||r.getAttribute('data-ck')===cur.ck)&&(!cur.cat||(' '+r.getAttribute('data-cat')+' ').indexOf(' '+cur.cat+' ')>=0)&&
+    (!cur.tag||(' '+r.getAttribute('data-tags')+' ').indexOf(' '+cur.tag+' ')>=0)&&(!q||r.getAttribute('data-name').indexOf(q)>=0);
+   show=false;if(ok){n++;if(n<=lim){show=true;sh++;}}r.classList.toggle('hide',!show);}
+  tb.setAttribute('data-count',String(n));tb.setAttribute('data-shown',String(sh));
+  var pc2=$('pl-count');if(pc2)pc2.textContent='결과 '+n+' 쌍 · 표시 '+sh;
+  var pm=$('pl-more');if(pm){pm.hidden=n<=sh;pm.textContent='더 보기 (+'+(n-sh)+' 쌍)';}
+  var pnone=$('pl-none');if(pnone)pnone.hidden=n!==0;
+  root.setAttribute('data-pl-count',String(n));root.setAttribute('data-pl-shown',String(sh));root.setAttribute('data-pl-total',tb.getAttribute('data-total'));}
+ root.setAttribute('data-entry',entry);root.setAttribute('data-tab',tab);
+ var det=$('pn-detail'),html;
+ if(!sel)html='<p class="muted">선택한 것이 없습니다. 목록·카드·지도에서 하나를 누르세요.</p>';
+ else if(sel.t==='pair')html=PB[sel.id]?pairDetail(PB[sel.id]):'<p class="muted">없는 쌍입니다.</p>';
+ else if(sel.t==='roi')html=roiDetail(sel.id);
+ else html=relatedDetail(sel,pr);
+ if(det)det.innerHTML=html;}
 /* ---- maps (mrep/T7): one PNG pair per layer and product, decoded on demand, self-checked, drawn in sections 1, 2 and 3 ---- */
 var MP=D.maps||null,PNG=null,SD={},IB={},DEC={},GEN=0,ALPHA=0.8,CC={},ANYFAIL=false,DECODED=0;
 if(MP){try{var pe=$('map-png');PNG=pe?JSON.parse(pe.textContent):null;}catch(e1){PNG=null;}
@@ -283,7 +362,7 @@ function onMapClick(cv,ev){var view=cv.getAttribute('data-view'),r=cv.getAttribu
 function toggleLayers(key){var st=parseHash(),cfg=mapCfg(st,selOf(st));
  if(key==='ov'){if(st.kv.ov==='1')delete st.kv.ov;else st.kv.ov='1';setHash(st);return;}
  cfg.on[key]=!cfg.on[key];var l=Object.keys(cfg.on).filter(function(q){return cfg.on[q];});st.kv.layers=l.length?l.join(','):'none';setHash(st);}
-function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel);filterRows(st);drawPartners(sel);
+function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel);filterRows(st);drawPartners(sel);drawPanel(st,sel,pr);
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
  var lab=$('sel-label');if(lab)lab.innerHTML=label(sel);var clr=$('sel-clear');if(clr)clr.disabled=!sel;
  mark(sel,pr);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');drawMaps(st,sel,pr);}
@@ -295,12 +374,18 @@ document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.
   h.replace(/^#/,'').split('&').forEach(function(p){var i=p.indexOf('=');if(i>0){var v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}add.kv[p.slice(0,i)]=v;}});
   Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;setHash(st2);}});
 document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest)return;
+ var fb=t.closest('[data-f]');if(fb){var fs=parseHash(),fk=fb.getAttribute('data-f'),fv=fb.getAttribute('data-v');
+  if(fk==='more')fs.kv.more='1';else if(fv===''||(fk!=='tab'&&fk!=='entry'&&fs.kv[fk]===fv))delete fs.kv[fk];else fs.kv[fk]=fv;
+  if(fk!=='more'&&fk!=='tab'&&fk!=='entry')delete fs.kv.more;setHash(fs);return;}
+ var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
  var ch=t.closest('[data-mlayer]');if(ch){var s1=parseHash();s1.kv.layer=ch.getAttribute('data-mlayer');setHash(s1);return;}
  var tg=t.closest('[data-t]');if(tg&&!tg.disabled){toggleLayers(tg.getAttribute('data-t'));}});
 var al=$('m-alpha');if(al)al.addEventListener('input',function(){ALPHA=Number(al.value)/100;renderMaps();});
 document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&ev.target.getAttribute&&ev.target.getAttribute('data-href'))ev.target.click();});
 var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.q=qi.value;else delete st.kv.q;
+ var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
+var pqi=$('pl-q');if(pqi)pqi.addEventListener('input',function(){var st=parseHash();if(pqi.value)st.kv.q=pqi.value;else delete st.kv.q;delete st.kv.more;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
 var ca=$('cond-all');if(ca)ca.addEventListener('toggle',function(){apply();});
 window.addEventListener('hashchange',apply);

@@ -356,7 +356,7 @@ def test_chrome_pair_selection_marks_the_row_and_shows_only_that_pairs_condition
     page = out / 'ledger_report.html'
     dom, text = dump_dom(page, '#sel=pair:P2')
     assert dom.root['data-sel'] == 'pair:P2' and 'data-err' not in dom.root
-    assert selected(dom, 'data-pair') == ['P2', 'P2']        # the row in the "most changed" and in the "riskiest" list
+    assert selected(dom, 'data-pair') == ['P2', 'P2', 'P2']  # the rows in the "most changed" list, the "riskiest" list and the pair list of section 3
     cond = [a for t, a in dom.elements if t == 'tr' and a.get('data-pair') is not None]
     # the visible condition table is the one under #cond: its rows are only P2's items x sizes
     start = text.index('id="cond-table"')
@@ -599,7 +599,7 @@ def test_every_map_png_is_embedded_once_and_the_bundle_carries_none(tmp_path):
 def test_without_maps_dir_there_is_no_png_block_and_the_slots_say_so(tmp_path):
     page = html_of(run_report(tmp_path, sample_doc())[1])
     assert 'id="map-png"' not in page and '<canvas' not in re.sub(r'<script.*?</script>', '', page, flags=re.S)
-    assert '지도 없음' in section(page, 1) and '지도 없음' in section(page, 2) and '다음 단계에서 추가됩니다' in section(page, 3)
+    assert '지도 없음' in section(page, 1) and '지도 없음' in section(page, 2) and '지도 없음' in section(page, 3) and 'id="s3-panel"' in section(page, 3)
 
 
 def test_views_have_canvases_and_toggles_and_the_missing_share_line(tmp_path):
@@ -612,7 +612,7 @@ def test_views_have_canvases_and_toggles_and_the_missing_share_line(tmp_path):
         assert 'data-t="%s"' % key in s3
     assert s3.count('data-mlayer=') == len(bundle_of(page)['maps']['layers']) + 1 and 'id="m-alpha"' in s3 and 'id="m3-legend"' in s3
     assert re.search(r'id="m3-missing"[^>]*>지도에 없는 몫\(A vi 대비\): CNO [^·]+ · 곡선 보정 line [^/]+ / pixel ', s3)
-    assert 'data-slot="s3-panel"' in s3                                            # the 40% panel is T8
+    assert 'id="s3-panel"' in s3 and 'data-slot="s3-panel"' not in s3              # the 40% panel is built by T8
 
 
 def test_missing_share_adds_the_crp_part_only_when_the_crps_differ(tmp_path):
@@ -728,3 +728,251 @@ def test_chrome_without_dl1_still_draws_the_defect_areas_and_the_page_has_no_err
         assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root and dom.root['data-map-check'] == 'passed', fragment
     dom, text = dump_dom(page, '#demo')
     assert dom.root['data-map-layers'] == 'defect'
+
+
+# ---- mrep/T8: section 3 panel (two entries, pair list, card tabs, presence-split range tables, 07 links) -----------------------
+
+def comp_doc(extra_pairs=0):
+    """sample_doc whose P2 is a composition-change pair with three items: both / A only (gone) / B only (new).
+    extra_pairs adds that many line pairs (to test the 20-row default and 'more')."""
+    doc = sample_doc()
+    if extra_pairs:
+        pairs = [spec('P1', ['Data', 'ELVDD'], 'line', 0.0120, 0.0150), spec('P2', ['Scan1', 'EM'], 'line', 0.0060, 0.0078, change='layer_change',
+                                                                             comp=(['상하 GAT2–SD2'], ['측면 GAT2'])),
+                 spec('P3', ['Anode', 'Vint'], 'pixel', 0.0200, 0.0200, change='no_change', layer='PXL'),
+                 spec('P4', ['Gnode', 'Anode'], 'pixel', 0.0090, 0.0050, layer='SD1', failure='vertical_short', lower='PXL'),
+                 spec('P5', ['Scan2', 'Vint'], 'line', 0.0, 0.0065, present_a=False, change='new_pair', layer='SD1')]
+        pairs += [spec('X%02d' % i, ['Xa%02d' % i, 'Xb%02d' % i], 'line', 0.001 + i * 0.0001, 0.002) for i in range(extra_pairs)]
+        doc = make_ledger(pairs, cno=[('Anode', 'PXL', 0.0050, 0.0060)])
+    p2 = next(p for p in doc['pairs'] if p['pair_id'] == 'P2')
+    base = p2['items'][0]
+    gone = dict(base, item_id='P2-gone', failure_type='vertical_short', presence='gone', a=0.0020, b=0.0, delta=-0.0020)
+    new = dict(base, item_id='P2-new', failure_type='lateral_open', presence='new', a=0.0, b=0.0030, delta=0.0030)
+    p2['items'] = [base, gone, new]
+    p2['breakdown'] = {'same_delta': 0.0018, 'new_value': 0.0030, 'gone_value': 0.0020, 'n_both': 1, 'n_new': 1, 'n_gone': 1, 'status': 'ok'}
+    return doc
+
+
+def item_row(item_id, presence, value):
+    return {'item_id': item_id, 'presence': presence, 'value': value}
+
+
+def p2_card(doc, status='matched', rows='default', tabs=('same', 'comp', 'all')):
+    ids = [i['item_id'] for i in next(p for p in doc['pairs'] if p['pair_id'] == 'P2')['items']]
+    if rows == 'default':
+        # one range: the item both products have and the B-only item sit on the same tiles of B1 (so the table must split by
+        # `presence`, not by the row's match state)
+        rows = [{'id': 'A1', 'side': 'reference', 'range_total': 0.0100, 'match': {'status': 'matched', 'counterpart': 'B1'},
+                 'items': [item_row(ids[0], 'both', 0.0040), item_row(ids[1], 'a_only', 0.0020), item_row(ids[2], 'b_only', 0.0)]},
+                {'id': 'B1', 'side': 'target', 'range_total': 0.0120, 'match': {'status': 'matched', 'counterpart': 'A1'},
+                 'items': [item_row(ids[0], 'both', 0.0050), item_row(ids[1], 'a_only', 0.0), item_row(ids[2], 'b_only', 0.0030)]}]
+    return {'kind': 'line', 'pair_id': 'P2', 'rank': 'L2', 'tabs': list(tabs), 'tab_ranks': {t: 1 for t in tabs},
+            'match': {'status': status, 'reason': None if status == 'matched' else 'no_common_item'}, 'rows': rows}
+
+
+def p1_card():
+    return {'kind': 'line', 'pair_id': 'P1', 'rank': 'L1', 'tabs': ['same', 'all'], 'tab_ranks': {'same': 1, 'all': 1},
+            'match': {'status': 'matched', 'reason': None}, 'rows': []}
+
+
+def t8_report(tmp_path, name='t8', doc=None, report07=None, **kwargs):
+    doc = doc or comp_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    kwargs.setdefault('changes', map_changes())
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, **kwargs)
+    out = tmp_path / ('out_' + name)
+    args = {} if report07 is None else {'report07_dir': str(report07)}
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps), **args) in (0, 3)
+    return doc, out
+
+
+def store_block(page, pair_id):
+    return re.search(r'<div data-range="%s">(.*?)</div>' % re.escape(pair_id), page, re.S).group(1)
+
+
+def table_rows(block, css):
+    start = block.index('class="rt %s"' % css)
+    end = block.index('</table>', start)
+    return re.findall(r'<tr data-range=.*?</tr>', block[start:end], re.S)
+
+
+def cells_of(row):
+    return [re.sub(r'<[^>]+>', '', c) for c in re.findall(r'<td[^>]*>(.*?)</td>', row, re.S)]
+
+
+def test_range_tables_split_by_presence_and_copy_the_ledger_maps_values(tmp_path):
+    doc, out = t8_report(tmp_path, cards=[p2_card(comp_doc()), p1_card()])
+    page = html_of(out)
+    block = store_block(page, 'P2')
+    both, only = table_rows(block, 'rt-both'), table_rows(block, 'rt-only')
+    assert len(both) == 1 and len(only) == 2
+    # same coordinates A -> B: the item both products have; its range value and the range total, as the maps file says
+    c = cells_of(both[0])
+    assert c[0] == 'A1 ↔ B1' and c[2] == '같은 좌표 A→B' and c[3] == '0.4000% → 0.5000%' and c[4] == '1.0000% → 1.2000%' and c[5] == '범위 · 장부'
+    # one product only: the A-only item on A1 and the B-only item on B1 (the B-only item shares the tiles of the compared item)
+    by_label = {cells_of(r)[1]: cells_of(r) for r in only}
+    gone, new = by_label['상하 L1'], by_label['CNO L1']
+    assert gone[0] == 'A1' and gone[2] == 'A 에만' and gone[3] == 'A 0.2000%' and gone[4] == 'A 1.0000%'
+    assert new[0] == 'B1' and new[2] == 'B 에만' and new[3] == 'B 0.3000%' and new[4] == 'B 1.2000%'
+    assert '근사 값' in block and '07 · 반복 n' in block and '<th>근사' not in block         # no approximate column (C8)
+    assert page.count('data-range="P2"') == 4 and 'data-range="P1"' in page
+
+
+def test_card_summary_hides_zero_parts_and_tabs_follow_the_cards_tabs(tmp_path):
+    doc, out = t8_report(tmp_path, cards=[p2_card(comp_doc(), tabs=('comp', 'all')), p1_card()])
+    s3 = section(html_of(out), 3)
+    tabs = dict(re.findall(r'<div class="cardtab" data-tab="(\w+)"( hidden)?>', s3) and [(m[0], m[1]) for m in re.findall(r'<div class="cardtab" data-tab="(\w+)"( hidden)?>', s3)])
+    assert sorted(tabs) == ['all', 'comp', 'same'] and tabs['same'] == '' and tabs['comp'] == tabs['all'] == ' hidden'
+    lis = {m[0]: m[1] for m in re.findall(r'<li data-card="(\w+)"[^>]*>(.*?)</li>', s3, re.S)}
+    p1 = lis['P1']
+    assert '같은 불량 +0.3000%p' in p1 and '새 방식' not in p1 and '없어진 방식' not in p1           # zero parts are hidden
+    comp_tab = s3[s3.index('data-tab="comp"'):s3.index('data-tab="all"')]
+    assert 'data-card="P2"' in comp_tab and 'data-card="P1"' not in comp_tab
+    assert '같은 불량 +0.1800%p' in comp_tab and '새 방식 +0.3000%' in comp_tab and '없어진 방식 −0.2000%' in comp_tab
+
+
+def test_card_that_could_not_match_says_why_in_the_same_slot(tmp_path):
+    doc, out = t8_report(tmp_path, cards=[p2_card(comp_doc(), status='not_compared', rows=[])])
+    block = store_block(html_of(out), 'P2')
+    assert '같은 좌표로 비교할 항목이 없습니다' in block and '같은 좌표로 비교하지 못했습니다' in block and 'no_common_item' in block
+    assert table_rows(block, 'rt-both') == [] or 'colspan' in block
+
+
+def test_pair_list_rows_carry_the_filter_values_and_the_unlinked_text(tmp_path):
+    doc, out = t8_report(tmp_path, changes=ok_changes(), cards=[p1_card()])
+    page = html_of(out)
+    s3 = section(page, 3)
+    rows = {m.group(1): m.group(0) for m in re.finditer(r'<tr class="plrow[^"]*" data-pair="(\w+)".*?</tr>', s3, re.S)}
+    assert sorted(rows) == ['P1', 'P2', 'P3', 'P4', 'P5']
+    assert 'data-cat="same new gone"' in rows['P2'] and 'data-cat="new"' in rows['P5'] and 'data-kind="pixel"' in rows['P3']
+    assert 'data-tags="shifted reshaped"' in rows['P1'] and 'data-linked="1"' in rows['P1'] and '#1' in rows['P1']
+    assert '변경 위치 미연결 — 04 가 고른 상위 위치에 없음' in rows['P2'] and '변경 위치 미연결' not in rows['P1']
+    assert '변화 없음' in rows['P3']                                        # no_change pairs are not "unlinked"
+    # composition-based text of the changed-composition pair: item +k / -m (+... / -...)
+    assert 'item +1 / −1 (+상하 GAT2–SD2 / −측면 GAT2)' in rows['P2']
+    assert 'id="pl-count"' in s3 and '결과 5 쌍 · 표시 5' in s3 and 'data-total="5" data-count="5" data-shown="5"' in s3
+    for key in ('kind', 'ck', 'cat', 'tag'):
+        assert 'data-f="%s"' % key in s3
+    assert 'data-f="entry" data-v="loc"' in s3 and 'data-f="entry" data-v="pair"' in s3
+
+
+def test_location_entry_lists_rois_with_their_linked_pair_counts_and_the_empty_states(tmp_path):
+    doc, out = t8_report(tmp_path, changes=map_changes())
+    s3 = section(html_of(out), 3)
+    rows = re.findall(r'<tr data-roi="([^"]+)" data-href="([^"]+)"[^>]*>(.*?)</tr>', s3, re.S)
+    assert [r[0] for r in rows] == ['roi:R1', 'roi:R2']
+    assert rows[0][1] == '#sel=roi:roi:R1&amp;entry=loc' and cells_of(rows[0][2])[0] == '#1' and cells_of(rows[0][2])[2] == '2'
+    assert '위치 이동' in rows[0][2] and '형상 변경' in rows[0][2] and '연결됨' in rows[0][2]
+    assert cells_of(rows[1][2])[2] == '0' and '연결된 쌍 없음(미연결)' in rows[1][2] and '지도 밖' in rows[1][2]
+    assert '위치별 합계는 만들지 않습니다' in s3
+    # no 04 / no maps folder: the entry says so instead of an empty table
+    doc, out = t8_report(tmp_path, name='no04', changes={'link_status': 'no_candidates'})
+    assert 'id="roi-none"' in section(html_of(out), 3) and 'id="roi-table"' not in section(html_of(out), 3)
+    page = html_of(run_report(tmp_path, comp_doc(), name='nomaps')[1])
+    assert '지도 폴더(--maps-dir)가 없어 변경 위치 목록이 없습니다' in section(page, 3) and 'id="pl-table"' in section(page, 3)
+
+
+def test_section_2_says_observed_basis_when_dl1_is_missing_and_section_4_hides_empty_size_columns(tmp_path):
+    page = html_of(run_report(tmp_path, corr_doc(complete=False))[1])
+    s2 = section(page, 2)
+    assert 'id="corr-observed"' in s2 and '관찰 기준' in s2 and '관찰 기준(DL1 없음)' in s2_cell(page, 'Data', 'L1')[1] + s2_row(page, 'Data')
+    assert 'id="corr-observed"' not in section(html_of(run_report(tmp_path, corr_doc(), name='ok')[1]), 2)
+    # sizes 1 and 2 µm carry values; 3 µm is 0 in every row, so its column goes and the head says so
+    doc = corr_doc()
+    for kind in ('line', 'pixel'):
+        for row in doc['layers'][kind]:
+            row['by_size'].append({'diameter_um': 3.0, 'a': 0.0, 'b': 0.0, 'delta': 0.0})
+    s4 = section(html_of(run_report(tmp_path, doc, name='sz')[1]), 4)
+    assert 'id="size-hidden-line"' in s4 and '값 없는 크기 1개 숨김' in s4 and '3 µm Δ' not in s4 and '1 µm Δ' in s4
+
+
+def chrome_t8(tmp_path, name='t8c', **kwargs):
+    kwargs.setdefault('cards', [p2_card(comp_doc()), p1_card()])
+    doc, out = t8_report(tmp_path, name=name, **kwargs)
+    return doc, out / 'ledger_report.html'
+
+
+def test_chrome_t8_hash_states_have_no_error_and_the_list_counts_follow_the_filters(tmp_path):
+    doc, page = chrome_t8(tmp_path, changes=ok_changes())
+    expected = {'#': (5, 5), '#kind=pixel': (2, 2), '#kind=line': (3, 3), '#cat=same': (4, 4), '#cat=new': (2, 2), '#cat=gone': (1, 1),
+                '#cat=line:same': (2, 2), '#ck=layer_change': (1, 1), '#q=anode': (2, 2), '#q=nothing-like-this': (0, 0),
+                '#tag=shifted': (1, 1), '#tag=reshaped': (2, 2), '#cat=tag:reshaped': (2, 2), '#cat=cno': (0, 0), '#kind=line&cat=new': (2, 2)}
+    for fragment, (count, shown) in expected.items():
+        dom, text = dump_dom(page, fragment)
+        assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
+        assert (int(dom.root['data-pl-count']), int(dom.root['data-pl-shown'])) == (count, shown), (fragment, dom.root)
+        visible = [a['data-pair'] for t, a in dom.elements if t == 'tr' and 'plrow' in (a.get('class') or '') and 'hide' not in a['class'].split()]
+        assert len(visible) == shown, fragment
+    for fragment in ('', '#demo', '#sel=pair:P2', '#sel=pair:P1', '#sel=pair:P5', '#sel=roi:roi:R1&entry=loc', '#sel=electrode:Anode', '#sel=layer:PXL',
+                     '#tab=comp', '#tab=all', '#entry=loc', '#q=Data', '#cat=new', '#more=1', '#print', '#sel=pair:P2&print'):
+        dom, text = dump_dom(page, fragment)
+        assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
+    dom, text = dump_dom(page, '#tab=comp')
+    assert dom.root['data-tab'] == 'comp'
+    shown_tabs = [a['data-tab'] for t, a in dom.elements if t == 'div' and a.get('data-tab') and 'hidden' not in a]
+    assert shown_tabs == ['comp']
+    dom, text = dump_dom(page, '#entry=loc')
+    assert dom.root['data-entry'] == 'loc'
+    dom, text = dump_dom(page, '#sel=roi:roi:R1')
+    assert dom.root['data-entry'] == 'loc' and 'id="roi-pairs"' in text
+
+
+def test_chrome_default_shows_20_rows_more_shows_all(tmp_path):
+    doc, page = chrome_t8(tmp_path, name='many', doc=comp_doc(extra_pairs=25), changes=ok_changes(), cards=[p2_card(comp_doc(extra_pairs=25))])
+    dom, text = dump_dom(page, '#')
+    assert dom.root['data-pl-total'] == '30' and dom.root['data-pl-count'] == '30' and dom.root['data-pl-shown'] == '20'
+    assert '더 보기 (+10 쌍)' in text
+    dom, text = dump_dom(page, '#more=1')
+    assert dom.root['data-pl-shown'] == '30' and 'data-err' not in dom.root
+    dom, text = dump_dom(page, '#q=xa0&more=1')
+    assert dom.root['data-pl-count'] == dom.root['data-pl-shown'] == '10'
+
+
+def test_chrome_pair_detail_has_the_equation_totals_items_ranges_and_07_links(tmp_path):
+    seven = tmp_path / 'compare2_report'
+    seven.mkdir()
+    (seven / 'report.html').write_text('<html></html>', encoding='utf-8')
+    doc, page = chrome_t8(tmp_path, name='d07', report07=seven, changes=map_changes())
+    dom, text = dump_dom(page, '#sel=pair:P2')
+    pd = text[text.index('id="pd"'):]
+    assert 'data-err' not in dom.root and 'data-pd="P2"' in pd
+    assert '쌍 Δ = 같은 불량 증감 <b>+0.1800%p</b> + 새 방식 <b>0.3000%</b> − 없어진 방식 <b>0.2000%</b>' in pd
+    assert 'id="pd-total"' in pd and 'id="pd-items"' in pd and pd.count('A 에만') >= 2 and 'B 에만' in pd and '양쪽' in pd
+    assert 'id="range-tables"' in pd and '같은 좌표 비교 A → B' in pd and '이 제품에만 있는 불량 방식' in pd
+    assert '변경 위치 미연결 — 04 가 고른 상위 위치에 없음' in pd                      # P2 is not linked in map_changes()
+    assert 'href="../compare2_report/report.html#s6"' in text and '영상: 보고서 미포함' in pd
+    dom, text = dump_dom(page, '#sel=pair:P1')
+    pd = text[text.index('id="pd"'):]
+    assert '관련 쌍 전체값입니다. 위치별 합계는 없습니다.' in pd and '#sel=roi:roi%3AR1&amp;entry=loc' in pd
+    dom, text = dump_dom(page, '#sel=roi:roi:R1')
+    assert 'href="../compare2_report/report.html#roiroi:R1"' in text
+    # without 07
+    doc, page2 = chrome_t8(tmp_path, name='n07', changes=map_changes())
+    dom, text = dump_dom(page2, '#sel=pair:P2')
+    assert '07 보고서 없음' in text[text.index('id="pd-video"'):] and 'report.html#s6' not in text
+
+
+def test_chrome_pair_without_a_card_or_with_a_dropped_card_says_why(tmp_path):
+    dropped = [{'kind': 'line', 'pair_id': 'P1', 'rank': 'L1', 'tabs': ['all'], 'stage': 'target', 'reason': 'card_reserve_failed'}]
+    doc, page = chrome_t8(tmp_path, name='nocard', cards=[p2_card(comp_doc())], dropped=dropped, status='partial')
+    dom, text = dump_dom(page, '#sel=pair:P3')
+    assert 'id="no-card"' in text and '위치 카드 대상이 아닙니다(상위 5)' in text and '같은 불량 증감 상위 · 구성 변경 상위 · 전체 |Δ|' in text
+    dom, text = dump_dom(page, '#sel=pair:P1')
+    assert 'cards_budget_reduced · 단계 target · card_reserve_failed' in text
+    page_text = html_of(page.parent)
+    assert 'id="cards-dropped"' in page_text and 'cards_budget_reduced' in page_text
+
+
+def test_chrome_zero_valued_condition_rows_are_folded_in_section_5(tmp_path):
+    doc = comp_doc()
+    p = next(p for p in doc['pairs'] if p['pair_id'] == 'P5')
+    for size in p['items'][0]['by_size']:
+        size['value_a'] = 0.0
+        size['value_b'] = 0.0
+    page = run_report(tmp_path, doc)[1] / 'ledger_report.html'
+    dom, text = dump_dom(page, '#sel=pair:P5')
+    assert 'class="zrows" hidden' in text and '값 0 인 크기 2개 펼치기' in text and 'data-err' not in dom.root
+    dom, text = dump_dom(page, '#sel=pair:P5&print')
+    assert 'class="zrows" hidden' not in text and '값 0 인 크기 2개 접기' in text
+    dom, text = dump_dom(page, '#sel=pair:P1')
+    assert 'class="zrows"' not in text[text.index('id="cond-table"'):text.index('</table>', text.index('id="cond-table"'))]

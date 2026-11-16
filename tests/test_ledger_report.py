@@ -243,7 +243,7 @@ def test_html_has_no_external_reference_and_all_files(tmp_path):
     assert report['schema_version'] == 'ledger_report_v2'
     assert len(report['ledger_json_sha256']) == 64 and report['options'] == {'top_pairs': 30, 'top_electrodes': 30}
     assert report['ledger_execution']['status'] == 'ok'
-    assert report['sections'] == {'present': [1, 5], 'placeholders': [2, 3, 4]}
+    assert report['sections'] == {'present': [1, 2, 3, 4, 5], 'placeholders': []}
     assert report['html_bytes'] == len(page.encode('utf-8')) and 0 < report['data_bytes'] < report['html_bytes']
     assert report['report07'] == 'none'
     assert json.loads((out / 'execution.json').read_text(encoding='utf-8'))['exit_code'] == 0
@@ -255,9 +255,8 @@ def test_five_sections_in_order_slots_for_2_3_4_and_one_data_bundle(tmp_path):
     titles = ['① 한눈 요약', '② 제품 대응', '③ 탐색', '④ 분포', '⑤ 근거 · 검산']
     positions = [page.index('<h2>%s</h2>' % t) for t in titles]
     assert positions == sorted(positions)
-    for number in (3,):                                 # sections 2 and 4 are built (mrep/T6); 3 is T7-T8
-        part = section(page, number)
-        assert '다음 단계에서 추가됩니다' in part and '<table' not in part
+    assert '다음 단계에서 추가됩니다' not in page                  # every section is built (T6 = 2 and 4, T7-T8 = 3)
+    assert 'id="s3-panel"' in section(page, 3) and '<table id="pl-table"' in section(page, 3)
     assert '<table id="corr-table">' in section(page, 2) and '<table id="ledger-table">' in section(page, 4)
     assert page.count('id="report-data"') == 1 and page.count('<script type="application/json"') == 1
     for old in ('<section id="s6">', '<section id="s7">', 'id="pairs-line"', 'id="el-line"'):
