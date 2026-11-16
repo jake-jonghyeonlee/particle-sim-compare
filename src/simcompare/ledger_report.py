@@ -4,10 +4,12 @@ Input: `ledger.json` (+ the `execution.json` of the `ledger` run), optionally th
 folder of the 07 report (`--report07-dir`). Nothing is recalculated: every number is a `ledger.json` / `ledger_maps.json`
 value; the report only converts formats (% of the reference vi, %p) and adds up the values of the rows it folds.
 
-mrep/T5 builds the frame: one data bundle (`<script type="application/json" id="report-data">`), the fixed bar with one global
-selection kept in the location hash, section 1 (summary) and section 5 (evidence). Sections 2, 3 and 4 are slots for T6-T8.
-The page is plain HTML plus a small script: section 1 and 5 read without the script; the script marks the selected rows
-(`.sel`) and draws the condition table of the selected pair.
+One data bundle (`<script type="application/json" id="report-data">`), a fixed bar with one global selection kept in the location
+hash, and five sections: 1 summary, 2 electrode correspondence, 3 exploration (maps, pair list, location cards), 4 electrode
+ledger and layer x size, 5 evidence. The page is plain HTML plus a script: sections 1, 4 and 5 read without the script; the script
+marks the selected rows (`.sel`), draws the maps, the pair detail and the condition table of the selected pair. The location hash
+is untrusted input: the script accepts only the four selection kinds (pair, electrode, layer, roi) and never puts a hash or data
+value into an attribute name.
 """
 from __future__ import annotations
 
@@ -43,7 +45,6 @@ HTML_WARN_BYTES = 8 * 1024 * 1024
 LIST_TOP = 5
 MODE_LABELS = {'lateral_short': '측면', 'vertical_short': '상하', 'lateral_open': 'CNO'}
 REASON_LABELS = {'ledger_totals_check_failed': '합계 검산이 맞지 않습니다(ledger 의 checks 를 확인하세요)'}
-NEXT_STEP = '다음 단계에서 추가됩니다'
 OUTDATED_HINT = '08 을 새 번들로 다시 돌리세요(ledger → ledger-maps → ledger-report)'
 CATS = (('same', '같은 불량의 증감', '양쪽에 있는 item 의 B−A 합'),
         ('new', '새로 생긴 불량 방식', 'B 에만 있는 item 의 B 합 (+)'),
@@ -109,7 +110,7 @@ def sub(text):
 
 
 def chip(kind):
-    return '<span class="chip" style="background:var(--%s)"></span>' % kind
+    return '<span class="chip" style="background:var(--%s)"></span>' % (kind if kind in KINDS else 'common')
 
 
 def osum(values):
@@ -227,7 +228,10 @@ def _report07_link(report07_dir, out):
     target = Path(report07_dir) / 'report.html'
     if not target.is_file():
         return {'status': 'missing', 'href': None}
-    rel = os.path.relpath(str(target.resolve()), str(Path(out).resolve()))
+    try:
+        rel = os.path.relpath(str(target.resolve()), str(Path(out).resolve()))
+    except ValueError:      # Windows: another drive has no relative path; the report is still made, without the link
+        return {'status': 'missing', 'href': None, 'reason': 'no_relative_path'}
     return {'status': 'linked', 'href': rel.replace(os.sep, '/')}
 
 
@@ -245,6 +249,12 @@ class Ctx(object):
         self.vi_a = {kind: doc['kinds'][kind]['vi_a'] for kind in KINDS}
         self.changes = (maps['doc'].get('changes') if maps is not None else None)
         self.pair_by_id = {p['pair_id']: p for p in doc['pairs']}
+        # electrodes that belong to a failure kind: a calculated pair of that kind (pixel: or a CNO row). The others are 해당 없음.
+        self.kind_electrodes = {kind: set() for kind in KINDS}
+        for row in doc['pairs']:
+            if row['kind'] in KINDS:
+                self.kind_electrodes[row['kind']].update(row['electrodes'])
+        self.kind_electrodes['pixel'] |= {r['electrode_id'] for r in doc.get('cno') or []}
 
     def pct(self, value, kind):
         return pct_of(value, self.vi_a[kind])
@@ -258,6 +268,10 @@ class Ctx(object):
 
     def crp_differs(self):
         return bool(self.crp().get('present'))
+
+    def crp_pp(self):
+        """The CRP difference in %p; 대기 when the ledger has no value (never a made-up 0)."""
+        return pp_txt(self.crp().get('delta'))
 
     def link_status(self):
         """'ok' / 'no_candidates' / 'stale' / 'invalid' of the 04 link, or 'no_maps' when there is no --maps-dir."""
@@ -371,7 +385,9 @@ def _breakdown_cell(ctx, kind, cat):
         return '<td class="l muted">해당 없음</td>'
     brk = ctx.doc['kinds'][kind]['item_breakdown']
     value = brk.get(cat)
-    href = ' data-href="#cat=%s:%s"' % (kind, cat)
+    # the breakdown rows open the pair entry of section 3 and scroll there; CNO is no pair: it points to the electrode ledger (4)
+    href = ' data-go="s4" title="CNO 는 쌍이 아니라 ④ 전극 장부에서 봅니다"' if cat == 'cno' else (
+        ' data-href="#cat=%s:%s&amp;entry=pair" data-scroll="s3"' % (kind, cat))
     if value is None:
         return '<td class="l muted"%s>대기</td>' % href
     if cat == 'gone':
@@ -396,7 +412,7 @@ def _breakdown_table(ctx):
     note = ''
     if ctx.crp_differs():
         note = ('<p class="muted" id="crp-note" style="margin:3px 0 0">CRP 차이 %s 는 ⑤ 참고 — 두 제품의 CRP 가 달라 pixel 합에는 분해에 없는 CRP 줄이 더해집니다.</p>' %
-                esc(raw_pp(ctx.crp().get('delta') or 0.0)))
+                esc(ctx.crp_pp()))
     return ('<table id="breakdown"><thead><tr><th class="l">범주</th><th class="l">%sline</th><th class="l">%spixel</th></tr></thead><tbody>%s</tbody></table>'
             '%s<p class="muted" style="margin:3px 0 0">item = 불량 방식 × 양 끝 레이어. 쌍의 불량 구성이 달라도 이 분해에는 모두 들어갑니다. '
             '줄을 누르면 ③ 의 쌍 목록이 그 범주로 걸러집니다.</p>' % (chip('line'), chip('pixel'), ''.join(rows), note))
@@ -467,7 +483,7 @@ def _tag_block(ctx):
             BAND_TEXT.get('link_' + status, '지도 폴더(--maps-dir)와 04 결과(ledger-maps --candidates)가 필요합니다.'))
     counts = ((ctx.changes.get('summary') or {}).get('tag_pair_counts')) or {}
     names = _tag_names()
-    rows = ''.join('<tr data-href="#cat=tag:%s"><td class="l">%s</td><td>%d</td><td>%d</td><td>%d</td></tr>' % (
+    rows = ''.join('<tr data-href="#cat=tag:%s&amp;entry=pair" data-scroll="s3"><td class="l">%s</td><td>%d</td><td>%d</td><td>%d</td></tr>' % (
         esc(quote(tag, safe='')), esc(names.get(tag, tag)), c.get('line', 0), c.get('pixel', 0), c.get('line', 0) + c.get('pixel', 0))
         for tag, c in sorted(counts.items()))
     if not rows:
@@ -521,7 +537,7 @@ def _change_kind_table(ctx):
             else:
                 value = sums[(kind, code)]
                 cells.append('<td class="l">%s</td>' % pp_cell(value, ctx.pct(value, kind)))
-        rows.append('<tr data-code="%s" data-href="#cat=kind:%s"><td class="l">%s</td><td>%d</td>%s%s</tr>' % (
+        rows.append('<tr data-code="%s" data-href="#cat=kind:%s&amp;entry=pair" data-scroll="s3"><td class="l">%s</td><td>%d</td>%s%s</tr>' % (
             esc(code), esc(code), esc(entry['label']), count, cells[0], cells[1]))
     total = ''.join('<td class="l">%s</td>' % pp_cell(doc['totals'][k]['delta'], ctx.pct(doc['totals'][k]['delta'], k)) for k in KINDS)
     rows.append('<tr class="sum"><td class="l">종류 전체 Δ</td><td></td>%s</tr>' % total)
@@ -622,7 +638,7 @@ def _crp_line(ctx):
         return ''
     products = ctx.doc['inputs']['products']
     return ('<p id="crp-line"><b>CRP 줄</b>: A CRP %s, B CRP %s. 차이 %s 가 pixel 전체 Δ 에 더해집니다(A = −d, B = 0, 전극에 나누지 않음).</p>' % (
-        esc(num(products['reference'].get('crp'))), esc(num(products['target'].get('crp'))), esc(raw_pp(ctx.crp().get('delta') or 0.0))))
+        esc(num(products['reference'].get('crp'))), esc(num(products['target'].get('crp'))), esc(ctx.crp_pp())))
 
 
 def _link07(ctx):
@@ -1130,6 +1146,10 @@ def _card_tables(ctx, card):
                                     esc(card.get('pair_id')), esc(rng), esc(labels.get(entry.get('item_id'), entry.get('item_id'))),
                                     _range_ab(entry.get('value'), _row_item_value(counterpart, entry.get('item_id'))),
                                     _range_ab(row.get('range_total'), counterpart.get('range_total')), BASIS_CHIP))
+        elif side == 'reference' and status == 'matched' and counterpart is not None and any(e.get('presence') == 'both' for e in row['items']):
+            # the matched B range lies outside the map window (no items): say it, do not drop the A range silently
+            both.append('<tr data-range="%s" class="range-outside"><td class="l">%s ↔ %s</td><td class="l muted" colspan="5">B 범위가 지도 창 밖 — 값 없음</td></tr>' % (
+                esc(card.get('pair_id')), esc(row.get('id')), esc(counterpart.get('id'))))
         elif status != 'matched' and any(e.get('presence') == 'both' for e in row['items']):
             unmatched.append('%s(%s)' % (row.get('id'), (row.get('match') or {}).get('reason') or '짝 없음'))
         for entry in row['items']:
@@ -1227,13 +1247,26 @@ def _excluded_only_electrodes(doc):
     return named - kept
 
 
-def _ab_cell(ctx, kind, v):
+def _applies(ctx, kind, row):
+    """False when the electrode has no pair of this failure kind (pixel: nor a CNO row) — the cell says 해당 없음."""
+    return row['electrode'] in ctx.kind_electrodes[kind]
+
+
+def _ab_cell(ctx, kind, row):
+    """A → B of an electrode row: 해당 없음 (no pair of this kind) / 없음 (the electrode is not in that product) / 대기 / 0% / value."""
+    v = row.get(kind)
+    if not _applies(ctx, kind, row):
+        return muted('해당 없음')
     if v is None:
         return muted('—')
-    return '%s → %s' % (esc(vi_txt(v.get('a'))), esc(vi_txt(v.get('b'))))
+    a = muted('없음') if not row.get('present_a') else esc(vi_txt(v.get('a')))
+    b = muted('없음') if not row.get('present_b') else esc(vi_txt(v.get('b')))
+    return '%s → %s' % (a, b)
 
 
-def _delta_cell(ctx, kind, v):
+def _delta_cell(ctx, kind, v, row=None):
+    if row is not None and not _applies(ctx, kind, row):
+        return muted('해당 없음')
     if v is None:
         return muted('—')
     return pp_cell(v.get('delta'), ctx.pct(v.get('delta'), kind))
@@ -1261,13 +1294,14 @@ def _electrode_ledger(ctx):
         name = row['electrode']
         mark = ' <span class="muted">(계산 제외 쌍만 있음)</span>' if name in only else ''
         if name in cno_names:
-            cno = '<td>%s%s</td>' % (esc(vi_txt((row.get('cno') or {}).get('a'))) + ' → ' + esc(vi_txt((row.get('cno') or {}).get('b'))),
+            cno = '<td>%s%s</td>' % (('없음' if not row.get('present_a') else esc(vi_txt((row.get('cno') or {}).get('a')))) + ' → ' +
+                                     ('없음' if not row.get('present_b') else esc(vi_txt((row.get('cno') or {}).get('b')))),
                                      sub('Δ ' + pp_txt((row.get('cno') or {}).get('delta'))))
         else:
             cno = '<td>%s</td>' % muted('해당 없음')
         body.append('<tr %s data-row="ledger"><td class="l"><b>%s</b>%s</td><td>%s</td><td class="l">%s</td><td>%s</td><td class="l">%s</td>%s</tr>' % (
-            _el_attrs(name), esc(name), mark, _ab_cell(ctx, 'line', row.get('line')), _delta_cell(ctx, 'line', row.get('line')),
-            _ab_cell(ctx, 'pixel', row.get('pixel')), _delta_cell(ctx, 'pixel', row.get('pixel')), cno))
+            _el_attrs(name), esc(name), mark, _ab_cell(ctx, 'line', row), _delta_cell(ctx, 'line', row.get('line'), row),
+            _ab_cell(ctx, 'pixel', row), _delta_cell(ctx, 'pixel', row.get('pixel'), row), cno))
     tl, tp = _ledger_total(doc, 'line'), _ledger_total(doc, 'pixel')
     total = ('<tr class="sum" id="ledger-total"><td class="l">합계</td><td>%s</td><td class="l">%s</td><td>%s</td><td class="l">%s</td><td></td></tr>' % (
         esc(vi_txt(tl['a'])) + ' → ' + esc(vi_txt(tl['b'])), _delta_cell(ctx, 'line', tl),
@@ -1297,7 +1331,7 @@ def _size_table(ctx, kind):
             esc(row['layer']), esc(_href('layer:' + row['layer'])), esc(row['layer']), esc(vi_txt(row['a'])), esc(vi_txt(row['b'])),
             pp_cell(row['delta'], ctx.pct(row['delta'], pct_kind)), cells))
     title = {'line': 'line', 'pixel': 'pixel', 'cno': 'pixel CNO (pixel 의 일부)'}[kind]
-    hidden = ('<p class="muted" id="size-hidden-%s">값 없는 크기 %d개 숨김 (%s µm: 모든 줄이 0 이거나 값 없음)</p>' % (
+    hidden = ('<p class="muted" id="size-hidden-%s">Δ 가 모두 0 인 크기 %d개 숨김 (%s µm)</p>' % (
         kind, len(dropped), esc(', '.join(num(d) for d in dropped)))) if dropped else ''
     return ('<h4>%s%s</h4>%s<div class="ovx"><table id="size-%s"><thead><tr><th class="l">레이어</th><th>A → B</th><th class="l">Δ</th>%s</tr></thead>'
             '<tbody>%s</tbody></table></div>' % (chip(pct_kind), esc(title), hidden, kind, head, ''.join(body)))
@@ -1324,7 +1358,8 @@ def _pair_bundle(ctx, pair):
     for item in pair['items']:
         items.append({'id': item['item_id'], 'ft': item.get('failure_type'), 'ul': item.get('upper_layer'), 'll': item.get('lower_layer'),
                       'al': item.get('analysis_layer'), 'label': _item_label(item), 'pres': item.get('presence'),
-                      'a': item.get('a'), 'b': item.get('b'), 'd': item.get('delta'), 'sizes': item.get('by_size') or []})
+                      'a': item.get('a'), 'b': item.get('b'), 'd': item.get('delta'), 'sizes': item.get('by_size') or [],
+                      'af': bool(item.get('a_filtered')), 'bf': bool(item.get('b_filtered'))})
     return {'id': pair['pair_id'], 'no': pair.get('rank'), 'e': list(pair['electrodes']), 'kind': pair['kind'], 'ck': pair['change_kind'],
             'a': pair['a'], 'b': pair['b'], 'd': pair['delta'], 'pa': bool(pair['present_a']), 'pb': bool(pair['present_b']),
             'pct_a': pair.get('pct_a'), 'pct_b': pair.get('pct_b'), 'pct_d': pair.get('pct_delta'),
@@ -1421,11 +1456,6 @@ def _bar():
                      ((1, '① 요약'), (2, '② 대응'), (3, '③ 탐색'), (4, '④ 분포'), (5, '⑤ 근거')))
     return ('<div id="bar"><b>선택</b> <span id="sel-label"><span class="muted">선택 없음</span></span> '
             '<button type="button" id="sel-clear" data-clear disabled>선택 해제</button><span class="sp"></span>%s</div>' % nav)
-
-
-def _slot(number, title, question):
-    return ('<section id="s%d"><p class="q">%s</p><h2>%s</h2><div class="slot" data-slot="s%d">%s</div></section>' % (
-        number, esc(question), esc(title), number, NEXT_STEP))
 
 
 def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None, report07=None, size_warning=False):

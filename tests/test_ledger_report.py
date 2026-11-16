@@ -1,5 +1,6 @@
-"""ledger-report (mrep/T5): the merged report frame — data bundle, fixed bar with the global selection kept in the hash,
-section 1 (summary with the item breakdown) and section 5 (evidence). Sections 2, 3 and 4 are slots (T6-T8).
+"""ledger-report: the merged report frame — data bundle, fixed bar with the global selection kept in the hash, and the five
+sections (1 summary, 2 correspondence, 3 exploration, 4 distribution, 5 evidence). The table-level tests of sections 2-4 are in
+test_ledger_report_v2.py.
 
 test_ledger.py / test_ledger_integration.py cover the ledger itself. These tests build `ledger_v1` documents by hand (a
 consistent builder: totals are the sums of the rows, and the mrep/T1 keys are filled) and one from the real compare2 -> ledger chain.

@@ -256,11 +256,11 @@ def _parser() -> argparse.ArgumentParser:
     led.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger 가 이전에 만든 폴더만 덮어씀")
     lrep = _korean_help(sub.add_parser(
         "ledger-report", add_help=False,
-        help="ledger 결과(ledger.json)로 합친 비교 보고서(ledger_report.html, 단일 파일)를 만든다. ①·⑤ 구성, ②③④ 는 다음 단계"))
+        help="ledger 결과(ledger.json)로 합친 비교 보고서(ledger_report.html, 단일 파일)를 만든다. ① 요약 · ② 제품 대응 · ③ 탐색 · ④ 분포 · ⑤ 근거"))
     lrep.add_argument("--ledger-dir", required=True, help="ledger 출력 폴더(ledger.json 이 있는 곳)")
     lrep.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-report 가 이전에 만든 폴더만 덮어씀")
-    lrep.add_argument("--top-pairs", type=int, default=30, help="불량 종류별 상위 쌍 수(기본 30). 나머지는 '기타 k 쌍' 합계 줄")
-    lrep.add_argument("--top-electrodes", type=int, default=30, help="불량 종류별 상위 전극 수(기본 30). 나머지는 '기타 k 전극' 합계 줄")
+    lrep.add_argument("--top-pairs", type=int, default=30, help="현재 표시 개수에 쓰이지 않음(호환용, 1 이상의 정수 · 기본 30)")
+    lrep.add_argument("--top-electrodes", type=int, default=30, help="현재 표시 개수에 쓰이지 않음(호환용, 1 이상의 정수 · 기본 30)")
     lrep.add_argument("--maps-dir", default=None, help="ledger-maps 출력 폴더(ledger_maps.json 이 있는 곳). 있으면 지도·카드·변경 위치 자료를 넣음")
     lrep.add_argument("--report07-dir", default=None, help="07(compare2-report) 출력 폴더(report.html 이 있는 곳). 있으면 출력 폴더 기준 상대 링크를 넣음")
     lmaps = _korean_help(sub.add_parser(

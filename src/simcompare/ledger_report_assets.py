@@ -90,16 +90,18 @@ window.onerror=function(m,u,l){document.documentElement.setAttribute('data-err',
 var D=JSON.parse(document.getElementById('report-data').textContent);
 var $=function(id){return document.getElementById(id);};
 var esc=function(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
-var PB={},EB={};
+var PB=Object.create(null),EB=Object.create(null);
+var SELT={pair:1,electrode:1,layer:1,roi:1};
 D.pairs.forEach(function(p){PB[p.id]=p;});
 function parseHash(){var o={kv:{},flags:{}},h=location.hash.replace(/^#/,'');if(!h)return o;
  h.split('&').forEach(function(p){if(!p)return;var i=p.indexOf('=');if(i<0){o.flags[p]=true;return;}
   var k=p.slice(0,i),v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}o.kv[k]=v;});return o;}
-function buildHash(o){var parts=[];['sel','entry','tab','cat','kind','ck','tag','q','more','layer','layers','ov'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
+function buildHash(o){var parts=[];['sel','entry','tab','cat','kind','ck','tag','q','eq','more','layer','layers','ov'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
  ['print','demo'].forEach(function(k){if(o.flags[k])parts.push(k);});return parts.length?'#'+parts.join('&'):'#';}
 function setHash(o){var h=buildHash(o);if(h==='#'){if(location.hash){history.replaceState(null,'',location.pathname+location.search);}apply();}else{location.hash=h;}}
 function selOf(o){var s=o.kv.sel;if(!s&&o.flags.demo&&D.demo_pair)s='pair:'+D.demo_pair;if(!s)return null;
- var i=s.indexOf(':');return i<0?null:{t:s.slice(0,i),id:s.slice(i+1)};}
+ var i=s.indexOf(':');if(i<0)return null;var t=s.slice(0,i);
+ return Object.prototype.hasOwnProperty.call(SELT,t)?{t:t,id:s.slice(i+1)}:null;}   /* the hash is untrusted: only these four kinds */
 function layersOfPair(p){var out={};p.items.forEach(function(it){[it.ul,it.ll].forEach(function(l){if(l)out[l]=true;});});
  (p.la||[]).concat(p.lb||[]).forEach(function(l){out[l]=true;});return out;}
 function related(sel){var r={pairs:{},els:{},layers:{},rois:{}};if(!sel)return r;
@@ -138,13 +140,12 @@ function drawPartners(sel){var box=$('el-partners');if(!box)return;
  if(!sel||sel.t!=='electrode'){box.innerHTML='<p class="muted">전극 이름이나 칸을 누르면 그 전극의 상대 전극과 쌍 Δ 가 이 자리에 나옵니다. 이 목록은 스크립트가 그립니다.</p>';return;}
  var rows=[];D.pairs.forEach(function(p){var i=p.e.indexOf(sel.id);if(i<0)return;var other=p.e.filter(function(x,j){return j!==i;}).join('–')||sel.id;
   rows.push('<tr data-pair="'+esc(p.id)+'" data-href="#sel=pair:'+encodeURIComponent(p.id)+'"><td class="l">'+esc(other)+'</td><td class="l">'+esc(p.kind)+'</td><td class="l">'+esc(D.labels.change_kinds[p.ck]||p.ck)+
-  '</td><td>'+f4(p.a)+' → '+f4(p.b)+'</td><td class="l">'+(p.d==null?'대기':(p.d===0?'0%p':(p.d>0?'+':'−')+Math.abs(p.d*100).toFixed(4)+'%p'))+'</td></tr>');});
+  '</td><td>'+(p.pa?f4(p.a):'없음')+' → '+(p.pb?f4(p.b):'없음')+'</td><td class="l">'+(p.d==null?'대기':(p.d===0?'0%p':(p.d>0?'+':'−')+Math.abs(p.d*100).toFixed(4)+'%p'))+'</td></tr>');});
  box.innerHTML='<h3>선택한 전극 <b>'+esc(sel.id)+'</b> 의 상대 전극과 쌍 Δ <span class="muted" style="font-weight:400">(전극 장부 값 · 쌍 전체 값, 전극에 절반씩 나누기 전)</span></h3>'+
   (rows.length?'<div class="scrl"><table id="partner-table"><thead><tr><th class="l">상대 전극</th><th class="l">종류</th><th class="l">변화</th><th>A → B</th><th class="l">Δ</th></tr></thead><tbody>'+rows.join('')+'</tbody></table></div>':'<p class="muted">이 전극이 들어 있는 계산 쌍이 없습니다.</p>');}
-function filterRows(st){var q=(st.kv.q||'').toLowerCase(),inp=$('el-q'),n=0,tot=0,rows=document.querySelectorAll('tr[data-el]'),i;
- if(inp&&inp.value!==(st.kv.q||''))inp.value=st.kv.q||'';
- for(i=0;i<rows.length;i++){var hit=!q||rows[i].getAttribute('data-el').toLowerCase().indexOf(q)>=0;rows[i].classList.toggle('hide',!hit);
-  if(rows[i].getAttribute('data-row')==='corr'){tot++;if(hit)n++;}}
+function filterRows(st){var q=(st.kv.eq||'').toLowerCase(),inp=$('el-q'),n=0,tot=0,rows=document.querySelectorAll('tr[data-row="corr"]'),i;
+ if(inp&&inp.value!==(st.kv.eq||''))inp.value=st.kv.eq||'';   /* the section 2 search (#eq=) filters the section 2 table only; the section 4 ledger is not filtered */
+ for(i=0;i<rows.length;i++){var hit=!q||rows[i].getAttribute('data-el').toLowerCase().indexOf(q)>=0;rows[i].classList.toggle('hide',!hit);tot++;if(hit)n++;}
  var c=$('el-count');if(c)c.textContent=n+' / '+tot;
  var pq=$('pl-q');if(pq&&pq.value!==(st.kv.q||''))pq.value=st.kv.q||'';}
 /* ---- section 3 panel (mrep/T8): two entries, pair list, card tabs, detail of the selection ---- */
@@ -155,7 +156,7 @@ var scl=function(v){return v==null||v===0?'':(v>0?'s-up':'s-down');};
 var sgx=function(v){return v==null?'<span class="muted">대기</span>':'<span class="sg '+scl(v)+'">'+ppx(v)+'</span>';};
 function roiNo(key){var r=(D.changes&&D.changes.rois)||[],i;for(i=0;i<r.length;i++){if(r[i].roi_key===key)return i+1;}return '?';}
 function pairRois(id){return (D.changes&&D.changes.pairs&&D.changes.pairs[id]&&D.changes.pairs[id].roi_keys)||[];}
-function link07(h){var r=D.report07;return r&&r.status==='linked'?'<a class="l07" href="'+esc(r.href+h)+'">07 에서 보기</a>':'<span class="muted l07">07 보고서 없음</span>';}
+function link07(h){var r=D.report07;return r&&r.status==='linked'&&typeof r.href==='string'&&!/^[a-z][a-z0-9+.\-]*:/i.test(r.href)?'<a class="l07" href="'+esc(r.href+h)+'">07 에서 보기</a>':'<span class="muted l07">07 보고서 없음</span>';}
 function ckBadge(p){var cls={new_pair:' b-new',gone_pair:' b-gone',layer_change:' b-mv',value_pending:' b-mv'}[p.ck]||'';return '<span class="badge'+cls+'">'+esc(D.labels.change_kinds[p.ck]||p.ck)+'</span>';}
 function compLine(p){var c=p.comp;if(!c||p.ck!=='layer_change')return '';var a=c.added||[],r=c.removed||[];if(!a.length&&!r.length)return '';
  return '<span class="sub2">item +'+a.length+' / −'+r.length+' ('+esc(a.map(function(x){return '+'+x.text;}).concat(r.map(function(x){return '−'+x.text;})).join(' '))+')</span>';}
@@ -171,11 +172,11 @@ function pairDetail(p){var rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.c
  var tags=tg.map(function(t){return '<span class="badge b-tag">'+esc(TAGN[t]||t)+'</span>';}).join('');
  if(!b||b.status==='not_evaluated'||b.same_delta==null||b.new_value==null||b.gone_value==null)eq='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
  else eq='쌍 Δ = 같은 불량 증감 <b>'+ppx(b.same_delta)+'</b> + 새 방식 <b>'+f4(b.new_value)+'</b> − 없어진 방식 <b>'+f4(b.gone_value)+'</b>';
- h='<div class="panel" id="pd" data-pd="'+esc(p.id)+'"><div class="t"><b>'+esc(p.no||'—')+' · '+esc(p.e.join('–'))+'</b> <span class="chip" style="background:var(--'+esc(p.kind)+')"></span>'+esc(p.kind)+'</div>'+
+ h='<div class="panel" id="pd" data-pd="'+esc(p.id)+'"><div class="t"><b>'+esc(p.no||'—')+' · '+esc(p.e.join('–'))+'</b> <span class="chip" style="background:var(--'+(p.kind==='pixel'?'pixel':'line')+')"></span>'+esc(p.kind)+'</div>'+
   '<div style="margin:4px 0">'+ckBadge(p)+compLine(p)+tags+'</div><p class="headline" id="pd-eq" style="margin:6px 0">'+eq+'</p>'+
   '<table id="pd-total"><thead><tr><th class="l">쌍 전체 (장부)</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody><tr><td class="l">'+esc(p.e.join('–'))+'</td><td>'+(p.pa?f4(p.a):'없음')+'</td><td>'+(p.pb?f4(p.b):'없음')+'</td><td>'+sgx(p.d)+'</td></tr></tbody></table>'+
   '<details open><summary>item 펼침 ('+p.items.length+')</summary><table id="pd-items"><thead><tr><th class="l">방식 · 레이어</th><th class="l">구분</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody>'+
-  p.items.map(function(it){return '<tr><td class="l">'+esc(it.label)+'</td><td class="l"><span class="badge '+(it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''))+'">'+(PRES[it.pres]||esc(it.pres))+'</span></td><td>'+(it.pres==='new'?'없음':f4(it.a))+'</td><td>'+(it.pres==='gone'?'없음':f4(it.b))+'</td><td>'+(it.pres==='both'?sgx(it.d):'<span class="muted">비교 없음</span>')+'</td></tr>';}).join('')+'</tbody></table></details>'+
+  p.items.map(function(it){return '<tr><td class="l">'+esc(it.label)+'</td><td class="l"><span class="badge '+(it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''))+'">'+(PRES[it.pres]||esc(it.pres))+'</span></td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+'</td><td>'+(it.pres==='both'?sgx(it.d):'<span class="muted">비교 없음</span>')+'</td></tr>';}).join('')+'</tbody></table></details>'+
   '<h3>관련 변경 위치</h3><div id="pd-rois">'+(rk.length?rk.map(function(k){return '<button type="button" data-href="#sel=roi:'+encodeURIComponent(k)+'&entry=loc">#'+roiNo(k)+'</button>';}).join(' ')+' <span class="muted">관련 쌍 전체값입니다. 위치별 합계는 없습니다.</span>':
    (D.changes&&D.changes.link_status==='ok'?'<span class="muted">변경 위치 미연결 — 04 가 고른 상위 위치에 없음</span>':'<span class="muted">04 결과가 없어 연결을 알 수 없습니다.</span>'))+'</div>'+
   rangeBlock(p)+'<div class="slot" id="pd-video">영상: 보고서 미포함 — '+link07('#s6')+'</div></div>';
@@ -188,7 +189,7 @@ function roiDetail(key){var rois=(D.changes&&D.changes.rois)||[],roi=null,i;for(
   (ids.length?'<table id="roi-pairs"><thead><tr><th class="l">관련 쌍</th><th class="l">변화 종류</th><th>Δ</th></tr></thead><tbody>'+ids.map(function(id){var p=PB[id];return '<tr data-pair="'+esc(id)+'" data-href="#sel=pair:'+encodeURIComponent(id)+'"><td class="l">'+esc(p.no||'')+' '+esc(p.e.join('–'))+'</td><td class="l">'+ckBadge(p)+'</td><td>'+sgx(p.d)+'</td></tr>';}).join('')+'</tbody></table>':'<p class="muted">연결된 쌍이 없습니다(미연결).</p>')+
   '<p>'+link07('#roi'+encodeURI(key))+'</p></div>';}
 function relatedDetail(sel,pr){var ids=Object.keys(pr.pairs).sort();
- return '<div class="panel" id="pd" data-pd-'+esc(sel.t)+'="'+esc(sel.id)+'"><div class="t">'+label(sel)+'</div><p class="muted">관련 쌍 '+ids.length+'개 — 눌러서 쌍을 고릅니다.</p>'+
+ return '<div class="panel" id="pd" data-pd-kind="'+esc(sel.t)+'" data-pd-id="'+esc(sel.id)+'"><div class="t">'+label(sel)+'</div><p class="muted">관련 쌍 '+ids.length+'개 — 눌러서 쌍을 고릅니다.</p>'+
   (ids.length?'<table id="rel-pairs"><tbody>'+ids.map(function(id){var p=PB[id];return '<tr data-pair="'+esc(id)+'" data-href="#sel=pair:'+encodeURIComponent(id)+'"><td class="l">'+esc(p.no||'')+' '+esc(p.e.join('–'))+'</td><td class="l">'+ckBadge(p)+'</td><td>'+sgx(p.d)+'</td></tr>';}).join('')+'</tbody></table>':'')+'</div>';}
 function parseCat(v){var o={kind:'',cat:'',tag:'',ck:''},i;if(!v)return o;i=v.indexOf(':');if(i<0){o.cat=v;return o;}
  var h=v.slice(0,i),r=v.slice(i+1);if(h==='line'||h==='pixel'){o.kind=h;o.cat=r;}else if(h==='tag')o.tag=r;else if(h==='kind')o.ck=r;else o.cat=v;return o;}
@@ -207,7 +208,8 @@ function drawPanel(st,sel,pr){var pn=$('s3-panel');if(!pn)return;var root=docume
   tb.setAttribute('data-count',String(n));tb.setAttribute('data-shown',String(sh));
   var pc2=$('pl-count');if(pc2)pc2.textContent='결과 '+n+' 쌍 · 표시 '+sh;
   var pm=$('pl-more');if(pm){pm.hidden=n<=sh;pm.textContent='더 보기 (+'+(n-sh)+' 쌍)';}
-  var pnone=$('pl-none');if(pnone)pnone.hidden=n!==0;
+  var pnone=$('pl-none');if(pnone){pnone.hidden=n!==0;
+   pnone.innerHTML=cur.cat==='cno'?'CNO 는 쌍이 아니라 ④ 전극 장부에서 봅니다. <a data-go="s4" href="#s4">④ 로 이동</a>':'조건에 맞는 쌍이 없습니다.';}
   root.setAttribute('data-pl-count',String(n));root.setAttribute('data-pl-shown',String(sh));root.setAttribute('data-pl-total',tb.getAttribute('data-total'));}
  root.setAttribute('data-entry',entry);root.setAttribute('data-tab',tab);
  var det=$('pn-detail'),html;
@@ -217,7 +219,7 @@ function drawPanel(st,sel,pr){var pn=$('s3-panel');if(!pn)return;var root=docume
  else html=relatedDetail(sel,pr);
  if(det)det.innerHTML=html;}
 /* ---- maps (mrep/T7): one PNG pair per layer and product, decoded on demand, self-checked, drawn in sections 1, 2 and 3 ---- */
-var MP=D.maps||null,PNG=null,SD={},IB={},DEC={},GEN=0,ALPHA=0.8,CC={},ANYFAIL=false,DECODED=0;
+var MP=D.maps||null,PNG=null,SD={},IB=Object.create(null),DEC={},GEN=0,ALPHA=0.8,CC={},ANYFAIL=false,DECODED=0,MKEY=null;
 if(MP){try{var pe=$('map-png');PNG=pe?JSON.parse(pe.textContent):null;}catch(e1){PNG=null;}
  D.pairs.forEach(function(p){p.items.forEach(function(it){IB[it.id]={p:p,it:it};});});
  ['A','B'].forEach(function(r){var s=MP.sides[r],o={maps:{},items:{},els:{}};
@@ -264,7 +266,7 @@ function hiSets(sel){var hi={},par={};if(!sel)return {hi:hi,par:par};
  return {hi:hi,par:par};}
 function noteOf(cv){var n=cv.parentNode.querySelector('.mnote');return n;}
 function failList(r,L){var rows=[];Object.keys(SD[r].items).forEach(function(k){var it=SD[r].items[k],ib=IB[it.id];if(it.l!==L)return;
- rows.push('<li>'+(ib?'쌍 '+esc(ib.p.no||'')+' '+esc(ib.p.e.join('–'))+' · '+esc(ib.it.label):esc(it.id))+' · 번호 '+it.n+'</li>');});
+ rows.push('<li>'+(ib?'쌍 '+esc(ib.p.no||'')+' '+esc(ib.p.e.join('–'))+' · '+esc(ib.it.label):esc(it.id))+' · 번호 '+esc(it.n)+'</li>');});
  return '<div class="mwarn"><b>⚠ 지도 검사 실패</b> — 이 그림의 번호별 픽셀 수가 ledger_maps.json 과 다릅니다. 그림 대신 목록을 보입니다.</div><ul>'+rows.join('')+'</ul>';}
 function dashOn(x,y,per){return ((x+y)%per)<per/2;}
 function drawRois(g,cv,r,L,cfg,sel,w){var rois=(D.changes&&D.changes.rois)||[],cnt=0,lw=Math.max(1.5,w/260),fs=Math.max(11,Math.round(w/28));cv._rects=[];
@@ -321,6 +323,7 @@ function render(cv,r,L,o,cfg,sel,pr){var e=DEC[r+'|'+L],note=noteOf(cv);cv._labe
  if(o.roi)cv._rois=drawRois(g,cv,r,L,cfg,sel,w);else cv._rois=0;
  cv._drawn=1;return 1;}
 function drawMaps(st,sel,pr){if(!MP)return;var gen=++GEN,cfg=mapCfg(st,sel),jobs=[],need={},root=document.documentElement;colors();
+ root.setAttribute('data-map-gen',String(gen));   /* how many times the maps were redrawn (the tests count it) */
  var top3=topPairs(),tops={};top3.forEach(function(p){tops[p.id]=1;});
  var all=$('m3-all');
  if(all){all.innerHTML='';if(cfg.layer==='all'&&!cfg.ov){MP.layers.forEach(function(L){var div=document.createElement('div');div.className='mall';
@@ -348,7 +351,6 @@ function drawMaps(st,sel,pr){if(!MP)return;var gen=++GEN,cfg=mapCfg(st,sel),jobs
   b=document.querySelectorAll('[data-t]');for(q=0;q<b.length;q++){var t=b[q].getAttribute('data-t');b[q].classList.toggle('on',t==='ov'?cfg.ov:!!cfg.on[t]);}}
  if(!left){paint();return;}
  keys.forEach(function(key){load(need[key][0],need[key][1],function(){left--;if(left===0)paint();});});}
-function renderMaps(){var st=parseHash(),sel=selOf(st);drawMaps(st,sel,related(sel));}
 function pickAt(cv,ev){var b=cv.getBoundingClientRect();return [Math.floor((ev.clientX-b.left)*cv.width/b.width),Math.floor((ev.clientY-b.top)*cv.height/b.height)];}
 function chooseSel(id){var st=parseHash();st.kv.sel=id;st.flags.demo=false;setHash(st);}
 function onMapClick(cv,ev){var view=cv.getAttribute('data-view'),r=cv.getAttribute('data-role'),q=pickAt(cv,ev),x=q[0],y=q[1],i;
@@ -365,25 +367,32 @@ function toggleLayers(key){var st=parseHash(),cfg=mapCfg(st,selOf(st));
 function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel);filterRows(st);drawPartners(sel);drawPanel(st,sel,pr);
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
  var lab=$('sel-label');if(lab)lab.innerHTML=label(sel);var clr=$('sel-clear');if(clr)clr.disabled=!sel;
- mark(sel,pr);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');drawMaps(st,sel,pr);}
+ mark(sel,pr);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');
+ var mk=mapKey(st,sel);if(mk!==MKEY){MKEY=mk;drawMaps(st,sel,pr);}}   /* the maps are redrawn only when a map state changed (not by search, tab, filter or scroll) */
+function mapKey(st,sel){return [sel?sel.t+':'+sel.id:'',st.kv.layer||'',st.kv.layers==null?'':st.kv.layers,st.kv.ov||'',ALPHA].join('|');}
 function go(id){var el=$(id);if(el&&el.scrollIntoView)el.scrollIntoView({block:'start'});}
 document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.closest('[data-go],[data-href],[data-clear]'):null;if(!t)return;
  if(t.hasAttribute('data-clear')){var st=parseHash();delete st.kv.sel;st.flags.demo=false;setHash(st);return;}
  if(t.hasAttribute('data-go')){ev.preventDefault();go(t.getAttribute('data-go'));return;}
  var h=t.getAttribute('data-href');if(h){var st2=parseHash(),add={kv:{},flags:{}};
   h.replace(/^#/,'').split('&').forEach(function(p){var i=p.indexOf('=');if(i>0){var v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}add.kv[p.slice(0,i)]=v;}});
-  Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;setHash(st2);}});
+  Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;setHash(st2);if(t.hasAttribute('data-scroll'))go(t.getAttribute('data-scroll'));}});
 document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest)return;
  var fb=t.closest('[data-f]');if(fb){var fs=parseHash(),fk=fb.getAttribute('data-f'),fv=fb.getAttribute('data-v');
-  if(fk==='more')fs.kv.more='1';else if(fv===''||(fk!=='tab'&&fk!=='entry'&&fs.kv[fk]===fv))delete fs.kv[fk];else fs.kv[fk]=fv;
+  if(fk==='more')fs.kv.more='1';else if(fv===''||(fk!=='tab'&&fk!=='entry'&&fs.kv[fk]===fv)){delete fs.kv[fk];
+   var pcf=parseCat(fs.kv.cat);   /* "불량 전체" / "전체" also lifts what a #cat=line:same / tag: / kind: hash set */
+   if(fk==='kind'&&pcf.kind)fs.kv.cat=pcf.cat;else if(fk==='cat')delete fs.kv.cat;else if(fk==='tag'&&pcf.tag)delete fs.kv.cat;else if(fk==='ck'&&pcf.ck)delete fs.kv.cat;}
+  else fs.kv[fk]=fv;
   if(fk!=='more'&&fk!=='tab'&&fk!=='entry')delete fs.kv.more;setHash(fs);return;}
  var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
  var ch=t.closest('[data-mlayer]');if(ch){var s1=parseHash();s1.kv.layer=ch.getAttribute('data-mlayer');setHash(s1);return;}
  var tg=t.closest('[data-t]');if(tg&&!tg.disabled){toggleLayers(tg.getAttribute('data-t'));}});
-var al=$('m-alpha');if(al)al.addEventListener('input',function(){ALPHA=Number(al.value)/100;renderMaps();});
+var alPending=false;
+var al=$('m-alpha');if(al)al.addEventListener('input',function(){if(alPending)return;alPending=true;   /* throttled: one redraw per 40 ms, with the last value */
+ setTimeout(function(){alPending=false;ALPHA=Number(al.value)/100;var st=parseHash(),sel=selOf(st);MKEY=mapKey(st,sel);drawMaps(st,sel,related(sel));},40);});
 document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&ev.target.getAttribute&&ev.target.getAttribute('data-href'))ev.target.click();});
-var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.q=qi.value;else delete st.kv.q;
+var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.eq=qi.value;else delete st.kv.eq;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
 var pqi=$('pl-q');if(pqi)pqi.addEventListener('input',function(){var st=parseHash();if(pqi.value)st.kv.q=pqi.value;else delete st.kv.q;delete st.kv.more;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});

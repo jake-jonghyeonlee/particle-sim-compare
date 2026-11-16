@@ -1,4 +1,5 @@
-"""ledger-report (mrep/T5): section 1 (summary, item breakdown), section 5 (evidence), the data bundle and the hash state.
+"""ledger-report (merged report): the five sections, the data bundle and the hash state — sections 1 and 5 (T5), 2 and 4 (T6), the
+maps (T7), the section 3 panel (T8) and the report fixes (T11).
 
 The real chain (synthetic 02 -> ledger -> ledger-maps with 04 -> ledger-report) is `test_real_chain_report_for_the_lead`; open its
 HTML with `pytest tests/test_ledger_report_v2.py -k test_real_chain_report_for_the_lead --basetemp=/tmp/mrep_t5` and look at
@@ -82,7 +83,8 @@ def test_item_breakdown_rows_sum_to_the_kind_delta_when_the_crp_is_the_same(tmp_
     assert '해당 없음' in cno_row and ledger_report.raw_pp(doc['kinds']['pixel']['item_breakdown']['cno']) in cno_row
     assert 'id="crp-note"' not in s1 and 'id="crp-line"' not in section(page, 5)
     assert '합 = 종류 전체 Δ' in table
-    assert 'data-href="#cat=line:same"' in table and 'data-href="#cat=pixel:gone"' in table
+    assert 'data-href="#cat=line:same&amp;entry=pair" data-scroll="s3"' in table and 'data-href="#cat=pixel:gone&amp;entry=pair"' in table
+    assert 'data-go="s4"' in cno_row and 'data-href' not in cno_row                      # CNO is no pair: it points to the electrode ledger
 
 
 def test_crp_note_only_when_the_two_crps_differ(tmp_path):
@@ -527,7 +529,7 @@ def test_chrome_section_2_and_4_hash_states(tmp_path):
     out = tmp_path / 'chrome_out'
     assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None) == 0
     page = out / 'ledger_report.html'
-    for fragment in ('', '#', '#print', '#sel=electrode:Anode', '#sel=layer:PXL', '#q=Sc'):
+    for fragment in ('', '#', '#print', '#sel=electrode:Anode', '#sel=layer:PXL', '#eq=Sc'):
         dom, text = dump_dom(page, fragment)
         assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
     dom, text = dump_dom(page, '#sel=electrode:Anode')
@@ -538,12 +540,17 @@ def test_chrome_section_2_and_4_hash_states(tmp_path):
     dom, text = dump_dom(page, '#sel=layer:PXL')
     marked = selected(dom, 'data-layer')
     assert marked.count('PXL') >= len(doc['electrodes']) + 1 and set(marked) == {'PXL'}                    # head + cells + section 4 row
-    dom, text = dump_dom(page, '#q=Sc')
+    dom, text = dump_dom(page, '#eq=Sc')
     assert '<span id="el-count" class="muted">2 / %d</span>' % len(doc['electrodes']) in text
     hidden = [a['data-el'] for t, a in dom.elements if t == 'tr' and 'hide' in (a.get('class') or '').split() and a.get('data-row') == 'corr']
     assert len(hidden) == len(doc['electrodes']) - 2 and 'Scan1' not in hidden and 'Scan2' not in hidden
-    dom, text = dump_dom(page, '#sel=electrode:Shift&q=shi')
+    dom, text = dump_dom(page, '#sel=electrode:Shift&eq=shi')
     assert selected(dom, 'data-el') == ['Shift', 'Shift'] and 'data-err' not in dom.root
+    # R3:4 — the section 2 search (#eq=) does not hide section 4 ledger rows, and the pair search (#q=) does not touch section 2
+    hidden4 = [a for t, a in dom.elements if t == 'tr' and a.get('data-row') == 'ledger' and 'hide' in (a.get('class') or '').split()]
+    assert hidden4 == []
+    dom, text = dump_dom(page, '#q=Sc')
+    assert '<span id="el-count" class="muted">%d / %d</span>' % (len(doc['electrodes']), len(doc['electrodes'])) in text
 
 
 def test_chrome_unverified_page_draws_without_errors(tmp_path):
@@ -883,7 +890,7 @@ def test_section_2_says_observed_basis_when_dl1_is_missing_and_section_4_hides_e
         for row in doc['layers'][kind]:
             row['by_size'].append({'diameter_um': 3.0, 'a': 0.0, 'b': 0.0, 'delta': 0.0})
     s4 = section(html_of(run_report(tmp_path, doc, name='sz')[1]), 4)
-    assert 'id="size-hidden-line"' in s4 and '값 없는 크기 1개 숨김' in s4 and '3 µm Δ' not in s4 and '1 µm Δ' in s4
+    assert 'id="size-hidden-line"' in s4 and 'Δ 가 모두 0 인 크기 1개 숨김' in s4 and '3 µm Δ' not in s4 and '1 µm Δ' in s4
 
 
 def chrome_t8(tmp_path, name='t8c', **kwargs):
@@ -976,3 +983,229 @@ def test_chrome_zero_valued_condition_rows_are_folded_in_section_5(tmp_path):
     assert 'class="zrows" hidden' not in text and '값 0 인 크기 2개 접기' in text
     dom, text = dump_dom(page, '#sel=pair:P1')
     assert 'class="zrows"' not in text[text.index('id="cond-table"'):text.index('</table>', text.index('id="cond-table"'))]
+
+
+# ---- mrep/T11: report fixes (R3:1 - R3:10) ----------------------------------------------------------------------------------
+
+def run_in_page(page_path, fragment, script, tag='t11'):
+    """Chrome --dump-dom of a copy of the page with `script` appended (it runs after the report script, so it can change the hash,
+    click and read the attributes the report sets)."""
+    page = Path(page_path)
+    copy = page.parent / ('%s_copy.html' % tag)
+    text = page.read_text(encoding='utf-8')
+    copy.write_text(text.replace('</body>', '<script>' + script + '</script></body>'), encoding='utf-8')
+    return dump_dom(copy, fragment)
+
+
+def test_chrome_hash_cannot_inject_attributes_or_markup(tmp_path):
+    """R3:1 — the hash is untrusted: `sel=<anything>:<id>` with a kind that is not pair/electrode/layer/roi selects nothing, and the
+    id never becomes an attribute NAME (it only fills quoted, escaped values)."""
+    doc, page = chrome_t8(tmp_path, changes=ok_changes())
+    bad = ('onfocus', 'onerror', 'onclick', 'onload', 'autofocus', 'data-inj')
+    fragments = ['#sel=x%20autofocus%20tabindex%3D0%20onfocus%3Dwindow.name%3D1%20data-inj%3D1%20y%3Az',
+                 '#sel=pair:%22%20onfocus%3D%22x%20data-inj%3D%221',
+                 '#sel=layer:%22%3E%3Cimg%20src%3Dx%20onerror%3Dwindow.name%3D1%3E',
+                 '#sel=electrode:%3Cb%20data-inj%3D1%3E%3Cimg%20src%3Dx%20onerror%3D1%3E',
+                 '#sel=roi:%22%20autofocus%20onfocus%3D%22x', '#sel=__proto__:x', '#sel=constructor:x', '#sel=pair:constructor',
+                 '#sel=pair:__proto__', '#sel=electrode:__proto__&entry=pair&cat=%22%3E%3Cb%3E&tag=%22%20onfocus%3D1&layer=%22%20onfocus%3D1']
+    for fragment in fragments:
+        dom, text = dump_dom(page, fragment)
+        assert 'data-err' not in dom.root, (fragment, dom.root)
+        assert dom.root.get('data-ready') == '1', fragment
+        for tag, attrs in dom.elements:
+            for name in attrs:
+                assert name not in bad, (fragment, tag, name)
+        assert not [a for t, a in dom.elements if t == 'img' and a.get('src') == 'x'], fragment
+    dom, text = dump_dom(page, fragments[0])
+    assert dom.root['data-sel'] == ''                                                         # a non-whitelisted kind selects nothing
+    dom, text = dump_dom(page, '#sel=layer:PXL')
+    pd = [a for t, a in dom.elements if a.get('id') == 'pd'][0]
+    assert pd.get('data-pd-kind') == 'layer' and pd.get('data-pd-id') == 'PXL' and 'data-pd-layer' not in pd
+    dom, text = dump_dom(page, '#sel=electrode:Anode')
+    pd = [a for t, a in dom.elements if a.get('id') == 'pd'][0]
+    assert pd.get('data-pd-kind') == 'electrode' and pd.get('data-pd-id') == 'Anode'
+
+
+def test_chrome_07_link_with_a_scheme_is_never_an_anchor(tmp_path):
+    doc, page = chrome_t8(tmp_path, changes=map_changes())
+    text = page.read_text(encoding='utf-8')
+    hacked = text.replace('"report07": {"href": null, "status": "none"}', '"report07": {"href": "javascript:alert(1)//", "status": "linked"}')
+    if hacked == text:
+        hacked = re.sub(r'"report07":\s*\{[^}]*\}', '"report07": {"href": "javascript:alert(1)//", "status": "linked"}', text)
+    assert hacked != text
+    bad = page.parent / 'hacked.html'
+    bad.write_text(hacked, encoding='utf-8')
+    dom, out = dump_dom(bad, '#sel=pair:P2')
+    assert 'data-err' not in dom.root and not [a for t, a in dom.elements if t == 'a' and (a.get('href') or '').startswith('javascript')]
+    assert '07 보고서 없음' in out
+
+
+def absent_doc():
+    pairs = [spec('Z1', ['Zed', 'Eff'], 'line', 0.0, 0.0, change='no_change'),
+             spec('N1', ['New', 'Eff'], 'line', 0.0, 0.0030, present_a=False, change='new_pair'),
+             spec('G1', ['Gone', 'Eff'], 'line', 0.0020, 0.0, present_b=False, change='gone_pair'),
+             spec('W1', ['Wait', 'Eff'], 'line', None, 0.0010, change='value_pending'),
+             spec('F1', ['Fil', 'Eff'], 'line', 0.0, 0.0010, filtered=(True, False)),
+             spec('PX', ['Pix', 'Eff2'], 'pixel', 0.0040, 0.0050)]
+    doc = make_ledger(pairs, cno=[('Pix', 'PXL', 0.001, 0.002)])
+    for row in doc['electrodes']:
+        if row['electrode'] == 'New':
+            row['present_a'] = False
+        if row['electrode'] == 'Gone':
+            row['present_b'] = False
+    return doc
+
+
+def ledger_cells(page, name):
+    m = re.search(r'<tr data-el="%s"[^>]*data-row="ledger">(.*?)</tr>' % re.escape(name), page, re.S)
+    assert m, name
+    return [re.sub(r'<[^>]+>', '', c) for c in re.findall(r'<td[^>]*>(.*?)</td>', m.group(1), re.S)]
+
+
+def test_section_4_ledger_tells_absent_not_applicable_and_zero_apart(tmp_path):
+    """R3:2 — 없음 (not in that product), 해당 없음 (no pair of that kind), 0% (there, value 0), 대기 (there, no value)."""
+    page = html_of(run_report(tmp_path, absent_doc())[1])
+    zed = ledger_cells(page, 'Zed')                       # line-only electrode
+    assert zed[1] != '해당 없음' and zed[3] == '해당 없음' and zed[4] == '해당 없음' and zed[5] == '해당 없음'      # no pixel pair and no CNO
+    new = ledger_cells(page, 'New')                       # not in A
+    assert new[1].startswith('없음 → ') and '없음' not in new[1].split('→')[1]
+    gone = ledger_cells(page, 'Gone')                     # not in B
+    assert gone[1].endswith('→ 없음') and not gone[1].startswith('없음')
+    pix = ledger_cells(page, 'Pix')                       # has a pixel pair and CNO, and no line pair
+    assert pix[1] == '해당 없음' and pix[2] == '해당 없음' and pix[3] != '해당 없음' and '→' in pix[5]
+    eff2 = ledger_cells(page, 'Eff2')                     # pixel pair, no CNO
+    assert eff2[3] != '해당 없음' and eff2[5] == '해당 없음'
+
+
+def test_chrome_partner_list_and_pair_detail_tell_absent_pending_zero_and_distance_filter_apart(tmp_path):
+    """R3:2 — section 2 partner list (없음), section 3 pair detail (없음 / 대기 / 거리 필터로 0)."""
+    out = run_report(tmp_path, absent_doc())[1]
+    page = out / 'ledger_report.html'
+    dom, text = dump_dom(page, '#sel=electrode:Eff')
+    assert 'data-err' not in dom.root
+    block = text[text.index('id="partner-table"'):]
+    block = block[:block.index('</table>')]
+    row = {}
+    for m in re.finditer(r'<tr data-pair="([^"]+)"[^>]*>(.*?)</tr>', block, re.S):
+        row[m.group(1)] = re.sub(r'<[^>]+>', '', m.group(2).replace('</td>', '|'))
+    ab = {pid: text.split('|')[3] for pid, text in row.items()}                              # the "A → B" cell (the 4th cell)
+    assert ab['N1'].startswith('없음 → ') and ab['G1'].endswith('→ 없음')
+    assert ab['W1'].startswith('대기 → ') and '없음' not in ab['W1'] and ab['Z1'] == '0% → 0%'
+    dom, text = dump_dom(page, '#sel=pair:F1')
+    pd = text[text.index('id="pd"'):]
+    items = pd[pd.index('id="pd-items"'):]
+    items = items[:items.index('</table>')]
+    assert items.count('거리 필터로 0') == 1                                                   # the A side only
+    dom, text = dump_dom(page, '#sel=pair:N1')
+    pd = text[text.index('id="pd-total"'):]
+    assert '없음' in pd[:pd.index('</table>')]
+    dom, text = dump_dom(page, '#sel=pair:W1')
+    pd = text[text.index('id="pd-total"'):]
+    assert '대기' in pd[:pd.index('</table>')]
+    dom, text = dump_dom(page, '#sel=pair:Z1')
+    pd = text[text.index('id="pd-total"'):]
+    assert '0%' in pd[:pd.index('</table>')] and '거리 필터로 0' not in pd[:pd.index('</table>')]
+    data = bundle_of(page.read_text(encoding='utf-8'))
+    assert [p for p in data['pairs'] if p['id'] == 'F1'][0]['items'][0]['af'] is True
+
+
+def test_chrome_maps_redraw_only_for_map_state_and_the_alpha_slider_is_throttled(tmp_path):
+    """R3:3 — search, tab, filters and more do not redraw; layer / selection / layers / overlay do; 5 slider events = 1 redraw."""
+    doc, page = chrome_t8(tmp_path, changes=ok_changes())
+    script = ("var R=document.documentElement,g=function(){return Number(R.getAttribute('data-map-gen'));},o={};"
+              "setTimeout(function(){o.g0=g();location.hash='#q=an&tab=comp&kind=line&more=1&entry=pair&cat=same';setTimeout(function(){o.g1=g();"
+              "var al=document.getElementById('m-alpha');for(var i=0;i<5;i++){al.value=String(20+i*10);al.dispatchEvent(new Event('input'));}"
+              "setTimeout(function(){o.g2=g();location.hash='#q=an&tab=comp&kind=line&more=1&entry=pair&cat=same&layer=all';setTimeout(function(){o.g3=g();"
+              "R.setAttribute('data-gens',[o.g0,o.g1,o.g2,o.g3].join(','));},200);},200);},200);},200);")
+    dom, text = run_in_page(page, '#', script)
+    g0, g1, g2, g3 = [int(x) for x in dom.root['data-gens'].split(',')]
+    assert 'data-err' not in dom.root and g0 >= 1
+    assert g1 == g0                      # search / tab / filter / more / entry are not map states
+    assert g2 == g1 + 1                  # five slider events in a row make one redraw
+    assert g3 == g2 + 1                  # the layer is a map state
+
+
+def test_chrome_search_keys_are_separate_eq_for_section_2_and_q_for_section_3(tmp_path):
+    """R3:4"""
+    doc, page = chrome_t8(tmp_path, changes=ok_changes())
+    dom, text = dump_dom(page, '#eq=Sc&q=anode')
+    assert dom.root['data-pl-count'] == '2'                                                    # the pair search is q
+    m = re.search(r'id="el-count" class="muted">(\d+) / (\d+)<', text)
+    assert m.group(1) != m.group(2)                                                            # the section 2 search is eq
+    hidden4 = [a for t, a in dom.elements if t == 'tr' and a.get('data-row') == 'ledger' and 'hide' in (a.get('class') or '').split()]
+    assert hidden4 == []                                                                       # section 4 is not filtered by the section 2 search
+    dom, text = dump_dom(page, '#q=Sc')
+    m = re.search(r'id="el-count" class="muted">(\d+) / (\d+)<', text)
+    assert m.group(1) == m.group(2)                                                           # the pair search does not touch section 2
+
+
+def test_chrome_section_1_rows_open_the_pair_entry_cno_points_to_section_4_and_all_lifts_the_kind(tmp_path):
+    """R3:5"""
+    doc, page = chrome_t8(tmp_path, changes=ok_changes())
+    script = ("var R=document.documentElement,o={};"
+              "setTimeout(function(){location.hash='#entry=loc';setTimeout(function(){"
+              "document.querySelector('#breakdown tr[data-cat=\"same\"] td[data-href]').click();setTimeout(function(){o.h1=location.hash;"
+              "o.entry=R.getAttribute('data-entry');"
+              "var b=document.querySelector('#pl-filters [data-f=\"kind\"][data-v=\"\"]');b.click();setTimeout(function(){o.h2=location.hash;"
+              "R.setAttribute('data-nav',JSON.stringify(o));},200);},200);},200);},200);")
+    dom, text = run_in_page(page, '#', script)
+    assert 'data-err' not in dom.root
+    nav = json.loads(dom.root['data-nav'])
+    assert 'cat=line%3Asame' in nav['h1'] and 'entry=pair' in nav['h1'] and nav['entry'] == 'pair'
+    assert 'line' not in nav['h2'] and 'cat=same' in nav['h2']                                  # "불량 전체" lifts the kind that the cat carried
+    dom, text = dump_dom(page, '#cat=pixel:cno')
+    assert 'CNO 는 쌍이 아니라 ④ 전극 장부에서 봅니다' in text and dom.root['data-pl-count'] == '0'
+    s1 = section(page.read_text(encoding='utf-8'), 1)
+    assert re.search(r'<tr data-cat="cno">.*?data-go="s4"', s1, re.S)
+    assert 'data-scroll="s3"' in s1
+
+
+def test_report07_link_survives_a_path_without_a_relative_form(tmp_path, monkeypatch):
+    """R3:6 — Windows: os.path.relpath raises ValueError for another drive; the report is made, without the link."""
+    seven = tmp_path / 'compare2_report'
+    seven.mkdir()
+    (seven / 'report.html').write_text('<html></html>', encoding='utf-8')
+
+    def boom(*args, **kwargs):
+        raise ValueError("path is on mount 'C:', start on mount 'D:'")
+    monkeypatch.setattr(ledger_report.os.path, 'relpath', boom)
+    code, out = run_report(tmp_path, sample_doc(), report07_dir=str(seven))
+    assert code == 0
+    page = html_of(out)
+    assert bundle_of(page)['report07']['status'] == 'missing' and bundle_of(page)['report07']['href'] is None
+    assert json.loads((out / 'report.json').read_text(encoding='utf-8'))['report07'] == 'missing'
+
+
+def test_old_wording_and_dead_code_are_gone():
+    """R3:7"""
+    assert not hasattr(ledger_report, 'NEXT_STEP') and not hasattr(ledger_report, '_slot')
+    from simcompare import cli
+    text = Path(cli.__file__).read_text(encoding='utf-8')
+    line = text[text.index('"ledger-report", add_help=False'):]
+    line = line[:line.index('lrep.add_argument("--maps-dir"')]
+    assert '다음 단계' not in line and line.count('현재 표시 개수에 쓰이지 않음') == 2 and '호환용' in line
+    assert '다음 단계' not in Path(ledger_report.__file__).read_text(encoding='utf-8')
+
+
+def test_crp_difference_without_a_value_is_waiting_not_zero(tmp_path):
+    """R3:9"""
+    doc = make_ledger([spec('A1', ['A', 'B'], 'pixel', 0.001, 0.002)], crp=0.0005, crp_a=1.0, crp_b=1.2)
+    doc['totals']['pixel']['crp']['delta'] = None
+    page = html_of(run_report(tmp_path, doc)[1])
+    note = re.search(r'id="crp-note"[^>]*>(.*?)</p>', page, re.S).group(1)
+    assert 'CRP 차이 대기' in note and '0.0000%p' not in note
+    line = re.search(r'id="crp-line">(.*?)</p>', page, re.S).group(1)
+    assert '차이 대기' in line and '0.0000%p' not in line
+
+
+def test_matched_b_range_outside_the_window_is_said_not_dropped(tmp_path):
+    """R3:10"""
+    ids = [i['item_id'] for i in next(p for p in comp_doc()['pairs'] if p['pair_id'] == 'P2')['items']]
+    rows = [{'id': 'A1', 'side': 'reference', 'range_total': 0.0100, 'match': {'status': 'matched', 'counterpart': 'B1'},
+             'items': [item_row(ids[0], 'both', 0.0040), item_row(ids[1], 'a_only', 0.0020)]},
+            {'id': 'B1', 'side': 'target', 'range_total': None, 'match': {'status': 'matched', 'counterpart': 'A1'}, 'items': None}]
+    doc, out = t8_report(tmp_path, cards=[p2_card(comp_doc(), rows=rows), p1_card()])
+    block = store_block(html_of(out), 'P2')
+    both = table_rows(block, 'rt-both')
+    assert len(both) == 1 and 'B 범위가 지도 창 밖 — 값 없음' in both[0] and 'A1 ↔ B1' in both[0]
+    assert '같은 좌표로 비교할 항목이 없습니다' not in block

@@ -1,8 +1,8 @@
 """ledger-report --maps-dir (mrep/T5): reading a `ledger_maps_v2` folder — the checks (stale, schema, missing files), the bands the
 report shows for it, the bundle's maps / changes / cards meta, and the CLI.
 
-The old section 2 (canvas script) and section 5 (location cards) are gone: T7 draws the maps and T8 the cards. Their tests are
-replaced by these data-level tests; the old ones are in git history (6aeb027)."""
+The map drawing and the location cards are tested in test_ledger_report_v2.py (Chrome); these are the data-level tests. The tests of
+the old canvas script are in git history (6aeb027)."""
 import hashlib
 import io
 import json
@@ -181,7 +181,7 @@ def test_04_changes_feed_the_tag_axis_and_the_count_line_from_the_json_values(tm
     page = html_of(report(tmp_path, folder, maps)[1])
     s1 = section(page, 1)
     assert 'id="band-changes"' not in page and 'id="tags"' in s1
-    rows = re.findall(r'<tr data-href="#cat=tag:([^"]+)"><td class="l">([^<]*)</td><td>(\d+)</td><td>(\d+)</td><td>(\d+)</td></tr>', s1)
+    rows = re.findall(r'<tr data-href="#cat=tag:([^"&]+)&amp;entry=pair" data-scroll="s3"><td class="l">([^<]*)</td><td>(\d+)</td><td>(\d+)</td><td>(\d+)</td></tr>', s1)
     assert rows == [('reshaped', '형상 변경', '1', '1', '2'), ('shifted', '위치 이동', '1', '0', '1')]
     assert 'Δ 를 더하면 중복' in s1
     assert re.search(r'변경 위치 <b>1곳</b>\(04\) · 위치에 연결된 쌍 <b>2</b> · 미연결 쌍 <b>2</b>', s1) and '분모 4 쌍' in s1
