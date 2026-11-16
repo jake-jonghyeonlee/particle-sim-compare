@@ -1550,9 +1550,125 @@ def _resolve_input_files(folder, assignment, config_dir, distance_table):
     return stack, table_path, distance_table
 
 
-def _input_hash_parts(manifest, assignment, table_path, distance_table):
+def _read_pair_table(table_path):
+    """(line/pixel pairs, excluded rows, ids) of pairs.csv: {frozenset: Pair}, {frozenset: (pair_id, version)}, set.
+
+    `class` is line, pixel or excluded; any other value is `invalid_pair`. An A-B / B-A repeat of the same class and
+    version keeps the first row (its pair_id is reserved); another class or version is `duplicate_or_conflicting_pair`."""
+    from ..numeric_schema import Pair
+    from ..pair_exclusion import EXCLUDED_CLASS
+    pairs, excluded, ids = {}, {}, set()
+    if table_path is None:
+        return pairs, excluded, ids
+    seen = {}       # electrode ids -> (class, version, pair_id) of the first row, whatever its class
+    with table_path.open(encoding='utf-8-sig', newline='') as handle:
+        reader = csv.DictReader(handle)
+        required_columns = {'pair_id', 'electrode_a_id', 'electrode_b_id', 'class', 'pair_table_version'}
+        if not required_columns <= set(reader.fieldnames or ()):
+            raise NumericContractError('invalid_pair_table_header')
+        for row in reader:
+            names = (row['electrode_a_id'], row['electrode_b_id'])
+            if not all(names) or names[0] == names[1]:
+                raise NumericContractError('invalid_pair_table_row')
+            kind = row['class']
+            # an excluded row gets the same checks (identifier, version, electrodes) as a line row; Pair rejects the rest
+            pair = Pair(row['pair_id'], frozenset(names), 'line' if kind == EXCLUDED_CLASS else kind,
+                        row['pair_table_version'])
+            earlier = seen.get(pair.electrode_ids)
+            if earlier is not None:
+                # A-B와 B-A처럼 같은 조합이 다시 나오면 분류와 표 버전이 같을 때만 첫 행을 유지한다.
+                if earlier[:2] != (kind, pair.table_version):
+                    raise NumericContractError('duplicate_or_conflicting_pair')
+                if pair.pair_id in ids and pair.pair_id != earlier[2]:
+                    raise NumericContractError('duplicate_or_conflicting_pair')
+                ids.add(pair.pair_id)
+                continue
+            if pair.pair_id in ids:
+                raise NumericContractError('duplicate_or_conflicting_pair')
+            seen[pair.electrode_ids] = (kind, pair.table_version, pair.pair_id)
+            if kind == EXCLUDED_CLASS:
+                excluded[pair.electrode_ids] = (pair.pair_id, pair.table_version)
+            else:
+                pairs[pair.electrode_ids] = pair
+            ids.add(pair.pair_id)
+    return pairs, excluded, ids
+
+
+def _split_pair_exclusions(manifest, stack, pairs, excluded_rows):
+    """(manifest without the left-out cases, pair_exclusions block or None, number of left-out cases).
+
+    Decided on the electrode names of the endpoints (see pair_exclusion): real cases and expected cases without a folder.
+    The manifest passed in is never changed; when nothing is left out the same object is returned. Layers are only read
+    for the record (a left-out case is not checked against the layer stack) and may be null."""
+    from ..pair_exclusion import build_block, exclusion_reason, overridden_reason
+    registered, table_excluded = frozenset(pairs), frozenset(excluded_rows)
+
+    def analysis_layer(defect, layer_a, layer_b):
+        if layer_a not in stack or layer_b not in stack:
+            return None
+        if defect == 'vertical_short':
+            return None if layer_a == layer_b else max((layer_a, layer_b), key=lambda layer: stack[layer][0])
+        return layer_a if layer_a == layer_b else None
+
+    def entry(name, defect, a, b, layer_a, layer_b, reason, presence, observed):
+        excluded_pair = excluded_rows.get(frozenset((a, b)))
+        return {'case': name, 'electrodes': sorted((a, b)), 'failure_type': defect,
+                'analysis_layer': analysis_layer(defect, layer_a, layer_b), 'presence': presence,
+                'observed_diameters': observed, 'reason': reason,
+                'pair_id': excluded_pair[0] if reason == 'pairs_csv:excluded' else None}
+
+    records, kept_cases, overridden, overridden_seen = [], [], [], set()
+    dropped_names = set()
+    discovered_names = set()
+
+    def note_override(a, b, pair_name_key):
+        reason = overridden_reason(a, b, registered)
+        if reason is not None and pair_name_key not in overridden_seen:
+            overridden_seen.add(pair_name_key)
+            pair = pairs[frozenset((a, b))]
+            overridden.append({'electrodes': sorted((a, b)), 'pair_id': pair.pair_id,
+                               'class': pair.classification, 'reason': reason})
+
+    for raw_case in manifest['cases']:
+        discovered_names.add(raw_case['case_name'])
+        a, b = raw_case['endpoints']
+        names = (a['electrode_id'], b['electrode_id'])
+        reason = exclusion_reason(names[0], names[1], registered, table_excluded)
+        if reason is None:
+            kept_cases.append(raw_case)
+            note_override(names[0], names[1], frozenset(names))
+            continue
+        dropped_names.add(raw_case['case_name'])
+        records.append(entry(raw_case['case_name'], raw_case['failure_type'], names[0], names[1],
+                             a['actual_layer'], b['actual_layer'], reason, 'discovered',
+                             sum(r['input_status'] == 'observed' for r in raw_case['records'])))
+    expected = manifest.get('expected_cases')
+    for name in sorted(set(expected or ()) - discovered_names):
+        try:
+            defect, ea, la, eb, lb = _case_name(name)
+        except (NumericContractError, TypeError):
+            continue    # a name that does not parse is kept: the later code refuses it with its own error
+        reason = exclusion_reason(ea, eb, registered, table_excluded)
+        if reason is None:
+            note_override(ea, eb, frozenset((ea, eb)))
+            continue
+        dropped_names.add(name)
+        records.append(entry(name, defect, ea, eb, la, lb, reason, 'expected_only', 0))
+    if not records:
+        return manifest, None, 0
+    kept = {**manifest, 'cases': kept_cases}
+    if expected is not None:
+        kept['expected_cases'] = [name for name in expected if name not in dropped_names]
+    return kept, build_block(records, overridden), len(records)
+
+
+def _input_hash_parts(manifest, assignment, table_path, distance_table, pair_exclusions=0):
     """(assignment hash, pair table hash, input_hash). The path of the distance file is not part of the hash (the same
-    table content gives the same hash from any place); the rule and the normalised table are."""
+    table content gives the same hash from any place); the rule and the normalised table are.
+
+    pair_exclusions: number of cases (real or expected without a folder) the pair rule left out; the rule version is part
+    of the hash only when it is above 0, so an input without exclusions keeps its hash."""
+    from ..pair_exclusion import PAIR_EXCLUSION_RULE
     hashed_assignment = {k: v for k, v in assignment.items() if k != 'interlayer_distance_path'}
     assignment_json = json.dumps(hashed_assignment, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
     assignment_hash = hashlib.sha256(assignment_json.encode('utf-8')).hexdigest()
@@ -1561,14 +1677,17 @@ def _input_hash_parts(manifest, assignment, table_path, distance_table):
     configured_hash = hashlib.sha256((manifest['source_payload_hash']+assignment_hash+(pair_hash or '')
                                       +CASE_EXCLUSION_RULE
                                       +('' if distance_table is None else
-                                        DISTANCE_FILTER_RULE+distance_table.table_sha256)).encode('ascii')).hexdigest()
+                                        DISTANCE_FILTER_RULE+distance_table.table_sha256)
+                                      +(PAIR_EXCLUSION_RULE if pair_exclusions else '')).encode('ascii')).hexdigest()
     return assignment_hash, pair_hash, configured_hash
 
 
 def configured_input_hash(folder, manifest, assignment, config_dir=None, distance_table=None):
     """The `input_hash` configured_dataset would put into its provenance, without reading a mask or allocating an array."""
-    _, table_path, distance_table = _resolve_input_files(folder, assignment, config_dir, distance_table)
-    return _input_hash_parts(manifest, assignment, table_path, distance_table)[2]
+    stack, table_path, distance_table = _resolve_input_files(folder, assignment, config_dir, distance_table)
+    pairs, excluded_rows, _ = _read_pair_table(table_path)
+    _, _, count = _split_pair_exclusions(manifest, stack, pairs, excluded_rows)
+    return _input_hash_parts(manifest, assignment, table_path, distance_table, count)[2]
 
 
 def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_buckets=DEFAULT_TOP_BUCKETS,
@@ -1608,31 +1727,10 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
             any(not isinstance(k, str) or not isinstance(v, str) or not v.strip() for k, v in role_map.items())):
         raise NumericContractError('invalid_real_electrode_roles')
     stack, table_path, distance_table = _resolve_input_files(folder, assignment, config_dir, distance_table)
-    pairs, ids = {}, set()
-    if table_path is not None:
-        with table_path.open(encoding='utf-8-sig', newline='') as handle:
-            reader = csv.DictReader(handle)
-            required_columns = {'pair_id', 'electrode_a_id', 'electrode_b_id', 'class', 'pair_table_version'}
-            if not required_columns <= set(reader.fieldnames or ()):
-                raise NumericContractError('invalid_pair_table_header')
-            for row in reader:
-                names = (row['electrode_a_id'], row['electrode_b_id'])
-                if not all(names) or names[0] == names[1]:
-                    raise NumericContractError('invalid_pair_table_row')
-                pair = Pair(row['pair_id'], frozenset(names), row['class'], row['pair_table_version'])
-                earlier = pairs.get(pair.electrode_ids)
-                if earlier is not None:
-                    # A-B와 B-A처럼 같은 조합이 다시 나오면 분류와 표 버전이 같을 때만 첫 행을 유지한다.
-                    if (earlier.classification, earlier.table_version) != (pair.classification, pair.table_version):
-                        raise NumericContractError('duplicate_or_conflicting_pair')
-                    if pair.pair_id in ids and pair.pair_id != earlier.pair_id:
-                        raise NumericContractError('duplicate_or_conflicting_pair')
-                    ids.add(pair.pair_id)
-                    continue
-                if pair.pair_id in ids:
-                    raise NumericContractError('duplicate_or_conflicting_pair')
-                pairs[pair.electrode_ids] = pair
-                ids.add(pair.pair_id)
+    pairs, excluded_rows, _ids = _read_pair_table(table_path)
+    # Pair rule (class=excluded rows + built-in GH / N_NODE / VBIAS-VINT1): the cases it leaves out are removed here,
+    # before anything is counted or merged. The manifest of the caller is not changed.
+    manifest, pair_exclusions, excluded_count = _split_pair_exclusions(manifest, stack, pairs, excluded_rows)
     if role_policy == 'electrode_id':
         role_map = {electrode: electrode for pair in pairs.values() for electrode in pair.electrode_ids}
     frame_spec = manifest['frame']
@@ -1932,7 +2030,8 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                     for c in cases]
     # The distance file path is not part of the hash (the same table content gives the same hash from any place);
     # the rule and the normalised table are, below.
-    assignment_hash, pair_hash, configured_hash = _input_hash_parts(manifest, assignment, table_path, distance_table)
+    assignment_hash, pair_hash, configured_hash = _input_hash_parts(manifest, assignment, table_path, distance_table,
+                                                                    excluded_count)
     looked_up_pairs = vertical_pairs - unfiltered_pairs
     distance_provenance = ({} if distance_table is None else
                            {'distance_filter': {**distance_table.summary(), 'filtered_records': filtered_records,
@@ -1942,6 +2041,7 @@ def configured_dataset(folder: Path, manifest: dict, assignment: dict, top_bucke
                                                     'unfiltered_expected_cases': unfiltered_cases}
                                                    if unfiltered_cases else {})}})
     provenance = {**copy.deepcopy(manifest), 'is_synthetic': False, 'cases': expected_raw, **distance_provenance,
+                  **({'pair_exclusions': pair_exclusions} if pair_exclusions else {}),
                   'pair_table_version': next(iter(pairs.values())).table_version if pairs else None,
                   'pair_table_hash': pair_hash, 'configured_assignments': copy.deepcopy(assignment),
                   'configured_assignment_hash': assignment_hash, 'input_hash': configured_hash,
