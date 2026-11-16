@@ -309,7 +309,7 @@ def dump_dom(page_path, fragment):
     try:
         proc = subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--no-first-run', '--user-data-dir=' + profile,
                                '--virtual-time-budget=5000', '--dump-dom', Path(page_path).resolve().as_uri() + fragment],
-                              capture_output=True, text=True, timeout=120)
+                              capture_output=True, text=True, timeout=300)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
     assert proc.returncode == 0, proc.stderr[-500:]
@@ -554,3 +554,177 @@ def test_chrome_unverified_page_draws_without_errors(tmp_path):
     for fragment in ('', '#print', '#sel=electrode:Data'):
         dom, text = dump_dom(out / 'ledger_report.html', fragment)
         assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root and '확인 불가' in text
+
+
+# ---- maps (mrep/T7): section 3 map, section 2 layout, section 1 small maps ---------------------------------------------------
+
+def map_changes():
+    """04 changes with two ROIs: R1 has rectangles on both maps, R2 lies outside the map window (listed only)."""
+    changes = ok_changes()
+    changes['rois'][0]['map'] = {'status': 'ok', 'shifted': False, 'clipped': False, 'larger_than_window': False, 'shift_px': [0, 0],
+                                 'reference': {'rect_px': [6, 6, 16, 14], 'rect_map': [6, 6, 16, 14], 'clipped': False},
+                                 'target': {'status': 'ok', 'reason': None, 'rect_px': [7, 6, 17, 14], 'rect_map': [7, 6, 17, 14], 'clipped': False}}
+    second = dict(changes['rois'][0], roi_key='roi:R2', layers=['L1'])
+    second['map'] = {'status': 'outside_map', 'shifted': False, 'clipped': False, 'larger_than_window': False, 'reference': None, 'target': None}
+    changes['rois'].append(second)
+    changes['outside_map'] = ['roi:R2']
+    return changes
+
+
+def map_report(tmp_path, doc=None, name='mv', changes='default', overlay=None, **kwargs):
+    doc = doc or sample_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, overlay=overlay,
+                      changes=map_changes() if changes == 'default' else changes, **kwargs)
+    out = tmp_path / ('out_' + name)
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) in (0, 3)
+    return doc, maps, out
+
+
+def test_every_map_png_is_embedded_once_and_the_bundle_carries_none(tmp_path):
+    doc, maps, out = map_report(tmp_path)
+    page = html_of(out)
+    document = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+    files = sorted(e['file'] for side in document['sides'].values() for e in side['maps'])
+    assert len(files) >= 8
+    assert page.count('iVBORw0KGgo') == len(files) and page.count('id="map-png"') == 1
+    block = re.search(r'<script type="application/json" id="map-png">(.*?)</script>', page, re.S).group(1)
+    assert sorted(json.loads(block)) == files
+    assert 'iVBORw0KGgo' not in bundle_of(page).__repr__()
+    data = bundle_of(page)['maps']
+    assert [m['f'] for m in data['sides']['A']['maps']] == sorted(m['f'] for m in data['sides']['A']['maps'])
+    assert data['layers'] == sorted({i['analysis_layer'] for p in doc['pairs'] for i in p['items']})
+
+
+def test_without_maps_dir_there_is_no_png_block_and_the_slots_say_so(tmp_path):
+    page = html_of(run_report(tmp_path, sample_doc())[1])
+    assert 'id="map-png"' not in page and '<canvas' not in re.sub(r'<script.*?</script>', '', page, flags=re.S)
+    assert '지도 없음' in section(page, 1) and '지도 없음' in section(page, 2) and '다음 단계에서 추가됩니다' in section(page, 3)
+
+
+def test_views_have_canvases_and_toggles_and_the_missing_share_line(tmp_path):
+    doc, maps, out = map_report(tmp_path)
+    page = html_of(out)
+    for number, view in ((1, 's1'), (2, 's2'), (3, 's3')):
+        assert len(re.findall(r'<canvas class="mapcv" data-view="%s"' % view, section(page, number))) == 2, view
+    s3 = section(page, 3)
+    for key in ('shape', 'defect', 'others', 'roi', 'ov'):
+        assert 'data-t="%s"' % key in s3
+    assert s3.count('data-mlayer=') == len(bundle_of(page)['maps']['layers']) + 1 and 'id="m-alpha"' in s3 and 'id="m3-legend"' in s3
+    assert re.search(r'id="m3-missing"[^>]*>지도에 없는 몫\(A vi 대비\): CNO [^·]+ · 곡선 보정 line [^/]+ / pixel ', s3)
+    assert 'data-slot="s3-panel"' in s3                                            # the 40% panel is T8
+
+
+def test_missing_share_adds_the_crp_part_only_when_the_crps_differ(tmp_path):
+    same = section(html_of(map_report(tmp_path, name='same')[2]), 3)
+    assert 'CRP' not in re.search(r'id="m3-missing".*?</p>', same, re.S).group(0)
+    differ = sample_doc()
+    differ = make_ledger([spec('P1', ['Data', 'ELVDD'], 'line', 0.0120, 0.0150), spec('P3', ['Anode', 'Vint'], 'pixel', 0.0200, 0.0200, layer='PXL')],
+                         cno=[('Anode', 'PXL', 0.0050, 0.0060)], crp=0.002)
+    text = section(html_of(map_report(tmp_path, doc=differ, name='differ')[2]), 3)
+    assert 'CRP' in re.search(r'id="m3-missing".*?</p>', text, re.S).group(0)
+
+
+def test_without_dl1_the_shape_toggle_is_off_with_the_reason_and_section_2_shows_no_picture(tmp_path):
+    doc, maps, out = map_report(tmp_path, doc=corr_doc(complete=False), el=False)
+    page = html_of(out)
+    s3, s2 = section(page, 3), section(page, 2)
+    assert re.search(r'<button[^>]*data-t="shape"[^>]*disabled', s3) and 'id="shape-reason"' in s3 and 'DL1 이 없어' in s3
+    assert 'id="s2-maps-reason"' in s2 and 'DL1 이 없어' in s2 and '<canvas' not in s2
+    assert bundle_of(page)['maps']['shape_reason'].startswith('전극·레이어 형상을 그릴 수 없습니다')
+
+
+def test_overlay_toggle_is_off_with_the_reason_unless_the_maps_say_available(tmp_path):
+    doc, maps, out = map_report(tmp_path, name='off')
+    s3 = section(html_of(out), 3)
+    assert re.search(r'<button[^>]*id="ov-btn"[^>]*disabled', s3) and 'id="ov-reason"' in s3 and 'coords_no_candidates' in s3
+    doc, maps, out = map_report(tmp_path, name='on', overlay={'available': True, 'offset_px': [1, 0], 'reason': None})
+    s3 = section(html_of(out), 3)
+    assert not re.search(r'<button[^>]*id="ov-btn"[^>]*disabled', s3) and 'id="ov-reason"' not in s3
+
+
+def test_roi_outside_the_map_is_only_in_the_list_and_rois_carry_their_rectangles(tmp_path):
+    doc, maps, out = map_report(tmp_path)
+    page = html_of(out)
+    s3 = section(page, 3)
+    block = re.search(r'<ul id="outside-map">(.*?)</ul>', s3, re.S).group(1)
+    assert 'roi:R2' in block and 'roi:R1' not in block and 'data-href="#sel=roi:roi:R2"' in block
+    rois = {r['roi_key']: r for r in bundle_of(page)['changes']['rois']}
+    assert rois['roi:R1']['map']['reference']['rect_map'] == [6, 6, 16, 14] and rois['roi:R2']['map']['status'] == 'outside_map'
+    doc, maps, out = map_report(tmp_path, name='nolist', changes=ok_changes())
+    assert 'id="outside-map"' not in section(html_of(out), 3)
+
+
+def test_section_2_cells_choose_the_layer_and_the_electrode(tmp_path):
+    doc = corr_doc()
+    page = html_of(run_report(tmp_path, doc)[1])
+    assert 'data-layer="L1" data-href="#sel=electrode:Data&amp;layer=L1"' in section(page, 2)
+
+
+def chrome_page(tmp_path, **kwargs):
+    doc, maps, out = map_report(tmp_path, **kwargs)
+    return doc, out / 'ledger_report.html'
+
+
+def visible_canvases(dom):
+    return [a for t, a in dom.elements if t == 'canvas' and 'mapcv' in (a.get('class') or '') and 'hidden' not in a]
+
+
+def test_chrome_map_hash_states_draw_with_the_self_check_passed(tmp_path):
+    doc, page = chrome_page(tmp_path, overlay={'available': True, 'offset_px': [1, 0], 'reason': None})
+    for fragment in ('', '#', '#demo', '#sel=pair:P1', '#sel=electrode:Anode', '#sel=layer:PXL', '#layers=shape', '#layers=none', '#layers=shape,defect,others,roi&layer=L1', '#layer=all'):
+        dom, text = dump_dom(page, fragment)
+        assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
+        assert dom.root.get('data-map-check') == 'passed', (fragment, dom.root)
+        assert int(dom.root['data-map-drawn']) == len(visible_canvases(dom)) >= 4, (fragment, dom.root)
+    dom, text = dump_dom(page, '#demo')
+    assert dom.root['data-map-layers'] == 'shape,defect' and dom.root['data-sel'].startswith('pair:')
+    dom, text = dump_dom(page, '#layers=shape')
+    assert dom.root['data-map-layers'] == 'shape'
+    dom, text = dump_dom(page, '#layers=none')
+    assert dom.root['data-map-layers'] == ''
+    dom, text = dump_dom(page, '#layer=PXL')
+    assert dom.root['data-map-layer'] == 'PXL'
+    dom, text = dump_dom(page, '#sel=layer:PXL')
+    assert dom.root['data-map-layer'] == 'PXL'
+    dom, text = dump_dom(page, '#layer=all')
+    assert dom.root['data-map-layer'] == 'all' and len([1 for t, a in dom.elements if t == 'canvas' and a.get('data-view') == 's3all']) == 2 * len(bundle_of(page.read_text(encoding='utf-8'))['maps']['layers'])
+
+
+def test_chrome_change_locations_draw_only_the_rectangles_that_have_a_place(tmp_path):
+    doc, page = chrome_page(tmp_path)
+    dom, text = dump_dom(page, '#layers=shape,roi&layer=L1')
+    assert dom.root['data-map-rois'] == '1' and 'data-err' not in dom.root
+    dom, text = dump_dom(page, '#layers=shape&layer=L1')
+    assert dom.root['data-map-rois'] == '0'
+    dom, text = dump_dom(page, '#sel=roi:roi:R1&layers=shape,roi&layer=L1')
+    assert dom.root['data-sel'] == 'roi:roi:R1' and dom.root['data-map-rois'] == '1'
+
+
+def test_chrome_overlay_shows_one_picture_only_when_available(tmp_path):
+    doc, page = chrome_page(tmp_path, overlay={'available': True, 'offset_px': [1, 0], 'reason': None})
+    dom, text = dump_dom(page, '#ov=1&layer=L1')
+    assert dom.root['data-map-ov'] == '1' and 'data-err' not in dom.root and dom.root['data-map-check'] == 'passed'
+    shown = [a['data-view'] for a in visible_canvases(dom)]
+    assert 'ov' in shown and 's3' not in shown
+    doc, page = chrome_page(tmp_path, name='noov')
+    dom, text = dump_dom(page, '#ov=1&layer=L1')
+    assert dom.root['data-map-ov'] == '0' and 's3' in [a['data-view'] for a in visible_canvases(dom)]
+
+
+def test_chrome_a_map_whose_pixel_counts_do_not_match_gets_a_warning_and_a_list(tmp_path):
+    doc, page = chrome_page(tmp_path, tamper=True)
+    dom, text = dump_dom(page, '#sel=pair:P1&layer=L1')
+    assert dom.root.get('data-map-check') == 'failed' and 'data-err' not in dom.root
+    assert '지도 검사 실패' in text and '번호 ' in text
+    assert not [a for a in visible_canvases(dom) if a['data-view'] in ('s3', 's2', 's1')]
+    assert re.search(r'<li>쌍 [^<]*Data–ELVDD[^<]*번호 \d+</li>', text)
+
+
+def test_chrome_without_dl1_still_draws_the_defect_areas_and_the_page_has_no_error(tmp_path):
+    doc, page = chrome_page(tmp_path, doc=corr_doc(complete=False), el=False)
+    for fragment in ('#demo', '#layers=shape', '#sel=pair:P1'):
+        dom, text = dump_dom(page, fragment)
+        assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root and dom.root['data-map-check'] == 'passed', fragment
+    dom, text = dump_dom(page, '#demo')
+    assert dom.root['data-map-layers'] == 'defect'

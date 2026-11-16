@@ -35,13 +35,56 @@ def counts_of(num):
     return {str(i): int(c) for i, c in enumerate(counts) if i and c}
 
 
+def full_side(out, doc, role, present, el=True, tamper=False):
+    """A side with real numbers: every item of the doc that exists on this product is a bar in the item picture of its layer, every
+    electrode of those items a strip in the electrode picture (el=False: no electrode pictures, as without DL1; tamper=True: the
+    recorded pixel counts do not match the PNG)."""
+    layers = {}
+    for pair in doc['pairs']:
+        for item in pair['items']:
+            if item['presence'] in present:
+                layers.setdefault(item['analysis_layer'], []).append((pair, item))
+    maps, item_rows, electrodes, number = [], [], {}, 0
+    for index, layer in enumerate(sorted(layers), 1):
+        num = np.zeros((40, 40), dtype=np.uint16)
+        names = sorted({e for pair, item in layers[layer] for e in pair['electrodes']})
+        for j, (pair, item) in enumerate(layers[layer]):
+            number += 1
+            num[3 + 4 * j:5 + 4 * j, 1:39] = number
+            item_rows.append({'item_id': item['item_id'], 'pair_id': pair['pair_id'], 'kind': pair['kind'], 'layers': [layer],
+                              'upper_layer': item['upper_layer'], 'lower_layer': item['lower_layer'], 'number': number,
+                              'value': item['a'] if role == 'reference' else item['b'], 'status': 'ok'})
+        file = 'map_%s_%03d_it.png' % (role, index)
+        (out / file).write_bytes(png_of(num))
+        counts = counts_of(num)
+        if tamper:
+            counts = {k: v + 1 for k, v in counts.items()}
+        maps.append({'file': file, 'layer': layer, 'kind': 'it', 'px_um': 0.2, 'shape_yx': [40, 40], 'origin_px': [0, 0], 'block_px': 1,
+                     'numbers': counts})
+        if el:
+            enum = np.zeros((40, 40), dtype=np.uint16)
+            for k, name in enumerate(names):
+                row = electrodes.setdefault(name, {'number': len(electrodes) + 1, 'name': name, 'layers': {}})
+                enum[1:39, 2 + 6 * k:6 + 6 * k] = row['number']
+                row['layers'][layer] = {'px': 38 * 4, 'overlap_px': 0}
+            file = 'map_%s_%03d_el.png' % (role, index)
+            (out / file).write_bytes(png_of(enum))
+            maps.append({'file': file, 'layer': layer, 'kind': 'el', 'px_um': 0.2, 'shape_yx': [40, 40], 'origin_px': [0, 0],
+                         'block_px': 1, 'numbers': counts_of(enum)})
+    return {'items': item_rows, 'maps': maps, 'frame': {'shape_yx': [40, 40], 'origin_um': [0.0, 0.0], 'pitch_um': 0.2},
+            'electrodes': sorted(electrodes.values(), key=lambda r: r['number']), 'hidden': {'item_px': 0, 'electrode_overlap_px': 0}}
+
+
 def write_maps(tmp, doc, ledger_sha, name='maps', status='ok', schema='ledger_maps_v2', cards=None, bands=None, changes=None,
-               overlay=None, dropped=None):
+               overlay=None, dropped=None, full=False, el=True, tamper=False):
     """Item picture + electrode picture per layer and product, ledger_maps.json (v2)."""
     out = tmp / name
     out.mkdir(parents=True, exist_ok=True)
     sides = {}
     for role, key, present in ROLES:
+        if full:
+            sides[role] = full_side(out, doc, role, present, el=el, tamper=tamper)
+            continue
         items, layers = [], []
         for pair in doc['pairs']:
             for item in pair['items']:

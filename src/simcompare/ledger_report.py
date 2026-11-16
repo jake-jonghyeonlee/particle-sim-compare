@@ -11,6 +11,7 @@ The page is plain HTML plus a small script: section 1 and 5 read without the scr
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -187,7 +188,7 @@ MAP_FILE_NAME = re.compile(r'map_(reference|target)_\d{3}_(el|it)\.png')
 def _read_maps(maps_dir, ledger_sha):
     """{'doc', 'sha'} of a ledger-maps folder, or NumericContractError ledger_maps_input_missing /
     ledger_maps_schema_mismatch (not ledger_maps_v2) / ledger_maps_stale (made from another ledger.json). The map PNGs are
-    only checked for their names and existence here; T7 draws them."""
+    read once here and embedded once (base64) in the page; the script draws them."""
     folder = Path(maps_dir)
     path = folder / 'ledger_maps.json'
     if not path.is_file():
@@ -207,6 +208,7 @@ def _read_maps(maps_dir, ledger_sha):
     if recorded != ledger_sha:
         raise NumericContractError('ledger_maps_stale', f'{path}: 다른 ledger.json 으로 만든 지도입니다(지도 {recorded}, 현재 {ledger_sha}). '
                                                       'ledger-maps 를 다시 실행하세요')
+    pngs = {}
     for role in ('reference', 'target'):
         for entry in ((doc.get('sides') or {}).get(role) or {}).get('maps') or []:
             name = entry.get('file') if isinstance(entry, dict) else None
@@ -214,7 +216,8 @@ def _read_maps(maps_dir, ledger_sha):
                 raise NumericContractError('ledger_maps_input_missing', f'{folder}: 지도 파일 이름 {name!r} 이 폴더 직속 map_*.png 가 아닙니다')
             if not (folder / name).is_file():
                 raise NumericContractError('ledger_maps_input_missing', f'{folder / name}: 지도 PNG 가 없습니다')
-    return {'doc': doc, 'sha': hashlib.sha256(raw).hexdigest()}
+            pngs[name] = (folder / name).read_bytes()
+    return {'doc': doc, 'sha': hashlib.sha256(raw).hexdigest(), 'pngs': pngs}
 
 
 def _report07_link(report07_dir, out):
@@ -555,7 +558,7 @@ def _section1(ctx):
            '<div class="g3"><div><h3>무엇 때문인가 — item 단위 분해 <span class="muted" style="font-weight:400">'
            '(위 = 증가, 아래 = 감소 · 합이 종류 전체 Δ)</span></h3>%s</div>' % _breakdown_table(ctx),
            '<div>%s</div>' % _lists(ctx),
-           '<div><h3>작은 A·B 지도</h3><div class="slot" data-slot="s1-maps">%s</div>%s</div></div>' % (NEXT_STEP, _tag_block(ctx)),
+           '<div><h3>작은 A·B 지도</h3>%s%s</div></div>' % (_small_maps(ctx), _tag_block(ctx)),
            _change_kind_table(ctx), _trust(ctx), '</section>']
     return ''.join(out)
 
@@ -738,7 +741,7 @@ def _el_attrs(name):
 def _layer_cell(row, layer, verified):
     state = (row.get('layer_state') or {}).get(layer)
     def attrs(cls):
-        return 'class="c %s" data-layer="%s"' % (cls, esc(layer))
+        return 'class="c %s" data-layer="%s" data-href="%s"' % (cls, esc(layer), esc(_href('electrode:' + row['electrode']) + '&layer=' + quote(layer, safe='')))
     if state is None:
         if verified:
             return '<td %s></td>' % attrs('st-none')
@@ -747,6 +750,17 @@ def _layer_cell(row, layer, verified):
     if row.get('moved') and state in MOVE_TEXT:
         return '<td %s title="%s">⇄<sub>%s</sub></td>' % (attrs(cls + ' st-mv'), esc(MOVE_TEXT[state]), 'A' if state == 'a_only' else 'B')
     return '<td %s title="%s">%s</td>' % (attrs(cls), esc(text), symbol)
+
+
+def _layout_maps(ctx):
+    """A/B layout pictures beside the table (shape layer of the chosen layer; a cell click chooses the layer and marks the electrode)."""
+    if ctx.maps is None:
+        return '<div class="s2map" id="s2-maps"><p class="muted">지도 없음 — --maps-dir 를 주면 A·B layout 이 이 자리에 나옵니다.</p></div>'
+    reason = _shape_reason(ctx)
+    if reason or not _map_layers(ctx):
+        return '<div class="s2map" id="s2-maps"><p class="muted" id="s2-maps-reason">%s</p></div>' % esc(reason or '지도 PNG 가 없습니다.')
+    return ('<div class="s2map" id="s2-maps"><h4>A · B layout <span class="muted" style="font-weight:400" id="s2-layer"></span></h4>%s'
+            '<p class="muted" style="margin:3px 0">표의 칸을 누르면 그 레이어로 바뀌고 그 전극이 굵게 보입니다.</p></div>' % _pair_of_maps('s2'))
 
 
 def _section2(ctx):
@@ -782,10 +796,143 @@ def _section2(ctx):
         body.append('<tr %s data-row="corr"><td class="l nm%s"><b>%s</b></td><td class="l"><span class="badge">%s</span></td>%s</tr>' % (
             _el_attrs(row['electrode']), shade, esc(row['electrode']), badge,
             ''.join(_layer_cell(row, layer, verified) for layer in layers)))
-    out.append('<div class="scrl"><table id="corr-table"><thead><tr><th class="l">전극</th><th class="l">상태</th>%s</tr></thead><tbody>%s</tbody></table></div>' % (
-        head, ''.join(body)))
+    out.append('<div class="s2row"><div class="s2tab"><div class="scrl"><table id="corr-table"><thead><tr><th class="l">전극</th><th class="l">상태</th>%s</tr></thead><tbody>%s</tbody></table></div></div>%s</div>' % (
+        head, ''.join(body), _layout_maps(ctx)))
     out.append('<div id="el-partners" class="partners"><p class="muted">전극 이름이나 칸을 누르면 그 전극의 상대 전극과 쌍 Δ 가 이 자리에 나옵니다. '
                '이 목록은 스크립트가 그립니다.</p></div></section>')
+    return ''.join(out)
+
+
+# ---- maps: section 3 (map + toggles), the A/B layout of section 2 and the small maps of section 1 (mrep/T7) -----------------------
+# One numbered PNG pair (item picture `it`, electrode picture `el`) per layer and product is embedded once (id="map-png"); the
+# script decodes the layers it needs, checks the pixel count of every number against ledger_maps.json and draws the three views
+# from the same decoded arrays. Electrode shapes are thin outlines (no fill), so the defect fill of the selected pair stays readable.
+
+ROLE_KEYS = (('reference', 'A'), ('target', 'B'))
+OVERLAY_REASONS = {'coords_no_candidates': '04 결과가 없어 A 와 B 의 위치 차이(offset)를 알 수 없습니다',
+                   'coords_stale': '04 결과가 지금 입력과 달라 위치 차이를 쓸 수 없습니다'}
+
+
+def _map_entries(ctx, role):
+    return ((ctx.maps['doc'].get('sides') or {}).get(role) or {}).get('maps') or []
+
+
+def _map_layers(ctx):
+    return sorted({e['layer'] for role, _k in ROLE_KEYS for e in _map_entries(ctx, role) if isinstance(e, dict)})
+
+
+def _has_el_maps(ctx):
+    return any(e.get('kind') == 'el' for role, _k in ROLE_KEYS for e in _map_entries(ctx, role) if isinstance(e, dict))
+
+
+def _shape_reason(ctx):
+    """'' when the electrode outlines can be drawn, else the reason (DL1 electrode pictures are missing)."""
+    if _has_el_maps(ctx):
+        return ''
+    if any(row.get('layer_state_status') != 'verified' for row in ctx.doc['electrodes']):
+        return '전극·레이어 형상을 그릴 수 없습니다: DL1 이 없어 전극 그림(el)이 만들어지지 않았습니다.'
+    return '전극·레이어 형상을 그릴 수 없습니다: ledger-maps 에 전극 그림(el)이 없습니다.'
+
+
+def _overlay_info(ctx):
+    overlay = ctx.maps['doc'].get('overlay') or {}
+    if overlay.get('available'):
+        return True, ''
+    reason = overlay.get('reason')
+    return False, OVERLAY_REASONS.get(reason, '겹쳐 보기를 쓸 수 없습니다') + (' (%s)' % reason if reason else '')
+
+
+def _map_png_block(ctx):
+    pngs = ctx.maps['pngs']
+    return ('<script type="application/json" id="map-png">%s</script>' % _json_embed(
+        {name: base64.b64encode(data).decode('ascii') for name, data in sorted(pngs.items())}))
+
+
+def _mapcv(view, role, title, extra=''):
+    return ('<figure class="mfig"><figcaption><b>%s</b></figcaption><canvas class="mapcv" data-view="%s" data-role="%s" width="1" height="1" '
+            'role="img" aria-label="%s 지도" hidden%s></canvas><div class="mnote" data-view="%s" data-role="%s"></div></figure>' % (
+                esc(title), view, role, esc(title), extra, view, role))
+
+
+def _pair_of_maps(view):
+    return '<div class="mpair">%s%s</div>' % (_mapcv(view, 'A', '기준 A'), _mapcv(view, 'B', '대상 B'))
+
+
+def _small_maps(ctx):
+    if ctx.maps is None:
+        return '<div class="slot" data-slot="s1-maps">지도 없음 — --maps-dir 를 주면 A·B 작은 지도가 나옵니다</div>'
+    reason = _shape_reason(ctx)
+    note = '<p class="muted" style="margin:3px 0">전극 윤곽(회색) + 변화가 큰 상위 3쌍의 번호. 번호를 누르면 ③ 에서 그 쌍을 봅니다.</p>'
+    if reason and not _map_layers(ctx):
+        return '<div id="s1-maps" class="smaps"><p class="muted">지도 PNG 가 없습니다.</p></div>'
+    return '<div id="s1-maps" class="smaps" data-slot="s1-maps">%s%s%s</div>' % (
+        note, _pair_of_maps('s1'), ('<p class="muted" id="s1-shape-reason">%s</p>' % esc(reason)) if reason else '')
+
+
+def _missing_share(ctx):
+    """The part of the change the maps cannot show: CNO, the curve intercept, the CRP line (display of ledger values)."""
+    t = ctx.doc['totals']
+
+    def part(label, value, kind):
+        if value is None:
+            return '%s 대기' % label
+        p = ctx.pct(value, kind)
+        return '%s %s' % (label, spct(p) if p is not None else '— (A 가 0)')
+    cno = (t['pixel'].get('cno') or {}).get('delta')
+    parts = [part('CNO', cno, 'pixel'),
+             '곡선 보정 line %s / pixel %s' % (part('', (t['line'].get('intercept') or {}).get('delta'), 'line').strip(),
+                                            part('', (t['pixel'].get('intercept') or {}).get('delta'), 'pixel').strip())]
+    if ctx.crp_differs():
+        parts.append(part('CRP', ctx.crp().get('delta'), 'pixel'))
+    return '<p id="m3-missing" class="muted">지도에 없는 몫(A vi 대비): %s</p>' % esc(' · '.join(parts))
+
+
+def _m_legend():
+    def sw(css, text):
+        return '<div><i class="sw" style="%s"></i>%s</div>' % (css, esc(text))
+    return ('<div class="mleg" id="m3-legend"><b>범례</b>'
+            + sw('border:1px solid var(--common);background:none', '전극 윤곽 (얇은 회색, 채움 없음)')
+            + sw('border:3px solid var(--common);background:rgba(141,140,133,.18)', '선택 전극 (굵은 윤곽 + 옅은 채움)')
+            + sw('border:2px dashed var(--common);background:none', '선택 쌍의 다른 전극 (점선 윤곽)')
+            + sw('background:var(--line)', 'line 불량 영역 (선택 쌍)') + sw('background:var(--pixel)', 'pixel 불량 영역 (선택 쌍)')
+            + sw('border:2px dashed var(--pixel);background:none', '한쪽에만 있는 item (점선 윤곽)')
+            + sw('background:var(--common);opacity:.3', '다른 쌍 (옅게)')
+            + sw('border:2px dashed var(--text-primary);background:none', '변경 위치 (04, 번호)')
+            + sw('border:2px dashed var(--text-primary);border-style:dotted double;background:none', '반복 위치로 옮겨 표시한 위치')
+            + '<div class="muted">⌐ 창 경계에서 잘림 · ≫ 창보다 큼</div></div>')
+
+
+def _section3(ctx):
+    head = '<section id="s3"><p class="q">어디가 얼마나 달라졌나</p><h2>③ 탐색</h2>'
+    if ctx.maps is None:
+        return head + '<div class="slot" data-slot="s3">%s</div></section>' % NEXT_STEP
+    layers = _map_layers(ctx)
+    reason = _shape_reason(ctx)
+    ov_ok, ov_reason = _overlay_info(ctx)
+    chips = ''.join('<button type="button" class="mchip" data-mlayer="%s">%s</button>' % (esc(layer), esc(layer)) for layer in layers)
+    chips += '<button type="button" class="mchip" data-mlayer="all">전체</button>'
+    toggles = ''.join('<button type="button" class="mtog" data-t="%s"%s>%s</button>' % (
+        key, (' disabled title="%s"' % esc(reason)) if key == 'shape' and reason else '', text)
+        for key, text in (('shape', '전극·레이어 형상'), ('defect', '불량 영역(선택 쌍)'), ('others', '다른 쌍도 옅게'), ('roi', '변경 위치')))
+    toggles += '<button type="button" class="mtog" id="ov-btn" data-t="ov"%s>겹쳐 보기</button>' % (
+        '' if ov_ok else ' disabled title="%s"' % esc(ov_reason))
+    out = [head, '<div class="s3grid"><div class="s3maps" id="s3-maps"><div class="mbar"><span class="muted">레이어</span> %s<br>'
+           '<span class="muted">보기</span> %s <label class="muted">불량 영역 투명도 <input type="range" id="m-alpha" min="10" max="100" value="80"></label></div>' % (
+               chips, toggles)]
+    if reason:
+        out.append('<p class="muted" id="shape-reason">%s</p>' % esc(reason))
+    if not ov_ok:
+        out.append('<p class="muted" id="ov-reason">겹쳐 보기 꺼짐: %s</p>' % esc(ov_reason))
+    out.append('<div class="mrow"><div class="mview"><div id="m3-view">%s</div><div id="m3-ov" hidden>%s</div><div id="m3-all" hidden></div></div>%s</div>' % (
+        _pair_of_maps('s3'), _mapcv('ov', 'A', 'A 위에 B (A 회색 실선 · B 점선)'), _m_legend()))
+    out.append(_missing_share(ctx))
+    outside = (ctx.changes or {}).get('outside_map') or [] if isinstance(ctx.changes, dict) else []
+    if outside:
+        index = {roi.get('roi_key'): i + 1 for i, roi in enumerate(ctx.changes.get('rois') or [])}
+        out.append('<div id="m3-outside"><h4>지도 밖 변경 위치 <span class="muted" style="font-weight:400">(창 밖이라 그리지 않고 목록으로만 보입니다)</span></h4><ul id="outside-map">%s</ul></div>' % ''.join(
+            '<li data-roi="%s" data-href="%s" tabindex="0">변경 위치 %s <span class="muted">%s</span></li>' % (
+                esc(key), esc(_href('roi:' + key)), esc(index.get(key, '?')), esc(key)) for key in outside))
+    out.append('</div><div class="slot" id="s3-panel" data-slot="s3-panel">%s</div></div></section>' % NEXT_STEP)
     return ''.join(out)
 
 
@@ -913,10 +1060,28 @@ def _changes_bundle(ctx):
         rois.append({'roi_key': roi.get('roi_key'), 'layers': roi.get('layers'), 'status': roi.get('status'),
                      'tags': roi.get('change_kinds'), 'tag_text': roi.get('change_kind_text'),
                      'center_xy_um': roi.get('center_xy_um'), 'window_um': roi.get('window_um'),
-                     'map_status': (roi.get('map') or {}).get('status')})
+                     'map_status': (roi.get('map') or {}).get('status'), 'map': roi.get('map')})
     return {'link_status': ch.get('link_status'), 'coords_status': ch.get('coords_status'), 'apply_align': ch.get('apply_align'),
             'summary': ch.get('summary'), 'pairs': ch.get('pairs') or {}, 'rois': rois, 'outside_map': ch.get('outside_map') or [],
             'overlay': ctx.maps['doc'].get('overlay')}
+
+
+def _map_sides(ctx):
+    """Per product: the numbered pictures (file, layer, kind, size, origin, block, pixel count of every number), the item numbers
+    (item_id, pair, layer, status) and the electrode numbers. The PNG bytes are in id="map-png"."""
+    out = {}
+    side_doc = ctx.maps['doc'].get('sides') or {}
+    for role, key in ROLE_KEYS:
+        side = side_doc.get(role) or {}
+        maps = []
+        for entry in sorted(side.get('maps') or [], key=lambda m: m['file']):
+            height, width = entry['shape_yx']
+            maps.append({'f': entry['file'], 'l': entry['layer'], 'k': entry['kind'], 'w': width, 'h': height,
+                         'o': list(entry.get('origin_px') or [0, 0]), 'b': entry.get('block_px') or 1, 'n': entry.get('numbers') or {}})
+        out[key] = {'maps': maps, 'els': [{'n': e['number'], 'name': e['name']} for e in side.get('electrodes') or []],
+                    'items': [{'n': i['number'], 'id': i['item_id'], 'p': i['pair_id'], 'k': i['kind'], 'l': (i.get('layers') or [None])[0],
+                               's': i.get('status')} for i in side.get('items') or []]}
+    return out
 
 
 def _maps_bundle(ctx):
@@ -925,7 +1090,8 @@ def _maps_bundle(ctx):
     mdoc = ctx.maps['doc']
     return {'status': mdoc.get('status'), 'reasons': list(mdoc.get('reasons') or []), 'bands': mdoc.get('bands') or [],
             'cards_dropped': len(mdoc.get('cards_dropped_for_budget') or []), 'options': mdoc.get('options') or {},
-            'sha256': ctx.maps['sha'], 'report': mdoc.get('report') or {}}
+            'sha256': ctx.maps['sha'], 'report': mdoc.get('report') or {}, 'sides': _map_sides(ctx), 'layers': _map_layers(ctx),
+            'shape_reason': _shape_reason(ctx), 'overlay': mdoc.get('overlay')}
 
 
 def _cards_bundle(ctx):
@@ -987,9 +1153,10 @@ def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None, report07=
         '<h1>설계 변경 영향 보고서 — 합친 비교 <span class="muted" style="font-size:13px;font-weight:400">기준 A: %s · 대상 B: %s · ledger %s</span></h1>' % (
             esc(products['reference'].get('model_group')), esc(products['target'].get('model_group')), esc(doc.get('status'))),
         _bands(ctx, size_warning), _bar(), _section1(ctx),
-        _section2(ctx), _slot(3, '③ 탐색', '어디가 얼마나 달라졌나'), _section4(ctx),
+        _section2(ctx), _section3(ctx), _section4(ctx),
         _section5(ctx),
-        '</main><script type="application/json" id="report-data">%s</script><script>%s</script></body></html>\n' % (data, SCRIPT)]
+        '</main><script type="application/json" id="report-data">%s</script>%s<script>%s</script></body></html>\n' % (
+            data, _map_png_block(ctx) if ctx.maps is not None else '', SCRIPT)]
     return ''.join(body), len(data.encode('utf-8'))
 
 
