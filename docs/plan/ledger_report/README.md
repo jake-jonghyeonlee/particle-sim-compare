@@ -549,3 +549,27 @@ CNO (종류 CNO, 목업에서 K6):
 ## 26. 13절과의 충돌 확인
 
 13절 "넣지 않는 것"(간격 측정, A 로 되돌리기, 우선순위, 신뢰도, DR, 기능 묶음 표, 07·`delta.*` 변경)과 16–25절은 충돌하지 않는다. 13절의 "1단계에서 뺀 것"(2절 지도, 5절 위치 상세·범위 합계, 방향·분포 열, 가장자리 반복)은 이 Run 이 2·3단계로 넣는 항목이다. 방향·분포 열은 여전히 넣지 않는다.
+
+## 27. item 분해·구성 변경·칸 상태 (mrep/T1)
+
+`ledger.json` 은 `ledger_v1` 을 유지한다. 키만 더한다. 새 키를 지우고 `change_kinds` 의 `layer_change` label 하나만 되돌리면 기준 commit(c194d0e) 출력과 같다(`tests/test_ledger_breakdown.py` 가 옛 `ledger.py` 로 비교한다). `ledger_pairs.csv`·`ledger_electrodes.csv` 는 코드만 쓰므로 바뀌지 않는다.
+
+| 키 | 내용 |
+|---|---|
+| `pairs[].breakdown` | `{same_delta, new_value, gone_value, n_both, n_new, n_gone, status}`. `same_delta` = presence `both` item 의 Δ 합, `new_value` = `new` item 의 B 값 합, `gone_value` = `gone` item 의 A 값 합(둘 다 ≥ 0). 쌍 Δ = same_delta + new_value − gone_value |
+| `pairs[].composition` | `{added, removed}`. `layer_change` 쌍만 채운다(8절 키 집합과 같은 규칙, 거리 필터 0 item 처리 포함). 원소는 `{item_id, failure_type, layers, text}`(예 `상하 GAT2-SD2`, `측면 GAT2`)이고 `(failure_type, layers, item_id)` 순이다. 다른 쌍은 빈 목록 |
+| `pairs[].items[].by_size` | 이미 있는 `_size_map` 자료를 공개한 것. `{diameter_um, density_layer, area_a, area_b, lambda_a, lambda_b, value_a, value_b}`. 없는 item·크기는 0, 기울기가 없으면 value 만 null. 새 계산은 없다 |
+| `kinds.<kind>.item_breakdown` | `{same, new, gone, cno, crp}`. `totals.<kind>.items` 를 만드는 같은 내부 item 값의 합(쌍 공개 값이 null 이어도 포함, E1). line 의 cno·crp 는 0. 종류 계산 불가면 전부 null |
+| `checks.item_breakdown` | `pair`: `{status, checked, failed, not_evaluated}`(쌍마다 same + new − gone = 쌍 Δ). `kind.<kind>`: `{status, items, total}`. `items` = same + new − gone vs `totals.<kind>.items.delta`, `total` = 거기에 cno + crp 를 더한 값 vs `totals.<kind>.delta`. 오차는 compare2 와 같은 `_within` |
+| `electrodes[].layer_state` | `{<layer>: both / a_only / b_only}`. 출처는 `layers_a/b`(DL1 inventory) |
+| `electrodes[].moved` | 양쪽에 있고 A 전용·B 전용 레이어가 모두 있으면 true. inventory 가 `observed` 면 null |
+| `electrodes[].layer_state_status` | `verified` 또는 `unverified`(어느 한쪽 inventory 가 `observed`, DL1 없음) |
+
+null 규칙:
+- 쌍 공개 값(Δ)이 null 이면(대기 `condition_not_computable`, item 없는 대기 쌍, 종류 계산 불가) `breakdown` 의 값 전부와 개수가 null, `status = not_evaluated`. 빈 합 0 으로 두지 않는다. 아니면 `status = ok`.
+- 종류 분해는 쌍 공개 null 과 무관하게 내부 item 값으로 합하므로, 대기 쌍이 있어도 종류 검산은 숫자로 passed 다. 대기 쌍은 `pair.not_evaluated` 로만 센다.
+- `checks.item_breakdown` 은 `checks.status` 와 최상위 `status`(종료 코드)에 넣지 않는다(기준 출력과 같게 두기 위해). 실패는 이 키에서 읽는다.
+
+이름과 값:
+- `change_kinds` 표에서 `layer_change` 의 label 은 "불량 구성 변경" 이다. 코드 `layer_change` 와 item `presence` 값(`both/new/gone`)은 그대로다(E4). 카드 줄의 `a_only/b_only` 변환은 보고서 쪽에서 한다.
+- item 의 presence 판정은 8절 규칙이다. 한쪽이 거리 필터로 0 이고 상대에 같은 `item_id` 가 있으면 `both` 다.

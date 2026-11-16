@@ -101,3 +101,16 @@ def test_diameter_filter_that_removes_every_cell_of_an_item_reaches_the_ledger_f
     assert all(item['filtered_out'] and item['a_filtered'] and item['b_filtered'] for item in items)
     # same item ids on both sides, so the layer keys agree; the values are not computable here (nothing left)
     assert all(row['change_kind'] == 'value_pending' for row in doc['pairs'])
+
+
+def test_item_breakdown_checks_pass_on_real_compare2_output(tmp_path):
+    """mrep/T1: pair and kind item-breakdown sums hold on the real compare2 output (equal and different CRP)."""
+    for index, groups in enumerate(({}, {'ref_group': 'mobile', 'tgt_group': 'auto'})):
+        folder = tmp_path / f'v{index}'
+        folder.mkdir()
+        ref, tgt = two_sides()
+        code, out = run(folder, ref, tgt, ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: CNO_B}, **groups)
+        assert code == 0
+        checks = ledger_of(folder, out)['checks']['item_breakdown']
+        assert checks['pair']['failed'] == 0
+        assert checks['kind']['line']['status'] == 'passed' and checks['kind']['pixel']['status'] == 'passed'

@@ -36,7 +36,7 @@ TOP_CONTRIBUTORS = 2
 
 # change kinds (README 8): code -> label; the order is the display order
 CHANGE_KINDS = (
-    ('same_pair_change', '같은 쌍 증감'), ('layer_change', '레이어 변경'), ('new_pair', '새 쌍'),
+    ('same_pair_change', '같은 쌍 증감'), ('layer_change', '불량 구성 변경'), ('new_pair', '새 쌍'),
     ('gone_pair', '사라진 쌍'), ('electrode_added_removed', '전극 추가·제거'), ('no_change', '변화 없음'),
     ('cno', 'CNO'), ('value_pending', '값 대기'))
 STATUS_LABELS = (('common', '공통'), ('new', '신규'), ('removed', '제거'), ('unverifiable', '확인 불가'))
@@ -316,6 +316,8 @@ def build_ledger(doc, doc_sha256, cfg2):
     # pairs and their items
     pair_rows, unavailable = {}, []
     totals_items = {kind: _Tri() for kind in KINDS}
+    # mrep/T1: the same internal item values split by presence (E1), summed per kind
+    split_acc = {kind: {'same': _Acc(), 'new': _Acc(), 'gone': _Acc()} for kind in KINDS}
     pair_sum = {kind: _Tri() for kind in KINDS}            # sum of the pair values (README 5, check source)
     electrodes = {}
     layer_acc = {kind: {} for kind in KINDS}                # kind -> layer -> _Tri
@@ -366,6 +368,9 @@ def build_ledger(doc, doc_sha256, cfg2):
                                         'reasons': sorted(item.get('reasons') or ['lambda_null'])})
             # kind totals, electrode and layer ledgers (item values split over the two endpoints)
             totals_items[ikind].add(a, b, d)
+            presence = item_rows[-1]['presence']
+            split_acc[ikind][{'both': 'same', 'new': 'new', 'gone': 'gone'}[presence]].add(
+                d if presence == 'both' else (b if presence == 'new' else a))
             ends = base.get('endpoints') or [{'electrode_id': e, 'actual_layer': base['analysis_layer']} for e in names]
             for end in ends:
                 share = 1.0 / len(ends)
@@ -375,11 +380,19 @@ def build_ledger(doc, doc_sha256, cfg2):
             layer_acc[ikind].setdefault(base['analysis_layer'], _Tri()).add(a, b, d)
             pair_layer[ikind].setdefault((base['analysis_layer'], pid), _Tri()).add(a, b, d)
             sizes_a, sizes_b = _size_map(ia), _size_map(ib)
+            areas_a, areas_b = _size_area_map(ia), _size_area_map(ib)
+            by_size = []
             for size_key in sorted(set(sizes_a) | set(sizes_b), key=lambda k: (k[0], str(k[1]))):
                 # key = (diameter, density_layer): one item at one diameter in two density layers never overwrites
                 va = _size_value(slope[ikind], ia, sizes_a, size_key)
                 vb = _size_value(slope[ikind], ib, sizes_b, size_key)
                 size_acc[ikind].setdefault((base['analysis_layer'], size_key[0]), _Tri()).add(va, vb, _sub(vb, va))
+                by_size.append({
+                    'diameter_um': size_key[0], 'density_layer': size_key[1],
+                    'area_a': _size_pick(ia, areas_a, size_key), 'area_b': _size_pick(ib, areas_b, size_key),
+                    'lambda_a': _size_pick(ia, sizes_a, size_key), 'lambda_b': _size_pick(ib, sizes_b, size_key),
+                    'value_a': va, 'value_b': vb})
+            item_rows[-1]['by_size'] = by_size
         for a_name in names:
             electrode(a_name)
             for b_name in names:
@@ -412,7 +425,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             'a': a_pub, 'b': b_pub, 'delta': d_pub,
             'layers_a': sorted({i['analysis_layer'] for i in (recs['reference'] or {'items': {}})['items'].values()}),
             'layers_b': sorted({i['analysis_layer'] for i in (recs['target'] or {'items': {}})['items'].values()}),
-            'items': item_rows,
+            'items': item_rows, 'breakdown': _pair_breakdown(item_rows, d_pub),
             '_keys_known': not any(recs[role] is not None and recs[role]['noncomputable'] for role in ROLES),
             # the layer-change key set leaves out a filter-removed item (a true 0) only when the other product
             # has no item with the same id at all (README 8)
@@ -439,6 +452,15 @@ def build_ledger(doc, doc_sha256, cfg2):
         else:
             code = 'same_pair_change'
         row['change_kind'] = code
+        # mrep/T1: what a changed defect composition added / removed (same key sets as the layer_change rule above)
+        row['composition'] = {'added': [], 'removed': []}
+        if code == 'layer_change':
+            by_id = {item['item_id']: item for item in row['items']}
+            for field, ids in (('added', row['_keys']['target'] - row['_keys']['reference']),
+                               ('removed', row['_keys']['reference'] - row['_keys']['target'])):
+                row['composition'][field] = sorted(
+                    (_item_description(by_id[i]) for i in ids if i in by_id),
+                    key=lambda d: (d['failure_type'], d['layers'], d['item_id']))
 
     # per-kind vi, percentages, ranks
     for kind in KINDS:
@@ -553,6 +575,14 @@ def build_ledger(doc, doc_sha256, cfg2):
                 layers_ab[role] = sorted(elec_layers[role].get(name, ()))
         row = {'electrode': name, 'status': status, 'present_a': in_a, 'present_b': in_b,
                'layers_a': layers_ab['reference'], 'layers_b': layers_ab['target']}
+        # mrep/T1: per-layer cell state from the same layer lists (DL1 inventory; observed = unverified)
+        only_a = sorted(set(row['layers_a']) - set(row['layers_b']))
+        only_b = sorted(set(row['layers_b']) - set(row['layers_a']))
+        row['layer_state'] = {layer: ('both' if layer in row['layers_a'] and layer in row['layers_b']
+                                      else ('a_only' if layer in row['layers_a'] else 'b_only'))
+                              for layer in sorted(set(row['layers_a']) | set(row['layers_b']))}
+        row['layer_state_status'] = 'verified' if complete else 'unverified'
+        row['moved'] = (bool(in_a and in_b and only_a and only_b)) if complete else None
         for kind in KINDS:
             out = acc[kind].out(fam[kind])
             out.update(pct_a=_pct(out['a'], side_a.vi[kind]), pct_b=_pct(out['b'], side_a.vi[kind]),
@@ -588,6 +618,35 @@ def build_ledger(doc, doc_sha256, cfg2):
         pair_vs_compare2[kind] = _check(lhs, rhs)
     checks = {'equations': equations, 'electrode_sum': electrode_sum, 'pair_delta_vs_compare2': pair_vs_compare2}
 
+    # mrep/T1: item breakdown per kind (the internal item values behind totals.<kind>.items, E1) and its checks
+    item_breakdown = {}
+    for kind in KINDS:
+        parts = {name: split_acc[kind][name].value(fam[kind]) for name in ('same', 'new', 'gone')}
+        parts['cno'] = (cno_total.d.value(fam['pixel']) if kind == 'pixel' else (0.0 if fam[kind] else None))
+        parts['crp'] = crp_d if kind == 'pixel' else (0.0 if fam[kind] else None)
+        item_breakdown[kind] = parts
+    kind_checks = {}
+    for kind in KINDS:
+        parts = item_breakdown[kind]
+        core = _osum([parts['same'], parts['new'], None if parts['gone'] is None else -parts['gone']])
+        items_check = _check(core, totals[kind]['items']['delta'])
+        full_check = _check(_osum([core, parts['cno'], parts['crp']]), totals[kind]['delta'])
+        kind_checks[kind] = {'status': _worst([items_check['status'], full_check['status']]),
+                             'items': items_check, 'total': full_check}
+    pair_states = []
+    for row in pair_rows.values():
+        brk = row['breakdown']
+        if brk['status'] != 'ok':
+            pair_states.append('not_evaluated')
+        else:
+            pair_states.append(_check(math.fsum([brk['same_delta'], brk['new_value'], -brk['gone_value']]),
+                                      row['delta'])['status'])
+    checks['item_breakdown'] = {
+        'pair': {'status': _worst(pair_states), 'checked': sum(1 for s in pair_states if s != 'not_evaluated'),
+                 'failed': sum(1 for s in pair_states if s == 'failed'),
+                 'not_evaluated': sum(1 for s in pair_states if s == 'not_evaluated')},
+        'kind': kind_checks}
+
     # kinds block
     ordered = {}
     for kind in KINDS:
@@ -610,7 +669,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             'change_kinds': counts,
             'increase_sum': math.fsum(v for v in known if v > 0) if fam[kind] else None,
             'decrease_sum': math.fsum(v for v in known if v < 0) if fam[kind] else None,
-            'value_pending_rows': len(rows_delta) - len(known)}
+            'value_pending_rows': len(rows_delta) - len(known), 'item_breakdown': item_breakdown[kind]}
         if not fam[kind]:
             unavailable.append({'scope': 'kind', 'id': kind, 'reasons': ['kind_not_computable']})
     unknown = sorted((r for r in pair_rows.values() if r['kind'] is None), key=lambda r: r['pair_id'])
@@ -698,6 +757,42 @@ def _size_map(item):
     for entry in item.get('by_size') or ():
         parts.setdefault((entry['diameter_um'], entry.get('density_layer')), []).append(entry['lambda'])
     return {key: _osum(values) for key, values in parts.items()}
+
+
+def _size_area_map(item):
+    """{(diameter_um, density_layer): area_share_um2} of one item, summed per key like `_size_map`."""
+    if item is None:
+        return {}
+    parts = {}
+    for entry in item.get('by_size') or ():
+        parts.setdefault((entry['diameter_um'], entry.get('density_layer')), []).append(entry.get('area_share_um2'))
+    return {key: _osum(values) for key, values in parts.items()}
+
+
+def _size_pick(item, mapping, key):
+    """One shown number of a size row: an absent item or size is a true 0 (same rule as `_size_value`)."""
+    return 0.0 if item is None or key not in mapping else mapping[key]
+
+
+def _pair_breakdown(item_rows, delta):
+    """same_delta + new_value - gone_value = pair delta. No public pair value (waiting, no slope) = nothing to split."""
+    if delta is None:
+        return {'same_delta': None, 'new_value': None, 'gone_value': None, 'n_both': None, 'n_new': None,
+                'n_gone': None, 'status': 'not_evaluated'}
+    both = [r for r in item_rows if r['presence'] == 'both']
+    new = [r for r in item_rows if r['presence'] == 'new']
+    gone = [r for r in item_rows if r['presence'] == 'gone']
+    return {'same_delta': _osum(r['delta'] for r in both), 'new_value': _osum(r['b'] for r in new),
+            'gone_value': _osum(r['a'] for r in gone), 'n_both': len(both), 'n_new': len(new),
+            'n_gone': len(gone), 'status': 'ok'}
+
+
+def _item_description(item):
+    """Short description of one item for the composition lists: defect way + endpoint layers."""
+    layers = sorted({e['actual_layer'] for e in item.get('endpoints') or ()}) or [item['analysis_layer']]
+    way = {'lateral_short': '측면', 'vertical_short': '상하'}.get(item['failure_type'], item['failure_type'])
+    return {'item_id': item['item_id'], 'failure_type': item['failure_type'], 'layers': layers,
+            'text': f'{way} {"-".join(layers)}'}
 
 
 def _size_value(s, item, sizes, diameter):

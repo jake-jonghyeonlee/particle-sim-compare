@@ -416,6 +416,11 @@ def test_one_noncomputable_pair_waits_for_value_only(tmp_path):
     assert doc['checks']['equations']['eq3_line_delta']['status'] == 'passed'
     assert doc['checks']['pair_delta_vs_compare2']['line']['status'] == 'not_evaluated'   # a null condition delta
     assert doc['kinds']['change_kind_counts']['value_pending'] == 1
+    # mrep/T1: the waiting pair has no split, the kind split and its checks still hold on the internal item values
+    assert row['breakdown']['status'] == 'not_evaluated' and row['breakdown']['same_delta'] is None
+    assert doc['kinds']['line']['item_breakdown']['same'] is not None
+    assert doc['checks']['item_breakdown']['kind']['line']['status'] == 'passed'
+    assert doc['checks']['item_breakdown']['pair']['not_evaluated'] == 1
 
 
 def test_real_zero_is_no_change_not_pending(tmp_path):
