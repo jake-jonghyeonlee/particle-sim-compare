@@ -676,6 +676,12 @@ def build_ledger(doc, doc_sha256, cfg2):
         'checks': checks, 'warnings': warnings,
         'unavailable': sorted(unavailable, key=lambda u: (u['scope'], str(u['id']), str(u.get('side', '')))),
     }
+    # pexcl/T3: the pair-exclusion blocks of compare2.json, copied as they are; no key when no product left a pair out
+    manifests = (doc.get('inputs') or {}).get('manifests') or {}
+    blocks = {role: manifests[role]['pair_exclusions'] for role in ROLES
+              if isinstance(manifests.get(role), dict) and manifests[role].get('pair_exclusions')}
+    if blocks:
+        document['inputs']['pair_exclusions'] = blocks
     return document, status, reasons
 
 

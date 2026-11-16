@@ -219,6 +219,43 @@ def _head_band(ctx):
             '표의 숫자를 그대로 믿지 말고 사유를 확인하세요.<ul>%s</ul>%s</div>' % (reasons, extra))
 
 
+PAIR_REASON_TEXT = {'builtin:GH': '코드 규칙: GH 포함', 'builtin:N_NODE': '코드 규칙: N_NODE 포함',
+                    'builtin:VBIAS-VINT1': '코드 규칙: VBIAS-VINT1', 'pairs_csv:excluded': 'pairs.csv: excluded'}
+PRODUCT_NAMES = (('reference', '기준 A'), ('target', '대상 B'))
+
+
+def _pair_exclusion_rows(doc):
+    """[(product name, electrodes, pair_id, reason, actual cases, expected-only cases, layers)] of ledger.json
+    inputs.pair_exclusions; one row per entry of a block's `pairs` (empty when the key is absent)."""
+    blocks = (doc.get('inputs') or {}).get('pair_exclusions') or {}
+    rows = []
+    for role, name in PRODUCT_NAMES:
+        block = blocks.get(role)
+        if not isinstance(block, dict):
+            continue
+        presence = {}
+        for case in block.get('cases') or []:
+            counts = presence.setdefault((tuple(case.get('electrodes') or ()), case.get('reason')), [0, 0])
+            counts[0 if case.get('presence') == 'discovered' else 1] += 1
+        for pair in block.get('pairs') or []:
+            electrodes = tuple(pair.get('electrodes') or ())
+            actual, expected = presence.get((electrodes, pair.get('reason')), (pair.get('cases') or 0, 0))
+            rows.append((name, electrodes, pair.get('pair_id'), pair.get('reason'), actual, expected,
+                         list(pair.get('analysis_layers') or [])))
+    return rows
+
+
+def _excluded_only_electrodes(ctx):
+    """Electrodes that appear in a left-out pair and keep no calculated item (no registered pair, no CNO)."""
+    kept = set(ctx.cno_electrodes)
+    for row in ctx.doc['pairs']:
+        kept.update(row['electrodes'])
+    named = set()
+    for _name, electrodes, _pid, _reason, _a, _e, _layers in _pair_exclusion_rows(ctx.doc):
+        named.update(electrodes)
+    return named - kept
+
+
 def _section1(ctx):
     doc = ctx.doc
     kinds, totals = doc['kinds'], doc['totals']
@@ -256,6 +293,10 @@ def _section1(ctx):
     if incomplete:
         out.append('<p class="muted" id="inventory-note">전극 목록이 완전하지 않아(관측 기준) 전극 추가·제거를 판정하지 않습니다. '
                    '목록에 없다는 것은 "없음"이 아니라 "확인 불가"입니다.</p>')
+    excluded = _pair_exclusion_rows(doc)
+    if excluded:
+        distinct = len({tuple(sorted(row[1])) for row in excluded})
+        out.append('<p class="muted" id="pair-excluded-note">계산에서 제외한 전극 쌍 %d개 — 7절 참고</p>' % distinct)
     out.append('</section>')
     return ''.join(out)
 
@@ -486,8 +527,10 @@ def _section3(ctx):
                 len(rest), _electrode_head(kind), ''.join(_electrode_row(ctx, row, kind, i, 'restitem') for i, row in enumerate(rest, 1))))
         na = [row['electrode'] for row in doc['electrodes'] if row['electrode'] not in ctx.kind_electrodes[kind]]
         if na:
+            only = _excluded_only_electrodes(ctx)
+            names = ', '.join(esc(name) + (' (계산 제외 쌍만 있음)' if name in only else '') for name in na)
             out.append('<details><summary>%s — 이 종류의 쌍(CNO)이 없는 전극 %d 개</summary><p class="wrap">%s</p></details>' % (
-                '해당 없음', len(na), esc(', '.join(na))))
+                '해당 없음', len(na), names))
     out.append('</section>')
     return ''.join(out)
 
@@ -754,6 +797,16 @@ def _section7(ctx):
         out.append('<tr><td class="l">%s</td><td class="l">%s</td><td class="l wrap">%s</td><td>%s</td></tr>' % (
             name, esc(p.get('model_group')), esc(p.get('pair_table_hash')), esc(num(p.get('crp')) if p.get('crp') is not None else '—')))
     out.append('</table>')
+    excluded = _pair_exclusion_rows(doc)
+    if excluded:
+        out.append('<h3>계산에서 제외한 전극 쌍</h3><table id="pair-excluded"><tr><th class="l">제품</th><th class="l">전극 쌍</th>'
+                   '<th class="l">pair_id</th><th class="l">사유</th><th>case 수 (실제 / 기대 전용)</th><th class="l">layer</th></tr>')
+        out.extend('<tr><td class="l">%s</td><td class="l">%s</td><td class="l">%s</td><td class="l">%s</td><td>%d / %d</td>'
+                   '<td class="l wrap">%s</td></tr>' % (
+                       esc(name), esc(' – '.join(electrodes)), esc(pair_id) if pair_id else '—',
+                       esc(PAIR_REASON_TEXT.get(reason, reason)), actual, expected, esc(', '.join(layers)) if layers else '—')
+                   for name, electrodes, pair_id, reason, actual, expected, layers in excluded)
+        out.append('</table>')
     out.append('<h3>caa</h3><p class="muted">caa 지표는 ledger.json 에 들어 있지 않습니다. 07 보고서(compare2-report)의 caa 표시를 보세요.</p>')
     # inputs and settings
     out.append('<h3>입력과 설정</h3><table id="inputs">')

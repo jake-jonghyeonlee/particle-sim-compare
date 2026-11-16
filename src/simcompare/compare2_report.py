@@ -1840,9 +1840,65 @@ def _short_sha(value):
     return f'<span title="{_e(value)}">{_e(str(value)[:12])}…</span>'
 
 
+PAIR_REASON_ORDER = ('builtin:GH', 'builtin:N_NODE', 'builtin:VBIAS-VINT1', 'pairs_csv:excluded')
+PAIR_REASON_SHORT = {'builtin:GH': 'GH', 'builtin:N_NODE': 'N_NODE', 'builtin:VBIAS-VINT1': 'VBIAS-VINT1',
+                     'pairs_csv:excluded': 'pairs.csv'}
+PAIR_REASON_TEXT = {'builtin:GH': '코드 규칙: GH 포함', 'builtin:N_NODE': '코드 규칙: N_NODE 포함',
+                    'builtin:VBIAS-VINT1': '코드 규칙: VBIAS-VINT1', 'pairs_csv:excluded': 'pairs.csv: excluded'}
+
+
+def _pair_exclusion_rows(block):
+    """[(electrodes, pair_id, reason, actual cases, expected-only cases, layers)] of one pair_exclusions block."""
+    presence = {}
+    for case in block.get('cases') or []:
+        key = (tuple(case.get('electrodes') or ()), case.get('reason'))
+        counts = presence.setdefault(key, [0, 0])
+        counts[0 if case.get('presence') == 'discovered' else 1] += 1
+    rows = []
+    for pair in block.get('pairs') or []:
+        electrodes = tuple(pair.get('electrodes') or ())
+        actual, expected = presence.get((electrodes, pair.get('reason')), (pair.get('cases') or 0, 0))
+        rows.append((electrodes, pair.get('pair_id'), pair.get('reason'), actual, expected,
+                     list(pair.get('analysis_layers') or [])))
+    return rows
+
+
+def _pair_exclusion_html(doc):
+    """The "계산 제외 쌍" row of the input table (value cell html); None when neither product has a block."""
+    manifests = (doc.get('inputs') or {}).get('manifests') or {}
+    blocks = {role: (manifests.get(role) or {}).get('pair_exclusions') for role in ('reference', 'target')}
+    if not any(isinstance(block, dict) for block in blocks.values()):
+        return None
+    lines, table_rows = [], []
+    for role, word in (('reference', 'A'), ('target', 'B')):
+        block = blocks[role]
+        if not isinstance(block, dict):
+            lines.append(f'{word}: 없음')
+            continue
+        total = (block.get('excluded_cases') or 0) + (block.get('excluded_expected_cases') or 0)
+        by_reason = block.get('by_reason') or {}
+        order = [r for r in PAIR_REASON_ORDER if r in by_reason] + sorted(r for r in by_reason if r not in PAIR_REASON_ORDER)
+        detail = ' · '.join(f'{_e(PAIR_REASON_SHORT.get(r, r))} {_e(by_reason[r])}' for r in order)
+        lines.append(f'{word}: 제외 case {_e(total)}개' + (f' ({detail})' if detail else ''))
+        for electrodes, pair_id, reason, actual, expected, layers in _pair_exclusion_rows(block):
+            table_rows.append(
+                f'<tr><td class="l">{word}</td><td class="l">{_e(" – ".join(electrodes))}</td>'
+                f'<td class="l">{_e(pair_id) if pair_id else "—"}</td><td class="l">{_e(PAIR_REASON_TEXT.get(reason, reason))}</td>'
+                f'<td>{_e(actual)} / {_e(expected)}</td><td class="l">{_e(", ".join(layers)) if layers else "—"}</td></tr>')
+    html_text = '<br>'.join(lines)
+    if table_rows:
+        html_text += ('<details><summary>계산 제외 쌍 목록</summary><table><tr><th class="l">제품</th><th class="l">전극 쌍</th>'
+                      '<th class="l">pair_id</th><th class="l">사유</th><th>case 수 (실제 / 기대 전용)</th>'
+                      '<th class="l">layer</th></tr>' + ''.join(table_rows) + '</table></details>')
+    return html_text
+
+
 def _inputs_table(doc, view):
     rows = [('compare2 결과', f'compare2.json (sha256 {_short_sha(view["json_sha"])})'),
             ('제외 규칙', f'SD2·SD3·PXL 이 낀 수직 단락은 기존 계산 방식에 따라 제외 (규칙 {_e(CASE_EXCLUSION_RULE)})')]
+    pair_row = _pair_exclusion_html(doc)
+    if pair_row is not None:
+        rows.append(('계산 제외 쌍', pair_row))
     parts = []
     for role, word in (('reference', 'A'), ('target', 'B')):
         block = ((((doc.get('inputs') or {}).get('manifests') or {}).get(role)) or {}).get('distance_filter')
