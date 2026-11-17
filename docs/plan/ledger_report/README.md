@@ -679,3 +679,14 @@ null 규칙:
 - unit 창은 회색 점선 사각형으로 형상 층과 함께 그린다. 창이 frame 전체이면 그리지 않고 "창 = frame 전체"라고 쓴다.
 - 확인용 `data-*`: canvas 의 `data-phys-w-um`, `.mpair` 의 `data-scale-ratio`(작은/큰 물리 폭), canvas 의 `data-win`(창 점선 여부).
 - 자료는 `ledger_maps_v2` 의 `sides.<role>.frame.pitch_um`, `sides.<role>.region`, 최상위 `window.<role>` 이다. 하나라도 없으면 축척 없이 예전처럼 그린다.
+- (rtrim/T2 보정) 캡션의 "영역 W × H µm" 는 `region.size_px × pitch_um` 이다(렌더 폭 비율은 위처럼 지도 px × `block_px` × pitch). "유도"는 한 번만 쓴다: "unit 창 U µm(frame 에서 유도)" / "(설정)". unit 창 점선은 전극 윤곽(연한 회색)과 다르게 진한 회색 긴 점선이다.
+
+## 31. 보고서 표시 정리 (rtrim/T2) — 배치만 바꾸고 계산은 그대로
+
+사용자 결정(2026-11-17): ② 상대 전극 목록(`#el-partners`)은 **그대로 둔다**. 숫자 값과 ledger·ledger_maps 스키마는 바꾸지 않는다.
+
+- **삭제**: ① 의 작은 A·B 지도(`#s1-maps`, `data-view="s1"`)와 그 그리기·클릭 코드. 순위 목록 줄을 누르면 ③ 으로 가는 동작은 그대로다. ① 은 2열(분해 / 순위 목록)이다.
+- **이동**: 형상 태그 표(`#tags`, `#tags-folded`)는 ① 에서 ③ "변경 위치로 찾기"(`#pn-loc`) 맨 위로 옮겼다(같은 id, 같은 `#cat=tag:…&entry=pair` 동작). 선택 쌍 조건 표는 ⑤ `#cond` 에서 ③ 쌍 상세 맨 아래 `<details id="cond-detail">` 로 옮겼다(표 id `cond-table`, 값 0 접기 규칙 그대로). ⑤ 에는 `#cond-link`(③ 으로 가는 링크)와 `#cond-all`(전체 보기)만 남는다.
+- **접기**: ⑤ 검산 두 표(`sum-check`, `item-check`)는 `<details id="checks-details">` 안에 있다. 어느 검산이든 `passed` 가 아니거나(failed·pending·partial) ledger 가 partial 이면 `open`. ② 전극 × 레이어 표(범례·검색·A/B layout 포함)는 신규 0 · 제거 0 · 레이어 이동 0 이고 확인 불가 전극도 없을 때만 `<details id="corr-details">`(요약 줄 = `#corr-summary`)로 닫혀 있다. 차이가 있으면 지금처럼 펼침. `#print` 는 모든 `details` 를 연다.
+- **③ 쌍 목록**: 변화 종류 필터 버튼에 그 종류의 쌍 수를 쓴다("같은 쌍 증감 (121)", ledger.json `pairs[].change_kind` 집계). 정렬 버튼 "변화 큰 순(기본) / B 위험 큰 순"은 해시 `#sort=b`(허용 값은 `b` 하나)이고, 목록에 "B 값" 열을 더했다. B 순서 = ① "B 에서 가장 위험한 쌍" 과 같은 기준(`present_b` 이고 `pct_b` 가 있는 쌍을 `pct_b` 큰 순, 같으면 pair_id; 값 없는 쌍은 뒤에 기본 순서).
+- **문구**: ① 제목 "변화의 구성 — item 단위 분해"(질문 "얼마나 달라졌고, 어떻게 구성되나"). 인과를 확정하는 말은 쓰지 않는다.

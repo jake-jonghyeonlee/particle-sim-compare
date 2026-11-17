@@ -175,7 +175,7 @@ def test_missing_maps_missing_04_and_partial_each_have_their_own_band(tmp_path):
     assert 'id="band-no-maps"' in page and 'id="band-changes"' not in page
     doc, folder, maps = setup(tmp_path / 'nocand')
     page2 = html_of(ledger_report_run(tmp_path, folder, maps, 'nocand_out'))
-    assert 'id="band-no-maps"' not in page2 and 'id="band-changes"' in page2 and 'id="tags-folded"' in section(page2, 1)
+    assert 'id="band-no-maps"' not in page2 and 'id="band-changes"' in page2 and 'id="tags-folded"' in section(page2, 3)
     partial = make_ledger([spec('A1', ['A', 'B'], 'line', 0.001, 0.002)], status='partial', reasons=['ledger_totals_check_failed'])
     code, out = run_report(tmp_path, partial, name='part', execution={'command': 'ledger', 'status': 'partial', 'exit_code': 3})
     assert code == 3 and 'id="partial"' in html_of(out)
@@ -214,7 +214,8 @@ def test_section_5_has_the_number_rules_inputs_and_warnings(tmp_path):
     for word in ('없음', '0%', '대기', '해당 없음', '확인 불가'):
         assert '<td class="l"><b>%s</b></td>' % word in s5
     assert 'w_test' in s5 and '계산 불가 항목 1 개' in s5 and 'condition_not_computable' in s5 and 'id="products"' in s5
-    assert 'id="cond"' in s5 and 'id="cond-all"' in s5 and '전체 보기 (%d 쌍)' % len(doc['pairs']) in s5
+    assert 'id="cond-link"' in s5 and 'id="cond-all"' in s5 and '전체 보기 (%d 쌍)' % len(doc['pairs']) in s5     # rtrim/T2: the selected-pair table moved to section 3
+    assert 'id="cond"' not in s5 and 'id="cond-table"' not in html_of(run_report(tmp_path, doc, name='nocond')[1]).split('<script')[0]
     assert '07 보고서 없음' in s5 and '가정 계산' in s5
 
 
@@ -273,7 +274,7 @@ def test_real_chain_report_for_the_lead(tmp_path, big):
     from simcompare.compare2_report import KIND_TEXT
     for tag, counts in s['tag_pair_counts'].items():
         assert ('<td class="l">%s</td><td>%d</td><td>%d</td><td>%d</td>' % (KIND_TEXT.get(tag, tag), counts['line'], counts['pixel'],
-                                                                         counts['line'] + counts['pixel'])) in s1
+                                                                         counts['line'] + counts['pixel'])) in section(page, 3)
     assert [c['pair_id'] for c in data['cards']] == [c['pair_id'] for c in maps_doc['cards']]
     report = json.loads((out / 'report.json').read_text(encoding='utf-8'))
     assert report['html_bytes'] == len(page.encode('utf-8')) and report['data_bytes'] > 0
@@ -335,11 +336,11 @@ def test_chrome_hash_states_draw_sections_1_and_5_without_errors(tmp_path):
         dom, text = dump_dom(page, fragment)
         assert dom.root.get('data-ready') == '1' and 'data-err' not in dom.root, (fragment, dom.root)
         ids = [a.get('id') for t, a in dom.elements if a.get('id')]
-        for needed in ('s1', 's5', 'breakdown', 'sum-check', 'item-check', 'cond', 'bar'):
+        for needed in ('s1', 's5', 'breakdown', 'sum-check', 'item-check', 'cond-all', 'checks-details', 'bar'):
             assert needed in ids, (fragment, needed)
-    # no selection
+    # no selection: the condition table (now in the section 3 pair detail) is not drawn
     dom, text = dump_dom(page, '#')
-    assert dom.root['data-sel'] == '' and selected(dom, 'data-pair') == [] and '위에서 쌍을 하나 고르면' in text
+    assert dom.root['data-sel'] == '' and selected(dom, 'data-pair') == [] and 'id="cond-table"' not in text
     # print opens every details block and draws the whole condition table
     dom, text = dump_dom(page, '#print')
     details = [a for t, a in dom.elements if t == 'details']
@@ -606,14 +607,15 @@ def test_every_map_png_is_embedded_once_and_the_bundle_carries_none(tmp_path):
 def test_without_maps_dir_there_is_no_png_block_and_the_slots_say_so(tmp_path):
     page = html_of(run_report(tmp_path, sample_doc())[1])
     assert 'id="map-png"' not in page and '<canvas' not in re.sub(r'<script.*?</script>', '', page, flags=re.S)
-    assert '지도 없음' in section(page, 1) and '지도 없음' in section(page, 2) and '지도 없음' in section(page, 3) and 'id="s3-panel"' in section(page, 3)
+    assert '지도 없음' in section(page, 2) and '지도 없음' in section(page, 3) and 'id="s3-panel"' in section(page, 3)
 
 
 def test_views_have_canvases_and_toggles_and_the_missing_share_line(tmp_path):
     doc, maps, out = map_report(tmp_path)
     page = html_of(out)
-    for number, view in ((1, 's1'), (2, 's2'), (3, 's3')):
+    for number, view in ((2, 's2'), (3, 's3')):
         assert len(re.findall(r'<canvas class="mapcv" data-view="%s"' % view, section(page, number))) == 2, view
+    assert '<canvas' not in section(page, 1) and 'id="s1-maps"' not in page and 'data-view="s1"' not in page       # rtrim/T2: no small maps in section 1
     s3 = section(page, 3)
     for key in ('shape', 'defect', 'others', 'roi', 'ov'):
         assert 'data-t="%s"' % key in s3
@@ -970,7 +972,7 @@ def test_chrome_pair_without_a_card_or_with_a_dropped_card_says_why(tmp_path):
     assert 'id="cards-dropped"' in page_text and 'cards_budget_reduced' in page_text
 
 
-def test_chrome_zero_valued_condition_rows_are_folded_in_section_5(tmp_path):
+def test_chrome_zero_valued_condition_rows_are_folded_in_the_pair_detail(tmp_path):
     doc = comp_doc()
     p = next(p for p in doc['pairs'] if p['pair_id'] == 'P5')
     for size in p['items'][0]['by_size']:
@@ -1296,7 +1298,7 @@ def test_chrome_maps_share_one_physical_scale_in_sections_1_2_3(tmp_path):
     page = scaled_report(tmp_path)
     dom, text, rows = probe(page, '#')
     widths = pair_widths(rows)
-    assert {'s1', 's2', 's3'} <= set(widths)
+    assert {'s2', 's3'} <= set(widths) and 's1' not in widths
     for fragment in ('#', '#print', '#layer=all'):
         dom, text, rows = probe(page, fragment)
         for view, items in pair_widths(rows).items():
@@ -1315,10 +1317,12 @@ def test_scale_bar_caption_and_window_outline(tmp_path):
     page = scaled_report(tmp_path, source='derived')
     dom, text, rows = probe(page, '#')
     caps = re.findall(r'<span class="scap">(\d[^<]*)</span>', text)
-    assert any('영역 120 × 120 µm · unit 창 60 µm(유도) + 여백 10 µm (frame 에서 유도)' in c for c in caps), caps[:3]
-    assert any('영역 100 × 100 µm · unit 창 50 µm(유도)' in c for c in caps)
+    # R1:4 (rtrim/T2): "derived" is said once, "(frame 에서 유도)"; R1:2: the region size is region.size_px x pitch
+    assert any('영역 120 × 120 µm · unit 창 60 µm(frame 에서 유도) + 여백 10 µm' in c for c in caps), caps[:3]
+    assert any('영역 100 × 100 µm · unit 창 50 µm(frame 에서 유도)' in c for c in caps)
+    assert not any('(유도)' in c or 'frame 에서 유도)' in c and c.count('유도') > 1 for c in caps)
     assert any(c.startswith('20 µm · ') for c in caps)                                      # about a fifth of 120 um
-    assert all(r[5] == '1' for r in rows if r[0] in ('s1', 's2', 's3'))                     # the unit window is outlined on A and B
+    assert all(r[5] == '1' for r in rows if r[0] in ('s2', 's3'))                           # the unit window is outlined on A and B
     cfg = scaled_report(tmp_path, name='cfg', source='config')
     dom, text, rows = probe(cfg, '#')
     caps = re.findall(r'<span class="scap">(\d[^<]*)</span>', text)
@@ -1362,3 +1366,160 @@ def test_scaled_report_is_byte_identical_for_the_same_input(tmp_path):
     assert one == two
     side = bundle_of(one.decode('utf-8'))['maps']['sides']['A']['sc']
     assert side['p'] == 3.0 and side['wo'] == [10, 10] and side['whole'] is False and side['us'] == 'config'
+
+
+# ---- rtrim/T2: merged report trim (small maps, tags, condition table, folds, change-kind counts, B sort) -------------------------
+
+def verified_doc(doc=None):
+    """sample_doc whose electrode rows say the layer correspondence is verified and unchanged (nothing new / removed / moved)."""
+    doc = doc or sample_doc()
+    for row in doc['electrodes']:
+        row['status'] = 'common'
+        row['layer_state'] = {layer: 'both' for layer in row['layers_a']}
+        row['layer_state_status'] = 'verified'
+        row['moved'] = False
+    return doc
+
+
+def test_rtrim_section_1_has_no_small_maps_no_tag_table_and_the_new_wording(tmp_path):
+    doc, maps, out = map_report(tmp_path, changes=ok_changes())
+    page = html_of(out)
+    s1, s3 = section(page, 1), section(page, 3)
+    assert '<canvas' not in s1 and 'id="s1-maps"' not in page and 'data-view="s1"' not in page and '작은 A·B 지도' not in page
+    assert 'id="tags"' not in s1 and 'id="tags"' in s3
+    assert '변화의 구성' in s1 and '무엇 때문인가' not in page and '어떻게 구성되나' in s1
+    assert 'id="top-changed-line"' in s1 and 'data-href="#sel=pair:' in s1                    # the ranked list rows still open section 3
+    assert '<table id="change-kinds">' in s1 and 'id="kinds-details"' in s1                  # the folded change-kind table stays in section 1
+    assert 'topPairs()' in page and "view==='s1'" not in page and 'o.tops' not in page         # the script has no small-map drawing or click code left
+    nomaps = html_of(run_report(tmp_path, sample_doc(), name='nomaps')[1])
+    assert 'id="tags-folded"' in section(nomaps, 3) and 'id="tags-folded"' not in section(nomaps, 1)
+
+
+def test_rtrim_change_kind_buttons_show_the_pair_count_of_the_ledger(tmp_path):
+    doc = sample_doc()
+    page = html_of(run_report(tmp_path, doc)[1])
+    s3 = section(page, 3)
+    counts = {}
+    for p in doc['pairs']:
+        counts[p['change_kind']] = counts.get(p['change_kind'], 0) + 1
+    buttons = dict(re.findall(r'<button type="button" class="fbtn" data-f="ck" data-v="(\w+)">([^<]*)</button>', s3))
+    assert buttons and 'data-f="ck" data-v=""' in s3
+    for code, text in buttons.items():
+        if code:
+            label = [c['label'] for c in doc['change_kinds'] if c['code'] == code][0]
+            assert text == '%s (%d)' % (label, counts[code]), (code, text)
+    assert set(buttons) - {''} == {c for c in counts if counts[c]} - {'cno'}
+
+
+def test_rtrim_pair_list_carries_the_b_value_and_the_b_rank_of_section_1(tmp_path):
+    doc = sample_doc()
+    page = html_of(run_report(tmp_path, doc)[1])
+    s3 = section(page, 3)
+    assert '<th>B 값</th>' in s3 and 'data-f="sort" data-v="b"' in s3 and 'data-f="sort" data-v=""' in s3
+    ranked = sorted((p for p in doc['pairs'] if p['present_b'] and p['pct_b'] is not None), key=lambda p: (-p['pct_b'], p['pair_id']))
+    by_rank = dict((int(r), pid) for pid, r in re.findall(r'<tr class="plrow[^"]*" data-pair="([^"]*)"[^>]*data-brank="(\d+)"', s3))
+    assert [by_rank[i + 1] for i in range(len(ranked))] == [p['pair_id'] for p in ranked]
+    for p in ranked:
+        row = re.search(r'<tr class="plrow[^"]*" data-pair="%s".*?</tr>' % p['pair_id'], s3, re.S).group(0)
+        assert ledger_report.pct_txt(p['pct_b']) in row
+
+
+def plrow_order(dom):
+    return [a['data-pair'] for t, a in dom.elements if t == 'tr' and 'plrow' in (a.get('class') or '').split() and 'hide' not in (a.get('class') or '').split()]
+
+
+def test_chrome_rtrim_sort_b_orders_the_pair_list_and_other_values_are_ignored(tmp_path):
+    doc = sample_doc()
+    page = run_report(tmp_path, doc)[1] / 'ledger_report.html'
+    ranked = [p['pair_id'] for p in sorted((p for p in doc['pairs'] if p['present_b'] and p['pct_b'] is not None), key=lambda p: (-p['pct_b'], p['pair_id']))]
+    default = [p['pair_id'] for p in sorted(doc['pairs'], key=ledger_report._pair_sort_key)]
+    dom, text = dump_dom(page, '#sort=b')
+    assert 'data-err' not in dom.root and plrow_order(dom) == ranked
+    assert [a for t, a in dom.elements if a.get('data-f') == 'sort' and 'on' in (a.get('class') or '').split()][0]['data-v'] == 'b'
+    for fragment in ('#', '#sort=x', '#sort=B', '#sort=%22%20onfocus%3D1'):
+        dom, text = dump_dom(page, fragment)
+        assert 'data-err' not in dom.root and plrow_order(dom) == default, fragment
+    dom, text = dump_dom(page, '#sort=b&kind=pixel')
+    assert plrow_order(dom) == [pid for pid in ranked if next(p for p in doc['pairs'] if p['pair_id'] == pid)['kind'] == 'pixel']
+
+
+def test_rtrim_check_details_are_folded_unless_a_check_is_not_passed(tmp_path):
+    doc = sample_doc()
+    s5 = section(html_of(run_report(tmp_path, doc, name='fine')[1]), 5)
+    assert '<details id="checks-details">' in s5 and '모두 통과' in s5
+    assert s5.index('<details id="checks-details"') < s5.index('<table id="sum-check">') < s5.index('<table id="item-check">') < s5.index('</details>')
+    bad = sample_doc()
+    bad['checks']['item_breakdown']['kind']['line']['status'] = 'failed'
+    assert '<details id="checks-details" open>' in section(html_of(run_report(tmp_path, bad, name='badkind')[1]), 5)
+    wrong = sample_doc()
+    wrong['totals']['line']['a'] += 0.01                                  # the sum check of the page fails
+    assert '<details id="checks-details" open>' in section(html_of(run_report(tmp_path, wrong, name='badsum')[1]), 5)
+    pending = sample_doc()
+    pending['checks']['item_breakdown']['kind']['pixel']['status'] = 'not_evaluated'
+    assert '<details id="checks-details" open>' in section(html_of(run_report(tmp_path, pending, name='pend')[1]), 5)
+    assert '<details id="checks-details" open>' in section(html_of(run_report(tmp_path, make_ledger(
+        [spec('A1', ['A', 'B'], 'line', 0.001, 0.002)], status='partial', reasons=['ledger_totals_check_failed']), name='part',
+        execution={'command': 'ledger', 'status': 'partial', 'exit_code': 3})[1]), 5)
+    assert 'id="trust"' in section(html_of(run_report(tmp_path, doc, name='fine2')[1]), 1)           # the trust line of section 1 stays
+
+
+def test_chrome_rtrim_print_opens_the_folded_checks_and_correspondence(tmp_path):
+    page = run_report(tmp_path, verified_doc())[1] / 'ledger_report.html'
+    dom, text = dump_dom(page, '#print')
+    details = {a.get('id'): a for t, a in dom.elements if t == 'details' and a.get('id')}
+    assert 'open' in details['checks-details'] and 'open' in details['corr-details'] and 'data-err' not in dom.root
+
+
+def test_rtrim_correspondence_table_is_folded_only_when_nothing_differs(tmp_path):
+    same = verified_doc()
+    s2 = section(html_of(run_report(tmp_path, same, name='same')[1]), 2)
+    assert '<details id="corr-details"><summary class="lead" id="corr-summary">' in s2 and 'id="el-partners"' in s2
+    summary = s2[s2.index('id="corr-summary"'):s2.index('</summary>')]
+    assert '신규 <b>0</b> · 제거 <b>0</b> · 레이어 이동 <b>0</b>' in summary
+    assert s2.index('<details id="corr-details"') < s2.index('<table id="corr-table">') < s2.index('</details>') < s2.index('id="el-partners"')
+    for name, change in (('new', lambda r: r.update(status='new')), ('removed', lambda r: r.update(status='removed')),
+                         ('moved', lambda r: r.update(moved=True)), ('unverified', lambda r: r.update(layer_state_status='unverified'))):
+        doc = verified_doc()
+        change(doc['electrodes'][0])
+        s2 = section(html_of(run_report(tmp_path, doc, name=name)[1]), 2)
+        assert 'id="corr-details"' not in s2 and '<p class="lead" id="corr-summary">' in s2 and '<table id="corr-table">' in s2, name
+        assert 'id="el-partners"' in s2, name                                    # the partner list stays where it was in every case
+    assert 'id="el-partners"' in section(html_of(run_report(tmp_path, sample_doc(), name='plain')[1]), 2)
+
+
+def test_chrome_rtrim_condition_table_is_the_last_block_of_the_pair_detail(tmp_path):
+    doc = sample_doc()
+    page = run_report(tmp_path, doc)[1] / 'ledger_report.html'
+    dom, text = dump_dom(page, '#sel=pair:P2')
+    assert 'data-err' not in dom.root and 'id="cond"' not in text
+    start = text.index('id="pd" data-pd="P2"')
+    detail = text[start:text.index('<div id="card-store"', start)] if '<div id="card-store"' in text[start:] else text[start:]
+    assert detail.index('id="pd-video"') < detail.index('id="cond-detail"') < detail.index('id="cond-table"')
+    assert '이물 크기' in detail[detail.index('id="cond-detail"'):] and 'density 레이어' in detail[detail.index('id="cond-detail"'):]
+    cond = [a for t, a in dom.elements if a.get('id') == 'cond-detail']
+    assert cond and 'open' not in cond[0]                                                  # folded by default
+    s5_start = text.index('<section id="s5"')
+    assert 'id="cond-table"' not in text[s5_start:text.index('</section>', s5_start)] and 'id="cond-link"' in text[s5_start:]
+    dom, text = dump_dom(page, '#')
+    assert not [a for t, a in dom.elements if a.get('id') in ('cond-detail', 'cond-table')]
+    dom, text = dump_dom(page, '#sel=pair:P2&print')
+    assert 'open' in [a for t, a in dom.elements if a.get('id') == 'cond-detail'][0]
+
+
+def test_chrome_rtrim_map_click_selects_the_same_thing_on_the_narrowed_b_map(tmp_path):
+    """R1:1 — a real click event on the B map (drawn narrower than A) picks the same pair as the same relative point of the A map."""
+    page = scaled_report(tmp_path)
+    script = ("setTimeout(function(){var R=document.documentElement,res=[],cvs={},f,fx,fy,r,j;"
+              "['A','B'].forEach(function(r){cvs[r]=document.querySelector('canvas.mapcv[data-view=\"s3\"][data-role=\"'+r+'\"]');});"
+              "R.setAttribute('data-wa',cvs.A.getBoundingClientRect().width.toFixed(1));R.setAttribute('data-wb',cvs.B.getBoundingClientRect().width.toFixed(1));"
+              "for(fy=0.05;fy<1;fy+=0.1){for(fx=0.05;fx<1;fx+=0.1){var row=[];['A','B'].forEach(function(r){var b=cvs[r].getBoundingClientRect();"
+              "location.hash='#layer=L1';cvs[r].dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:b.left+b.width*fx,clientY:b.top+b.height*fy}));"
+              "row.push(location.hash.replace(/&?layer=L1/,''));});res.push(row.join('>'));}}"
+              "R.setAttribute('data-clicks',res.join(';'));},700);")
+    dom, text = run_in_page(page, '#layer=L1', script, tag='rtc')
+    assert 'data-err' not in dom.root
+    assert float(dom.root['data-wb']) < float(dom.root['data-wa']) * 0.9                  # B is really narrower
+    rows = [r.split('>') for r in dom.root['data-clicks'].split(';')]
+    picked = [r for r in rows if r[0].startswith('#sel=')]
+    assert picked, rows[:5]                                                                # some clicks selected something
+    assert all(a == b for a, b in rows), [r for r in rows if r[0] != r[1]][:3]            # A and B give the same selection at the same relative point

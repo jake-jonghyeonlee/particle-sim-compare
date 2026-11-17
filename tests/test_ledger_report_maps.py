@@ -153,7 +153,7 @@ def test_without_maps_dir_the_page_has_the_no_maps_band_and_empty_bundle_parts(t
     page = html_of(out)
     data = bundle_of(page)
     assert code == 0 and 'id="band-no-maps"' in page and data['maps'] is None and data['changes'] is None and data['cards'] == []
-    assert 'id="tags-folded"' in section(page, 1) and 'id="locations"' in section(page, 1)
+    assert 'id="tags-folded"' in section(page, 3) and 'id="tags-folded"' not in section(page, 1) and 'id="locations"' in section(page, 1)   # rtrim/T2: tags moved to section 3
     assert 'ledger_maps_json_sha256' not in json.loads((out / 'report.json').read_text(encoding='utf-8'))
 
 
@@ -179,11 +179,13 @@ def test_each_04_status_has_its_band(tmp_path, status):
 def test_04_changes_feed_the_tag_axis_and_the_count_line_from_the_json_values(tmp_path):
     doc, folder, maps = setup(tmp_path, changes=ok_changes())
     page = html_of(report(tmp_path, folder, maps)[1])
-    s1 = section(page, 1)
-    assert 'id="band-changes"' not in page and 'id="tags"' in s1
-    rows = re.findall(r'<tr data-href="#cat=tag:([^"&]+)&amp;entry=pair" data-scroll="s3"><td class="l">([^<]*)</td><td>(\d+)</td><td>(\d+)</td><td>(\d+)</td></tr>', s1)
+    s1, s3 = section(page, 1), section(page, 3)
+    assert 'id="band-changes"' not in page and 'id="tags"' in s3 and 'id="tags"' not in s1       # rtrim/T2: the tag table heads the section 3 location entry
+    pn_loc = s3[s3.index('id="pn-loc"'):s3.index('id="pn-pair"')]
+    assert pn_loc.index('id="tags"') < pn_loc.index('id="roi-table"')
+    rows = re.findall(r'<tr data-href="#cat=tag:([^"&]+)&amp;entry=pair" data-scroll="s3"><td class="l">([^<]*)</td><td>(\d+)</td><td>(\d+)</td><td>(\d+)</td></tr>', s3)
     assert rows == [('reshaped', '형상 변경', '1', '1', '2'), ('shifted', '위치 이동', '1', '0', '1')]
-    assert 'Δ 를 더하면 중복' in s1
+    assert 'Δ 를 더하면 중복' in s3
     assert re.search(r'변경 위치 <b>1곳</b>\(04\) · 위치에 연결된 쌍 <b>2</b> · 미연결 쌍 <b>2</b>', s1) and '분모 4 쌍' in s1
     data = bundle_of(page)
     assert data['changes']['summary']['roi_count'] == 1 and data['changes']['pairs']['P1']['roi_keys'] == ['roi:R1']

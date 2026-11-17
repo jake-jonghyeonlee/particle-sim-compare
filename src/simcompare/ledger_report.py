@@ -572,12 +572,11 @@ def _trust(ctx):
 
 
 def _section1(ctx):
-    out = ['<section id="s1"><p class="q">얼마나 달라졌고, 무엇 때문인가</p><h2>① 한눈 요약</h2>',
+    out = ['<section id="s1"><p class="q">얼마나 달라졌고, 어떻게 구성되나</p><h2>① 한눈 요약</h2>',
            '<div class="kpis">%s%s</div>' % (_kpi(ctx, 'line'), _kpi(ctx, 'pixel')), _headline(ctx),
-           '<div class="g3"><div><h3>무엇 때문인가 — item 단위 분해 <span class="muted" style="font-weight:400">'
+           '<div class="g2"><div><h3>변화의 구성 — item 단위 분해 <span class="muted" style="font-weight:400">'
            '(위 = 증가, 아래 = 감소 · 합이 종류 전체 Δ)</span></h3>%s</div>' % _breakdown_table(ctx),
-           '<div>%s</div>' % _lists(ctx),
-           '<div><h3>작은 A·B 지도</h3>%s%s</div></div>' % (_small_maps(ctx), _tag_block(ctx)),
+           '<div>%s</div></div>' % _lists(ctx),
            _change_kind_table(ctx), _trust(ctx), '</section>']
     return ''.join(out)
 
@@ -590,8 +589,8 @@ def _check_cell(status, text=None):
 
 
 def _sum_checks(ctx):
-    """Rows: the column sum (pairs [+ CNO] + curve intercept [+ CRP]) next to the vi, per kind and product."""
-    rows = []
+    """(table html, [status of every row]): the column sum (pairs [+ CNO] + curve intercept [+ CRP]) next to the vi, per kind and product."""
+    rows, statuses = [], []
     for kind in KINDS:
         t = ctx.doc['totals'][kind]
         for side, label in (('a', 'A'), ('b', 'B')):
@@ -607,17 +606,19 @@ def _sum_checks(ctx):
                 status = 'not_evaluated'
             else:
                 status = 'passed' if math.isclose(whole, total, rel_tol=1e-9, abs_tol=1e-12) else 'failed'
+            statuses.append(status)
             rows.append('<tr data-kind="%s" data-side="%s"><td class="l">%s%s %s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>%s</tr>' % (
                 kind, label, chip(kind), kind, label, esc(vi_txt(pair_part)), esc(vi_txt(curve)),
                 esc(vi_txt(crp)) if kind == 'pixel' else '<span class="muted">—</span>', esc(vi_txt(whole)), esc(vi_txt(total)),
                 _check_cell(status)))
     return ('<table id="sum-check"><thead><tr><th class="l">종류 · 제품</th><th>쌍 합 (+CNO)</th><th>곡선 보정</th><th>CRP 줄</th><th>합</th><th>전체 vi</th>'
-            '<th class="l">검산</th></tr></thead><tbody>%s</tbody></table>' % ''.join(rows))
+            '<th class="l">검산</th></tr></thead><tbody>%s</tbody></table>' % ''.join(rows)), statuses
 
 
 def _item_checks(ctx):
+    """(html, [status of the kind rows and of the pair check])."""
     checks = (ctx.doc.get('checks') or {}).get('item_breakdown') or {}
-    rows = []
+    rows, statuses = [], []
     for kind in KINDS:
         brk = ctx.doc['kinds'][kind]['item_breakdown']
         pair_delta = ctx.doc['totals'][kind]['items']['delta']
@@ -625,15 +626,30 @@ def _item_checks(ctx):
         core = osum([brk.get('same'), brk.get('new'), None if brk.get('gone') is None else -brk['gone']])
         extra = osum([brk.get('cno'), brk.get('crp')])
         kind_check = ((checks.get('kind') or {}).get(kind) or {})
+        statuses.append(kind_check.get('status', 'not_evaluated'))
         rows.append('<tr data-kind="%s"><td class="l">%s%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>%s</tr>' % (
             kind, chip(kind), kind, esc(pp_txt(core)), esc(pp_txt(pair_delta)), esc(pp_txt(extra)), esc(pp_txt(osum([core, extra]))),
             esc(pp_txt(total)), _check_cell(kind_check.get('status', 'not_evaluated'))))
     pair = checks.get('pair') or {}
+    statuses.append(pair.get('status', 'not_evaluated'))
     note = ('<p class="muted" id="pair-check">쌍마다 (같은 + 새 − 없어진) = 쌍 Δ: 확인 %s 쌍 · 실패 %s 쌍 · 확인 안 함(값 대기) %s 쌍 · %s</p>' % (
         esc(pair.get('checked', '—')), esc(pair.get('failed', '—')), esc(pair.get('not_evaluated', '—')),
         esc(CHECK_TEXT.get(pair.get('status'), pair.get('status', '—')))))
     return ('<table id="item-check"><thead><tr><th class="l">종류</th><th>같은 + 새 − 없어진</th><th>쌍 Δ 합</th><th>CNO + CRP</th>'
-            '<th>쌍 Δ 합 + 나머지</th><th>종류 전체 Δ</th><th class="l">검산</th></tr></thead><tbody>%s</tbody></table>%s' % (''.join(rows), note))
+            '<th>쌍 Δ 합 + 나머지</th><th>종류 전체 Δ</th><th class="l">검산</th></tr></thead><tbody>%s</tbody></table>%s' % (''.join(rows), note)), statuses
+
+
+def _checks_block(ctx):
+    """Both check tables in one <details>; it is open when any check is not 'passed' (failed, pending, partial) or the ledger is partial."""
+    sum_html, sum_status = _sum_checks(ctx)
+    item_html, item_status = _item_checks(ctx)
+    statuses = sum_status + item_status + [(ctx.doc.get('checks') or {}).get('status')]
+    attention = any(s != 'passed' for s in statuses) or ctx.doc.get('status') == 'partial'
+    summary = '검산 상세 (합 관계 · item 분해) — %s' % ('확인이 필요한 항목이 있습니다' if attention else '모두 통과')
+    return ('<details id="checks-details"%s><summary>%s</summary>'
+            '<h3>합 관계 검산 <span class="muted" style="font-weight:400">(쌍 합 + CNO + 곡선 보정 + CRP = vi, 제품 전체)</span></h3>%s%s'
+            '<h3>item 분해 검산 <span class="muted" style="font-weight:400">(같은 + 새 − 없어진 = 쌍 Δ 합, + CNO + CRP = 종류 전체 Δ)</span></h3>%s</details>' % (
+                ' open' if attention else '', esc(summary), sum_html, _crp_line(ctx), item_html))
 
 
 def _crp_line(ctx):
@@ -721,14 +737,12 @@ NUMBER_RULES = (('없음', '그 제품에 그 전극·쌍·item 이 없습니다
 
 def _section5(ctx):
     out = ['<section id="s5"><p class="q">어떻게 계산했고 믿을 수 있는가</p><h2>⑤ 근거 · 검산</h2><div class="g2"><div>',
-           '<h3>합 관계 검산 <span class="muted" style="font-weight:400">(쌍 합 + CNO + 곡선 보정 + CRP = vi, 제품 전체)</span></h3>', _sum_checks(ctx),
-           _crp_line(ctx),
-           '<h3>item 분해 검산 <span class="muted" style="font-weight:400">(같은 + 새 − 없어진 = 쌍 Δ 합, + CNO + CRP = 종류 전체 Δ)</span></h3>', _item_checks(ctx),
+           _checks_block(ctx),
            _link07(ctx),
            '<h3>숫자 표시 규칙</h3><table id="number-rules">%s</table></div><div>' % ''.join(
                '<tr><td class="l"><b>%s</b></td><td class="l wrap">%s</td></tr>' % (esc(k), esc(v)) for k, v in NUMBER_RULES),
-           '<h3>선택한 쌍의 조건 값 <span class="muted" style="font-weight:400">(이물 크기 · density 레이어 · 면적 · λ · 값)</span></h3>',
-           '<div id="cond"><p class="muted">위에서 쌍을 하나 고르면 그 쌍의 조건 값이 이 자리에 나옵니다. 이 표는 스크립트가 그립니다.</p></div>',
+           '<h3>조건 값 <span class="muted" style="font-weight:400">(이물 크기 · density 레이어 · 면적 · λ · 값)</span></h3>',
+           '<p class="muted" id="cond-link">선택한 쌍의 조건 값은 <a href="#s3" data-go="s3">③ 쌍 상세</a> 맨 아래에 있습니다. 전체는 아래에서 봅니다.</p>',
            '<details id="cond-all"><summary>전체 보기 (%d 쌍)</summary><div id="cond-all-body"></div></details>' % len(ctx.doc['pairs']),
            _inputs_block(ctx), '</div></div></section>']
     return ''.join(out)
@@ -794,12 +808,18 @@ def _section2(ctx):
     unverified = [row for row in rows if row.get('layer_state_status') != 'verified']
     counts = {code: sum(1 for row in rows if row.get('status') == code) for code in ('common', 'new', 'removed')}
     moved = sum(1 for row in rows if row.get('moved'))
-    out = ['<section id="s2"><p class="q">전극은 어떻게 대응되나</p><h2>② 제품 대응</h2>',
-           '<p class="lead" id="corr-summary">공통 <b>%d</b> · 신규 <b>%d</b> · 제거 <b>%d</b> · 레이어 이동 <b>%d</b>%s'
-           '<span class="muted"> — 대응은 전극 이름 기준입니다. 이름이 바뀐 전극은 \'제거 + 신규\' 로 보입니다.</span></p>' % (
-               counts['common'], counts['new'], counts['removed'], moved,
-               (' · 확인 불가 <b>%d</b>' % sum(1 for row in rows if row.get('status') == 'unverifiable')) if any(
-                   row.get('status') == 'unverifiable' for row in rows) else '')]
+    summary = ('공통 <b>%d</b> · 신규 <b>%d</b> · 제거 <b>%d</b> · 레이어 이동 <b>%d</b>%s'
+               '<span class="muted"> — 대응은 전극 이름 기준입니다. 이름이 바뀐 전극은 \'제거 + 신규\' 로 보입니다.</span>' % (
+                   counts['common'], counts['new'], counts['removed'], moved,
+                   (' · 확인 불가 <b>%d</b>' % sum(1 for row in rows if row.get('status') == 'unverifiable')) if any(
+                       row.get('status') == 'unverifiable' for row in rows) else ''))
+    # nothing new, removed or moved (and nothing unverifiable): the table says "no difference", so it is folded; any difference opens it
+    unchanged = not (counts['new'] or counts['removed'] or moved or unverified)
+    if unchanged:
+        out = ['<section id="s2"><p class="q">전극은 어떻게 대응되나</p><h2>② 제품 대응</h2>',
+               '<details id="corr-details"><summary class="lead" id="corr-summary">%s <span class="muted">(차이 없음 — 눌러서 표 펼치기)</span></summary>' % summary]
+    else:
+        out = ['<section id="s2"><p class="q">전극은 어떻게 대응되나</p><h2>② 제품 대응</h2>', '<p class="lead" id="corr-summary">%s</p>' % summary]
     if unverified:
         out.append('<div class="band info" id="band-no-dl1"><b>확인 불가</b> — DL1 전극 목록이 없어 %d 개 전극의 레이어 대응(공통·신규·제거·이동)을 '
                    '확인하지 못했습니다. 빈 칸은 없다는 뜻이 아니라 알 수 없다는 뜻입니다.</div>' % len(unverified))
@@ -824,12 +844,14 @@ def _section2(ctx):
             ''.join(_layer_cell(row, layer, verified) for layer in layers)))
     out.append('<div class="s2row"><div class="s2tab"><div class="scrl"><table id="corr-table"><thead><tr><th class="l">전극</th><th class="l">상태</th>%s</tr></thead><tbody>%s</tbody></table></div></div>%s</div>' % (
         head, ''.join(body), _layout_maps(ctx)))
+    if unchanged:
+        out.append('</details>')
     out.append('<div id="el-partners" class="partners"><p class="muted">전극 이름이나 칸을 누르면 그 전극의 상대 전극과 쌍 Δ 가 이 자리에 나옵니다. '
                '이 목록은 스크립트가 그립니다.</p></div></section>')
     return ''.join(out)
 
 
-# ---- maps: section 3 (map + toggles), the A/B layout of section 2 and the small maps of section 1 (mrep/T7) -----------------------
+# ---- maps: section 3 (map + toggles) and the A/B layout of section 2 (mrep/T7; the small maps of section 1 were removed in rtrim/T2) --
 # One numbered PNG pair (item picture `it`, electrode picture `el`) per layer and product is embedded once (id="map-png"); the
 # script decodes the layers it needs, checks the pixel count of every number against ledger_maps.json and draws the three views
 # from the same decoded arrays. Electrode shapes are thin outlines (no fill), so the defect fill of the selected pair stays readable.
@@ -884,17 +906,6 @@ def _pair_of_maps(view):
     return '<div class="mpair">%s%s</div>' % (_mapcv(view, 'A', '기준 A'), _mapcv(view, 'B', '대상 B'))
 
 
-def _small_maps(ctx):
-    if ctx.maps is None:
-        return '<div class="slot" data-slot="s1-maps">지도 없음 — --maps-dir 를 주면 A·B 작은 지도가 나옵니다</div>'
-    reason = _shape_reason(ctx)
-    note = '<p class="muted" style="margin:3px 0">전극 윤곽(회색) + 변화가 큰 상위 3쌍의 번호. 번호를 누르면 ③ 에서 그 쌍을 봅니다.</p>'
-    if reason and not _map_layers(ctx):
-        return '<div id="s1-maps" class="smaps"><p class="muted">지도 PNG 가 없습니다.</p></div>'
-    return '<div id="s1-maps" class="smaps" data-slot="s1-maps">%s%s%s</div>' % (
-        note, _pair_of_maps('s1'), ('<p class="muted" id="s1-shape-reason">%s</p>' % esc(reason)) if reason else '')
-
-
 def _missing_share(ctx):
     """The part of the change the maps cannot show: CNO, the curve intercept, the CRP line (display of ledger values)."""
     t = ctx.doc['totals']
@@ -923,6 +934,7 @@ def _m_legend():
             + sw('background:var(--line)', 'line 불량 영역 (선택 쌍)') + sw('background:var(--pixel)', 'pixel 불량 영역 (선택 쌍)')
             + sw('border:2px dashed var(--pixel);background:none', '한쪽에만 있는 item (점선 윤곽)')
             + sw('background:var(--common);opacity:.3', '다른 쌍 (옅게)')
+            + sw('border:2px dashed var(--text-secondary);background:none', 'unit 창 (진한 회색 긴 점선)')
             + sw('border:2px dashed var(--text-primary);background:none', '변경 위치 (04, 번호)')
             + sw('border:2px dashed var(--text-primary);border-style:dotted double;background:none', '반복 위치로 옮겨 표시한 위치')
             + '<div class="muted">⌐ 창 경계에서 잘림 · ≫ 창보다 큼</div></div>')
@@ -1003,7 +1015,20 @@ def _pair_sort_key(pair):
     return (1, -abs(delta), pair['pair_id']) if delta is not None else (2, 0, pair['pair_id'])
 
 
-def _pl_row(ctx, pair, index, tag_names):
+def _b_ranks(doc):
+    """{pair_id: rank by B value} with the rule of the 'riskiest in B' list of section 1 (B vi as % of the A vi of the kind; pairs
+    present in B with a value only; ties by pair_id). Pairs without a B value get no rank."""
+    rows = sorted((p for p in doc['pairs'] if p['present_b'] and p.get('pct_b') is not None), key=lambda p: (-p['pct_b'], p['pair_id']))
+    return {p['pair_id']: i + 1 for i, p in enumerate(rows)}
+
+
+def _pl_b_cell(pair):
+    if not pair['present_b']:
+        return muted('없음')
+    return esc(pct_txt(pair['pct_b'])) if pair.get('pct_b') is not None else muted('대기')
+
+
+def _pl_row(ctx, pair, index, tag_names, b_ranks):
     pid = pair['pair_id']
     name = '–'.join(pair['electrodes'])
     roi_keys, tags = _pair_link(ctx, pid)
@@ -1019,11 +1044,13 @@ def _pl_row(ctx, pair, index, tag_names):
         tag_html = '<span class="muted unlinked">%s</span>' % esc(UNLINKED_TEXT)
     hidden = ' hide' if index >= PAIR_SHOW else ''
     return ('<tr class="plrow%s" data-pair="%s" data-href="%s" tabindex="0" data-kind="%s" data-ck="%s" data-cat="%s" data-tags="%s" data-linked="%d" '
-            'data-name="%s"><td><b>%s</b></td><td class="l"><b>%s</b></td><td class="l">%s%s</td><td class="l wrap">%s%s</td><td class="l wrap">%s</td><td class="l">%s</td></tr>' % (
+            'data-name="%s" data-idx="%d" data-brank="%d"><td><b>%s</b></td><td class="l"><b>%s</b></td><td class="l">%s%s</td><td class="l wrap">%s%s</td>'
+            '<td class="l wrap">%s</td><td class="l">%s</td><td>%s</td></tr>' % (
                 hidden, esc(pid), esc(_href('pair:' + pid)), esc(pair['kind']), esc(pair.get('change_kind')), ' '.join(_pair_cats(pair)),
-                esc(' '.join(tags)), 1 if roi_keys else 0, esc((name + ' ' + pid).lower()), esc(pair.get('rank') or '—'), esc(name),
+                esc(' '.join(tags)), 1 if roi_keys else 0, esc((name + ' ' + pid).lower()), index, b_ranks.get(pid, 0),
+                esc(pair.get('rank') or '—'), esc(name),
                 chip(pair['kind']), esc(pair['kind']), ctx.change_badge(pair['change_kind']), _comp_text(pair), tag_html,
-                pp_cell(pair.get('delta'), pair.get('pct_delta'))))
+                pp_cell(pair.get('delta'), pair.get('pct_delta')), _pl_b_cell(pair)))
 
 
 def _filter_buttons(key, label, options):
@@ -1037,28 +1064,35 @@ def _pair_list(ctx):
     pairs = sorted(doc['pairs'], key=_pair_sort_key)
     names = _tag_names()
     counts = doc['kinds']['change_kind_counts']
-    ck_opts = [('', '전체')] + [(c['code'], c['label']) for c in doc['change_kinds'] if c['code'] not in ('cno',) and counts.get(c['code'], 0) > 0]
+    pair_counts = {}                       # pairs per change kind, straight from ledger.json pairs[] (the buttons show these, not the shown rows)
+    for p in doc['pairs']:
+        pair_counts[p['change_kind']] = pair_counts.get(p['change_kind'], 0) + 1
+    ck_opts = [('', '전체')] + [(c['code'], '%s (%d)' % (c['label'], pair_counts.get(c['code'], 0))) for c in doc['change_kinds']
+                              if c['code'] not in ('cno',) and counts.get(c['code'], 0) > 0]
+    b_ranks = _b_ranks(doc)
     tag_opts = [('', '전체')]
     if ctx.link_status() == 'ok':
         tag_opts += [(t, names.get(t, t)) for t in sorted(((ctx.changes.get('summary') or {}).get('tag_pair_counts')) or {})]
-    filters = [_filter_buttons('kind', '불량', [('', '전체'), ('line', 'line'), ('pixel', 'pixel')]),
+    filters = [_filter_buttons('sort', '정렬', [('', '변화 큰 순'), ('b', 'B 위험 큰 순')]),
+               _filter_buttons('kind', '불량', [('', '전체'), ('line', 'line'), ('pixel', 'pixel')]),
                _filter_buttons('ck', '변화 종류', ck_opts),
                _filter_buttons('cat', '① 분해 범주', [('', '전체'), ('same', '같은 불량의 증감'), ('new', '새로 생긴 불량 방식'), ('gone', '없어진 불량 방식')])]
     if len(tag_opts) > 1:
         filters.append(_filter_buttons('tag', '형상 태그', tag_opts))
     total = len(pairs)
     shown = min(PAIR_SHOW, total)
-    rows = ''.join(_pl_row(ctx, p, i, names) for i, p in enumerate(pairs)) or (
-        '<tr><td colspan="6" class="l muted">계산한 쌍이 없습니다.</td></tr>')
+    rows = ''.join(_pl_row(ctx, p, i, names, b_ranks) for i, p in enumerate(pairs)) or (
+        '<tr><td colspan="7" class="l muted">계산한 쌍이 없습니다.</td></tr>')
     return ('<div class="chips fbar" id="pl-filters">%s</div>'
             '<p class="searchrow"><label>쌍·전극 이름 검색 <input type="search" id="pl-q" autocomplete="off" placeholder="예: Scan3 또는 Anode–Vint"></label> '
             '<span id="pl-count" class="muted">결과 %d 쌍 · 표시 %d</span></p>'
             '<div class="scrl" id="pl-box"><table id="pl-table" data-total="%d" data-count="%d" data-shown="%d"><thead><tr><th>#</th><th class="l">쌍</th>'
-            '<th class="l">종류</th><th class="l">변화 종류</th><th class="l">형상 태그</th><th class="l">Δ (쌍 전체)</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<th class="l">종류</th><th class="l">변화 종류</th><th class="l">형상 태그</th><th class="l">Δ (쌍 전체)</th><th>B 값</th></tr></thead><tbody>%s</tbody></table></div>'
             '<p id="pl-none" class="muted" hidden>조건에 맞는 쌍이 없습니다.</p>'
             '<p style="margin:5px 0 0"><button type="button" id="pl-more" data-f="more" data-v="1"%s>더 보기 (+%d 쌍)</button></p>'
             '<p class="muted">줄 = 쌍 하나. Δ 는 쌍 전체의 장부 값(vi 의 %%p)이며 A 대비 %% 는 각 종류의 vi A 기준입니다. '
-            '기본으로 |변화| 가 큰 상위 %d 쌍만 보입니다.</p>' % (
+            'B 값 = 그 쌍의 B vi 를 종류별 A vi 에 대한 %% 로 쓴 값입니다(① "B 에서 가장 위험한 쌍" 과 같은 기준). '
+            '기본으로 정렬 순서의 상위 %d 쌍만 보입니다.</p>' % (
                 ''.join(['<div>%s</div>' % f for f in filters]), total, shown, total, total, shown, rows,
                 '' if total > PAIR_SHOW else ' hidden', max(0, total - PAIR_SHOW), PAIR_SHOW))
 
@@ -1203,7 +1237,7 @@ def _s3_panel(ctx):
     return ('<div id="s3-panel" class="s3panel"><div class="chips" id="entry-tabs"><button type="button" class="fbtn" data-f="entry" data-v="loc">변경 위치로 찾기</button>'
             '<button type="button" class="fbtn" data-f="entry" data-v="pair">전극·쌍으로 찾기</button></div>'
             '<div id="pn-loc" hidden>%s</div><div id="pn-pair">%s%s</div><div id="pn-detail"><p class="muted">선택한 것이 없습니다. 목록·카드·지도에서 하나를 누르세요.</p></div>%s</div>' % (
-                _roi_rows(ctx), _card_chooser(ctx), _pair_list(ctx), _card_store(ctx)))
+                _tag_block(ctx) + _roi_rows(ctx), _card_chooser(ctx), _pair_list(ctx), _card_store(ctx)))
 
 
 def _section3(ctx):
@@ -1407,10 +1441,11 @@ def _map_scale(ctx, role, side):
     wo, ws, ro = _num_pair(window.get('origin_px')), _num_pair(window.get('size_px')), _num_pair(region.get('origin_px'))
     shape = _num_pair((side.get('frame') or {}).get('shape_yx'))
     unit = _num_pair(window.get('unit_um'))
+    region_size = _num_pair(region.get('size_px'))             # the caption writes "영역 W × H µm" from this x the pitch
     if not isinstance(pitch, (int, float)) or isinstance(pitch, bool) or pitch <= 0 or not (wo and ws and ro and shape):
         return None
     whole = ws[0] >= shape[1] and ws[1] >= shape[0]
-    return {'p': pitch, 'wo': wo, 'ws': ws, 'ro': ro, 'whole': whole, 'u': unit,
+    return {'p': pitch, 'wo': wo, 'ws': ws, 'ro': ro, 'rs': region_size, 'whole': whole, 'u': unit,
             'us': 'derived' if window.get('unit_source') == 'derived' else 'config',
             'r': (mdoc.get('options') or {}).get('range_um')}
 
