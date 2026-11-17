@@ -43,6 +43,7 @@ def _strip_new_keys(doc):
     for kind in ('line', 'pixel'):
         doc['kinds'][kind].pop('item_breakdown')
     doc['checks'].pop('item_breakdown')
+    doc['inputs'].pop('diameter_filter')            # rtrim/T3: the only key added to inputs; the baseline module has none
     for row in doc['electrodes']:
         for key in ('layer_state', 'layer_state_status', 'moved'):
             row.pop(key)

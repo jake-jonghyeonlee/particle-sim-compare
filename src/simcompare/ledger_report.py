@@ -365,6 +365,45 @@ def _kpi(ctx, kind):
                 kind, chip(kind), kind, esc(vi_txt(kd['vi_a'])), esc(vi_txt(kd['vi_b'])), big, big_txt, esc(sub_txt)))
 
 
+def _size_value(value):
+    return '%g' % value if isinstance(value, (int, float)) else str(value)
+
+
+def _sizes_text(values):
+    """Same rule as the 07 report: up to 8 values listed, else `a–b µm, n개`."""
+    values = sorted(v for v in values if isinstance(v, (int, float)))
+    if not values:
+        return None
+    if len(values) > 8:
+        return '%s–%s µm, %d개' % (_size_value(values[0]), _size_value(values[-1]), len(values))
+    return ', '.join(_size_value(v) for v in values) + ' µm'
+
+
+def _size_range_parts(doc):
+    """(text, with_07_hint) of the particle size range recorded in ledger.json `inputs.diameter_filter`."""
+    flt = (doc.get('inputs') or {}).get('diameter_filter')
+    if not isinstance(flt, dict):
+        return '이물 크기 범위 정보 없음 — 08 을 다시 실행하면 나옵니다', False
+    if flt.get('mode') != 'listed':
+        return '이물 크기 범위: 모든 크기', False
+    listed = _sizes_text(flt.get('diameters_um') or [])
+    text = '이물 크기 범위: 선택 %s' % (listed or '(목록 없음)')
+    missing = _sizes_text(flt.get('not_observed_um') or [])
+    if missing:
+        text += ' (관찰 안 됨: %s)' % missing
+    return text, True
+
+
+def _size_range_line(ctx):
+    text, hint = _size_range_parts(ctx.doc)
+    tail = ''
+    if hint:
+        link = ctx.report07
+        tail = ' (전체 크기 값은 %s에서 봅니다)' % (
+            '<a href="%s">07 1절</a>' % esc(link['href']) if link['status'] == 'linked' else '07 1절')
+    return '<p class="muted size-range" id="size-range">%s%s</p>' % (esc(text), tail)
+
+
 def _headline(ctx):
     dl, dp = ctx.doc['totals']['line']['delta'], ctx.doc['totals']['pixel']['delta']
     if dl is None or dp is None:
@@ -573,7 +612,7 @@ def _trust(ctx):
 
 def _section1(ctx):
     out = ['<section id="s1"><p class="q">얼마나 달라졌고, 어떻게 구성되나</p><h2>① 한눈 요약</h2>',
-           '<div class="kpis">%s%s</div>' % (_kpi(ctx, 'line'), _kpi(ctx, 'pixel')), _headline(ctx),
+           '<div class="kpis">%s%s</div>' % (_kpi(ctx, 'line'), _kpi(ctx, 'pixel')), _size_range_line(ctx), _headline(ctx),
            '<div class="g2"><div><h3>변화의 구성 — item 단위 분해 <span class="muted" style="font-weight:400">'
            '(위 = 증가, 아래 = 감소 · 합이 종류 전체 Δ)</span></h3>%s</div>' % _breakdown_table(ctx),
            '<div>%s</div></div>' % _lists(ctx),
@@ -696,6 +735,8 @@ def _inputs_block(ctx):
     for label, value in (('compare2.json sha256', inputs.get('compare2_json_sha256')), ('config sha256', inputs.get('config_sha256')),
                          ('ledger_basis', inputs.get('ledger_basis')), ('ledger 상태', doc.get('status'))):
         out.append('<tr><td class="l"><b>%s</b></td><td class="l wrap">%s</td></tr>' % (esc(label), esc(value)))
+    out.append('<tr id="inputs-size-range"><td class="l"><b>이물 크기 범위</b></td><td class="l wrap">%s</td></tr>' % esc(
+        _size_range_parts(doc)[0].replace('이물 크기 범위: ', '', 1)))
     inventory = inputs.get('electrode_inventory') or {}
     for role, name in PRODUCT_NAMES:
         inv = inventory.get(role) or {}

@@ -114,3 +114,33 @@ def test_item_breakdown_checks_pass_on_real_compare2_output(tmp_path):
         checks = ledger_of(folder, out)['checks']['item_breakdown']
         assert checks['pair']['failed'] == 0
         assert checks['kind']['line']['status'] == 'passed' and checks['kind']['pixel']['status'] == 'passed'
+
+
+# ---- rtrim/T3: inputs.diameter_filter ---------------------------------------------------------------------------------
+
+def test_rtrim_ledger_copies_the_compare2_diameter_filter_block_and_formula_basis(tmp_path):
+    ref, tgt = two_sides()
+    code, out = run(tmp_path, ref, tgt, diameters=[1, 2, 9])
+    assert code in (0, 3)
+    raw = json.loads((out / 'compare2.json').read_text(encoding='utf-8'))
+    doc = ledger_of(tmp_path, out)
+    block = dict(raw['inputs']['diameter_filter'], formula_basis=raw['formula_basis'])
+    assert doc['inputs']['diameter_filter'] == block
+    assert block['mode'] == 'listed' and block['diameters_um'] == [1, 2, 9] and block['formula_basis'] == 'diameter_subset'
+
+
+def test_rtrim_ledger_without_a_filter_says_all_sizes_and_changes_nothing_else(tmp_path, monkeypatch):
+    ref, tgt = two_sides()
+    code, out = run(tmp_path, ref, tgt)
+    assert code == 0
+    assert 'diameter_filter' not in json.loads((out / 'compare2.json').read_text(encoding='utf-8'))['inputs']
+    doc = ledger_of(tmp_path, out)
+    assert doc['inputs']['diameter_filter'] == {'mode': 'all'}
+    # only that one key is new: with its producer replaced, the rest of the document is equal
+    monkeypatch.setattr(ledger, '_diameter_filter_block', lambda d: 'x')
+    other = ledger_of(tmp_path, out)
+    assert other['inputs'].pop('diameter_filter') == 'x'
+    doc['inputs'].pop('diameter_filter')
+    for volatile in (doc, other):
+        volatile.pop('generated_at', None)
+    assert doc == other

@@ -166,7 +166,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 | `schema_version` | `ledger_v1` |
 | `status`, `reasons` | `ok` / `partial`(종료 3, 사유 `ledger_totals_check_failed`) |
 | `change_kinds`, `electrode_status` | 코드 → 표시 이름 표(`same_pair_change` 같은 쌍 증감, `layer_change` 레이어 변경, `new_pair` 새 쌍, `gone_pair` 사라진 쌍, `electrode_added_removed` 전극 추가·제거, `no_change` 변화 없음, `cno` CNO, `value_pending` 값 대기 / `common` 공통, `new` 신규, `removed` 제거, `unverifiable` 확인 불가) |
-| `inputs` | `compare2_json_sha256`, `config_sha256`, `ledger_basis`, `products.<role>`(model_group, pair_table_hash, crp), `electrode_inventory.<role>` {`electrodes`(정렬), `layers`(dl1 만), `source` dl1/observed, `status` complete/incomplete, `sha256`} |
+| `inputs` | `compare2_json_sha256`, `config_sha256`, `ledger_basis`, `products.<role>`(model_group, pair_table_hash, crp), `electrode_inventory.<role>` {`electrodes`(정렬), `layers`(dl1 만), `source` dl1/observed, `status` complete/incomplete, `sha256`}, `diameter_filter`(rtrim/T3: compare2.json `inputs.diameter_filter` 를 그대로 복사하고 `formula_basis` 를 더한다. 필터가 없으면 `{"mode": "all"}`. 키가 없으면 T3 이전 산출물이라 보고서가 "이물 크기 범위 정보 없음" 으로 적는다) |
 | `totals.<line/pixel>` | `items`(쌍 item 합 A·B·Δ), `intercept`(절편 줄), pixel 만 `cno`·`crp`(A = −d, B = 0, Δ = d; `present`), `a`·`b`·`delta`(열 합계), `vi_a`·`vi_b` |
 | `kinds.<line/pixel>` | `computable`, `vi_a`, `vi_b`, `slope`, `slope_method`, `lambda_a`, `lambda_b`, `pair_count`, `change_kinds`(코드별 건수; pixel 은 `cno` 건수 포함), `increase_sum`·`decrease_sum`, `value_pending_rows` |
 | `kinds.change_kind_counts` | 쌍 + CNO 전체의 변화 종류별 건수(건수는 쌍 하나 한 번) |

@@ -1523,3 +1523,34 @@ def test_chrome_rtrim_map_click_selects_the_same_thing_on_the_narrowed_b_map(tmp
     picked = [r for r in rows if r[0].startswith('#sel=')]
     assert picked, rows[:5]                                                                # some clicks selected something
     assert all(a == b for a, b in rows), [r for r in rows if r[0] != r[1]][:3]            # A and B give the same selection at the same relative point
+
+
+# ---- rtrim/T3: particle size range line --------------------------------------------------------------------------------
+
+def _range_line(page):
+    return _texts(re.search(r'<p class="muted size-range" id="size-range">(.*?)</p>', section(page, 1), re.S).group(1)).strip()
+
+
+def test_rtrim_size_range_line_for_a_listed_filter_all_sizes_and_missing_info(tmp_path):
+    doc = sample_doc()
+    doc['inputs']['diameter_filter'] = {'mode': 'listed', 'diameters_um': [7, 3, 5], 'observed_diameters_um': [3, 5],
+                                        'not_observed_um': [7], 'formula_basis': 'diameter_subset'}
+    page = html_of(run_report(tmp_path, doc, name='a')[1])
+    assert _range_line(page) == '이물 크기 범위: 선택 3, 5, 7 µm (관찰 안 됨: 7 µm) (전체 크기 값은 07 1절에서 봅니다)'
+    assert '선택 3, 5, 7 µm' in section(page, 5) and 'id="inputs-size-range"' in section(page, 5)
+    many = sample_doc()
+    many['inputs']['diameter_filter'] = {'mode': 'listed', 'diameters_um': list(range(1, 11)), 'not_observed_um': []}
+    assert '선택 1–10 µm, 10개' in _range_line(html_of(run_report(tmp_path, many, name='m')[1]))
+    allsizes = sample_doc()
+    allsizes['inputs']['diameter_filter'] = {'mode': 'all'}
+    page = html_of(run_report(tmp_path, allsizes, name='b')[1])
+    assert _range_line(page) == '이물 크기 범위: 모든 크기'
+    assert '모든 크기' in section(page, 5)
+
+
+def test_rtrim_old_ledger_without_the_key_is_not_rejected(tmp_path):
+    doc = sample_doc()
+    doc['inputs'].pop('diameter_filter', None)
+    code, out = run_report(tmp_path, doc, name='old')
+    assert code == 0
+    assert _range_line(html_of(out)) == '이물 크기 범위 정보 없음 — 08 을 다시 실행하면 나옵니다'

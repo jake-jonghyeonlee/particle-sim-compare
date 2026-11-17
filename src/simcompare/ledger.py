@@ -9,6 +9,7 @@ delta and % of that kind is null, its checks are `not_evaluated`); presence (pre
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -730,7 +731,8 @@ def build_ledger(doc, doc_sha256, cfg2):
             'products': {role: {'model_group': (doc.get('products') or {}).get(role, {}).get('model_group'),
                                 'pair_table_hash': (doc.get('products') or {}).get(role, {}).get('pair_table_hash'),
                                 'crp': (doc.get('products') or {}).get(role, {}).get('crp')} for role in ROLES},
-            'electrode_inventory': inventory},
+            'electrode_inventory': inventory,
+            'diameter_filter': _diameter_filter_block(doc)},
         'totals': totals,
         'kinds': dict(kinds_doc, change_kind_counts=all_counts),
         'pairs': pairs_out, 'electrodes': electrode_rows, 'cno': cno_rows, 'layers': layers,
@@ -744,6 +746,18 @@ def build_ledger(doc, doc_sha256, cfg2):
     if blocks:
         document['inputs']['pair_exclusions'] = blocks
     return document, status, reasons
+
+
+def _diameter_filter_block(doc):
+    """rtrim/T3: the particle size range of the 02 result, copied (nothing is recalculated). Without a filter in compare2.json
+    the range is every size: {'mode': 'all'}."""
+    flt = (doc.get('inputs') or {}).get('diameter_filter')
+    if not isinstance(flt, dict):
+        return {'mode': 'all'}
+    block = copy.deepcopy(flt)
+    if doc.get('formula_basis') is not None:
+        block['formula_basis'] = doc['formula_basis']
+    return block
 
 
 def _public_pair(row):
