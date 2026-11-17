@@ -1245,3 +1245,120 @@ def test_matched_b_range_outside_the_window_is_said_not_dropped(tmp_path):
     both = table_rows(block, 'rt-both')
     assert len(both) == 1 and 'B 범위가 지도 창 밖 — 값 없음' in both[0] and 'A1 ↔ B1' in both[0]
     assert '같은 좌표로 비교할 항목이 없습니다' not in block
+
+
+# ---- mscale/T1: A and B maps at the same physical scale, scale bar, unit window outline -----------------------------------------
+
+def scaled_report(tmp_path, name='sc', pitch_a=3.0, pitch_b=2.5, whole=False, source='config', with_scale=True):
+    """A full-map fixture (every picture is 40 x 40 px) whose ledger_maps.json carries pitch / region / window: A = 40 * pitch_a um wide."""
+    doc = comp_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, changes=map_changes())
+    mdoc = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+    if with_scale:
+        mdoc['window'] = {}
+        for role, pitch in (('reference', pitch_a), ('target', pitch_b)):
+            mdoc['sides'][role]['frame']['pitch_um'] = pitch
+            mdoc['sides'][role]['region'] = {'origin_px': [0, 0], 'size_px': [40, 40], 'block_px': 1}
+            size = [40, 40] if whole else [20, 20]
+            origin = [0, 0] if whole else [10, 10]
+            mdoc['window'][role] = {'origin_px': origin, 'size_px': size, 'unit_um': [size[0] * pitch, size[1] * pitch], 'unit_source': source}
+        mdoc['options']['range_um'] = 10.0
+    (maps / 'ledger_maps.json').write_text(json.dumps(mdoc, sort_keys=True), encoding='utf-8')
+    out = tmp_path / ('out_' + name)
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) in (0, 3)
+    return out / 'ledger_report.html'
+
+
+SCALE_PROBE = ("setTimeout(function(){var R=document.documentElement,o=[],c=document.querySelectorAll('canvas.mapcv'),i;"
+               "for(i=0;i<c.length;i++){if(c[i].hidden)continue;var b=c[i].getBoundingClientRect(),p=c[i].parentNode.parentNode;"
+               "o.push([c[i].getAttribute('data-view'),c[i].getAttribute('data-role'),b.width,c[i].getAttribute('data-phys-w-um')||'',"
+               "p.getAttribute('data-scale-ratio')||'',c[i].getAttribute('data-win')||''].join('|'));}"
+               "R.setAttribute('data-probe',o.join(';'));},400);")
+
+
+def probe(page, fragment):
+    dom, text = run_in_page(page, fragment, SCALE_PROBE, tag='scp')
+    assert 'data-err' not in dom.root, (fragment, dom.root)
+    rows = [r.split('|') for r in dom.root.get('data-probe', '').split(';') if r]
+    assert rows, fragment
+    return dom, text, rows
+
+
+def pair_widths(rows):
+    out = {}
+    for view, role, width, phys, ratio, win in rows:
+        out.setdefault(view, []).append((role, float(width), phys, ratio))
+    return out
+
+
+def test_chrome_maps_share_one_physical_scale_in_sections_1_2_3(tmp_path):
+    page = scaled_report(tmp_path)
+    dom, text, rows = probe(page, '#')
+    widths = pair_widths(rows)
+    assert {'s1', 's2', 's3'} <= set(widths)
+    for fragment in ('#', '#print', '#layer=all'):
+        dom, text, rows = probe(page, fragment)
+        for view, items in pair_widths(rows).items():
+            if view == 'ov':
+                continue
+            by_role = {}
+            for role, width, phys, ratio in items:
+                by_role.setdefault(role, []).append((width, phys, ratio))
+            assert set(by_role) == {'A', 'B'}, (fragment, view)
+            for (wa, pa, ra), (wb, pb, rb) in zip(by_role['A'], by_role['B']):
+                assert (pa, pb) == ('120', '100') and ra == rb == '0.833', (fragment, view, pa, pb, ra, rb)
+                assert abs(wb / wa - 100.0 / 120.0) < 0.02, (fragment, view, wa, wb)
+
+
+def test_scale_bar_caption_and_window_outline(tmp_path):
+    page = scaled_report(tmp_path, source='derived')
+    dom, text, rows = probe(page, '#')
+    caps = re.findall(r'<span class="scap">(\d[^<]*)</span>', text)
+    assert any('영역 120 × 120 µm · unit 창 60 µm(유도) + 여백 10 µm (frame 에서 유도)' in c for c in caps), caps[:3]
+    assert any('영역 100 × 100 µm · unit 창 50 µm(유도)' in c for c in caps)
+    assert any(c.startswith('20 µm · ') for c in caps)                                      # about a fifth of 120 um
+    assert all(r[5] == '1' for r in rows if r[0] in ('s1', 's2', 's3'))                     # the unit window is outlined on A and B
+    cfg = scaled_report(tmp_path, name='cfg', source='config')
+    dom, text, rows = probe(cfg, '#')
+    caps = re.findall(r'<span class="scap">(\d[^<]*)</span>', text)
+    assert caps and any('unit 창 60 µm(설정)' in c for c in caps) and not any('frame 에서 유도' in c for c in caps)
+
+
+def test_window_equal_to_the_frame_draws_no_outline_and_says_so(tmp_path):
+    page = scaled_report(tmp_path, whole=True)
+    dom, text, rows = probe(page, '#')
+    assert all(r[5] == '0' for r in rows)
+    caps = re.findall(r'<span class="scap">(\d[^<]*)</span>', text)
+    assert caps and all('창 = frame 전체' in c and 'unit 창' not in c for c in caps)
+
+
+def test_without_scale_data_the_maps_are_drawn_as_before(tmp_path):
+    page = scaled_report(tmp_path, with_scale=False)
+    dom, text = run_in_page(page, '#', SCALE_PROBE, tag='scn')
+    rows = [r.split('|') for r in dom.root.get('data-probe', '').split(';') if r]
+    assert rows and all(r[3] == '' and r[5] == '0' for r in rows) and not re.search(r'<span class="scap">\d', text)
+    assert dom.root.get('data-map-check') == 'passed' and 'data-err' not in dom.root
+
+
+def test_chrome_map_click_coordinates_survive_the_resize(tmp_path):
+    page = scaled_report(tmp_path)
+    script = ("setTimeout(function(){var R=document.documentElement,cv=document.querySelector('canvas.mapcv[data-view=\"s3\"][data-role=\"B\"]'),"
+              "b=cv.getBoundingClientRect(),x=b.left+b.width*0.5,y=b.top+b.height*0.25,"
+              "q=[Math.floor((x-b.left)*cv.width/b.width),Math.floor((y-b.top)*cv.height/b.height)];"
+              "R.setAttribute('data-pick',q.join(','));R.setAttribute('data-cvw',cv.width+','+cv.height);"
+              "R.setAttribute('data-box',b.width.toFixed(1)+','+b.height.toFixed(1));},400);")
+    dom, text = run_in_page(page, '#', script, tag='scc')
+    assert dom.root['data-pick'] == '20,10' and dom.root['data-cvw'] == '40,40'            # the canvas pixels are unchanged
+    w, h = [float(x) for x in dom.root['data-box'].split(',')]
+    assert abs(w - h) < 1.0                                                                 # the aspect ratio is kept
+
+
+def test_scaled_report_is_byte_identical_for_the_same_input(tmp_path):
+    one = scaled_report(tmp_path, name='same').read_bytes()
+    two_dir = tmp_path / 'again'
+    two_dir.mkdir()
+    two = scaled_report(two_dir, name='same').read_bytes()
+    assert one == two
+    side = bundle_of(one.decode('utf-8'))['maps']['sides']['A']['sc']
+    assert side['p'] == 3.0 and side['wo'] == [10, 10] and side['whole'] is False and side['us'] == 'config'

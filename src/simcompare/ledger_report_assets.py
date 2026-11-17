@@ -62,6 +62,7 @@ td.nm{font-weight:600}
 .partners{margin-top:8px}h4{font-size:12px;margin:8px 0 3px;color:var(--text-secondary)}
 tr.hide{display:none}
 .mpair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mfig{margin:0}.mfig figcaption{font-size:12px;color:var(--text-secondary)}
+.mscale{margin-top:3px;font-size:11px;color:var(--text-secondary)}.mscale .sbar{height:5px;border:1px solid var(--text-primary);border-top:0;box-sizing:border-box}.mscale .scap{display:block}
 canvas.mapcv{display:block;width:100%;height:auto;background:var(--surface-0);border:1px solid var(--border);border-radius:6px;cursor:pointer;image-rendering:pixelated}
 .mnote{font-size:12px;color:var(--text-muted)}.mwarn{border-left:4px solid var(--pixel);background:var(--trade);padding:4px 8px;margin:4px 0;font-size:12px}
 .s2row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}.s2map{position:sticky;top:44px}
@@ -284,6 +285,8 @@ function render(cv,r,L,o,cfg,sel,pr){var e=DEC[r+'|'+L],note=noteOf(cv);cv._labe
  if(!e||!e.w){cv.hidden=true;if(note)note.textContent='이 제품에는 이 레이어 지도가 없습니다';return 0;}
  if(!e.ok){cv.hidden=true;if(note)note.innerHTML=failList(r,L);return 0;}
  var w=e.w,h=e.h,g=cv.getContext('2d'),i,x,y,v;cv.width=w;cv.height=h;cv.hidden=false;
+ var sc=MP.sides[r].sc,mm=e.m.it||e.m.el,bk=(mm&&mm.b)||1;cv._phys=sc?[w*bk*sc.p,h*bk*sc.p]:null;cv._sc=sc||null;cv._win=null;
+ if(sc&&o.shape&&!sc.whole)cv._win=[(sc.wo[0]-sc.ro[0])/bk,(sc.wo[1]-sc.ro[1])/bk,sc.ws[0]/bk,sc.ws[1]/bk];
  var img=g.createImageData(w,h),d=img.data,tb=Math.max(2,Math.round(w/300)),per=Math.max(6,Math.round(w/80));
  for(i=0;i<w*h;i++){d[i*4]=CC.bg[0];d[i*4+1]=CC.bg[1];d[i*4+2]=CC.bg[2];d[i*4+3]=255;}
  function put(j,col,a){var q=j*4;d[q]=d[q]*(1-a)+col[0]*a;d[q+1]=d[q+1]*(1-a)+col[1]*a;d[q+2]=d[q+2]*(1-a)+col[2]*a;}
@@ -314,6 +317,9 @@ function render(cv,r,L,o,cfg,sel,pr){var e=DEC[r+'|'+L],note=noteOf(cv);cv._labe
    for(y=0;y<ob.h;y++){for(x=0;x<ob.w;x++){var bn=ob.el[y*ob.w+x];if(!bn)continue;
     if(!isBorder(ob.el,ob.w,ob.h,x,y,bn,1)||!dashOn(x,y,per))continue;var tx=x+sx,ty=y+sy;if(tx<0||ty<0||tx>=w||ty>=h)continue;put(ty*w+tx,CC.down,1);}}}}
  g.putImageData(img,0,0);
+ if(cv._win){var wl=cv._win;g.save();g.lineWidth=Math.max(1,w/400);g.strokeStyle='rgb('+CC.common.join(',')+')';g.setLineDash([Math.max(3,w/100),Math.max(3,w/100)]);
+  g.strokeRect(wl[0]+0.5,wl[1]+0.5,Math.max(1,wl[2]-1),Math.max(1,wl[3]-1));g.restore();}
+ cv.setAttribute('data-win',cv._win?'1':'0');
  if(o.tops){var fs=Math.max(11,Math.round(w/14)),done={};g.font='bold '+fs+'px sans-serif';g.textBaseline='top';g.lineWidth=Math.max(2,fs/4);
   Object.keys(SD[r].items).forEach(function(n){var it=SD[r].items[n],ib=IB[it.id],b=bb[n];if(!ib||!b||!o.tops[ib.p.id])return;
    var u=done[ib.p.id];if(!u){done[ib.p.id]=[b[0],b[1],b[2],b[3]];}else{if(b[0]<u[0])u[0]=b[0];if(b[1]<u[1])u[1]=b[1];}});
@@ -322,6 +328,29 @@ function render(cv,r,L,o,cfg,sel,pr){var e=DEC[r+'|'+L],note=noteOf(cv);cv._labe
    cv._labels.push({id:id,x0:lx,y0:ly,x1:lx+tw,y1:ly+fs});});}
  if(o.roi)cv._rois=drawRois(g,cv,r,L,cfg,sel,w);else cv._rois=0;
  cv._drawn=1;return 1;}
+function fnum(n){return String(Math.round(n*100)/100);}
+function niceBar(um){var t=um/5,p=Math.pow(10,Math.floor(Math.log(t)/Math.LN10)),c=[1,2,5,10],b=p,i;
+ for(i=0;i<c.length;i++){if(Math.abs(Math.log(c[i]*p/t))<Math.abs(Math.log(b/t)))b=c[i]*p;}return b;}
+function scaleCaption(sc,ph){var s='영역 '+fnum(ph[0])+' × '+fnum(ph[1])+' µm · ';
+ if(sc.whole)return s+'창 = frame 전체';
+ var u=sc.u?(sc.u[0]===sc.u[1]?fnum(sc.u[0]):fnum(sc.u[0])+' × '+fnum(sc.u[1])):'?';
+ s+='unit 창 '+u+' µm('+(sc.us==='derived'?'유도':'설정')+')';
+ if(sc.r!=null)s+=' + 여백 '+fnum(sc.r)+' µm';
+ if(sc.us==='derived')s+=' (frame 에서 유도)';return s;}
+function applyScale(){var cvs=document.querySelectorAll('canvas.mapcv'),groups=[],k,i;
+ for(k=0;k<cvs.length;k++){var cv=cvs[k],fg=cv.parentNode,host=fg.parentNode,sb=fg.querySelector('.mscale');
+  if(sb&&sb.parentNode)sb.parentNode.removeChild(sb);cv.style.width='';cv.removeAttribute('data-phys-w-um');
+  if(host&&host.classList.contains('mpair')&&groups.indexOf(host)<0){groups.push(host);host.removeAttribute('data-scale-ratio');}
+  if(!(host&&host.classList.contains('mpair')))groups.push({solo:cv});}
+ groups.forEach(function(gp){var list=gp.solo?[gp.solo]:Array.prototype.slice.call(gp.querySelectorAll('canvas.mapcv')),
+   ok=list.filter(function(c){return !c.hidden&&c._drawn&&c._phys;}),mx=0,mn=0;
+  ok.forEach(function(c){var w=c._phys[0];if(w>mx)mx=w;if(!mn||w<mn)mn=w;});
+  ok.forEach(function(c){var ph=c._phys,sc=c._sc,pct=ph[0]/mx*100,bar=niceBar(ph[0]),d;
+   if(!gp.solo)c.style.width=pct.toFixed(3)+'%';c.setAttribute('data-phys-w-um',fnum(ph[0]));
+   d=document.createElement('div');d.className='mscale';if(!gp.solo)d.style.width=pct.toFixed(3)+'%';
+   d.innerHTML='<div class="sbar" style="width:'+(bar/ph[0]*100).toFixed(2)+'%"></div><span class="scap">'+fnum(bar)+' µm · '+esc(scaleCaption(sc,ph))+'</span>';
+   c.parentNode.insertBefore(d,c.nextSibling);});
+  if(!gp.solo&&ok.length===2)gp.setAttribute('data-scale-ratio',(mn/mx).toFixed(3));});}
 function drawMaps(st,sel,pr){if(!MP)return;var gen=++GEN,cfg=mapCfg(st,sel),jobs=[],need={},root=document.documentElement;colors();
  root.setAttribute('data-map-gen',String(gen));   /* how many times the maps were redrawn (the tests count it) */
  var top3=topPairs(),tops={};top3.forEach(function(p){tops[p.id]=1;});
@@ -341,6 +370,7 @@ function drawMaps(st,sel,pr){if(!MP)return;var gen=++GEN,cfg=mapCfg(st,sel),jobs
  var keys=Object.keys(need),left=keys.length;
  function paint(){if(gen!==GEN)return;var n=0,rois=0;
   jobs.forEach(function(j){n+=render(j.cv,j.r,j.L,j.o,cfg,sel,pr);if(j.cv.getAttribute('data-view')==='s3'&&j.r==='A')rois=j.cv._rois||0;});
+  applyScale();
   var v3=$('m3-view'),vo=$('m3-ov');if(v3)v3.hidden=cfg.ov||cfg.layer==='all';if(vo)vo.hidden=!cfg.ov;if(all)all.hidden=!(cfg.layer==='all'&&!cfg.ov);
   var s2l=$('s2-layer');if(s2l)s2l.textContent='· 레이어 '+cfg.single;
   var on=Object.keys(cfg.on).filter(function(q){return cfg.on[q];});

@@ -670,3 +670,12 @@ null 규칙:
 ### 29.3 `overlay`
 
 `{available, offset_px, reason}`. 지도 영역 전체(A 지도 그림)에서 field offset 이 spread 기준 안에서 하나로 정해질 때만 `available`. 아니면 `reason`(`offset_spread`, `no_field_cell`, 좌표 코드).
+
+## 30. 지도 영역과 A·B 같은 축척 (mscale/T1)
+
+- 지도 영역 = 제품별 unit 창(U × U) + 사방 `--range-um` 여백이다. unit 창은 frame **중앙**에 놓이므로 네 unit 이 만나는 곳이 창 중심이고, 지도에는 네 unit 의 1/4 씩이 보인다(unit 한 장도 2×2 도 아니다).
+- A·B 지도 쌍은 같은 µm 축척으로 그린다. 물리 폭 = 지도 폭 px × `block_px` × `pitch_um`. 큰 쪽이 칸 폭 100%, 작은 쪽은 물리 폭 비율만큼 좁다. 두 제품 pitch 가 달라도 µm 기준이다.
+- 각 지도 아래에 µm 눈금 막대(1·2·5×10ⁿ, 그림 폭의 약 1/5)와 캡션 "영역 W × H µm · unit 창 U µm(설정|유도) + 여백 r µm"을 보인다. unit 이 frame 에서 유도되면 "(frame 에서 유도)"를 덧붙인다.
+- unit 창은 회색 점선 사각형으로 형상 층과 함께 그린다. 창이 frame 전체이면 그리지 않고 "창 = frame 전체"라고 쓴다.
+- 확인용 `data-*`: canvas 의 `data-phys-w-um`, `.mpair` 의 `data-scale-ratio`(작은/큰 물리 폭), canvas 의 `data-win`(창 점선 여부).
+- 자료는 `ledger_maps_v2` 의 `sides.<role>.frame.pitch_um`, `sides.<role>.region`, 최상위 `window.<role>` 이다. 하나라도 없으면 축척 없이 예전처럼 그린다.

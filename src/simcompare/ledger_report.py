@@ -1391,6 +1391,30 @@ def _changes_bundle(ctx):
             'overlay': ctx.maps['doc'].get('overlay')}
 
 
+def _num_pair(value):
+    if isinstance(value, (list, tuple)) and len(value) == 2 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value):
+        return [value[0], value[1]]
+    return None
+
+
+def _map_scale(ctx, role, side):
+    """The physical scale of one product's maps (pitch, unit window, region) from ledger_maps_v2; None when a value is missing
+    (the report then draws the maps as before: no scale bar, no window outline)."""
+    mdoc = ctx.maps['doc']
+    pitch = (side.get('frame') or {}).get('pitch_um')
+    window = (mdoc.get('window') or {}).get(role) or {}
+    region = side.get('region') or {}
+    wo, ws, ro = _num_pair(window.get('origin_px')), _num_pair(window.get('size_px')), _num_pair(region.get('origin_px'))
+    shape = _num_pair((side.get('frame') or {}).get('shape_yx'))
+    unit = _num_pair(window.get('unit_um'))
+    if not isinstance(pitch, (int, float)) or isinstance(pitch, bool) or pitch <= 0 or not (wo and ws and ro and shape):
+        return None
+    whole = ws[0] >= shape[1] and ws[1] >= shape[0]
+    return {'p': pitch, 'wo': wo, 'ws': ws, 'ro': ro, 'whole': whole, 'u': unit,
+            'us': 'derived' if window.get('unit_source') == 'derived' else 'config',
+            'r': (mdoc.get('options') or {}).get('range_um')}
+
+
 def _map_sides(ctx):
     """Per product: the numbered pictures (file, layer, kind, size, origin, block, pixel count of every number), the item numbers
     (item_id, pair, layer, status) and the electrode numbers. The PNG bytes are in id="map-png"."""
@@ -1403,7 +1427,7 @@ def _map_sides(ctx):
             height, width = entry['shape_yx']
             maps.append({'f': entry['file'], 'l': entry['layer'], 'k': entry['kind'], 'w': width, 'h': height,
                          'o': list(entry.get('origin_px') or [0, 0]), 'b': entry.get('block_px') or 1, 'n': entry.get('numbers') or {}})
-        out[key] = {'maps': maps, 'els': [{'n': e['number'], 'name': e['name']} for e in side.get('electrodes') or []],
+        out[key] = {'sc': _map_scale(ctx, role, side), 'maps': maps, 'els': [{'n': e['number'], 'name': e['name']} for e in side.get('electrodes') or []],
                     'items': [{'n': i['number'], 'id': i['item_id'], 'p': i['pair_id'], 'k': i['kind'], 'l': (i.get('layers') or [None])[0],
                                's': i.get('status')} for i in side.get('items') or []]}
     return out
