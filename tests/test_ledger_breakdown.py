@@ -36,6 +36,9 @@ def _baseline_module():
 def _strip_new_keys(doc):
     doc = copy.deepcopy(doc)
     for row in doc['pairs']:
+        for item in row['items']:       # rnarr/T5: the size rows keep their old keys
+            for size in item['by_size']:
+                size.pop('lambda_b_at_a')
         row.pop('breakdown')
         row.pop('composition')
         for item in row['items']:
@@ -46,6 +49,21 @@ def _strip_new_keys(doc):
     doc['inputs'].pop('diameter_filter')            # rtrim/T3: the only key added to inputs; the baseline module has none
     for row in doc['electrodes']:
         for key in ('layer_state', 'layer_state_status', 'moved'):
+            row.pop(key)
+    # rnarr/T5: summary, checks.{rebase,bundles,concentration}, item/CNO rebase fields, size-row lambda, layer_order
+    doc.pop('summary')
+    for key in ('rebase', 'bundles', 'concentration'):
+        doc['checks'].pop(key)
+    doc['inputs'].pop('layer_order', None)
+    for product in doc['inputs']['products'].values():
+        for key in ('resolution', 'effective_resolution', 'glass_um2', 'weights', 'unit_size_um', 'F', 'density_sha256'):
+            product.pop(key, None)
+    for row in doc['pairs']:
+        for item in row['items']:
+            for key in ('ca_delta', 'f_delta', 'density_delta'):
+                item.pop(key)
+    for row in doc['cno']:
+        for key in ('ca_delta', 'f_delta', 'density_delta'):
             row.pop(key)
     return doc
 

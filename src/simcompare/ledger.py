@@ -287,6 +287,11 @@ def build_ledger(doc, doc_sha256, cfg2):
     slopes = delta.get('slopes') or {}
     indicators = delta.get('indicators') or {}
     pair_kind = _pair_kinds(sides)
+    # E10: every layer list and layer row follows inputs.layer_order of compare2.json (none: by name, as before)
+    raw_order = (doc.get('inputs') or {}).get('layer_order')
+    layer_order = list(raw_order) if isinstance(raw_order, list) and all(isinstance(n, str) for n in raw_order) else None
+    lk = _layer_key(layer_order or ())
+    rebase, rb_items, rb_cno, rb_ok = _rebase_view(doc)
 
     # kinds: computable only when both vi and the slope exist (X2)
     fam, slope = {}, {}
@@ -394,6 +399,13 @@ def build_ledger(doc, doc_sha256, cfg2):
                     'lambda_a': _size_pick(ia, sizes_a, size_key), 'lambda_b': _size_pick(ib, sizes_b, size_key),
                     'value_a': va, 'value_b': vb})
             item_rows[-1]['by_size'] = by_size
+            # rnarr/T5: B's CA read with A's coefficients (compare2 `rebase`); null when it is not available
+            rb_rec = rb_items.get((item_id, ikind)) if rb_ok[ikind] else None
+            for name in ('ca_delta', 'f_delta', 'density_delta'):
+                item_rows[-1][name] = None if rb_rec is None else rb_rec.get(name)
+            for entry in by_size:
+                entry['lambda_b_at_a'] = _lambda_b_at_a(rb_rec, ib is not None, entry['diameter_um'],
+                                                        entry['density_layer'])
         for a_name in names:
             electrode(a_name)
             for b_name in names:
@@ -424,8 +436,10 @@ def build_ledger(doc, doc_sha256, cfg2):
             'pair_id': pid, 'electrodes': names, 'kind': kind, 'present_a': present_a, 'present_b': present_b,
             'computable_a': a_pub is not None, 'computable_b': b_pub is not None,
             'a': a_pub, 'b': b_pub, 'delta': d_pub,
-            'layers_a': sorted({i['analysis_layer'] for i in (recs['reference'] or {'items': {}})['items'].values()}),
-            'layers_b': sorted({i['analysis_layer'] for i in (recs['target'] or {'items': {}})['items'].values()}),
+            'layers_a': sorted({i['analysis_layer'] for i in (recs['reference'] or {'items': {}})['items'].values()},
+                               key=lk),
+            'layers_b': sorted({i['analysis_layer'] for i in (recs['target'] or {'items': {}})['items'].values()},
+                               key=lk),
             'items': item_rows, 'breakdown': _pair_breakdown(item_rows, d_pub),
             '_keys_known': not any(recs[role] is not None and recs[role]['noncomputable'] for role in ROLES),
             # the layer-change key set leaves out a filter-removed item (a true 0) only when the other product
@@ -460,7 +474,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             for field, ids in (('added', row['_keys']['target'] - row['_keys']['reference']),
                                ('removed', row['_keys']['reference'] - row['_keys']['target'])):
                 row['composition'][field] = sorted(
-                    (_item_description(by_id[i]) for i in ids if i in by_id),
+                    (_item_description(by_id[i], lk) for i in ids if i in by_id),
                     key=lambda d: (d['failure_type'], d['layers'], d['item_id']))
 
     # per-kind vi, percentages, ranks
@@ -508,6 +522,9 @@ def build_ledger(doc, doc_sha256, cfg2):
             'lambda_a': lam_a, 'lambda_b': lam_b, 'a': a, 'b': b, 'delta': d,
             'pct_a': _pct(a, side_a.vi['pixel']), 'pct_b': _pct(b, side_a.vi['pixel']),
             'pct_delta': _pct(d, side_a.vi['pixel'])})
+        rb_rec = rb_cno.get(key) if rb_ok['pixel'] else None
+        for name in ('ca_delta', 'f_delta', 'density_delta'):
+            cno_rows[-1][name] = None if rb_rec is None else rb_rec.get(name)
         for target in (electrode(key[0])['cno'], electrode(key[0])['pixel'],
                        electrode_layer(key[0], key[1], 'pixel'), cno_layer.setdefault(key[1], _Tri())):
             target.add(a, b, d)
@@ -571,17 +588,17 @@ def build_ledger(doc, doc_sha256, cfg2):
         for role in ROLES:
             inv = inventory[role]
             if inv['status'] == 'complete':
-                layers_ab[role] = list(inv['layers'].get(name, []))
+                layers_ab[role] = sorted(inv['layers'].get(name, []), key=lk)
             else:
-                layers_ab[role] = sorted(elec_layers[role].get(name, ()))
+                layers_ab[role] = sorted(elec_layers[role].get(name, ()), key=lk)
         row = {'electrode': name, 'status': status, 'present_a': in_a, 'present_b': in_b,
                'layers_a': layers_ab['reference'], 'layers_b': layers_ab['target']}
         # mrep/T1: per-layer cell state from the same layer lists (DL1 inventory; observed = unverified)
-        only_a = sorted(set(row['layers_a']) - set(row['layers_b']))
-        only_b = sorted(set(row['layers_b']) - set(row['layers_a']))
+        only_a = sorted(set(row['layers_a']) - set(row['layers_b']), key=lk)
+        only_b = sorted(set(row['layers_b']) - set(row['layers_a']), key=lk)
         row['layer_state'] = {layer: ('both' if layer in row['layers_a'] and layer in row['layers_b']
                                       else ('a_only' if layer in row['layers_a'] else 'b_only'))
-                              for layer in sorted(set(row['layers_a']) | set(row['layers_b']))}
+                              for layer in sorted(set(row['layers_a']) | set(row['layers_b']), key=lk)}
         row['layer_state_status'] = 'verified' if complete else 'unverified'
         row['moved'] = (bool(in_a and in_b and only_a and only_b)) if complete else None
         for kind in KINDS:
@@ -593,7 +610,7 @@ def build_ledger(doc, doc_sha256, cfg2):
         row['partners_a'] = sorted(acc['partners']['reference'])
         row['partners_b'] = sorted(acc['partners']['target'])
         row['layers'] = {layer: {kind: acc['layers'][layer][kind].out(fam[kind]) for kind in KINDS}
-                         for layer in sorted(acc['layers'])}
+                         for layer in sorted(acc['layers'], key=lk)}
         electrode_rows.append(row)
 
     # checks: electrode sums, pair delta against compare2
@@ -685,7 +702,7 @@ def build_ledger(doc, doc_sha256, cfg2):
     layers = {}
     for kind in KINDS:
         rows = []
-        for layer in sorted(layer_acc[kind]):
+        for layer in sorted(layer_acc[kind], key=lk):
             contrib = sorted(((pid, tri) for (lay, pid), tri in pair_layer[kind].items() if lay == layer),
                              key=lambda x: (-abs(x[1].d.value(fam[kind]) or 0.0), x[0]))
             sizes = [dict({'diameter_um': diameter}, **tri.out(fam[kind]))
@@ -698,7 +715,7 @@ def build_ledger(doc, doc_sha256, cfg2):
     layers['cno'] = [dict({'layer': layer}, **cno_layer[layer].out(fam['pixel']),
                           by_size=[dict({'diameter_um': diameter}, **tri.out(fam['pixel']))
                                    for (lay, diameter), tri in sorted(cno_size.items()) if lay == layer])
-                     for layer in sorted(cno_layer)]
+                     for layer in sorted(cno_layer, key=lk)]
 
     # layer x size table: the sizes of one layer add up to the layer value (a size row is never overwritten or lost)
     layer_size_sum = {}
@@ -717,9 +734,16 @@ def build_ledger(doc, doc_sha256, cfg2):
     states += [e['status'] for kind in layer_size_sum for e in layer_size_sum[kind].values()]
     checks['status'] = _worst(states)
 
+    # rnarr/T5: the narrative summary (rebase split, design difference, cause-candidate bundles, concentration)
+    summary, summary_checks = _build_summary(
+        doc, rebase, fam, {kind: side_a.vi[kind] for kind in KINDS}, totals, crp_d, pair_rows, cno_rows,
+        electrode_rows, lk)
+    checks.update({name: value for name, value in summary_checks.items() if name != 'status'})
     status, reasons = 'ok', []
     if checks['status'] == 'failed':
         status, reasons = 'partial', ['ledger_totals_check_failed']
+    elif summary_checks['status'] == 'failed':   # its own status: the existing checks.status stays as it was
+        status, reasons = 'partial', ['ledger_summary_check_failed']
     pairs_out = [_public_pair(r) for kind in KINDS for r in ordered[kind]] + [_public_pair(r) for r in unknown]
     document = {
         'schema_version': SCHEMA_VERSION, 'status': status, 'reasons': reasons,
@@ -738,7 +762,12 @@ def build_ledger(doc, doc_sha256, cfg2):
         'pairs': pairs_out, 'electrodes': electrode_rows, 'cno': cno_rows, 'layers': layers,
         'checks': checks, 'warnings': warnings,
         'unavailable': sorted(unavailable, key=lambda u: (u['scope'], str(u['id']), str(u.get('side', '')))),
+        'summary': summary,
     }
+    if layer_order is not None:
+        document['inputs']['layer_order'] = layer_order
+    for role in ROLES:   # the coefficients of each product (copied from compare2.json `products`, nothing recalculated)
+        document['inputs']['products'][role].update(_product_coefficients((doc.get('products') or {}).get(role) or {}))
     # pexcl/T3: the pair-exclusion blocks of compare2.json, copied as they are; no key when no product left a pair out
     manifests = (doc.get('inputs') or {}).get('manifests') or {}
     blocks = {role: manifests[role]['pair_exclusions'] for role in ROLES
@@ -803,9 +832,9 @@ def _pair_breakdown(item_rows, delta):
             'n_gone': len(gone), 'status': 'ok'}
 
 
-def _item_description(item):
+def _item_description(item, layer_key=str):
     """Short description of one item for the composition lists: defect way + endpoint layers."""
-    layers = sorted({e['actual_layer'] for e in item.get('endpoints') or ()}) or [item['analysis_layer']]
+    layers = sorted({e['actual_layer'] for e in item.get('endpoints') or ()}, key=layer_key) or [item['analysis_layer']]
     way = {'lateral_short': '측면', 'vertical_short': '상하'}.get(item['failure_type'], item['failure_type'])
     return {'item_id': item['item_id'], 'failure_type': item['failure_type'], 'layers': layers,
             'text': f'{way} {"-".join(layers)}'}
@@ -818,6 +847,605 @@ def _size_value(s, item, sizes, diameter):
     if item is None or diameter not in sizes:
         return 0.0
     return _times(s, sizes[diameter])
+
+
+# ---- rnarr/T5: summary (rebase split, design difference, cause-candidate bundles, concentration) -------------------------
+# Plan: docs of Run 20261118-report-narrative, PLAN-v3 3, v3.1 E1/E4/E10/E11, v3.2 G1-G3 and H1-H6.
+
+BUNDLE_RULE = 'bundle_assign_v1'
+HUB_MIN = 3              # same (electrode, layer, sign) with this many different partners = a hub (provisional)
+CARD_COUNT = 6
+CONFLICT_SHARE = 0.02
+K_SHARE, K_EPS = 0.8, 1e-12
+TOP_GROUPS = 10
+TOP_DESIGN = 5
+CONCENTRATED_K80, DISPERSED_RATIO, MIN_ATOMS = 3, 0.3, 8
+CONC_STAGES = ('division', 'layer', 'electrode', 'pair', 'item')
+DESIGN_SEGMENTS = (('design', 'ca'), ('resolution', 'f'), ('crp', 'crp'), ('density', 'density'))
+SUMMARY_RULES = {
+    'bundle_rule': BUNDLE_RULE, 'hub_min': HUB_MIN, 'card_count': CARD_COUNT, 'conflict_share': CONFLICT_SHARE,
+    'k_share': K_SHARE, 'concentrated_k80_max': CONCENTRATED_K80, 'dispersed_k80_ratio': DISPERSED_RATIO,
+    'min_atoms': MIN_ATOMS, 'top_groups': TOP_GROUPS, 'top_design': TOP_DESIGN,
+    'no_change_abs': NO_CHANGE_ABS, 'no_change_rel': NO_CHANGE_REL}
+
+
+def _layer_key(order):
+    """Sort key of a layer name: its place in `order`, then the other layers by name (E10)."""
+    rank = {name: index for index, name in enumerate(order)}
+    return lambda name: (rank.get(name, len(rank)), str(name))
+
+
+def _rebase_view(doc):
+    """(rebase block or None, {(item_id, class): rec}, {(electrode, density_layer): rec}, {kind: available})."""
+    rebase = doc.get('rebase')
+    if not isinstance(rebase, dict):
+        return None, {}, {}, {kind: False for kind in KINDS}
+    states = rebase.get('states') or {}
+    ok = {kind: (states.get(kind) or {}).get('status') == 'available' for kind in KINDS}
+    items = {(rec['item_id'], rec['class']): rec for rec in rebase.get('items') or ()}
+    cno = {(rec['electrode_id'], rec['density_layer']): rec for rec in rebase.get('cno') or ()}
+    return rebase, items, cno, ok
+
+
+def _lambda_b_at_a(rb_rec, in_b, diameter, density_layer):
+    """lambda of B's CA with A's coefficients for one size row (S1): an absent B item is a true 0."""
+    if not in_b:
+        return 0.0
+    if rb_rec is None:
+        return None
+    values = [row.get('lambda_s1') for row in rb_rec.get('by_size') or ()
+              if row.get('diameter_um') == diameter and row.get('density_layer') == density_layer]
+    return _osum(values) if values else None
+
+
+def _product_coefficients(product):
+    out = {}
+    for key in ('resolution', 'effective_resolution', 'glass_um2', 'weights', 'unit_size_um'):
+        if key in product:
+            out[key] = copy.deepcopy(product[key])
+    if any(key in product for key in ('F_line', 'F_pixel', 'F_cno')):
+        out['F'] = {'line': product.get('F_line'), 'pixel': product.get('F_pixel'), 'cno': product.get('F_cno')}
+    files = product.get('density_files')
+    if isinstance(files, dict):
+        out['density_sha256'] = {kind: (files.get(kind) or {}).get('sha256') for kind in KINDS}
+    return out
+
+
+def _item_pairs(pair_rows, kind):
+    """[(pair_row, [item row of this class])] in pair id order."""
+    out = []
+    for pid in sorted(pair_rows):
+        rows = [item for item in pair_rows[pid]['items'] if item['class'] == kind]
+        if rows:
+            out.append((pair_rows[pid], rows))
+    return out
+
+
+def _rebase_summary(rebase, basis, pair_rows, cno_rows, totals):
+    """summary.rebase and checks.rebase: the four segments (CA, F, CRP, density) of each kind, checked three ways."""
+    if rebase is None:
+        return ({'status': 'not_available', 'reasons': ['compare2_without_rebase']}, {'status': 'not_evaluated'})
+    summary = {'status': rebase.get('status'), 'reasons': list(rebase.get('reasons') or ()), 'basis': basis,
+               'ratios': copy.deepcopy((rebase.get('coefficients') or {}).get('ratios'))}
+    checks, states = {}, []
+    for kind in KINDS:
+        state = (rebase.get('states') or {}).get(kind) or {'status': 'unavailable', 'reasons': []}
+        entry = {'status': state.get('status'), 'reasons': list(state.get('reasons') or ()),
+                 'delta': totals[kind]['delta'], 'segments': None}
+        if state.get('status') != 'available':
+            summary[kind] = entry
+            checks[kind] = {'status': 'not_evaluated'}
+            states.append('not_evaluated')
+            continue
+        segments = state.get('segments') or {}
+        values = {name: (segments[name]['sum'] if name in segments else 0.0) for _label, name in DESIGN_SEGMENTS}
+        entry['segments'] = values
+        entry['states'] = {name: copy.deepcopy(state[name]) for name in ('S0', 'S1', 'S2', 'S3', 'S4') if name in state}
+        per = {}
+        for _label, name in DESIGN_SEGMENTS:
+            if name == 'crp':
+                per[name] = _check(values[name], segments[name]['delta_vi'] if name in segments else 0.0)
+                continue
+            parts = [item[f'{name}_delta'] for _row, rows in _item_pairs(pair_rows, kind) for item in rows]
+            if kind == 'pixel':
+                parts += [row[f'{name}_delta'] for row in cno_rows]
+            per[name] = _check(_osum(parts), segments[name]['delta_vi'])
+        total = _check(_osum(values.values()), totals[kind]['delta'])
+        checks[kind] = {'status': _worst([c['status'] for c in per.values()] + [total['status']]),
+                        'segments': per, 'total': total}
+        states.append(checks[kind]['status'])
+        summary[kind] = entry
+    checks['status'] = _worst(states)
+    return summary, checks
+
+
+def _design_summary(kind, rebase, basis_status, pair_rows, cno_rows, vi_a, totals, lk=str):
+    """G1: the four segments as design / resolution / CRP / density differences, as a share of vi_A, the top pairs."""
+    if rebase is None:
+        return {'status': 'not_available', 'reasons': ['compare2_without_rebase'], 'segments': None,
+                'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': []}
+    cells = {}
+    for miss in rebase.get('missing') or ():     # R9:2: compare2 lists item x size rows; sum them per cell
+        if miss.get('kind') != kind:
+            continue
+        cell = cells.setdefault((miss.get('density_layer'), miss.get('diameter_um')),
+                                {'area': [], 'share': [], 'items': set()})
+        cell['area'].append(miss.get('area_b_um2'))
+        cell['share'].append(miss.get('lambda_b_share'))
+        if miss.get('item_id') is not None:
+            cell['items'].add(miss['item_id'])
+    missing_cells = [{'density_layer': layer, 'diameter_um': diameter, 'area_b_um2': _osum(c['area']),
+                      'lambda_b_share': _osum(c['share']), 'item_count': len(c['items'])}
+                     for (layer, diameter), c in sorted(cells.items(), key=lambda kv: (lk(kv[0][0]), kv[0][1] or 0.0))]
+    if basis_status['status'] != 'available':
+        return {'status': 'unavailable', 'reasons': list(basis_status['reasons']), 'segments': None,
+                'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': missing_cells}
+    if ((rebase.get('check') or {}).get(kind) or {}).get('status') != 'passed':   # R9:3
+        return {'status': 'not_evaluated', 'reasons': ['rebase_check_failed'], 'segments': None,
+                'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': missing_cells}
+    values = basis_status['segments']
+    segments = {label: values[name] for label, name in DESIGN_SEGMENTS}
+    ratios = ((rebase.get('coefficients') or {}).get('ratios') or {}).get(kind) or {}
+    differs = [label for label, key in (('rule', 'r_rule'), ('glass', 'r_G'), ('weight', 'r_M'))
+               if ratios.get(key) is not None and abs(ratios[key] - 1.0) > 1e-12]
+    entries = []
+    for row, rows in _item_pairs(pair_rows, kind):
+        design, actual = _osum(item['ca_delta'] for item in rows), _osum(item['delta'] for item in rows)
+        entries.append({'key': row['pair_id'], 'pair_id': row['pair_id'], 'electrodes': list(row['electrodes']),
+                        'design_delta': design, 'actual_delta': actual, 'design_a_relative': _pct(design, vi_a),
+                        'actual_a_relative': _pct(actual, vi_a)})
+    if kind == 'pixel':
+        for row in cno_rows:
+            key = f'CNO:{row["electrode_id"]}@{row["density_layer"]}'
+            entries.append({'key': key, 'pair_id': None, 'electrodes': [row['electrode_id']],
+                            'design_delta': row['ca_delta'], 'actual_delta': row['delta'],
+                            'design_a_relative': _pct(row['ca_delta'], vi_a),
+                            'actual_a_relative': _pct(row['delta'], vi_a)})
+    entries = [e for e in entries if e['design_delta'] is not None]
+    up = sorted((e for e in entries if e['design_delta'] > 0), key=lambda e: (-e['design_delta'], e['key']))
+    down = sorted((e for e in entries if e['design_delta'] < 0), key=lambda e: (e['design_delta'], e['key']))
+    outside = not _no_change(0.0, segments['crp']) or not _no_change(0.0, segments['density'])
+    return {'status': 'available', 'reasons': [], 'vi_a': vi_a, 'delta': totals[kind]['delta'],
+            'delta_a_relative': _pct(totals[kind]['delta'], vi_a),
+            'segments': segments, 'a_relative': {label: _pct(value, vi_a) for label, value in segments.items()},
+            'names': {'design': '설계 차이', 'resolution': '해상도·조건 차이' if differs else '해상도 차이',
+                      'condition_differences': differs, 'show_outside_conditions': outside},
+            'top_increase': up[:TOP_DESIGN], 'top_decrease': down[:TOP_DESIGN], 'missing_cells': missing_cells}
+
+
+# ---- atoms ----------------------------------------------------------------------------------------------------------
+
+def _atoms(pair_rows, cno_rows):
+    """Every actual-value atom of both kinds: pair items (sizes added) and CNO lines (kind pixel)."""
+    atoms = []
+    for pid in sorted(pair_rows):
+        row = pair_rows[pid]
+        for item in row['items']:
+            ends = ([(e['electrode_id'], e['actual_layer']) for e in item['endpoints']] or
+                    [(name, item['analysis_layer']) for name in row['electrodes']])
+            atoms.append({'id': item['item_id'], 'kind': item['class'], 'pair_id': pid, 'cno': False,
+                          'layer': item['analysis_layer'], 'ends': ends, 'a': item['a'], 'b': item['b'],
+                          'd': item['delta'], 'presence': item['presence']})
+    for row in cno_rows:
+        name, layer = row['electrode_id'], row['density_layer']
+        atoms.append({'id': f'CNO:{name}@{layer}', 'kind': 'pixel', 'pair_id': None, 'cno': True, 'layer': layer,
+                      'ends': [(name, layer)], 'a': row['a'], 'b': row['b'], 'd': row['delta'],
+                      'presence': row['presence']})
+    return atoms
+
+
+def _kind_status(kind, atoms, computable, vi_a):
+    """(status, reasons, G): not_evaluated (kind not computable / a null atom), no_change, ok."""
+    mine = [a for a in atoms if a['kind'] == kind]
+    if not computable:
+        return 'not_evaluated', ['kind_not_computable'], None
+    if any(a['d'] is None for a in mine):
+        return 'not_evaluated', ['atom_null'], None
+    g = math.fsum(abs(a['d']) for a in mine)
+    return ('no_change' if g <= NO_CHANGE_ABS + NO_CHANGE_REL * abs(vi_a or 0.0) else 'ok'), [], g
+
+
+# ---- G2: cause-candidate bundles ------------------------------------------------------------------------------------
+
+def _bundle_id(key, length):
+    text = json.dumps(list(key), ensure_ascii=False, separators=(',', ':'))
+    return 'bd-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:length]
+
+
+def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk):
+    """summary.bundles and checks.bundles. `kstat[kind] = (status, reasons, G)`. Atom order never changes the result."""
+    live = [a for a in atoms if kstat[a['kind']][0] != 'not_evaluated']
+    moved = {name: row.get('moved') is True for name, row in erows.items()}
+
+    def state_of(electrode, layer):
+        """(state, unknown, unverified): an unverified electrode or a missing key is read as 'both' (H1)."""
+        row = erows.get(electrode)
+        if row is None:
+            return 'both', True, False
+        if row.get('layer_state_status') != 'verified':
+            return 'both', False, True
+        state = (row.get('layer_state') or {}).get(layer)
+        return ('both', True, False) if state is None else (state, False, False)
+
+    for a in live:
+        a['sign'] = '+' if a['d'] > 0 else '-'
+        a['tol'] = _no_change(a['a'], a['b'])
+        a['names'] = sorted({name for name, _layer in a['ends']})
+        a['two'] = None
+        if not a['cno'] and len(a['names']) == 2:
+            layer_of = {}
+            for name, layer in sorted(a['ends'], key=lambda end: (end[0], lk(end[1]))):
+                layer_of.setdefault(name, layer)
+            a['two'] = [(name, layer_of[name]) for name in a['names']]
+    hubs = {}    # (electrode, endpoint layer, sign) -> {partner: {atom id}}; both electrodes 'both', outside tolerance
+    for a in live:
+        two = a['two']
+        if two is None or a['tol'] or any(state_of(*end)[0] != 'both' for end in two):
+            continue
+        for i in (0, 1):
+            hubs.setdefault((two[i][0], two[i][1], a['sign']), {}).setdefault(two[1 - i][0], set()).add(a['id'])
+
+    def is_hub(end, sign):
+        return len(hubs.get((end[0], end[1], sign), ())) >= HUB_MIN
+
+    def e_key(electrode, layer):
+        state = state_of(electrode, layer)[0]
+        return ('mv', electrode) if moved.get(electrode) and state != 'both' else ('e', electrode, layer)
+
+    def assign(a):
+        if a['cno']:
+            return e_key(*a['ends'][0]), None
+        if len(a['names']) == 1:      # one electrode at both ends: the electrode's bundle, no rule 1/3
+            return e_key(a['names'][0], a['layer']), None
+        pair = ('p', a['pair_id'], a['layer'])
+        two = a['two']
+        if two is None:               # three electrodes or more
+            return pair, 'multi'
+        changed = [state_of(*end)[0] != 'both' for end in two]
+        if changed[0] and not changed[1]:
+            return e_key(*two[0]), None
+        if changed[1] and not changed[0]:
+            return e_key(*two[1]), None
+        if changed[0] and changed[1]:
+            return pair, 'both'
+        if a['tol']:
+            return pair, 'nohub'
+        h0, h1 = is_hub(two[0], a['sign']), is_hub(two[1], a['sign'])
+        if h0 and not h1:
+            return e_key(*two[0]), None
+        if h1 and not h0:
+            return e_key(*two[1]), None
+        return pair, ('hubs' if h0 and h1 else 'nohub')
+
+    buckets, assigned_to, assignments = {}, {}, 0
+    for a in sorted(live, key=lambda x: x['id']):
+        key, why = assign(a)
+        assignments += 1
+        assigned_to[a['id']] = key
+        bucket = buckets.setdefault(key, {'key': key, 'atoms': [], 'why': set(), 'unknown': False, 'unverified': False})
+        bucket['atoms'].append(a)
+        if why:
+            bucket['why'].add(why)
+        owned = {key[1]} if key[0] in ('e', 'mv') else set(a['names'])
+        for end in a['ends']:
+            if end[0] in owned:
+                _state, unknown, unverified = state_of(*end)
+                bucket['unknown'] = bucket['unknown'] or unknown
+                bucket['unverified'] = bucket['unverified'] or unverified
+
+    ids = {key: _bundle_id(key, 16) for key in buckets}
+    if len(set(ids.values())) != len(ids):
+        ids = {key: _bundle_id(key, 24) for key in buckets}
+    id_unique = len(set(ids.values())) == len(ids)
+    pair_delta = {pid: row['delta'] for pid, row in pair_rows.items()}
+
+    # partners that took part in a hub judgement but went to another bundle (R8:7)
+    elsewhere = {}
+    for (name, layer, _sign), partners in hubs.items():
+        if len(partners) < HUB_MIN:
+            continue
+        here = ('e', name, layer)
+        for partner, atom_ids in partners.items():
+            for atom_id in atom_ids:
+                if assigned_to[atom_id] != here:
+                    elsewhere.setdefault(here, set()).add((partner, ids[assigned_to[atom_id]]))
+
+    g = {kind: kstat[kind][2] for kind in KINDS}
+    blist, nets = [], {kind: [] for kind in KINDS}
+    for key, bucket in buckets.items():
+        out = {'id': ids[key], 'key': list(key), 'why': sorted(bucket['why']),
+               'layer_state_unverified': bucket['unverified'], 'layer_state_unknown': bucket['unknown']}
+        kinds = {}
+        for kind in KINDS:
+            status = kstat[kind][0]
+            mine = [a for a in bucket['atoms'] if a['kind'] == kind]
+            if status == 'not_evaluated':
+                kinds[kind] = {'net': None, 'abs': None, 'share': None, 'increase': None, 'decrease': None,
+                               'atoms': None}
+                continue
+            net, total = math.fsum(a['d'] for a in mine), math.fsum(abs(a['d']) for a in mine)
+            nets[kind].append(net)
+            kinds[kind] = {'net': net, 'abs': total, 'share': (total / g[kind]) if status == 'ok' else None,
+                           'increase': sum(1 for a in mine if a['d'] > 0), 'decrease': sum(1 for a in mine if a['d'] < 0),
+                           'atoms': len(mine)}
+        out['kinds'] = kinds
+        out['_abs'] = sum(1 for kind in KINDS if (kinds[kind]['abs'] or 0.0) > 0.0)
+        blist.append((key, bucket, out))
+
+    final = []
+    for key, bucket, out in blist:
+        if not out.pop('_abs'):       # nothing changed in this bundle (every |delta| is exactly 0): counted, not listed
+            continue
+        kinds, atoms_here = out['kinds'], bucket['atoms']
+        out['atoms'] = {'increase': sum(1 for a in atoms_here if a['d'] > 0),
+                        'decrease': sum(1 for a in atoms_here if a['d'] < 0), 'count': len(atoms_here)}
+        pair_atoms = [a for a in atoms_here if not a['cno']]
+        if key[0] == 'p':
+            out.update(type='pair', pair_id=key[1], layer=key[2], electrodes=list(pair_rows[key[1]]['electrodes']),
+                       electrode=None)
+        else:
+            out.update(electrode=key[1], pair_id=None, electrodes=None)
+            if key[0] == 'mv':
+                states = (erows.get(key[1]) or {}).get('layer_state') or {}
+                out.update(type='move', layer=None,
+                           **{'from': sorted((l for l, s in states.items() if s == 'a_only'), key=lk),
+                              'to': sorted((l for l, s in states.items() if s == 'b_only'), key=lk)})
+            else:
+                state = state_of(key[1], key[2])[0]
+                out.update(layer=key[2], type=('new' if state == 'b_only' else 'gone' if state == 'a_only'
+                                                else 'hub' if pair_atoms else 'cno'))
+        # partner lines (one per kind, pair or CNO, layer) and the largest partner per kind
+        rows, partner_abs = {}, {kind: {} for kind in KINDS}
+        for a in atoms_here:
+            partner = None
+            if key[0] != 'p' and not a['cno'] and len(a['names']) == 2:
+                partner = a['names'][0] if a['names'][1] == key[1] else a['names'][1]
+            rk = (a['kind'], 'CNO' if a['cno'] else a['pair_id'], a['layer'])
+            row = rows.setdefault(rk, {'kind': a['kind'], 'pair_id': None if a['cno'] else a['pair_id'], 'cno': a['cno'],
+                                       'layer': a['layer'], 'partner': partner, 'electrodes': None, 'net': [],
+                                       'abs': [], 'presence': set(), 'item_ids': [],
+                                       'pair_delta': None if a['cno'] else pair_delta[a['pair_id']]})
+            row['net'].append(a['d'])
+            row['abs'].append(abs(a['d']))
+            row['presence'].add(a['presence'])
+            row['item_ids'].append(a['id'])
+            if key[0] == 'p':
+                row['electrodes'] = list(pair_rows[a['pair_id']]['electrodes'])
+            if partner is not None:
+                partner_abs[a['kind']].setdefault(partner, []).append(abs(a['d']))
+        lines = []
+        for row in rows.values():
+            lines.append(dict(row, net=math.fsum(row['net']), abs=math.fsum(row['abs']),
+                              presence=sorted(row['presence']), item_ids=sorted(row['item_ids'])))
+        lines.sort(key=lambda r: (-r['abs'], r['kind'], str(r['pair_id']), r['layer']))
+        out['rows'] = lines
+        out['partners'] = sorted({a['names'][0] if a['names'][1] == key[1] else a['names'][1]
+                                  for a in pair_atoms if key[0] != 'p' and len(a['names']) == 2})
+        out['partner_count'] = len(out['partners'])
+        top = {}
+        for kind in KINDS:
+            parts = {name: math.fsum(values) for name, values in partner_abs[kind].items()}
+            total = kinds[kind]['abs']
+            if parts and total:
+                name = sorted(parts, key=lambda n: (-parts[n], n))[0]
+                top[kind] = {'partner': name, 'abs': parts[name], 'fraction': parts[name] / total}
+            else:
+                top[kind] = None
+        out['top_partner'] = top
+        line, pixel = kinds['line'], kinds['pixel']
+        out['conflict'] = bool(
+            line['net'] is not None and pixel['net'] is not None and line['share'] is not None
+            and pixel['share'] is not None and line['net'] * pixel['net'] < 0
+            and line['share'] >= CONFLICT_SHARE and pixel['share'] >= CONFLICT_SHARE)
+        out['partners_elsewhere'] = [{'partner': p, 'bundle_id': i} for p, i in sorted(elsewhere.get(key, ()))]
+        final.append(out)
+    final.sort(key=lambda b: (-max((b['kinds'][k]['share'] or 0.0) for k in KINDS), b['id']))
+
+    ranking, cover_checks, share_checks = {}, {}, {}
+    for kind in KINDS:
+        status = kstat[kind][0]
+        if status != 'ok':
+            ranking[kind] = {'status': status, 'k80': None, 'cards': [], 'cover': None, 'rest_share': None, 'rest': []}
+            cover_checks[kind] = share_checks[kind] = _check(None, 1.0)
+            continue
+        members = sorted((b for b in final if (b['kinds'][kind]['abs'] or 0.0) > 0),
+                         key=lambda b: (-b['kinds'][kind]['abs'], b['id']))
+        running, k80 = 0.0, None
+        for index, b in enumerate(members, 1):
+            running += b['kinds'][kind]['share']
+            if running >= K_SHARE - K_EPS:
+                k80 = index
+                break
+        if k80 is None:
+            k80 = len(members)
+        cards, rest = members[:CARD_COUNT], members[CARD_COUNT:]
+        cover = math.fsum(b['kinds'][kind]['share'] for b in cards)
+        rest_share = math.fsum(b['kinds'][kind]['share'] for b in rest)
+        ranking[kind] = {'status': 'ok', 'k80': k80, 'cards': [b['id'] for b in cards], 'cover': cover,
+                         'rest_share': rest_share, 'rest': [b['id'] for b in rest]}
+        cover_checks[kind] = _check(cover + rest_share, 1.0)
+        share_checks[kind] = _check(math.fsum(b['kinds'][kind]['share'] for b in final), 1.0)
+
+    crp_part = {'line': 0.0 if kstat['line'][0] != 'not_evaluated' else None, 'pixel': crp}
+    status_doc = {kind: kstat[kind][0] for kind in KINDS}
+    summary = {'rule': BUNDLE_RULE, 'hub_min': HUB_MIN, 'status': status_doc,
+               'reasons': {kind: list(kstat[kind][1]) for kind in KINDS}, 'g': g,
+               'atoms': {kind: sum(1 for a in live if a['kind'] == kind) for kind in KINDS},
+               'bundle_count': len(buckets), 'list': final, 'ranking': ranking, 'crp': crp_part}
+    net_checks = {}
+    for kind in KINDS:
+        if kstat[kind][0] == 'not_evaluated':
+            net_checks[kind] = _check(None, totals[kind]['delta'])
+        else:
+            net_checks[kind] = _check(_osum([math.fsum(nets[kind]), crp_part[kind]]), totals[kind]['delta'])
+    kind_checks = {kind: {'net_plus_crp': net_checks[kind], 'share_sum': share_checks[kind],
+                          'cover_plus_rest': cover_checks[kind]} for kind in KINDS}
+    atom_ids = [a['id'] for a in live]
+    structural = {'atoms': len(live), 'assigned': len(assigned_to), 'assignments': assignments,
+                  'duplicates': assignments - len(set(atom_ids)), 'id_unique': id_unique,
+                  'id_length': max([len(i) - 3 for i in ids.values()] or [16])}
+    states = [c['status'] for k in KINDS for c in kind_checks[k].values()]
+    structural_ok = (structural['duplicates'] == 0 and structural['assigned'] == structural['atoms']
+                     and structural['assignments'] == structural['atoms'] and id_unique)
+    states.append('passed' if structural_ok else 'failed')
+    checks = dict(structural, kinds=kind_checks, status=_worst(states))
+    return summary, checks
+
+
+# ---- G3: concentration (actual values) -------------------------------------------------------------------------------
+
+def _stage_parts(stage, atoms):
+    """{group key: ([|value|...], [value...])} of one stage. The electrode stage splits an item over its endpoints."""
+    parts = {}
+
+    def add(key, value):
+        entry = parts.setdefault(key, ([], []))
+        entry[0].append(abs(value))
+        entry[1].append(value)
+
+    for a in atoms:
+        d = a['d']
+        crp, cno = a.get('crp', False), a['cno']
+        if stage == 'division':
+            add('crp' if crp else 'cno' if cno else {'both': 'same', 'new': 'new', 'gone': 'gone'}[a['presence']], d)
+        elif stage == 'layer':
+            add('CRP' if crp else f'CNO@{a["layer"]}' if cno else a['layer'], d)
+        elif stage == 'electrode':
+            if crp:
+                add('CRP(귀속 불가)', d)
+            elif cno:
+                add(a['ends'][0][0], d)
+            else:
+                for name, _layer in a['ends']:
+                    add(name, d / len(a['ends']))
+        elif stage == 'pair':
+            add('CRP' if crp else a['id'] if cno else a['pair_id'], d)
+        else:
+            add('CRP' if crp else a['id'], d)
+    return parts
+
+
+def _concentration_stage(parts, total_abs, status, reasons, kind_delta, n_atoms):
+    """One stage block and its checks (E4, Z3). Shares and k50 / k80 are null for G = 0 or a null atom."""
+    base = {'status': status, 'atoms': n_atoms, 'g': total_abs}
+    if status == 'not_evaluated':
+        base.update(verdict='omitted', omit_reasons=list(reasons), n=None, k50=None, k80=None, top1=None, top3=None,
+                    top5=None, tie_at_cut=False, tie_count=0, groups=[], rest=None, net=None)
+        return base, {'shares_sum': _check(None, 1.0), 'net_sum': _check(None, kind_delta)}
+    rows = []
+    for key, (abs_parts, net_parts) in parts.items():
+        total, net = math.fsum(abs_parts), math.fsum(net_parts)
+        rows.append({'key': key, 'abs': total, 'net': net, 'cancel': total - abs(net)})
+    rows.sort(key=lambda r: (-r['abs'], r['key']))
+    active = [r for r in rows if r['abs'] > 0]
+    ok = status == 'ok'
+    for r in rows:
+        r['share'] = (r['abs'] / total_abs) if ok else None
+    k50 = k80 = None
+    top = {1: None, 3: None, 5: None}
+    tie_at_cut, tie_count = False, 0
+    if ok:
+        running = 0.0
+        for index, r in enumerate(active, 1):
+            running += r['share']
+            if k50 is None and running >= 0.5 - K_EPS:
+                k50 = index
+            if running >= K_SHARE - K_EPS:
+                k80 = index
+                break
+        if k80 is None:
+            k80 = len(active)
+        cut = active[k80 - 1]['abs']
+        tied = [i for i, r in enumerate(active) if _no_change(cut, r['abs'])]
+        tie_count = len(tied)
+        tie_at_cut = any(i >= k80 for i in tied)
+        for number in top:
+            top[number] = math.fsum(r['share'] for r in active[:number])
+    n = len(active)
+    omit = list(reasons)
+    if not ok:
+        omit.append('no_change')
+    else:
+        if n < MIN_ATOMS:
+            omit.append('n_lt_8')
+        if tie_at_cut:
+            omit.append('tie_at_cut')
+    if omit:
+        verdict = 'omitted'
+    elif k80 <= CONCENTRATED_K80:
+        verdict = 'concentrated'
+    elif k80 / n >= DISPERSED_RATIO:
+        verdict = 'dispersed'
+    else:
+        verdict = 'middle'
+    shown, left = rows[:TOP_GROUPS], rows[TOP_GROUPS:]
+    rest = None
+    if left:
+        rest_abs, rest_net = math.fsum(r['abs'] for r in left), math.fsum(r['net'] for r in left)
+        rest = {'count': len(left), 'abs': rest_abs, 'net': rest_net, 'cancel': rest_abs - abs(rest_net),
+                'share': (rest_abs / total_abs) if ok else None}
+    net_total = math.fsum(r['net'] for r in rows)
+    base.update(verdict=verdict, omit_reasons=omit, n=n, k50=k50, k80=k80, top1=top[1], top3=top[3], top5=top[5],
+                tie_at_cut=tie_at_cut, tie_count=tie_count, groups=shown, rest=rest, net=net_total)
+    shares = _check(math.fsum(r['share'] for r in rows), 1.0) if ok else _check(None, 1.0)
+    return base, {'shares_sum': shares, 'net_sum': _check(net_total, kind_delta)}
+
+
+def _concentration(atoms, kstat, crp, totals, vi_a):
+    """summary.concentration and checks.concentration: five stages, the actual basis only."""
+    summary, checks, states = {}, {}, []
+    for kind in KINDS:
+        mine = [a for a in atoms if a['kind'] == kind]
+        if kind == 'pixel':      # the CRP line is one more atom of the pixel kind; it belongs to no pair or electrode
+            mine = mine + [{'id': 'CRP', 'kind': 'pixel', 'pair_id': None, 'cno': False, 'crp': True, 'layer': None,
+                            'ends': [], 'a': None, 'b': None, 'd': crp, 'presence': 'both'}]
+        status, reasons, g = kstat[kind]
+        if status != 'not_evaluated' and any(a['d'] is None for a in mine):
+            status, reasons, g = 'not_evaluated', ['atom_null'], None
+        elif status != 'not_evaluated':
+            g = math.fsum(abs(a['d']) for a in mine)
+            status = 'no_change' if g <= NO_CHANGE_ABS + NO_CHANGE_REL * abs(vi_a[kind] or 0.0) else 'ok'
+        summary[kind], checks[kind] = {}, {}
+        stages, stage_checks = {}, {}
+        for stage in CONC_STAGES:
+            parts = _stage_parts(stage, mine) if status != 'not_evaluated' else {}
+            stages[stage], stage_checks[stage] = _concentration_stage(parts, g, status, reasons, totals[kind]['delta'],
+                                                                      len(mine))
+            states += [c['status'] for c in stage_checks[stage].values()]
+        summary[kind]['actual'] = stages
+        checks[kind] = stage_checks
+    checks['status'] = _worst(states)
+    return summary, checks
+
+
+# ---- the summary ----------------------------------------------------------------------------------------------------
+
+def _build_summary(doc, rebase, fam, vi_a, totals, crp_d, pair_rows, cno_rows, electrode_rows, lk):
+    basis = (doc.get('inputs') or {}).get('rebase_basis')
+    rebase_doc, rebase_checks = _rebase_summary(rebase, basis, pair_rows, cno_rows, totals)
+    design = {kind: _design_summary(kind, rebase, rebase_doc.get(kind) or {'status': 'unavailable', 'reasons': []},
+                                    pair_rows, cno_rows, vi_a[kind], totals, lk) for kind in KINDS}
+    atoms = _atoms(pair_rows, cno_rows)
+    kstat = {}
+    for kind in KINDS:
+        # the G threshold of the plan: 1e-12 + 1e-9 x vi_A
+        kstat[kind] = _kind_status(kind, atoms, fam[kind], vi_a[kind])
+    erows = {row['electrode']: row for row in electrode_rows}
+    # the bundle code writes into its atoms (sign, names); work on copies so the concentration atoms stay plain
+    bundle_atoms = [dict(a) for a in atoms]
+    bundles, bundle_checks = _bundle_summary(bundle_atoms, kstat, erows, pair_rows, crp_d if fam['pixel'] else None,
+                                             totals, lk)
+    conc_status = {kind: _kind_status(kind, atoms, fam[kind], vi_a[kind]) for kind in KINDS}
+    concentration, conc_checks = _concentration(atoms, conc_status, crp_d if fam['pixel'] else None, totals,
+                                              vi_a)
+    summary = {'rules': dict(SUMMARY_RULES), 'rebase': rebase_doc, 'design': design, 'bundles': bundles,
+               'concentration': concentration}
+    new_checks = {'rebase': rebase_checks, 'bundles': bundle_checks, 'concentration': conc_checks}
+    new_checks['status'] = _worst([rebase_checks['status'], bundle_checks['status'], conc_checks['status']])
+    # 'status' of the new checks is theirs alone: a not_evaluated summary check is not a failure of the ledger
+    new_checks['status'] = 'failed' if 'failed' in (rebase_checks['status'], bundle_checks['status'],
+                                                    conc_checks['status']) else new_checks['status']
+    return summary, new_checks
 
 
 # ---- CSV --------------------------------------------------------------------------------------------------------------
