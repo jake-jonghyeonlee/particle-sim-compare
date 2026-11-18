@@ -217,9 +217,21 @@ def bundle_of(page):
     return json.loads(re.search(r'<script type="application/json" id="report-data">(.*?)</script>', page, re.S).group(1))
 
 
-def section(page, number):
-    start = page.index('<section id="s%d">' % number)
+SECTION_IDS = {1: ('s1',), 2: ('s2',), 3: ('s4',), 4: ('s5',), 5: ('sA',)}   # rnarr/T7: the old numbers (1 summary, 2 correspondence, 3 exploration, 4 distribution, 5 evidence) -> the new ids
+
+
+def new_section(page, sid):
+    start = page.index('<section id="%s">' % sid)
     return page[start:page.index('</section>', start)]
+
+
+def section(page, number):
+    """Old section numbers kept by the older tests: 1 = 1 summary + the part of 4 before the exploration (breakdown, top lists),
+    3 = 4 results (the exploration is in it), 4 = 5 distribution, 5 = appendix."""
+    if number == 1:
+        s4 = new_section(page, 's4')
+        return new_section(page, 's1') + s4[:s4.index('<div id="explore">')]
+    return ''.join(new_section(page, sid) for sid in SECTION_IDS[number])
 
 
 def sample_doc():
@@ -244,7 +256,7 @@ def test_html_has_no_external_reference_and_all_files(tmp_path):
     assert report['schema_version'] == 'ledger_report_v2'
     assert len(report['ledger_json_sha256']) == 64 and report['options'] == {'top_pairs': 30, 'top_electrodes': 30}
     assert report['ledger_execution']['status'] == 'ok'
-    assert report['sections'] == {'present': [1, 2, 3, 4, 5], 'placeholders': []}
+    assert report['sections'] == {'present': ['s1', 's2', 's3', 's4', 's5', 's6', 'sA'], 'placeholders': []}
     assert report['html_bytes'] == len(page.encode('utf-8')) and 0 < report['data_bytes'] < report['html_bytes']
     assert report['report07'] == 'none'
     assert json.loads((out / 'execution.json').read_text(encoding='utf-8'))['exit_code'] == 0
@@ -253,14 +265,14 @@ def test_html_has_no_external_reference_and_all_files(tmp_path):
 def test_five_sections_in_order_slots_for_2_3_4_and_one_data_bundle(tmp_path):
     code, out = run_report(tmp_path, sample_doc())
     page = html_of(out)
-    titles = ['① 한눈 요약', '② 제품 대응', '③ 탐색', '④ 분포', '⑤ 근거 · 검산']
+    titles = ['1 전체 요약', '2 제품 대응', '3 원인 후보', '4 결과', '5 분포', '6 해상도 차이 비교', '부록 근거 · 검산']
     positions = [page.index('<h2>%s</h2>' % t) for t in titles]
     assert positions == sorted(positions)
     assert '다음 단계에서 추가됩니다' not in page                  # every section is built (T6 = 2 and 4, T7-T8 = 3)
     assert 'id="s3-panel"' in section(page, 3) and '<table id="pl-table"' in section(page, 3)
     assert '<table id="corr-table">' in section(page, 2) and '<table id="ledger-table">' in section(page, 4)
     assert page.count('id="report-data"') == 1 and page.count('<script type="application/json"') == 1
-    for old in ('<section id="s6">', '<section id="s7">', 'id="pairs-line"', 'id="el-line"'):
+    for old in ('<section id="s7">', 'id="pairs-line"', 'id="el-line"'):
         assert old not in page
 
 
@@ -269,7 +281,7 @@ def test_bar_has_the_global_selection_clear_and_five_links(tmp_path):
     page = html_of(out)
     bar = page[page.index('<div id="bar">'):page.index('</div>', page.index('<div id="bar">'))]
     assert 'id="sel-label"' in bar and 'id="sel-clear"' in bar and 'disabled' in bar and '선택 해제' in bar
-    assert [m for m in re.findall(r'data-go="(s\d)"', bar)] == ['s1', 's2', 's3', 's4', 's5']
+    assert [m for m in re.findall(r'data-go="(s[\dA])"', bar)] == ['s1', 's2', 's3', 's4', 's5', 's6', 'sA']
 
 
 def test_partial_ledger_gets_a_band_and_exit_3(tmp_path):

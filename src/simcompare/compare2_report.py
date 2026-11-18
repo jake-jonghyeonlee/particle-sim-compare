@@ -866,7 +866,7 @@ def _product_table(doc, infos, unit_text):
         return [fn(role) for role in ROLES]
 
     resolution = per_role(lambda role: ' × '.join(str(v) for v in doc['products'][role]['resolution']))
-    layers = per_role(lambda role: ', '.join(sorted({layer['layer'] for layer in doc['sides'][role]['layers']})) or '—')
+    layers = per_role(lambda role: ', '.join(_by_layer_order(doc, {layer['layer'] for layer in doc['sides'][role]['layers']})) or '—')
     area = []
     for role in ROLES:
         res, unit = doc['products'][role]['resolution'], infos[role]['unit_um']
@@ -1818,8 +1818,16 @@ def _electrode_section(doc, view, top_n):
             '<table>' + head + ''.join(rows) + '</table></section>\n')
 
 
+def _by_layer_order(doc, names):
+    """rnarr/T7 (E10): layer names in the order of compare2.json inputs.layer_order; the others after them by name; none: by name."""
+    raw = (doc.get('inputs') or {}).get('layer_order')
+    rank = {name: i for i, name in enumerate(raw)} if isinstance(raw, list) else {}
+    return sorted(names, key=lambda name: (rank.get(name, len(rank)), str(name)))
+
+
 def _distribution_section(doc):
-    layers = doc['delta']['layers']
+    order = {name: i for i, name in enumerate(_by_layer_order(doc, {r['layer'] for r in doc['delta']['layers']}))}
+    layers = sorted(doc['delta']['layers'], key=lambda r: order[r['layer']])
     sizes = sorted({s['diameter_um'] for row in layers for s in row.get('by_size', [])})
     base = _base_of(doc)        # the same base as every other section: the reference vi of the selected range
     tabs = [('layer', '레이어', '레이어별 Δvi 입니다(선택 범위, %p, 괄호는 기준 A 전체 vi 대비 변화율).',

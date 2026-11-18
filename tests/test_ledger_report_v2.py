@@ -19,7 +19,7 @@ from simcompare import ledger_report
 from simcompare.cli import main
 from test_ledger_maps_changes import candidates_run
 from test_ledger_maps_cards import big  # noqa: F401  (fixture)
-from test_ledger_report import bundle_of, html_of, make_ledger, run_report, sample_doc, section, spec, write_ledger
+from test_ledger_report import bundle_of, html_of, make_ledger, new_section, run_report, sample_doc, section, spec, write_ledger
 from test_ledger_report_maps import ledger_sha, ok_changes, setup, write_maps
 
 KINDS = ('line', 'pixel')
@@ -49,18 +49,18 @@ def test_kpis_conflict_sentence_and_no_curve_line_in_section_1(tmp_path):
         assert 'A %s → B %s' % (ledger_report.raw_pct(k['vi_a']), ledger_report.raw_pct(k['vi_b'])) in part
         assert ledger_report.raw_pp(t['delta']) in part
         assert 'A 대비 %s' % ledger_report.spct(100.0 * t['delta'] / k['vi_a']) in part
-    assert 'id="headline"' in s1
-    assert '곡선 보정' not in s1 and '절편' not in s1                   # the curve line is in section 5 only
+    assert 'id="opinion"' in s1                                          # rnarr/T7: the headline is the overall opinion of 1
+    assert '곡선 보정' not in s1 and '절편' not in s1                   # the curve line is in the appendix only
     assert '곡선 보정' in section(html_of(out), 5)
 
 
-def test_headline_says_conflict_only_when_the_kinds_move_in_opposite_directions(tmp_path):
+def test_opinion_says_the_direction_of_each_kind_and_waits_for_a_pending_kind(tmp_path):
     up_down = make_ledger([spec('A', ['E1', 'E2'], 'line', 0.001, 0.002), spec('B', ['E3', 'E4'], 'pixel', 0.002, 0.001)])
-    same = make_ledger([spec('A', ['E1', 'E2'], 'line', 0.001, 0.002), spec('B', ['E3', 'E4'], 'pixel', 0.001, 0.002)])
     pending = make_ledger([spec('A', ['E1', 'E2'], 'line', None, 0.002, change='value_pending'), spec('B', ['E3', 'E4'], 'pixel', 0.001, 0.002)])
-    assert '상충합니다' in section(html_of(run_report(tmp_path, up_down, name='a')[1]), 1)
-    assert '방향이 같습니다' in section(html_of(run_report(tmp_path, same, name='b')[1]), 1)
-    assert '방향을 말하지 않습니다' in section(html_of(run_report(tmp_path, pending, name='c')[1]), 1)
+    s1 = new_section(html_of(run_report(tmp_path, up_down, name='a')[1]), 's1')
+    assert 'line vi 는' in s1 and '높아졌습니다' in s1 and 'pixel vi 는' in s1 and '낮아졌습니다' in s1
+    s1 = new_section(html_of(run_report(tmp_path, pending, name='c')[1]), 's1')
+    assert 'line vi 는 값이 대기라 비교하지 않습니다' in s1
 
 
 def test_item_breakdown_rows_sum_to_the_kind_delta_when_the_crp_is_the_same(tmp_path):
@@ -83,8 +83,8 @@ def test_item_breakdown_rows_sum_to_the_kind_delta_when_the_crp_is_the_same(tmp_
     assert '해당 없음' in cno_row and ledger_report.raw_pp(doc['kinds']['pixel']['item_breakdown']['cno']) in cno_row
     assert 'id="crp-note"' not in s1 and 'id="crp-line"' not in section(page, 5)
     assert '합 = 종류 전체 Δ' in table
-    assert 'data-href="#cat=line:same&amp;entry=pair" data-scroll="s3"' in table and 'data-href="#cat=pixel:gone&amp;entry=pair"' in table
-    assert 'data-go="s4"' in cno_row and 'data-href' not in cno_row                      # CNO is no pair: it points to the electrode ledger
+    assert 'data-href="#cat=line:same&amp;entry=pair" data-scroll="explore"' in table and 'data-href="#cat=pixel:gone&amp;entry=pair"' in table
+    assert 'data-go="s5"' in cno_row and 'data-href' not in cno_row                      # CNO is no pair: it points to the electrode ledger (5)
 
 
 def test_crp_note_only_when_the_two_crps_differ(tmp_path):
@@ -93,7 +93,7 @@ def test_crp_note_only_when_the_two_crps_differ(tmp_path):
     code, out = run_report(tmp_path, differ)
     page = html_of(out)
     s1 = section(page, 1)
-    assert 'id="crp-note"' in s1 and 'CRP 차이' in s1 and '⑤ 참고' in s1 and ledger_report.raw_pp(0.0005) in s1
+    assert 'id="crp-note"' in s1 and 'CRP 차이' in s1 and '부록 참고' in s1 and ledger_report.raw_pp(0.0005) in s1
     s5 = section(page, 5)
     assert 'id="crp-line"' in s5 and 'A CRP 1' in s5 and 'B CRP 1.2' in s5
     # the breakdown rows do not add up to the delta by exactly the CRP difference
@@ -122,31 +122,22 @@ def test_lists_are_the_ledger_top_five_per_kind_with_composition_text(tmp_path):
     doc = make_ledger(pairs)
     code, out = run_report(tmp_path, doc)
     page = html_of(out)
-    for kind in KINDS:
-        rows = [p for p in doc['pairs'] if p['kind'] == kind and p['pct_delta'] is not None]
-        want_change = [p['pair_id'] for p in sorted(rows, key=lambda p: (-abs(p['pct_delta']), p['pair_id']))[:5]]
-        want_risk = [p['pair_id'] for p in sorted(rows, key=lambda p: (-p['pct_b'], p['pair_id']))[:5]]
-        assert _list_ids(page, 'top-changed-%s' % kind) == want_change
-        assert _list_ids(page, 'top-risk-%s' % kind) == want_risk
+    for kind in KINDS:        # rnarr/T7: 4 lists per kind pair of direction (worse = vi up, better = vi down), by |change| of the pair total
+        rows = [p for p in doc['pairs'] if p['kind'] == kind and p['delta'] is not None]
+        want_w = [p['pair_id'] for p in sorted((p for p in rows if p['delta'] > 0), key=lambda p: (-abs(p['delta']), p['pair_id']))[:5]]
+        want_b = [p['pair_id'] for p in sorted((p for p in rows if p['delta'] < 0), key=lambda p: (-abs(p['delta']), p['pair_id']))[:5]]
+        assert _list_ids(page, 'w-%s' % kind) == want_w
+        assert _list_ids(page, 'b-%s' % kind) == want_b
     assert doc['pairs'][0]['kind'] == 'line'
     s1 = section(page, 1)
-    assert s1.count('data-href="#sel=pair:') == len(_list_ids(page, 'top-changed-line') + _list_ids(page, 'top-changed-pixel')
-                                                    + _list_ids(page, 'top-risk-line') + _list_ids(page, 'top-risk-pixel'))
-    if 'LC' in _list_ids(page, 'top-risk-line') + _list_ids(page, 'top-changed-line'):
-        assert 'item +2 / −1 (+측면 GAT2 +상하 GAT2–SD1 / −상하 SD1–PXL)' in s1
+    assert s1.count('data-href="#sel=pair:') == sum(len(_list_ids(page, '%s-%s' % (d, k))) for d in 'wb' for k in KINDS)
+    assert 'top-risk' not in page and 'top-changed' not in page
 
 
-def test_change_kind_table_is_folded_zero_kinds_are_one_line_and_labels_come_from_the_ledger(tmp_path):
-    doc = sample_doc()
-    code, out = run_report(tmp_path, doc)
-    s1 = section(html_of(out), 1)
-    assert '<details id="kinds-details">' in s1 and '<details id="kinds-details" open' not in s1
-    label = [c['label'] for c in doc['change_kinds'] if c['code'] == 'layer_change'][0]
-    assert label == '불량 구성 변경' and ('<td class="l">%s</td>' % label) in s1
-    assert 'id="zero-kinds"' in s1 and '값 대기' in s1[s1.index('id="zero-kinds"'):]
-    shown = re.findall(r'<tr data-code="(\w+)"', s1)
-    counts = doc['kinds']['change_kind_counts']
-    assert shown == [c['code'] for c in doc['change_kinds'] if counts.get(c['code'], 0)]     # only kinds with at least one pair
+def test_the_change_kind_table_is_gone_from_the_summary(tmp_path):
+    code, out = run_report(tmp_path, sample_doc())
+    page = html_of(out)
+    assert 'kinds-details' not in page and 'id="change-kinds"' not in page and 'id="zero-kinds"' not in page
 
 
 def test_trust_line_counts_checks_exclusions_pending_and_partial(tmp_path):
@@ -264,11 +255,10 @@ def test_real_chain_report_for_the_lead(tmp_path, big):
         assert data['kinds'][kind]['vi_a'] == led['kinds'][kind]['vi_a']
     assert data['top']['changed']['line'] == [p['pair_id'] for p in sorted(
         [p for p in led['pairs'] if p['kind'] == 'line' and p['pct_delta'] is not None], key=lambda p: (-abs(p['pct_delta']), p['pair_id']))[:5]]
-    assert _list_ids(page, 'top-changed-line') == data['top']['changed']['line']
     ch = maps_doc['changes']
     assert ch['link_status'] == 'ok' and data['changes']['summary'] == ch['summary'] and data['changes']['pairs'] == ch['pairs']
     s = ch['summary']
-    s1 = section(page, 1)
+    s1 = section(page, 3)          # rnarr/T7: the location count line is inside the folded 04 reference of 4
     assert '변경 위치 <b>%d곳</b>(04) · 위치에 연결된 쌍 <b>%d</b> · 미연결 쌍 <b>%d</b>' % (s['roi_count'], s['linked_pairs'], s['unlinked_pairs']) in s1
     names = {}
     from simcompare.compare2_report import KIND_TEXT
@@ -359,7 +349,7 @@ def test_chrome_pair_selection_marks_the_row_and_shows_only_that_pairs_condition
     page = out / 'ledger_report.html'
     dom, text = dump_dom(page, '#sel=pair:P2')
     assert dom.root['data-sel'] == 'pair:P2' and 'data-err' not in dom.root
-    assert selected(dom, 'data-pair') == ['P2', 'P2', 'P2']  # the rows in the "most changed" list, the "riskiest" list and the pair list of section 3
+    assert selected(dom, 'data-pair') == ['P2', 'P2']  # the row in the worse/better top list and the pair list of section 4 (rnarr/T7: 4 lists by direction)
     cond = [a for t, a in dom.elements if t == 'tr' and a.get('data-pair') is not None]
     # the visible condition table is the one under #cond: its rows are only P2's items x sizes
     start = text.index('id="cond-table"')
@@ -432,7 +422,7 @@ def s2_row(page, name):
 
 
 def s2_cell(page, name, layer):
-    return re.search(r'<td class="c ([^"]*)" data-layer="%s"[^>]*>(.*?)</td>' % re.escape(layer), s2_row(page, name), re.S).groups()
+    return re.search(r'<td class="c ([^"]*)" data-cell="1" data-layer="%s"[^>]*>(.*?)</td>' % re.escape(layer), s2_row(page, name), re.S).groups()
 
 
 def test_section_2_cell_states_summary_and_legend(tmp_path):
@@ -854,15 +844,14 @@ def test_pair_list_rows_carry_the_filter_values_and_the_unlinked_text(tmp_path):
     rows = {m.group(1): m.group(0) for m in re.finditer(r'<tr class="plrow[^"]*" data-pair="(\w+)".*?</tr>', s3, re.S)}
     assert sorted(rows) == ['P1', 'P2', 'P3', 'P4', 'P5']
     assert 'data-cat="same new gone"' in rows['P2'] and 'data-cat="new"' in rows['P5'] and 'data-kind="pixel"' in rows['P3']
-    assert 'data-tags="shifted reshaped"' in rows['P1'] and 'data-linked="1"' in rows['P1'] and '#1' in rows['P1']
-    assert '변경 위치 미연결 — 04 가 고른 상위 위치에 없음' in rows['P2'] and '변경 위치 미연결' not in rows['P1']
-    assert '변화 없음' in rows['P3']                                        # no_change pairs are not "unlinked"
+    assert 'data-tags="shifted reshaped"' in rows['P1'] and 'data-linked="1"' in rows['P1']
+    assert '#1' not in rows['P1'] and '변경 위치' not in rows['P2']          # R8:6: no 04 badge or text in the default list rows
     # composition-based text of the changed-composition pair: item +k / -m (+... / -...)
     assert 'item +1 / −1 (+상하 GAT2–SD2 / −측면 GAT2)' in rows['P2']
     assert 'id="pl-count"' in s3 and '결과 5 쌍 · 표시 5' in s3 and 'data-total="5" data-count="5" data-shown="5"' in s3
     for key in ('kind', 'ck', 'cat', 'tag'):
         assert 'data-f="%s"' % key in s3
-    assert 'data-f="entry" data-v="loc"' in s3 and 'data-f="entry" data-v="pair"' in s3
+    assert 'data-f="entry"' not in s3 and '<details id="roi-ref">' in s3 and '<details id="pl-more-filters">' in s3     # R8:6: no entry tabs, the 04 reference is folded
 
 
 def test_location_entry_lists_rois_with_their_linked_pair_counts_and_the_empty_states(tmp_path):
@@ -1156,10 +1145,10 @@ def test_chrome_section_1_rows_open_the_pair_entry_cno_points_to_section_4_and_a
     assert 'cat=line%3Asame' in nav['h1'] and 'entry=pair' in nav['h1'] and nav['entry'] == 'pair'
     assert 'line' not in nav['h2'] and 'cat=same' in nav['h2']                                  # "불량 전체" lifts the kind that the cat carried
     dom, text = dump_dom(page, '#cat=pixel:cno')
-    assert 'CNO 는 쌍이 아니라 ④ 전극 장부에서 봅니다' in text and dom.root['data-pl-count'] == '0'
+    assert 'CNO 는 쌍이 아니라 5 분포의 전극 장부에서 봅니다' in text and dom.root['data-pl-count'] == '0'
     s1 = section(page.read_text(encoding='utf-8'), 1)
-    assert re.search(r'<tr data-cat="cno">.*?data-go="s4"', s1, re.S)
-    assert 'data-scroll="s3"' in s1
+    assert re.search(r'<tr data-cat="cno">.*?data-go="s5"', s1, re.S)
+    assert 'data-scroll="explore"' in s1
 
 
 def test_chrome_section_1_entry_clears_the_section_3_filters(tmp_path):
@@ -1334,9 +1323,9 @@ def test_roi_supporting_note_and_visible_window_legend(tmp_path):
     dom, text, rows = probe(page, '#')
     assert all(r[5] == '1' for r in rows if r[0] in ('s2', 's3'))                           # the outline is still drawn
     text = Path(page).read_text(encoding='utf-8')
-    m = re.search(r'<div id="pn-loc" hidden>(.*?)</div><div id="pn-pair">', text, re.S)
+    m = re.search(r'<details id="roi-ref"><summary>[^<]*</summary><div id="pn-loc">(.*?)</div></details>', text, re.S)   # rnarr/T7: folded reference
     assert m and m.group(1).startswith('<p class="muted" id="loc-note">변경 위치(04)는 A·B 설계가 비슷할 때 비교 의미가 큽니다.')
-    assert '같은 위치에 같은 전극이 없을 수 있습니다' in m.group(1) and '전극·쌍으로 찾기' in m.group(1)
+    assert '같은 위치에 같은 전극이 없을 수 있습니다' in m.group(1) and '판단은 쌍·전극 장부를' in m.group(1)
     assert 'unit 창 (노란 긴 점선 + 어두운 테두리' in text
     assert "g.fillText('unit'" in text and '#ffd21f' in text
 
@@ -1404,9 +1393,9 @@ def test_rtrim_section_1_has_no_small_maps_no_tag_table_and_the_new_wording(tmp_
     s1, s3 = section(page, 1), section(page, 3)
     assert '<canvas' not in s1 and 'id="s1-maps"' not in page and 'data-view="s1"' not in page and '작은 A·B 지도' not in page
     assert 'id="tags"' not in s1 and 'id="tags"' in s3
-    assert '변화의 구성' in s1 and '무엇 때문인가' not in page and '어떻게 구성되나' in s1
-    assert 'id="top-changed-line"' in s1 and 'data-href="#sel=pair:' in s1                    # the ranked list rows still open section 3
-    assert '<table id="change-kinds">' in s1 and 'id="kinds-details"' in s1                  # the folded change-kind table stays in section 1
+    assert '변화의 구성' in s1 and '무엇 때문인가' not in page and '때문' not in page.split('<script')[0]
+    assert 'id="w-line"' in s1 and 'data-href="#sel=pair:' in s1                              # the ranked list rows still open the exploration
+    assert 'id="change-kinds"' not in page and 'id="kinds-details"' not in page              # the change-kind table is gone (G0)
     assert 'topPairs()' in page and "view==='s1'" not in page and 'o.tops' not in page         # the script has no small-map drawing or click code left
     nomaps = html_of(run_report(tmp_path, sample_doc(), name='nomaps')[1])
     assert 'id="tags-folded"' in section(nomaps, 3) and 'id="tags-folded"' not in section(nomaps, 1)

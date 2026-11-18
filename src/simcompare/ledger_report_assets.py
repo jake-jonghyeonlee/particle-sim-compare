@@ -78,6 +78,18 @@ canvas.mapcv{display:block;width:100%;height:auto;background:var(--surface-0);bo
 .mrow{display:flex;gap:12px;align-items:flex-start}.mview{flex:1;min-width:0}.mleg{flex:0 0 150px;font-size:12px;position:sticky;top:44px}
 .mleg div{margin:3px 0}.sw{display:inline-block;width:14px;height:10px;margin-right:5px;vertical-align:middle;border-radius:2px}
 .mall{margin-bottom:8px}
+.purpose{margin:6px 0 4px;padding:7px 12px;border-left:3px solid var(--text-primary);background:var(--surface-1);font-size:15px;line-height:1.7}
+.nextl{margin:12px 0 0;padding-top:6px;border-top:1px dashed var(--border);color:var(--text-muted)}
+.report{border-left:3px solid var(--text-secondary);padding:7px 14px;margin:6px 0 10px;background:var(--surface-0);border-radius:0 6px 6px 0;font-size:14px;line-height:1.7}
+.report p{margin:0 0 5px}.summary{border-left:3px solid var(--text-secondary);padding:6px 12px;margin:6px 0 10px;background:var(--surface-0)}.summary p{margin:0 0 3px}
+.how,.ex,.note{background:var(--surface-0);border:1px solid var(--border);border-radius:6px;padding:6px 12px;margin:8px 0}.ex{border-style:dashed}.ex td{border:0;padding:1px 14px 1px 0;text-align:left}.ex table{width:auto}
+.bgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
+.bcard{background:var(--surface-0);border:1px solid var(--border);border-radius:8px;padding:8px 12px}.bcard .bt{font-size:15px}.bcard h4{margin:8px 0 2px}.bcard .bp{margin:2px 0}
+.bt2 th,.bt2 td{padding:2px 5px;font-size:12px}.bcard.selcard{border:2px solid #e0b04a;background:var(--trade)}.unitcell{outline:2px solid #e0b04a}
+a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto;height:auto;border:1px solid var(--border);border-radius:14px;padding:0 10px;margin:0 2px;color:var(--text-primary);text-decoration:none}
+.warn{color:#b07d00}.bar{display:inline-block;height:9px;background:var(--common);border-radius:2px;vertical-align:middle}.bar.line{background:var(--line)}.bar.pixel{background:var(--pixel)}
+.small{font-size:11px}
+@media (max-width:1180px){.bgrid{grid-template-columns:1fr}}
 @media (max-width:1180px){.s2row,.s3grid{grid-template-columns:1fr}.s2map,.s3maps,.mleg{position:static}.mrow{flex-direction:column}}
 @media (max-width:1180px){.g3,.g2,.kpis{grid-template-columns:1fr}}
 @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}}
@@ -94,10 +106,17 @@ var esc=function(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;'
 var PB=Object.create(null),EB=Object.create(null);
 var SELT={pair:1,electrode:1,layer:1,roi:1};
 D.pairs.forEach(function(p){PB[p.id]=p;});
+var BU=Object.create(null),IT=Object.create(null),TOS=/^(s[1-6]|sA|explore)$/,UNIT=/^bd-[0-9a-f]{16,24}$/;
+(D.bundles||[]).forEach(function(b){BU[b.id]=b;});
+D.pairs.forEach(function(p){p.items.forEach(function(it){IT[it.id]=p.id;});});
 function parseHash(){var o={kv:{},flags:{}},h=location.hash.replace(/^#/,'');if(!h)return o;
  h.split('&').forEach(function(p){if(!p)return;var i=p.indexOf('=');if(i<0){o.flags[p]=true;return;}
-  var k=p.slice(0,i),v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}o.kv[k]=v;});return o;}
-function buildHash(o){var parts=[];['sel','entry','tab','cat','sort','kind','ck','tag','q','eq','more','layer','layers','ov'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
+  var k=p.slice(0,i),v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}
+  if(k==='unit'&&!(UNIT.test(v)&&BU[v]))return;   /* the hash is untrusted: a unit must be a known cause candidate id */
+  if(k==='to'&&!TOS.test(v))return;
+  if(k==='it'&&!IT[v])return;
+  o.kv[k]=v;});return o;}
+function buildHash(o){var parts=[];['sel','entry','tab','cat','sort','kind','ck','tag','q','eq','more','layer','layers','ov','unit','it','to'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
  ['print','demo'].forEach(function(k){if(o.flags[k])parts.push(k);});return parts.length?'#'+parts.join('&'):'#';}
 function setHash(o){var h=buildHash(o);if(h==='#'){if(location.hash){history.replaceState(null,'',location.pathname+location.search);}apply();}else{location.hash=h;}}
 function selOf(o){var s=o.kv.sel;if(!s&&o.flags.demo&&D.demo_pair)s='pair:'+D.demo_pair;if(!s)return null;
@@ -113,7 +132,12 @@ function related(sel){var r={pairs:{},els:{},layers:{},rois:{}};if(!sel)return r
  Object.keys(r.pairs).forEach(function(id){var p=PB[id];if(!p)return;p.e.forEach(function(e){if(sel.t==='pair'||sel.t==='electrode'&&e===sel.id)r.els[e]=1;});
   if(sel.t==='pair'){var L=layersOfPair(p);Object.keys(L).forEach(function(l){r.layers[l]=1;});}});
  if(sel.t==='layer')r.layers[sel.id]=1;return r;}
-function label(sel){if(!sel)return '<span class="muted">선택 없음</span>';
+function unitCellOf(u){var c=u&&BU[u]&&BU[u].cells[0];return c?{e:c[0],l:c[1]}:null;}
+function cardsOfCell(e,l){var out=[];(D.bundles||[]).forEach(function(b){b.cells.forEach(function(c){if(c[0]===e&&c[1]===l&&out.indexOf(b)<0)out.push(b);});});
+ out.sort(function(a,b){return (b.ic?1:0)-(a.ic?1:0);});return out;}
+function label(sel,unit){var u=unit&&BU[unit]?'원인 후보 <b>'+esc(BU[unit].title)+'</b>':'';
+ if(!sel)return u||'<span class="muted">없음</span>';return (u?u+' · ':'')+label0(sel);}
+function label0(sel){if(!sel)return '<span class="muted">없음</span>';
  if(sel.t==='pair'){var p=PB[sel.id];return p?'쌍 <b>'+esc(p.no||'')+' '+esc(p.e.join('–'))+'</b>':'쌍 <b>'+esc(sel.id)+'</b> <span class="muted">(없는 쌍)</span>';}
  if(sel.t==='electrode')return '전극 <b>'+esc(sel.id)+'</b>';if(sel.t==='layer')return '레이어 <b>'+esc(sel.id)+'</b>';
  if(sel.t==='roi')return '변경 위치 <b>'+esc(sel.id)+'</b>';return '<span class="muted">선택 없음</span>';}
@@ -163,10 +187,17 @@ function rangeBlock(p){var st=$('card-store'),i,why;
  if(st){for(i=0;i<st.children.length;i++){if(st.children[i].getAttribute('data-range')===p.id)return '<h3>위치 카드 범위 값</h3><div id="range-tables">'+st.children[i].innerHTML+'</div>';}}
  if(!D.maps)why='지도 폴더(--maps-dir)가 없어 위치 카드가 없습니다.';
  else{var dr=(D.maps.dropped_cards||[]).filter(function(d){return d.pair_id===p.id;})[0],n=(D.maps.options&&D.maps.options.top_cards)||'';
-  if(dr)why='이 쌍의 카드는 메모리 예산 때문에 빠졌습니다(cards_budget_reduced · 단계 '+dr.stage+' · '+dr.reason+'). 범위 값은 07 에서 봅니다.';
+  if(dr)why='이 쌍의 카드는 메모리 예산이 모자라 빠졌습니다(cards_budget_reduced · 단계 '+dr.stage+' · '+dr.reason+'). 범위 값은 07 에서 봅니다.';
   else if(p.d==null)why='값이 대기라 위치 카드 대상이 아닙니다.';
   else why='이 쌍은 위치 카드 대상이 아닙니다(상위 '+n+'). 카드는 종류마다 "같은 불량 증감 상위 · 구성 변경 상위 · 전체 |Δ|" 세 기준의 상위 '+n+' 쌍만 만듭니다.';}
  return '<h3>위치 카드 범위 값</h3><p class="muted" id="no-card">'+esc(why)+'</p>';}
+function unitsOfPair(p){var cu=[],tot=0;
+ (D.bundles||[]).forEach(function(b){var q=b.pairs&&b.pairs[p.id];if(q){cu.push({b:b,q:q});tot+=q[1];}});
+ cu.sort(function(x,y){return y.q[1]-x.q[1]||(x.b.id<y.b.id?-1:1);});
+ if(!cu.length)return '';
+ return '<div class="small" id="pd-units"><b>이 쌍의 변화가 들어간 원인 후보</b> ('+cu.length+' 개)<ul style="margin:2px 0 4px;padding-left:18px">'+cu.map(function(c){
+  return '<li>'+(c.b.ic?'<a class="lk" href="#unit='+encodeURIComponent(c.b.id)+'&to=s3">'+esc(c.b.title)+'</a>':esc(c.b.title)+' <span class="muted">(그 밖)</span>')+
+   ' — 카드 몫 '+sgx(c.q[0])+' <span class="muted">(쌍 변화의 '+(tot?Math.round(c.q[1]/tot*100):0)+'%, item '+c.q[2]+' 건)</span></li>';}).join('')+'</ul></div>';}
 function pairDetail(p){var rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.changes.pairs[p.id]&&D.changes.pairs[p.id].tags)||[],b=p.brk,eq,h;
  var tags=tg.map(function(t){return '<span class="badge b-tag">'+esc(TAGN[t]||t)+'</span>';}).join('');
  if(!b||b.status==='not_evaluated'||b.same_delta==null||b.new_value==null||b.gone_value==null)eq='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
@@ -176,8 +207,9 @@ function pairDetail(p){var rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.c
   '<table id="pd-total"><thead><tr><th class="l">쌍 전체 (장부)</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody><tr><td class="l">'+esc(p.e.join('–'))+'</td><td>'+(p.pa?f4(p.a):'없음')+'</td><td>'+(p.pb?f4(p.b):'없음')+'</td><td>'+sgx(p.d)+'</td></tr></tbody></table>'+
   '<details open><summary>item 펼침 ('+p.items.length+')</summary><table id="pd-items"><thead><tr><th class="l">방식 · 레이어</th><th class="l">구분</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody>'+
   p.items.map(function(it){return '<tr><td class="l">'+esc(it.label)+'</td><td class="l"><span class="badge '+(it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''))+'">'+(PRES[it.pres]||esc(it.pres))+'</span></td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+'</td><td>'+(it.pres==='both'?sgx(it.d):'<span class="muted">비교 없음</span>')+'</td></tr>';}).join('')+'</tbody></table></details>'+
-  '<h3>관련 변경 위치</h3><div id="pd-rois">'+(rk.length?rk.map(function(k){return '<button type="button" data-href="#sel=roi:'+encodeURIComponent(k)+'&entry=loc">#'+roiNo(k)+'</button>';}).join(' ')+' <span class="muted">관련 쌍 전체값입니다. 위치별 합계는 없습니다.</span>':
-   (D.changes&&D.changes.link_status==='ok'?'<span class="muted">변경 위치 미연결 — 04 가 고른 상위 위치에 없음</span>':'<span class="muted">04 결과가 없어 연결을 알 수 없습니다.</span>'))+'</div>'+
+  unitsOfPair(p)+
+  '<details><summary>관련 변경 위치(04, 보조) ▸</summary><div id="pd-rois">'+(rk.length?rk.map(function(k){return '<button type="button" data-href="#sel=roi:'+encodeURIComponent(k)+'&entry=loc">#'+roiNo(k)+'</button>';}).join(' ')+' <span class="muted">관련 쌍 전체값입니다. 위치별 합계는 없습니다.</span>':
+   (D.changes&&D.changes.link_status==='ok'?'<span class="muted">변경 위치 미연결 — 04 가 고른 상위 위치에 없음</span>':'<span class="muted">04 결과가 없어 연결을 알 수 없습니다.</span>'))+'</div></details>'+
   rangeBlock(p)+'<div class="slot" id="pd-video">영상: 보고서 미포함 — '+link07('#s6')+'</div>'+condBlock([p])+'</div>';
  return h;}
 function roiDetail(key){var rois=(D.changes&&D.changes.rois)||[],roi=null,i;for(i=0;i<rois.length;i++){if(rois[i].roi_key===key)roi=rois[i];}
@@ -196,7 +228,7 @@ function drawPanel(st,sel,pr){var pn=$('s3-panel');if(!pn)return;var root=docume
  var entry=st.kv.entry==='loc'||st.kv.entry==='pair'?st.kv.entry:(sel&&sel.t==='roi'?'loc':'pair'),tab=TABS.indexOf(st.kv.tab)>=0?st.kv.tab:'same';
  var sortB=st.kv.sort==='b';   /* #sort= accepts only "b" (the B value order); anything else is the default order */
  var cur={kind:st.kv.kind||pc.kind,ck:st.kv.ck||pc.ck,cat:pc.cat,tag:st.kv.tag||pc.tag,tab:tab,entry:entry,sort:sortB?'b':''};
- var loc=$('pn-loc'),pair=$('pn-pair');if(loc)loc.hidden=entry!=='loc';if(pair)pair.hidden=entry!=='pair';
+ var rr=$('roi-ref');if(rr&&entry==='loc')rr.open=true;   /* the 04 locations are one folded reference; entry=loc opens it */
  var bs=pn.querySelectorAll('[data-f]');for(i=0;i<bs.length;i++){var k=bs[i].getAttribute('data-f');if(k==='more')continue;bs[i].classList.toggle('on',(cur[k]||'')===bs[i].getAttribute('data-v'));}
  var cts=pn.querySelectorAll('.cardtab');for(i=0;i<cts.length;i++){cts[i].hidden=cts[i].getAttribute('data-tab')!==tab;}
  var tb=$('pl-table');
@@ -213,7 +245,7 @@ function drawPanel(st,sel,pr){var pn=$('s3-panel');if(!pn)return;var root=docume
   var pc2=$('pl-count');if(pc2)pc2.textContent='결과 '+n+' 쌍 · 표시 '+sh;
   var pm=$('pl-more');if(pm){pm.hidden=n<=sh;pm.textContent='더 보기 (+'+(n-sh)+' 쌍)';}
   var pnone=$('pl-none');if(pnone){pnone.hidden=n!==0;
-   pnone.innerHTML=cur.cat==='cno'?'CNO 는 쌍이 아니라 ④ 전극 장부에서 봅니다. <a data-go="s4" href="#s4">④ 로 이동</a>':'조건에 맞는 쌍이 없습니다.';}
+   pnone.innerHTML=cur.cat==='cno'?'CNO 는 쌍이 아니라 5 분포의 전극 장부에서 봅니다. <a data-go="s5" href="#s5">5 분포로 이동</a>':'조건에 맞는 쌍이 없습니다.';}
   root.setAttribute('data-pl-count',String(n));root.setAttribute('data-pl-shown',String(sh));root.setAttribute('data-pl-total',tb.getAttribute('data-total'));}
  root.setAttribute('data-entry',entry);root.setAttribute('data-tab',tab);
  var det=$('pn-detail'),html;
@@ -238,6 +270,7 @@ function pairLayer(p){var i,ks;for(i=0;i<p.items.length;i++){if(p.items[i].al&&M
  ks=Object.keys(layersOfPair(p)).sort();for(i=0;i<ks.length;i++){if(MP.layers.indexOf(ks[i])>=0)return ks[i];}return null;}
 function mapCfg(st,sel){var L=st.kv.layer,t;if(L!=='all'&&MP.layers.indexOf(L)<0)L=null;
  if(!L&&sel&&sel.t==='layer'&&MP.layers.indexOf(sel.id)>=0)L=sel.id;
+ if(!L&&st.kv.unit){var uc0=unitCellOf(st.kv.unit);if(uc0&&MP.layers.indexOf(uc0.l)>=0)L=uc0.l;}   /* a chosen cause candidate shows its own layer */
  if(!L&&sel&&sel.t==='pair'&&PB[sel.id])L=pairLayer(PB[sel.id]);
  if(!L){t=topPairs();if(t.length)L=pairLayer(t[0]);}
  if(!L)L=MP.layers[0]||'';
@@ -390,20 +423,42 @@ function onMapClick(cv,ev){var view=cv.getAttribute('data-view'),r=cv.getAttribu
 function toggleLayers(key){var st=parseHash(),cfg=mapCfg(st,selOf(st));
  if(key==='ov'){if(st.kv.ov==='1')delete st.kv.ov;else st.kv.ov='1';setHash(st);return;}
  cfg.on[key]=!cfg.on[key];var l=Object.keys(cfg.on).filter(function(q){return cfg.on[q];});st.kv.layers=l.length?l.join(','):'none';setHash(st);}
-function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel);filterRows(st);drawPartners(sel);drawPanel(st,sel,pr);
+function msel(st,sel){var uc=unitCellOf(st.kv.unit);return sel||(uc?{t:'electrode',id:uc.e,implied:true}:null);}
+function cellCards(st){var p=$('cell-cards');if(!p||p.getAttribute('data-has')!=='1')return;var e,l,sel=selOf(st),uc=unitCellOf(st.kv.unit);
+ if(sel&&sel.t==='electrode'&&st.kv.layer){e=sel.id;l=st.kv.layer;}else if(uc){e=uc.e;l=uc.l;}else{p.innerHTML='';return;}
+ var cs=cardsOfCell(e,l),cc=cs.filter(function(b){return b.ic;}),oth=cs.length-cc.length;
+ p.innerHTML='<b>이 칸('+esc(e)+' · '+esc(l)+')의 원인 후보</b> → '+(cc.length?cc.map(function(b){return '<a class="lk" href="#unit='+encodeURIComponent(b.id)+'&to=s3">'+esc(b.title)+'</a>';}).join(' · ')+(oth?' <span class="muted">(카드에 없는 '+oth+' 개는 3 의 "그 밖" 표)</span>':''):
+  cs.length?'<span class="muted">카드에 없는 원인 후보 '+cs.length+' 개 (3 의 "그 밖" 표)</span>':'<span class="muted">이 칸에 배정된 원인 후보 없음</span>');}
+function markUnit(st){var i,els=document.querySelectorAll('.selcard,.unitcell');for(i=0;i<els.length;i++)els[i].classList.remove('selcard','unitcell');
+ var u=st.kv.unit;if(!u)return;var c=$(u);if(c)c.classList.add('selcard');
+ var uc=unitCellOf(u);if(uc){var rows=document.querySelectorAll('tr[data-row="corr"]');for(i=0;i<rows.length;i++){if(rows[i].getAttribute('data-el')!==uc.e)continue;
+  var cs=rows[i].querySelectorAll('td[data-layer]');for(var j=0;j<cs.length;j++){if(cs[j].getAttribute('data-layer')===uc.l)cs[j].classList.add('unitcell');}}}}
+function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel),ms=msel(st,sel),mpr=related(ms);filterRows(st);drawPartners(ms);drawPanel(st,sel,pr);
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
- var lab=$('sel-label');if(lab)lab.innerHTML=label(sel);var clr=$('sel-clear');if(clr)clr.disabled=!sel;
- mark(sel,pr);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');
- var mk=mapKey(st,sel);if(mk!==MKEY){MKEY=mk;drawMaps(st,sel,pr);}}   /* the maps are redrawn only when a map state changed (not by search, tab, filter or scroll) */
-function mapKey(st,sel){return [sel?sel.t+':'+sel.id:'',st.kv.layer||'',st.kv.layers==null?'':st.kv.layers,st.kv.ov||'',ALPHA].join('|');}
+ var lab=$('sel-label');if(lab)lab.innerHTML=label(sel,st.kv.unit);var clr=$('sel-clear');if(clr)clr.disabled=!(sel||st.kv.unit);
+ mark(ms,mpr);markUnit(st);cellCards(st);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');
+ document.documentElement.setAttribute('data-unit',st.kv.unit||'');
+ var mk=mapKey(st,ms);if(mk!==MKEY){MKEY=mk;drawMaps(st,ms,mpr);}}   /* the maps are redrawn only when a map state changed (not by search, tab, filter or scroll) */
+function mapKey(st,sel){return [sel?sel.t+':'+sel.id:'',st.kv.layer||'',st.kv.unit||'',st.kv.layers==null?'':st.kv.layers,st.kv.ov||'',ALPHA].join('|');}
+function openUp(el){for(var n=el;n&&n!==document.body;n=n.parentNode){if(n.tagName==='DETAILS')n.open=true;}}
+/* a link with to= (and unit=) scrolls once; the to= is then dropped from the address so a later action does not scroll again */
+function routeScroll(first){var st=parseHash(),to=st.kv.to,u=st.kv.unit,t=null;
+ if(to==='s3'&&u)t=$(u)||$('rest-line-'+u)||$('rest-pixel-'+u);
+ if(!t&&to)t=$(to);
+ if(!t&&!to&&u&&!selOf(st))t=$(u);
+ if(t){openUp(t);t.scrollIntoView({block:'start'});}
+ if(to){delete st.kv.to;var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);}}
 function go(id){var el=$(id);if(el&&el.scrollIntoView)el.scrollIntoView({block:'start'});}
 document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.closest('[data-go],[data-href],[data-clear]'):null;if(!t)return;
- if(t.hasAttribute('data-clear')){var st=parseHash();delete st.kv.sel;st.flags.demo=false;setHash(st);return;}
+ if(t.hasAttribute('data-clear')){var st=parseHash();['sel','unit','it','layer'].forEach(function(k){delete st.kv[k];});st.flags.demo=false;setHash(st);return;}
  if(t.hasAttribute('data-go')){ev.preventDefault();go(t.getAttribute('data-go'));return;}
  var h=t.getAttribute('data-href');if(h){var st2=parseHash(),add={kv:{},flags:{}};
   h.replace(/^#/,'').split('&').forEach(function(p){var i=p.indexOf('=');if(i>0){var v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}add.kv[p.slice(0,i)]=v;}});
   if(add.kv.cat!=null&&/^(line:|pixel:|tag:|kind:)/.test(add.kv.cat)){['kind','ck','tag','more','q'].forEach(function(k){delete st2.kv[k];});}   /* section 1 is a new entry: it replaces the section 3 filters */
-  Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;setHash(st2);if(t.hasAttribute('data-scroll'))go(t.getAttribute('data-scroll'));}});
+  Object.keys(add.kv).forEach(function(k){st2.kv[k]=add.kv[k];});if(add.kv.sel!=null)st2.flags.demo=false;
+  if(t.hasAttribute('data-cell')&&add.kv.sel&&add.kv.layer){   /* a cell of 2: pick the cause candidate that owns it (none: the line says so) */
+   var cs=cardsOfCell(add.kv.sel.replace(/^electrode:/,''),add.kv.layer);if(cs.length)st2.kv.unit=cs[0].id;else delete st2.kv.unit;}
+  setHash(st2);if(t.hasAttribute('data-scroll'))go(t.getAttribute('data-scroll'));}});
 document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest)return;
  var fb=t.closest('[data-f]');if(fb){var fs=parseHash(),fk=fb.getAttribute('data-f'),fv=fb.getAttribute('data-v');
   if(fk==='more')fs.kv.more='1';else if(fv===''||(fk!=='tab'&&fk!=='entry'&&fs.kv[fk]===fv)){delete fs.kv[fk];
@@ -424,7 +479,7 @@ var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash()
 var pqi=$('pl-q');if(pqi)pqi.addEventListener('input',function(){var st=parseHash();if(pqi.value)st.kv.q=pqi.value;else delete st.kv.q;delete st.kv.more;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
 var ca=$('cond-all');if(ca)ca.addEventListener('toggle',function(){apply();});
-window.addEventListener('hashchange',apply);
-apply();document.documentElement.setAttribute('data-ready','1');
+window.addEventListener('hashchange',function(){apply();routeScroll(false);});
+apply();routeScroll(true);document.documentElement.setAttribute('data-ready','1');
 })();
 """
