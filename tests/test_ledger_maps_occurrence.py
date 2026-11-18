@@ -25,11 +25,11 @@ def rows(doc):
 
 # ---- the metric on cell sets (no files) ------------------------------------------------------------------------------
 
-def fake_occ(budget, shape=(8, 8), names=('x', 'y')):
+def fake_occ(budget, shape=(8, 8), names=('x', 'y'), counts=None):
     ctx = SimpleNamespace(info={'frame': SimpleNamespace(shape_yx=shape)}, role='reference',
                           by_id={name: {'number': index + 1} for index, name in enumerate(names)},
                           items=[{'item_id': name} for name in names])
-    return lm._Occurrence(ctx, budget, 3.0), SimpleNamespace(valid=np.ones(shape, dtype=bool))
+    return lm._Occurrence(ctx, budget, 3.0, counts), SimpleNamespace(valid=np.ones(shape, dtype=bool))
 
 
 def flat(cells, width=8):
@@ -315,6 +315,121 @@ def test_a_tight_budget_gives_the_occurrence_up_and_leaves_maps_and_cards_unchan
     code, roomy = maps_direct(tmp_path, 'roomy')
     assert code == 0 and load_maps(roomy)['occurrence']['status'] == 'ok'
     assert png_bytes(roomy) == png_bytes(base)
+    # rnarr/T6b: the record says what the metric needed and why items are missing
+    record = doc['occurrence']['budget']
+    assert record['occ_peak_bytes'] > 0 and record['hold_mode'] == 'immediate' and record['yielded_at_bytes'] is None
+    band = [b for b in doc['bands'] if b['code'] == 'occurrence_budget_reduced'][0]
+    assert 'more is needed for the connected-region metric' in band['detail']
+    assert load_maps(roomy)['occurrence']['budget']['occ_peak_bytes'] == record['occ_peak_bytes']
+
+
+# ---- rnarr/T6b: single pieces are never held, the last piece completes, the yield is run-wide ------------------------
+
+def test_a_single_piece_item_is_measured_at_once_and_never_held():
+    budget = lm._Budget(10 ** 9)
+    occ, frame = fake_occ(budget, counts={'x': 1})
+    occ.arrive('x', frame, flat({(3, 3), (3, 4)}))
+    assert budget.occ_hold.bytes == 0 and budget.used == 0 and budget.occ_peak > 0     # temporaries only
+    assert occ.pieces == {} and occ.values['x'][:3] == (1, 2, 2)
+    assert not budget.occ_deferred
+    occ.finish()
+    assert occ.result()['x']['state'] == 'observed'
+    occ.close()
+
+
+def test_a_multi_piece_item_is_measured_when_its_last_piece_comes():
+    budget = lm._Budget(10 ** 9)
+    occ, frame = fake_occ(budget, counts={'x': 2})
+    occ.arrive('x', frame, flat({(3, 3), (3, 4)}))
+    assert budget.occ_hold.bytes > 0 and 'x' not in occ.values
+    occ.arrive('x', frame, flat({(3, 4), (3, 5), (4, 5)}))
+    assert budget.occ_hold.bytes == 0 and budget.used == 0                             # given back before finish
+    assert occ.values['x'][:3] == (1, 4, 4) and not budget.occ_deferred
+    occ.close()
+
+
+def test_an_unknown_piece_count_is_held_to_the_end_and_recorded_as_deferred():
+    budget = lm._Budget(10 ** 9)
+    occ, frame = fake_occ(budget)
+    occ.arrive('x', frame, flat({(3, 3)}))
+    occ.arrive('x', frame, flat({(5, 5)}))
+    assert budget.occ_hold.bytes > 0 and 'x' not in occ.values and budget.occ_deferred
+    occ.finish()
+    assert occ.values['x'][0] == 2 and budget.occ_hold.bytes == 0
+    occ.close()
+    # fewer pieces than counted: held to `finish`, still deferred
+    budget = lm._Budget(10 ** 9)
+    occ, frame = fake_occ(budget, counts={'x': 3})
+    occ.arrive('x', frame, flat({(3, 3)}))
+    assert not budget.occ_deferred
+    occ.finish()
+    assert budget.occ_deferred and occ.values['x'][0] == 1
+    occ.close()
+
+
+def test_a_piece_after_the_counted_ones_leaves_the_item_pending_not_wrong():
+    budget = lm._Budget(10 ** 9)
+    occ, frame = fake_occ(budget, counts={'x': 1})
+    occ.arrive('x', frame, flat({(3, 3)}))
+    occ.arrive('x', frame, flat({(5, 5)}))
+    occ.finish()
+    assert occ.result()['x'] == {'state': 'pending', 'reason': 'piece_count_mismatch'}
+    assert budget.occ_mismatch == 1
+    occ.close()
+
+
+def test_a_yield_in_one_product_stops_holding_in_the_next():
+    budget = lm._Budget(100)
+    budget.reserve(70, 'existing')
+    first, frame = fake_occ(budget)
+    first.arrive('x', frame, flat({(1, 1), (1, 2), (1, 3), (1, 4), (1, 5)}))
+    budget.reserve(15, 'existing again')                        # takes the 20 held bytes back
+    assert budget.occ_reduced and budget.occ_yielded_at == 20
+    first.close()
+    second, frame = fake_occ(budget, counts={'x': 2})           # the next product, same budget
+    second.arrive('x', frame, flat({(2, 2)}))
+    assert budget.occ_hold.bytes == 0 and second.result()['x'] == {'state': 'pending', 'reason': 'budget'}
+    budget.release(60, 'existing')                              # room for the temporaries of one measurement
+    single, frame = fake_occ(budget, counts={'x': 1})           # a single piece holds nothing, so it still gets a value
+    single.arrive('x', frame, flat({(2, 2)}))
+    assert single.result()['x']['state'] == 'observed'
+    second.close()
+    single.close()
+
+
+def test_a_yield_that_gives_back_no_byte_returns_false_and_the_reserve_does_not_loop():
+    budget = lm._Budget(100)
+    occ, frame = fake_occ(budget)
+    budget.reserve_occ(10, 'temporary of somebody else')       # occurrence bytes that are not held pieces
+    assert occ.give_back() is False and not budget.occ_reduced
+    budget.reserve(80, 'existing')
+    with pytest.raises(lm._BudgetExceeded):
+        budget.reserve(30, 'too much')                          # would loop for ever if the yield kept answering True
+    occ.close()
+
+
+def test_the_coordinate_arrays_are_reserved_before_they_are_built():
+    budget = lm._Budget(79)
+    cells = flat({(1, 1), (1, 2), (1, 3), (1, 4), (1, 5)})      # 5 cells: y/x arrays need 80 bytes
+    with pytest.raises(lm._BudgetExceeded, match='coordinates'):
+        lm._measure_regions(cells, (8, 8), budget, 'item')
+    assert budget.used == 0 and budget.occ_hold.bytes == 0
+    budget = lm._Budget(10 ** 6)
+    assert lm._measure_regions(cells, (8, 8), budget, 'item')[:3] == (1, 5, 5)
+    assert budget.used == 0
+
+
+def test_piece_counts_come_from_the_by_size_rows_of_the_map_diameter():
+    def row(diameter, area_a, area_b, layer='D1'):
+        return {'diameter_um': diameter, 'density_layer': layer, 'area_a': area_a, 'area_b': area_b,
+                'lambda_a': 0.0, 'lambda_b': 0.0}
+    led = {'pairs': [{'pair_id': 'P', 'items': [
+        {'item_id': 'one', 'presence': 'both', 'by_size': [row(3.0, 1.0, 2.0), row(5.0, 1.0, 1.0)]},
+        {'item_id': 'two', 'presence': 'both', 'by_size': [row(3.0, 1.0, 2.0), row(3.0, 1.0, 2.0, 'D2')]},
+        {'item_id': 'only_b', 'presence': 'new', 'by_size': [row(3.0, 0.0, 2.0)]},
+        {'item_id': 'none', 'presence': 'both', 'by_size': [row(5.0, 1.0, 1.0)]}]}]}
+    assert lm._occ_piece_counts(led, 'reference', 3.0) == {'one': 1, 'two': 2}
+    assert lm._occ_piece_counts(led, 'target', 3.0) == {'one': 1, 'two': 2, 'only_b': 1}
 
 
 # ---- layer order (E10) ------------------------------------------------------------------------------------------------

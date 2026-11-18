@@ -143,6 +143,11 @@ class _Budget(object):
         self.occ_hold = _Hold()
         self.occ_peak = 0                # the most bytes the occurrence hold owned at once
         self.yielder = None            # () -> True when it gave occurrence bytes back, False when it holds none
+        # rnarr/T6b (R11:2, R11:3): the yield is a fact of the whole run, not of one product
+        self.occ_reduced = False         # an existing reservation took the occurrence bytes back: nothing new is held
+        self.occ_yielded_at = None       # the occurrence bytes given back by the first yield
+        self.occ_deferred = False        # some item was held to the end of its product (piece count unknown or short)
+        self.occ_mismatch = 0            # items whose sink pieces did not match the ledger piece count (set pending)
 
     def set_stage(self, role, stage):
         self.stage = (role, stage)
@@ -330,6 +335,31 @@ def _side_items(led_doc, role):
     return items, by_id
 
 
+def _occ_piece_counts(led_doc, role, report_diameter):
+    """{item_id: sink pieces at the map diameter on this product}, known before the product is read (rnarr/T6b, E3).
+
+    The sink is called once per (item, group); a group is (analysis layer, density layer, diameter). The ledger lists the
+    same groups in `by_size` (`diameter_um`, `density_layer`, `area_a`/`area_b`), so the product has one piece for every
+    `by_size` row of the map diameter in which it has area. An item without such a row is left out (count unknown)."""
+    field = 'area_a' if role == 'reference' else 'area_b'
+    lam = 'lambda_a' if role == 'reference' else 'lambda_b'
+    present = ('both', 'gone') if role == 'reference' else ('both', 'new')
+    counts = {}
+    for pair in led_doc.get('pairs') or []:
+        for item in pair.get('items') or []:
+            if item.get('presence') not in present:
+                continue
+            number = 0
+            for entry in item.get('by_size') or ():
+                if entry.get('diameter_um') is None or size_key(entry['diameter_um']) != report_diameter:
+                    continue
+                if (entry.get(field) or 0) > 0 or entry.get(lam):
+                    number += 1
+            if number:
+                counts[item['item_id']] = number
+    return counts
+
+
 def _window(info):
     """README 18.3: a U_px square (per axis) at the centre of the frame, or the whole frame."""
     height, width = info['frame'].shape_yx
@@ -458,12 +488,20 @@ def _measure_regions(union, shape_yx, budget, what):
     """(n, cells, largest_cells, boundary_n) of the 4-neighbour regions of a sorted unique flat cell index array."""
     height, width = shape_yx
     count = int(len(union))
-    ys = union // width
-    xs = union - ys * width
-    y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
-    box_h, box_w = y1 - y0 + 1, x1 - x0 + 1
-    nbytes = box_h * box_w + 8 * box_h + OCC_LABEL_BYTES_PER_CELL * count
-    budget.reserve_occ(nbytes, f'labelling {what} (box {box_h}x{box_w}, {count} cells)')
+    # R11:4: the y/x arrays (16 B per cell) are reserved before they are built; the rest follows once the box is known
+    coords = 16 * count
+    budget.reserve_occ(coords, f'coordinates of {what} ({count} cells)')
+    try:
+        ys = union // width
+        xs = union - ys * width
+        y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+        box_h, box_w = y1 - y0 + 1, x1 - x0 + 1
+        nbytes = box_h * box_w + 8 * box_h + OCC_LABEL_BYTES_PER_CELL * count - coords
+        budget.reserve_occ(nbytes, f'labelling {what} (box {box_h}x{box_w}, {count} cells)')
+    except BaseException:
+        budget.release_occ(coords)
+        raise
+    nbytes += coords
     try:
         mask = np.zeros((box_h, box_w), dtype=bool)
         mask[ys - y0, xs - x0] = True
@@ -484,23 +522,33 @@ def _measure_regions(union, shape_yx, budget, what):
 class _Occurrence(object):
     """The observed connected regions of one product: pieces held while it is read, values after `finish`."""
 
-    def __init__(self, ctx, budget, report_diameter):
+    def __init__(self, ctx, budget, report_diameter, piece_counts=None):
+        """piece_counts: {item_id: number of sink pieces at the map diameter on this product} from ledger.json
+        `by_size` (see `_occ_piece_counts`). 1 = measured at once, never held; >= 2 = held until the last piece comes;
+        missing or 0 = unknown, held to `finish` (hold_mode deferred)."""
         self.ctx = ctx
         self.budget = budget
         self.diameter = report_diameter
+        self.piece_counts = piece_counts or {}
         height, width = ctx.info['frame'].shape_yx
         self.shape = (int(height), int(width))
         self.dtype = np.int32 if self.shape[0] * self.shape[1] < 2 ** 31 else np.int64
         self.itemsize = np.dtype(self.dtype).itemsize
         self.pieces = {}                # item_id -> [flat cell index arrays] (held)
         self.held = {}                  # item_id -> held bytes
+        self.seen = {}                  # item_id -> number of non-empty pieces that came
         self.arrived = set()            # item ids whose sink call of the map diameter came (also an empty one)
         self.failed = set()             # item ids without a value for lack of budget
-        self.reduced = False            # the budget took every occurrence byte back: nothing new is held
+        self.mismatch = set()           # items that got a piece after their value was measured (counted pieces too few)
         self.values = {}                # item_id -> measured regions
         self.valid_cells = None
         self.valid_basis = None
         budget.yielder = self.give_back
+
+    @property
+    def reduced(self):
+        """The budget took every occurrence byte back (in any product of the run): nothing new is held."""
+        return self.budget.occ_reduced
 
     def _drop(self, item_id):
         self.pieces.pop(item_id, None)
@@ -511,16 +559,56 @@ class _Occurrence(object):
         self._drop(item_id)
 
     def give_back(self):
-        """The yield hook of `_Budget.reserve`: True when it gave bytes back (every holder becomes `pending`)."""
-        if self.budget.occ_hold.bytes <= 0:
+        """The yield hook of `_Budget.reserve`: True when it gave bytes back (every holder becomes `pending`).
+        R11:3: False when no byte came back, so the reserve loop never repeats a yield that frees nothing."""
+        given = sum(self.held.values())
+        if given <= 0:
             return False
         for item_id in list(self.pieces):
             self._fail(item_id)
-        self.reduced = True
+        if self.budget.occ_yielded_at is None:
+            self.budget.occ_yielded_at = given
+        self.budget.occ_reduced = True
         return True
 
+    def _name(self, item_id):
+        return f'{self.ctx.role} item {self.ctx.by_id[item_id]["number"]}'
+
+    def _measure(self, item_id, union):
+        """The value of one item from its sorted unique cells; a budget miss makes just this item pending."""
+        try:
+            self.values[item_id] = _measure_regions(union, self.shape, self.budget, self._name(item_id))
+        except _BudgetExceeded:
+            self.failed.add(item_id)
+
+    def _complete(self, item_id):
+        """Union of the held pieces of one item, its value, and the pieces given back."""
+        pieces = self.pieces.get(item_id)
+        if pieces is None:
+            return
+        if len(pieces) > 1:
+            total = sum(len(piece) for piece in pieces)
+            nbytes = OCC_UNION_BYTES_PER_CELL * total
+            try:
+                self.budget.reserve_occ(nbytes, f'union {self._name(item_id)}')
+            except _BudgetExceeded:
+                self._fail(item_id)
+                return
+            try:
+                union = np.unique(np.concatenate(pieces))
+            finally:
+                self.budget.release_occ(nbytes)
+        else:
+            union = pieces[0]
+        pieces = None
+        try:
+            self._measure(item_id, union)
+        finally:
+            union = None
+            self._drop(item_id)
+
     def arrive(self, item_id, frame, geom_idx):
-        """One sink call of the map diameter (also an empty one): hold the cells as one piece of the item."""
+        """One sink call of the map diameter (also an empty one)."""
         if self.valid_cells is None:
             valid = getattr(frame, 'valid', None)
             if valid is None:
@@ -530,47 +618,41 @@ class _Occurrence(object):
         self.arrived.add(item_id)
         if not len(geom_idx) or item_id in self.failed:
             return
+        if item_id in self.values:
+            # a piece after the value was measured: the ledger piece count was too small. No value rather than a wrong one.
+            del self.values[item_id]
+            self.failed.add(item_id)
+            self.mismatch.add(item_id)
+            self.budget.occ_mismatch += 1
+            return
+        expected = self.piece_counts.get(item_id) or 0
+        self.seen[item_id] = self.seen.get(item_id, 0) + 1
+        if expected == 1:
+            # one piece in all: measured now, nothing is held (the temporaries are reserved and given back inside)
+            self._measure(item_id, geom_idx)
+            return
         if self.reduced:
             self._fail(item_id)
             return
         nbytes = self.itemsize * len(geom_idx)
         try:
-            self.budget.reserve_occ(nbytes, f'cells of {self.ctx.role} item {self.ctx.by_id[item_id]["number"]}')
+            self.budget.reserve_occ(nbytes, f'cells of {self._name(item_id)}')
         except _BudgetExceeded:
             self._fail(item_id)         # one piece missing: the item stays `pending` to the end (no partial value)
             return
         self.pieces.setdefault(item_id, []).append(geom_idx.astype(self.dtype))
         self.held[item_id] = self.held.get(item_id, 0) + nbytes
+        if expected >= 2 and self.seen[item_id] >= expected:
+            self._complete(item_id)     # the last piece came: value now, the pieces go back at once
+        elif expected < 2:
+            self.budget.occ_deferred = True     # piece count unknown: held to `finish`
 
     def finish(self):
-        """Values of every held item (the pieces are given back one item after the other)."""
+        """Values of every item still held (unknown or short piece count); pieces are given back one item after the other."""
         for item_id in [rec['item_id'] for rec in self.ctx.items]:
-            pieces = self.pieces.get(item_id)
-            if pieces is None:
-                continue
-            if len(pieces) > 1:
-                total = sum(len(piece) for piece in pieces)
-                nbytes = OCC_UNION_BYTES_PER_CELL * total
-                try:
-                    self.budget.reserve_occ(nbytes, f'union {self.ctx.role} item {self.ctx.by_id[item_id]["number"]}')
-                except _BudgetExceeded:
-                    self._fail(item_id)
-                    continue
-                try:
-                    union = np.unique(np.concatenate(pieces))
-                finally:
-                    self.budget.release_occ(nbytes)
-            else:
-                union = pieces[0]
-            pieces = None
-            try:
-                self.values[item_id] = _measure_regions(
-                    union, self.shape, self.budget, f'{self.ctx.role} item {self.ctx.by_id[item_id]["number"]}')
-            except _BudgetExceeded:
-                self.failed.add(item_id)
-            finally:
-                union = None
-                self._drop(item_id)
+            if item_id in self.pieces:
+                self.budget.occ_deferred = True   # fewer pieces came than counted: the item was held to the end
+            self._complete(item_id)
 
     def close(self):
         """Give back whatever is still held and stop yielding (also after an error)."""
@@ -584,7 +666,9 @@ class _Occurrence(object):
         out = {}
         for rec in self.ctx.items:
             item_id = rec['item_id']
-            if item_id in self.failed:
+            if item_id in self.mismatch:
+                out[item_id] = {'state': 'pending', 'reason': 'piece_count_mismatch'}
+            elif item_id in self.failed:
                 out[item_id] = {'state': 'pending', 'reason': 'budget'}
             elif item_id in self.values:
                 n, cells, largest, boundary = self.values[item_id]
@@ -2220,7 +2304,8 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     ctx = _SideContext(role, info, window, geom['tile_px'], region, block, items, by_id, layers)
     ctx.run = run
     ctx.layer_key = layer_key
-    occ = _Occurrence(ctx, budget, report_diameter) if OCCURRENCE_ENABLED and occ_out is not None else None
+    occ = (_Occurrence(ctx, budget, report_diameter, _occ_piece_counts(led_doc, role, report_diameter))
+           if OCCURRENCE_ENABLED and occ_out is not None else None)
     ctx.occ = occ
     key = 'a' if role == 'reference' else 'b'
 
@@ -2621,13 +2706,22 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     dropped = sorted(run.dropped, key=lambda d: (KINDS.index(d['kind']), d['rank'], d['pair_id']))
     occurrence = _occurrence_json(led_doc, window_json, occ_out, report_diameter) if len(occ_out) == len(ROLES) else None
     occ_pending = 0 if occurrence is None else sum(occurrence['counts'][role]['pending'] for role in ROLES)
+    # rnarr/T6b: what the occurrence metric needed on top of the existing operations' peak (peaks exclude occurrence)
+    occ_needed = max(0, budget.occ_peak - max(0, budget.limit - budget.peak))
+    if occurrence is not None:
+        occurrence['budget'] = {'occ_peak_bytes': budget.occ_peak, 'yielded_at_bytes': budget.occ_yielded_at,
+                                'hold_mode': 'deferred' if budget.occ_deferred else 'immediate',
+                                'piece_count_mismatch_items': budget.occ_mismatch}
     status = 'partial' if failed or dropped or occ_pending else 'ok'
     if occ_pending:
         # E3: the occurrence metric gave its memory back (or did not fit): those items have no value, nothing else changes
         reasons.append('occurrence_budget_reduced')
-        run.bands.append({'code': 'occurrence_budget_reduced', 'count': occ_pending,
-                          'detail': f'{occ_pending} item value(s) of the observed connected regions are missing '
-                                    f'because of the memory budget (max_operation_bytes {budget.limit})'})
+        detail = (f'{occ_pending} item value(s) of the observed connected regions are missing '
+                  f'because of the memory budget (max_operation_bytes {budget.limit})')
+        if occ_needed:
+            size = f'{occ_needed / 1048576:.1f} MB' if occ_needed >= 1048576 else f'{occ_needed} bytes'
+            detail += f'; about {size} more is needed for the connected-region metric'
+        run.bands.append({'code': 'occurrence_budget_reduced', 'count': occ_pending, 'detail': detail})
     if failed:
         reasons.append('ledger_maps_value_check_failed')
     if dropped:

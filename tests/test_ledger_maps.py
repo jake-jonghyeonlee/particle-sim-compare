@@ -475,6 +475,8 @@ def test_budget_exceeded_before_reading_exits_2_without_result_files(tmp_path):
 def test_budget_in_range_records_the_peak_reservation(tmp_path, monkeypatch):
     # rnarr/T6: the exact-peak limit is the limit of the existing operations; the occurrence metric would give its
     # memory back there (exit 3, tests/test_ledger_maps_occurrence.py), so this test runs without it
+    # rnarr/T6b (R11:5): still needed after the single-piece fix: the connected-region temporaries (138 bytes here)
+    # do not fit on top of the existing peak, so that item stays pending (exit 3)
     monkeypatch.setattr(ledger_maps, 'OCCURRENCE_ENABLED', False)
     chain(tmp_path)
     code, out = maps_direct(tmp_path)
