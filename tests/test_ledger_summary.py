@@ -250,6 +250,127 @@ def test_m2_atom_order_does_not_matter_to_the_bundle_function():
     assert len(set(outs)) == 1
 
 
+def mixed_world():
+    """Pair, hub, mixed why (['hubs', 'nohub']), CNO, moved electrode, 3-electrode (multi) atoms in one list."""
+    atoms, pair_rows = [], {}
+
+    def add(aid, kind, pid, ends, a, b, layer='SD1', cno=False):
+        atoms.append({'id': aid, 'kind': kind, 'pair_id': None if cno else pid, 'cno': cno, 'layer': layer,
+                      'ends': list(ends), 'a': a, 'b': b, 'd': b - a, 'presence': 'both'})
+        if not cno:
+            row = pair_rows.setdefault(pid, {'delta': 0.0, 'electrodes': sorted({n for n, _l in ends})})
+            row['delta'] += b - a
+
+    for i, partner in enumerate('ABC'):                       # S: hub with three partners at sign +
+        add(f'hs{i}', 'line', f'S{partner}', [('S', 'SD1'), (partner, 'SD1')], .010, .020 + .001 * i)
+    for i, partner in enumerate('DEF'):                       # T: hub with three partners at sign +
+        add(f'ht{i}', 'line', f'T{partner}', [('T', 'SD1'), (partner, 'SD1')], .010, .030 + .001 * i)
+    add('st0', 'line', 'ST', [('S', 'SD1'), ('T', 'SD1')], .010, .025)      # both ends hubs -> 'hubs'
+    add('st1', 'line', 'ST', [('S', 'SD1'), ('T', 'SD1')], .010, .010 + 1e-15)   # inside tolerance -> 'nohub'
+    add('mv0', 'pixel', 'MN', [('M', 'SD1'), ('N', 'SD1')], .004, .009)     # M moved: its layer state changed
+    add('cn0', 'pixel', None, [('N', 'SD1')], .001, .003, cno=True)         # CNO line of N
+    add('mu0', 'line', 'XYZ', [('X', 'SD1'), ('Y', 'SD1'), ('Z', 'SD1')], .002, .006)   # three electrodes
+    names = ['S', 'T', 'M', 'N', 'X', 'Y', 'Z'] + list('ABCDEF')
+    erows = {n: {'electrode': n, 'layer_state_status': 'verified', 'layer_state': {'SD1': 'both'}, 'moved': False}
+             for n in names}
+    erows['M'] = {'electrode': 'M', 'layer_state_status': 'verified', 'moved': True,
+                  'layer_state': {'SD1': 'a_only', 'GAT2': 'b_only'}}
+    g = {k: math.fsum(abs(a['d']) for a in atoms if a['kind'] == k) for k in ('line', 'pixel')}
+    kstat = {k: ('ok', [], g[k]) for k in g}
+    totals = {k: {'delta': math.fsum(a['d'] for a in atoms if a['kind'] == k)} for k in g}
+    return atoms, kstat, erows, pair_rows, totals
+
+
+def test_r10_2_a_mixed_atom_list_gives_identical_bytes_and_the_expected_reasons():
+    atoms, kstat, erows, pair_rows, totals = mixed_world()
+    outs, docs = [], []
+    for seed in range(6):
+        shuffled = [dict(a) for a in atoms]
+        random.Random(seed).shuffle(shuffled)
+        got, _ = ledger._bundle_summary(shuffled, kstat, erows, pair_rows, 0.0, totals, str, {'line': 1.0, 'pixel': 1.0})
+        outs.append(json.dumps(got, sort_keys=False))
+        docs.append(got)
+    assert len(set(outs)) == 1
+    by_key = {tuple(b['key']): b for b in docs[0]['list']}
+    assert by_key[('p', 'ST', 'SD1')]['why'] == ['hubs', 'nohub']              # (b) a mixed reason set
+    assert by_key[('p', 'XYZ', 'SD1')]['why'] == ['multi']                     # (c) three electrodes
+    assert ('mv', 'M') in by_key and ('e', 'N', 'SD1') in by_key               # a move and a CNO bundle
+    cno = by_key[('e', 'N', 'SD1')]
+    assert any(row['cno'] for row in cno['rows'])
+
+
+def test_r10_4_a_bundle_inside_the_limit_gets_no_card_and_no_k80_but_stays_in_the_sums():
+    atoms = []
+    for i, d in enumerate((.05, .04, 1e-13)):
+        atoms.append({'id': f'i{i}', 'kind': 'line', 'pair_id': f'P{i}', 'cno': False, 'layer': 'SD1',
+                      'ends': [(f'S{i}', 'SD1'), (f'T{i}', 'SD1')], 'a': .01, 'b': .01 + d, 'd': d, 'presence': 'both'})
+    names = [n for a in atoms for n, _l in a['ends']]
+    erows = {n: {'electrode': n, 'layer_state_status': 'verified', 'layer_state': {'SD1': 'both'}, 'moved': False}
+             for n in names}
+    pair_rows = {f'P{i}': {'delta': a['d'], 'electrodes': [a['ends'][0][0], a['ends'][1][0]]}
+                 for i, a in enumerate(atoms)}
+    g = math.fsum(a['d'] for a in atoms)
+    kstat = {'line': ('ok', [], g), 'pixel': ('no_change', [], 0.0)}
+    totals = {'line': {'delta': g}, 'pixel': {'delta': 0.0}}
+    got, checks = ledger._bundle_summary(atoms, kstat, erows, pair_rows, 0.0, totals, str, {'line': 1.0, 'pixel': 0.0})
+    ranking = got['ranking']['line']
+    assert len(ranking['cards']) == 2 and ranking['rest'] == [] and ranking['k80'] <= 2
+    assert checks['assigned'] == 3 and checks['duplicates'] == 0
+    assert all(c['status'] in ('passed', 'not_evaluated') for c in checks['kinds']['line'].values())
+    assert ledger.SUMMARY_RULES['negligible']['abs'] == ledger.NO_CHANGE_ABS
+
+
+def _design_args(design_deltas, vi_a=.25):
+    pair_rows = {f'P{i}': {'pair_id': f'P{i}', 'electrodes': [f'E{i}', f'F{i}'],
+                           'items': [{'class': 'line', 'ca_delta': d, 'delta': .001}]}
+                 for i, d in enumerate(design_deltas)}
+    segments = {'ca': math.fsum(design_deltas), 'f': .05, 'crp': 0.0, 'density': 0.0}
+    rebase = {'missing': [], 'coefficients': {'ratios': {}}, 'check': {'line': {'status': 'passed'}}}
+    basis = {'status': 'available', 'reasons': [], 'segments': segments}
+    return rebase, basis, pair_rows, vi_a
+
+
+def test_r10_1_a_design_difference_at_zero_noise_has_no_sign_and_is_marked_negligible():
+    rebase, basis, pair_rows, vi_a = _design_args([7.8e-18, -3.5e-18])      # same CA: only float residue
+    out = ledger._design_summary('line', rebase, basis, pair_rows, [], vi_a, {'line': {'delta': .05}})
+    assert out['top_increase'] == [] and out['top_decrease'] == []
+    assert out['negligible'] == ['design', 'crp', 'density']
+    assert out['a_relative']['design'] == pytest.approx(100.0 * out['segments']['design'] / vi_a)   # raw value kept
+    assert 'resolution' not in out['negligible']
+
+
+def test_r10_1_the_limit_is_abs_plus_rel_times_vi_a_pairs_just_inside_and_outside():
+    vi_a = .25
+    limit = ledger.NO_CHANGE_ABS + ledger.NO_CHANGE_REL * vi_a
+    rebase, basis, pair_rows, _ = _design_args([.5 * limit, -.5 * limit, 2 * limit, -2 * limit])
+    out = ledger._design_summary('line', rebase, basis, pair_rows, [], vi_a, {'line': {'delta': .05}})
+    assert [e['key'] for e in out['top_increase']] == ['P2'] and [e['key'] for e in out['top_decrease']] == ['P3']
+    assert 'design' in out['negligible']                    # the summed design segment is 0 here
+
+
+def test_r10_3_missing_cells_are_split_by_scope_and_a_null_share_is_flagged(tmp_path):
+    def put(doc):
+        miss = [{'scope': 'item', 'kind': 'pixel', 'item_id': 'i1', 'density_layer': 'SD1', 'diameter_um': 3.0,
+                 'area_b_um2': 1.0, 'lambda_b_share': .25},
+                {'scope': 'cno', 'kind': 'pixel', 'electrode_id': 'E1', 'density_layer': 'SD1', 'diameter_um': 3.0,
+                 'area_b_um2': 2.0, 'lambda_b_share': None},
+                {'scope': 'cno', 'kind': 'pixel', 'electrode_id': 'E2', 'density_layer': 'SD1', 'diameter_um': 3.0,
+                 'area_b_um2': 3.0, 'lambda_b_share': .5},
+                {'scope': 'cell', 'kind': 'pixel', 'density_layer': 'SD1', 'diameter_um': 3.0,
+                 'area_b_um2': 4.0, 'lambda_b_share': .125}]
+        doc['rebase'] = {'status': 'partial', 'reasons': [], 'missing': miss, 'coefficients': {'ratios': {}},
+                         'states': {'line': {'status': 'unavailable', 'reasons': ['r']},
+                                    'pixel': {'status': 'unavailable', 'reasons': ['r']}},
+                         'items': [], 'cno': [], 'check': {}}
+    doc, _ = run(tmp_path,[up('P1', ('E', 'F'), None)], mutate=put)
+    cells = {c['scope']: c for c in doc['summary']['design']['pixel']['missing_cells']}
+    assert sorted(cells) == ['cell', 'cno', 'item']
+    assert cells['item']['item_count'] == 1 and cells['item']['cno_count'] == 0 and cells['item']['share_partial'] is False
+    assert cells['cno']['cno_count'] == 2 and cells['cno']['item_count'] == 0
+    assert cells['cno']['lambda_b_share'] == .5 and cells['cno']['share_partial'] is True
+    assert cells['cno']['area_b_um2'] == 5.0
+
+
 def test_n_old_compare2_without_rebase_has_no_design_but_has_bundles(tmp_path):
     pairs = hub_pairs('S', ['A', 'B', 'C'], 'H')
     doc, _ = run(tmp_path, pairs, dl1=dl1_all(['S', 'A', 'B', 'C']))

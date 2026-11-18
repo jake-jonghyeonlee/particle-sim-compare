@@ -866,7 +866,13 @@ SUMMARY_RULES = {
     'bundle_rule': BUNDLE_RULE, 'hub_min': HUB_MIN, 'card_count': CARD_COUNT, 'conflict_share': CONFLICT_SHARE,
     'k_share': K_SHARE, 'concentrated_k80_max': CONCENTRATED_K80, 'dispersed_k80_ratio': DISPERSED_RATIO,
     'min_atoms': MIN_ATOMS, 'top_groups': TOP_GROUPS, 'top_design': TOP_DESIGN,
-    'no_change_abs': NO_CHANGE_ABS, 'no_change_rel': NO_CHANGE_REL}
+    'no_change_abs': NO_CHANGE_ABS, 'no_change_rel': NO_CHANGE_REL,
+    'negligible': {'abs': NO_CHANGE_ABS, 'rel': NO_CHANGE_REL, 'rule': '|x| <= abs + rel x |vi_A(kind)|'}}
+
+
+def _negligible_limit(vi_a):
+    """R10:1: a design difference or a bundle at or below this is read as 0 (kept in sums and checks)."""
+    return NO_CHANGE_ABS + NO_CHANGE_REL * abs(vi_a or 0.0)
 
 
 def _layer_key(order):
@@ -966,17 +972,24 @@ def _design_summary(kind, rebase, basis_status, pair_rows, cno_rows, vi_a, total
                 'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': []}
     cells = {}
     for miss in rebase.get('missing') or ():     # R9:2: compare2 lists item x size rows; sum them per cell
-        if miss.get('kind') != kind:
+        if miss.get('kind') != kind:             # R10:3: and per scope (item / cno / cell)
             continue
-        cell = cells.setdefault((miss.get('density_layer'), miss.get('diameter_um')),
-                                {'area': [], 'share': [], 'items': set()})
+        scope = miss.get('scope')
+        cell = cells.setdefault((miss.get('density_layer'), miss.get('diameter_um'), str(scope)),
+                                {'scope': scope, 'area': [], 'share': [], 'items': set(), 'cno': set()})
         cell['area'].append(miss.get('area_b_um2'))
         cell['share'].append(miss.get('lambda_b_share'))
         if miss.get('item_id') is not None:
             cell['items'].add(miss['item_id'])
-    missing_cells = [{'density_layer': layer, 'diameter_um': diameter, 'area_b_um2': _osum(c['area']),
-                      'lambda_b_share': _osum(c['share']), 'item_count': len(c['items'])}
-                     for (layer, diameter), c in sorted(cells.items(), key=lambda kv: (lk(kv[0][0]), kv[0][1] or 0.0))]
+        if miss.get('electrode_id') is not None:
+            cell['cno'].add(miss['electrode_id'])
+    missing_cells = []
+    for (layer, diameter, _s), c in sorted(cells.items(), key=lambda kv: (lk(kv[0][0]), kv[0][1] or 0.0, kv[0][2])):
+        shares = [v for v in c['share'] if v is not None]
+        missing_cells.append({'scope': c['scope'], 'density_layer': layer, 'diameter_um': diameter,
+                              'area_b_um2': _osum(c['area']), 'lambda_b_share': math.fsum(shares) if shares else None,
+                              'share_partial': len(shares) != len(c['share']),
+                              'item_count': len(c['items']), 'cno_count': len(c['cno'])})
     if basis_status['status'] != 'available':
         return {'status': 'unavailable', 'reasons': list(basis_status['reasons']), 'segments': None,
                 'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': missing_cells}
@@ -1001,13 +1014,17 @@ def _design_summary(kind, rebase, basis_status, pair_rows, cno_rows, vi_a, total
                             'design_delta': row['ca_delta'], 'actual_delta': row['delta'],
                             'design_a_relative': _pct(row['ca_delta'], vi_a),
                             'actual_a_relative': _pct(row['delta'], vi_a)})
-    entries = [e for e in entries if e['design_delta'] is not None]
+    limit = _negligible_limit(vi_a)       # R10:1: a design difference inside the limit is 0: no sign, not listed
+    entries = [e for e in entries if e['design_delta'] is not None and abs(e['design_delta']) > limit]
     up = sorted((e for e in entries if e['design_delta'] > 0), key=lambda e: (-e['design_delta'], e['key']))
     down = sorted((e for e in entries if e['design_delta'] < 0), key=lambda e: (e['design_delta'], e['key']))
+    negligible = [label for label, _name in DESIGN_SEGMENTS if segments[label] is not None
+                  and abs(segments[label]) <= limit]
     outside = not _no_change(0.0, segments['crp']) or not _no_change(0.0, segments['density'])
     return {'status': 'available', 'reasons': [], 'vi_a': vi_a, 'delta': totals[kind]['delta'],
             'delta_a_relative': _pct(totals[kind]['delta'], vi_a),
-            'segments': segments, 'a_relative': {label: _pct(value, vi_a) for label, value in segments.items()},
+            'segments': segments, 'negligible': negligible,
+            'a_relative': {label: _pct(value, vi_a) for label, value in segments.items()},
             'names': {'design': '설계 차이', 'resolution': '해상도·조건 차이' if differs else '해상도 차이',
                       'condition_differences': differs, 'show_outside_conditions': outside},
             'top_increase': up[:TOP_DESIGN], 'top_decrease': down[:TOP_DESIGN], 'missing_cells': missing_cells}
@@ -1052,7 +1069,7 @@ def _bundle_id(key, length):
     return 'bd-' + hashlib.sha256(text.encode('utf-8')).hexdigest()[:length]
 
 
-def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk):
+def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
     """summary.bundles and checks.bundles. `kstat[kind] = (status, reasons, G)`. Atom order never changes the result."""
     live = [a for a in atoms if kstat[a['kind']][0] != 'not_evaluated']
     moved = {name: row.get('moved') is True for name, row in erows.items()}
@@ -1248,8 +1265,11 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk):
             ranking[kind] = {'status': status, 'k80': None, 'cards': [], 'cover': None, 'rest_share': None, 'rest': []}
             cover_checks[kind] = share_checks[kind] = _check(None, 1.0)
             continue
-        members = sorted((b for b in final if (b['kinds'][kind]['abs'] or 0.0) > 0),
+        limit = _negligible_limit((vi_a or {}).get(kind))      # R10:4: below the limit = no card, no list, no k80
+        members = sorted((b for b in final if (b['kinds'][kind]['abs'] or 0.0) > limit),
                          key=lambda b: (-b['kinds'][kind]['abs'], b['id']))
+        tiny = math.fsum((b['kinds'][kind]['share'] or 0.0) for b in final
+                         if 0 < (b['kinds'][kind]['abs'] or 0.0) <= limit)
         running, k80 = 0.0, None
         for index, b in enumerate(members, 1):
             running += b['kinds'][kind]['share']
@@ -1263,7 +1283,7 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk):
         rest_share = math.fsum(b['kinds'][kind]['share'] for b in rest)
         ranking[kind] = {'status': 'ok', 'k80': k80, 'cards': [b['id'] for b in cards], 'cover': cover,
                          'rest_share': rest_share, 'rest': [b['id'] for b in rest]}
-        cover_checks[kind] = _check(cover + rest_share, 1.0)
+        cover_checks[kind] = _check(cover + rest_share + tiny, 1.0)
         share_checks[kind] = _check(math.fsum(b['kinds'][kind]['share'] for b in final), 1.0)
 
     crp_part = {'line': 0.0 if kstat['line'][0] != 'not_evaluated' else None, 'pixel': crp}
@@ -1434,7 +1454,7 @@ def _build_summary(doc, rebase, fam, vi_a, totals, crp_d, pair_rows, cno_rows, e
     # the bundle code writes into its atoms (sign, names); work on copies so the concentration atoms stay plain
     bundle_atoms = [dict(a) for a in atoms]
     bundles, bundle_checks = _bundle_summary(bundle_atoms, kstat, erows, pair_rows, crp_d if fam['pixel'] else None,
-                                             totals, lk)
+                                             totals, lk, vi_a)
     conc_status = {kind: _kind_status(kind, atoms, fam[kind], vi_a[kind]) for kind in KINDS}
     concentration, conc_checks = _concentration(atoms, conc_status, crp_d if fam['pixel'] else None, totals,
                                               vi_a)
