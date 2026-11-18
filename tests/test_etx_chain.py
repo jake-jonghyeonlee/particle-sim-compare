@@ -510,7 +510,7 @@ def test_step_08_writes_the_ledger_and_the_single_file_report_after_02(chain):
     assert (base / 'data/ledger_maps/ledger_maps.json').is_file()
     html = page.read_text(encoding='utf-8')
     # mrep/T5: the merged report has one data bundle; a maps folder is given, so there is no "no maps" band
-    assert 'id="report-data"' in html and '<h2>⑤ 근거 · 검산</h2>' in html and 'id="band-no-maps"' not in html
+    assert 'id="report-data"' in html and '<h2>부록 근거 · 검산</h2>' in html and 'id="band-no-maps"' not in html
 
 
 def test_step_08_alone_moves_its_old_folders_and_rewrites_them(chain):
