@@ -541,7 +541,7 @@ def _locations_line(ctx):
         return '<div class="trust2" id="locations">변경 위치: 04 결과 없음 — 위 띠를 보세요.</div>'
     s = ctx.changes.get('summary') or {}
     return ('<div class="trust2" id="locations">변경 위치 <b>%d곳</b>(04) · 위치에 연결된 쌍 <b>%d</b> · 미연결 쌍 <b>%d</b> '
-            '<span class="muted">(분모 %d 쌍 = 변화 없음을 뺀 쌍. 미연결은 "04 가 고른 상위 위치에 없음"이지 "변경 없음"이 아닙니다)</span></div>' % (
+            '<span class="muted">(보조 정보) (분모 %d 쌍 = 변화 없음을 뺀 쌍. 미연결은 "04 가 고른 상위 위치에 없음"이지 "변경 없음"이 아닙니다)</span></div>' % (
                 s.get('roi_count', 0), s.get('linked_pairs', 0), s.get('unlinked_pairs', 0), s.get('pair_denominator', 0)))
 
 
@@ -975,7 +975,7 @@ def _m_legend():
             + sw('background:var(--line)', 'line 불량 영역 (선택 쌍)') + sw('background:var(--pixel)', 'pixel 불량 영역 (선택 쌍)')
             + sw('border:2px dashed var(--pixel);background:none', '한쪽에만 있는 item (점선 윤곽)')
             + sw('background:var(--common);opacity:.3', '다른 쌍 (옅게)')
-            + sw('border:2px dashed var(--text-secondary);background:none', 'unit 창 (진한 회색 긴 점선)')
+            + sw('border:3px dashed #ffd21f;background:#141414', 'unit 창 (노란 긴 점선 + 어두운 테두리, 왼쪽 위 "unit")')
             + sw('border:2px dashed var(--text-primary);background:none', '변경 위치 (04, 번호)')
             + sw('border:2px dashed var(--text-primary);border-style:dotted double;background:none', '반복 위치로 옮겨 표시한 위치')
             + '<div class="muted">⌐ 창 경계에서 잘림 · ≫ 창보다 큼</div></div>')
@@ -1278,7 +1278,8 @@ def _s3_panel(ctx):
     return ('<div id="s3-panel" class="s3panel"><div class="chips" id="entry-tabs"><button type="button" class="fbtn" data-f="entry" data-v="loc">변경 위치로 찾기</button>'
             '<button type="button" class="fbtn" data-f="entry" data-v="pair">전극·쌍으로 찾기</button></div>'
             '<div id="pn-loc" hidden>%s</div><div id="pn-pair">%s%s</div><div id="pn-detail"><p class="muted">선택한 것이 없습니다. 목록·카드·지도에서 하나를 누르세요.</p></div>%s</div>' % (
-                _tag_block(ctx) + _roi_rows(ctx), _card_chooser(ctx), _pair_list(ctx), _card_store(ctx)))
+                '<p class="muted" id="loc-note">변경 위치(04)는 A·B 설계가 비슷할 때 비교 의미가 큽니다. unit 크기·배치가 다르면 같은 위치에 같은 전극이 없을 수 있습니다. '
+                '판단은 쌍·전극 장부(전극·쌍으로 찾기)를 기준으로 하세요.</p>' + _tag_block(ctx) + _roi_rows(ctx), _card_chooser(ctx), _pair_list(ctx), _card_store(ctx)))
 
 
 def _section3(ctx):

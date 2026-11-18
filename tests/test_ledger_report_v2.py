@@ -1329,6 +1329,23 @@ def test_scale_bar_caption_and_window_outline(tmp_path):
     assert caps and any('unit 창 60 µm(설정)' in c for c in caps) and not any('frame 에서 유도' in c for c in caps)
 
 
+def test_roi_supporting_note_and_visible_window_legend(tmp_path):
+    page = scaled_report(tmp_path, name='rnote', source='derived')
+    dom, text, rows = probe(page, '#')
+    assert all(r[5] == '1' for r in rows if r[0] in ('s2', 's3'))                           # the outline is still drawn
+    text = Path(page).read_text(encoding='utf-8')
+    m = re.search(r'<div id="pn-loc" hidden>(.*?)</div><div id="pn-pair">', text, re.S)
+    assert m and m.group(1).startswith('<p class="muted" id="loc-note">변경 위치(04)는 A·B 설계가 비슷할 때 비교 의미가 큽니다.')
+    assert '같은 위치에 같은 전극이 없을 수 있습니다' in m.group(1) and '전극·쌍으로 찾기' in m.group(1)
+    assert 'unit 창 (노란 긴 점선 + 어두운 테두리' in text
+    assert "g.fillText('unit'" in text and '#ffd21f' in text
+
+
+def test_locations_line_is_marked_as_supporting_information():
+    src = open(ledger_report.__file__, encoding='utf-8').read()
+    assert '(보조 정보) (분모 %d 쌍' in src
+
+
 def test_window_equal_to_the_frame_draws_no_outline_and_says_so(tmp_path):
     page = scaled_report(tmp_path, whole=True)
     dom, text, rows = probe(page, '#')

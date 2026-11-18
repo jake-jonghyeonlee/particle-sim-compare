@@ -317,8 +317,12 @@ function render(cv,r,L,o,cfg,sel,pr){var e=DEC[r+'|'+L],note=noteOf(cv);cv._rect
    for(y=0;y<ob.h;y++){for(x=0;x<ob.w;x++){var bn=ob.el[y*ob.w+x];if(!bn)continue;
     if(!isBorder(ob.el,ob.w,ob.h,x,y,bn,1)||!dashOn(x,y,per))continue;var tx=x+sx,ty=y+sy;if(tx<0||ty<0||tx>=w||ty>=h)continue;put(ty*w+tx,CC.down,1);}}}}
  g.putImageData(img,0,0);
- if(cv._win){var wl=cv._win;g.save();g.lineWidth=Math.max(1.5,w/250);g.strokeStyle='rgb('+CC.sec.join(',')+')';g.setLineDash([Math.max(8,w/30),Math.max(3,w/90)]);   /* darker than the electrode outlines (CC.common) and with long dashes: the unit window is told apart from them */
-  g.strokeRect(wl[0]+0.5,wl[1]+0.5,Math.max(1,wl[2]-1),Math.max(1,wl[3]-1));g.restore();}
+ if(cv._win){var wl=cv._win,lw=Math.max(2,w/160),rx=wl[0]+0.5,ry=wl[1]+0.5,rw=Math.max(1,wl[2]-1),rh=Math.max(1,wl[3]-1),fs=Math.max(11,Math.round(w/40));
+  g.save();g.setLineDash([Math.max(8,w/30),Math.max(3,w/90)]);   /* bright yellow with a thin dark halo: told apart from the grey outlines and the defect fills in both themes */
+  g.lineWidth=lw+2;g.strokeStyle='rgba(20,20,20,0.85)';g.strokeRect(rx,ry,rw,rh);
+  g.lineWidth=lw;g.strokeStyle='#ffd21f';g.strokeRect(rx,ry,rw,rh);g.setLineDash([]);
+  g.font='bold '+fs+'px sans-serif';g.textBaseline='top';var tw=g.measureText('unit').width+6;
+  g.fillStyle='rgba(20,20,20,0.85)';g.fillRect(rx+lw,ry+lw,tw,fs+4);g.fillStyle='#ffd21f';g.fillText('unit',rx+lw+3,ry+lw+2);g.restore();}
  cv.setAttribute('data-win',cv._win?'1':'0');
  if(o.roi)cv._rois=drawRois(g,cv,r,L,cfg,sel,w);else cv._rois=0;
  cv._drawn=1;return 1;}
