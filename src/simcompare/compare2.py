@@ -1065,6 +1065,8 @@ def _layer_order(cfg, sides):
         assignment = section.get('condition_assignment') if isinstance(section, dict) else None
         stack = assignment.get('layer_stack') if isinstance(assignment, dict) else None
         for row in stack or ():
+            if not isinstance(row, dict):
+                continue
             name, number = row.get('actual_layer'), row.get('stack_order')
             if isinstance(name, str) and isinstance(number, (int, float)) and not isinstance(number, bool):
                 order[name] = number if name not in order else min(order[name], number)

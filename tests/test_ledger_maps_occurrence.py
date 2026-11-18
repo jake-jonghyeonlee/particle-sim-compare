@@ -432,6 +432,77 @@ def test_piece_counts_come_from_the_by_size_rows_of_the_map_diameter():
     assert lm._occ_piece_counts(led, 'target', 3.0) == {'one': 1, 'two': 2, 'only_b': 1}
 
 
+# ---- rnarr/T8: R11b:3 needed bytes, R11b:4 coordinates, R11b:5 piece counts end to end --------------------------------
+
+def test_the_largest_failed_occurrence_request_is_recorded():
+    budget = lm._Budget(100)
+    budget.reserve_occ(60, 'fits')
+    for size in (50, 90, 45):
+        with pytest.raises(lm._BudgetExceeded):
+            budget.reserve_occ(size, 'does not fit')
+    assert budget.occ_failed_max == 90 and budget.occ_hold.bytes == 60
+
+
+def test_the_coordinate_split_gives_the_same_values_for_int32_and_int64_cells():
+    cells = flat({(1, 1), (1, 2), (2, 2), (6, 6)})
+    for dtype in (np.int32, np.int64):
+        budget = lm._Budget(10 ** 6)
+        assert lm._measure_regions(cells.astype(dtype), (8, 8), budget, 'item')[:3] == (2, 4, 3)
+        assert budget.used == 0
+
+
+def test_the_sink_pieces_of_a_real_run_match_the_by_size_rows(tmp_path, monkeypatch):
+    """R11b:5 (the chain fixture has one group per item): every item gets exactly the counted number of non-empty
+    pieces, no item is held to the end, and nothing is a piece-count mismatch."""
+    seen = {}
+    original = lm._Occurrence.arrive
+
+    def spy(self, item_id, frame, geom_idx):
+        if len(geom_idx):
+            key = (self.ctx.role, item_id)
+            seen[key] = seen.get(key, 0) + 1
+        return original(self, item_id, frame, geom_idx)
+    monkeypatch.setattr(lm._Occurrence, 'arrive', spy)
+    chain(tmp_path)
+    doc = occ_doc(tmp_path)
+    led = json.loads((tmp_path / 'led' / 'ledger.json').read_text(encoding='utf-8'))
+    counted = {role: lm._occ_piece_counts(led, role, 3.0) for role in ROLE_KEYS}
+    assert seen
+    for (role, item_id), number in seen.items():
+        assert counted[role].get(item_id) == number, (role, item_id)
+    record = doc['occurrence']['budget']
+    assert record['piece_count_mismatch_items'] == 0 and record['hold_mode'] == 'immediate'
+
+
+def test_pieces_two_then_a_third_after_completion_is_a_mismatch_not_a_value():
+    budget = lm._Budget(10 ** 9)
+    occ, frame = fake_occ(budget, counts={'x': 2})
+    occ.arrive('x', frame, flat({(1, 1)}))
+    occ.arrive('x', frame, flat({(1, 2)}))
+    assert occ.values['x'][:3] == (1, 2, 2) and budget.occ_hold.bytes == 0
+    occ.arrive('x', frame, flat({(5, 5)}))                      # the third piece comes after the value was measured
+    occ.finish()
+    assert occ.result()['x'] == {'state': 'pending', 'reason': 'piece_count_mismatch'}
+    assert budget.occ_mismatch == 1 and budget.occ_hold.bytes == 0
+    occ.close()
+
+
+def test_a_mismatch_only_run_says_the_needed_amount_could_not_be_measured(tmp_path, monkeypatch):
+    """R11b:3: pending items with nothing recorded as needed keep the sentence, with a plain "could not be measured"."""
+    original = lm._Occurrence.arrive
+
+    def late(self, item_id, frame, geom_idx):
+        original(self, item_id, frame, geom_idx)
+        if len(geom_idx) and item_id not in self.mismatch and item_id in self.values:
+            original(self, item_id, frame, geom_idx)             # one more piece than the ledger counted
+    monkeypatch.setattr(lm._Occurrence, 'arrive', late)
+    chain(tmp_path)
+    doc = occ_doc(tmp_path)
+    assert doc['occurrence']['budget']['piece_count_mismatch_items'] > 0
+    band = [b for b in doc['bands'] if b['code'] == 'occurrence_budget_reduced'][0]
+    assert 'could not be measured' in band['detail'] and 'more is needed' not in band['detail']
+
+
 # ---- layer order (E10) ------------------------------------------------------------------------------------------------
 
 def test_the_layer_key_follows_the_order_then_the_name():

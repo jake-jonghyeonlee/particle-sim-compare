@@ -691,3 +691,90 @@ null 규칙:
 - **③ 쌍 목록**: 변화 종류 필터 버튼에 그 종류의 쌍 수를 쓴다("같은 쌍 증감 (121)", ledger.json `pairs[].change_kind` 집계). 정렬 버튼 "변화 큰 순(기본) / B 위험 큰 순"은 해시 `#sort=b`(허용 값은 `b` 하나)이고, 목록에 "B 값" 열을 더했다. B 순서 = ① "B 에서 가장 위험한 쌍" 과 같은 기준(`present_b` 이고 `pct_b` 가 있는 쌍을 `pct_b` 큰 순, 같으면 pair_id; 값 없는 쌍은 뒤에 기본 순서).
 - **문구**: ① 제목 "변화의 구성 — item 단위 분해"(질문 "얼마나 달라졌고, 어떻게 구성되나"). 인과를 확정하는 말은 쓰지 않는다.
 - (rnarr/T1) unit 창 점선은 노란색 + 어두운 테두리 + 왼쪽 위 "unit" 라벨로 그린다. 변경 위치(04)는 보조 정보다: ③ "변경 위치로 찾기" 맨 위와 ① 신뢰 줄에 "A·B 설계가 비슷할 때만 비교 의미가 크다"는 안내를 둔다. 판단 기준은 쌍·전극 장부다.
+
+## 32. 환산 비교 (02 rebase) — B 의 CA 를 A 의 계수로 읽기 (rnarr/T4)
+
+질문: B 와 A 의 vi 차이 중 얼마가 설계(CA) 차이이고, 얼마가 해상도 등 계수 차이인가. 계산은 02(`compare2`)가 하고 `compare2.json` 의 `rebase` 에 쓴다. ledger 는 값을 나눠 배분만 한다.
+
+- **경로**: CA → F → CRP → density. 이 순서는 고정이다. 문서·문구·검산이 모두 이 순서를 쓴다. 순서를 바꾸면 구간 값이 달라진다(한계 참고).
+- **상태**(종류별):
+
+  | 상태 | CA | F | CRP(pixel 만) | density |
+  |---|---|---|---|---|
+  | S0 = A | A | A | A | A |
+  | S1 | B | A | A | A |
+  | S2 | B | B | A | A |
+  | S3 (pixel 만) | B | B | B | A |
+  | S4 = B | B | B | B | B |
+
+  S1 의 item × 크기 λ 는 `density_A × 몫 면적_B(반올림 전) × F_A` 다(곱셈 순서는 `lam()` 과 같다). CNO 는 `density_A,pixel × area_csv_B × F_A,cno` 다. S2 는 F 만 B 값으로 바꿔 직접 계산한다(`F_B`). 비율 `r_F` 를 곱하지 않으므로 F_A = 0 이어도 값이 정해진다. 두 제품의 표·계수가 같으면 S1 λ 는 B 의 λ 와 비트까지 같다.
+- **line 에는 CRP 가 없다**(보정값 1). line 은 S0 → S1 → S2 → S4 로 구간 1·2·4 만 있다. CRP ≠ 1 인 제품의 line 도 CRP 에 영향받지 않는다.
+- **구간별 할선**: 구간마다 기울기를 따로 구한다. `D` = line 1.2159, pixel 1.5462. `x` = line 은 λ_line, pixel 은 λ_pixel + λ_cno. `c` = line 1, pixel 은 그 상태의 CRP.
+  - 구간 1(CA): `slope_g(x_S0, x_S1) / (D × c_A)`, item 값 = 기울기 × (λ_S1 − λ_S0).
+  - 구간 2(F): `slope_g(x_S1, x_S2) / (D × c_A)`, item 값 = 기울기 × (λ_S2 − λ_S1).
+  - 구간 3(CRP, pixel 만): `g(x_S2) × (1/crp_B − 1/crp_A) / D`. item 으로 나누지 않는 한 줄이다.
+  - 구간 4(density): `slope_g(x_S2, x_S4) / (D × c_B)`, item 값 = 기울기 × (λ_S4 − λ_S2).
+  - 신규 item 은 λ_A = 0, 소멸 item 은 λ_S1 = λ_B = 0 으로 센다. CNO 도 같은 식이다.
+- **F 비율 표**(가법 분해 아님): `r_F = r_WH × r_rule × r_M / r_G`. `r_rule` 은 (유효 해상도 ÷ W×H) 의 B/A 비율을 실제 값으로(정수 내림 반영) 쓴다. 분모가 0 이면 "—(A 가 0)".
+- **대기 규칙**: B 면적 > 0 인 (종류, density layer, 지름) 에 A density 가 없으면 그 item 의 S1 λ 는 null 이고 **그 종류의 환산 전체가 `unavailable`** 이다(부분합을 vi 로 적지 않는다). B 면적이 0 이면 0 으로 센다(`density_missing_zero_area` 와 같은 규칙). A 의 glass 가 대기이거나 한쪽 종류를 계산할 수 없어도 `unavailable` 이다. 대기는 02 의 status·종료 코드를 바꾸지 않는다. 지름 필터 밖의 빠진 density 는 B 가 쓰지 않으므로 대기가 아니다.
+- **종류별 status 로만 판정**: `rebase.status` 는 `available`(두 종류 모두) / `partial`(한 종류만 가능) / `unavailable`(둘 다 불가) 다. `partial` 은 "한 종류만 가능" 표시이고, 소비하는 쪽은 종류별 `states.<kind>.status` 를 보고 판단한다(R9:1).
+- **`missing[]`**: 02 가 빠진 칸을 item × 크기 줄로 나열한다. 줄마다 `scope`(`item` / `cno` / `cell`), 종류, density layer, 지름, B 면적, 가능하면 `lambda_b`·`lambda_b_share` 를 갖는다. ledger 의 `summary.design.<kind>.missing_cells` 는 이를 (density layer, 지름, scope) 칸마다 합친다. `cno`·`cell` scope 줄에는 B λ 비중이 없어 `lambda_b_share` 가 항상 null 이다. 이것은 경고가 아니다(R10b:3). 보고서는 null 이 섞였음을 `share_partial` 로만 읽는다.
+- **검산**(`math.fsum`, `_within`): (1) Σ item S1 λ = 종류 S1 λ (2) 구간마다 Σ item + CNO (+ CRP 줄) = 그 구간의 실제 vi 차이 (3) 구간 합 = `totals.<kind>.delta` (4) 표·계수가 같으면 구간 2·3·4 가 0. 검산이 `passed` 가 아니면 ledger 는 그 종류를 `not_evaluated(rebase_check_failed)` 로 둔다.
+- **한계**: 값은 경로 순서(CA → F → CRP → density)에 의존한다. A 의 CA 를 B 의 계수로 읽는 반대 방향(A@B)은 내지 않는다. item 의 구간 값 합은 기존 item `delta` 와 다르다(종류 합계만 같다. 기존 값은 그대로다). 구간 1 에는 unit 형상 크기 차이가 남는다.
+- **새 키와 호환**: `inputs.rebase_basis = target_ca_reference_coefficients_v1`, `inputs.layer_order`, `rebase`. 기존 키·값·CSV 4 개는 바뀌지 않는다(골든은 `tests/test_compare2.py` 의 `GOLDEN` 이 지킨다). `inputs.layer_order` 는 §35 의 예외 참고.
+
+## 33. 원인 후보 묶음 (`summary.bundles`, rnarr/T5)
+
+질문: 변화량이 어디에 모여 있는가. item 단위 변화(actual Δ)를 원인 후보 묶음으로 나눈다. 묶음은 "함께 살펴볼 자리"이지 원인 확정이 아니다.
+
+- **원자**: 쌍 item(종류, analysis layer, 크기 합산 Δ)과 CNO 줄(전극, density layer, pixel). CRP 는 묶음에 넣지 않고 종류별 `crp` 한 줄로 둔다(기존 `totals.pixel.crp.delta`, line 은 0). 이 CRP 는 §32 의 구간 3 과 다른 값이다. 섞지 않는다(H6).
+- **변화량 G_k** = 종류 k 의 Σ 원자 |Δ|(CRP 제외). 묶음 몫 = 묶음의 Σ|Δ| ÷ G_k.
+- **끝점별 레이어**: 원자 끝점의 상태는 `layer_state[전극][끝점 actual_layer]` 다. 키가 없으면 `unknown` 이다(A·B 한쪽에만 있음과 구분). `unknown` 끝점과 `layer_state_status ≠ verified` 인 전극은 "상태 그대로"로 보고 이동 묶음을 만들지 않는다. 그 묶음에 `layer_state_unknown`·`layer_state_unverified` 를 표시하고 보고서가 한 줄로 알린다.
+- **배정**(원자마다 정확히 한 묶음, 위에서 처음 맞는 규칙):
+  0. CNO → 그 전극 묶음(layer = density layer). density layer 상태가 없으면 유형 `cno`.
+  1. 서로 다른 전극이 1 개(같은 이름 두 끝점) → 그 전극 묶음(analysis layer). 3 개 이상(multi) → 쌍 묶음(why = `multi`).
+  2. 그 레이어에서 한쪽 전극만 `layer_state ≠ both` → 그 전극 묶음.
+  3. 두 전극 모두 `≠ both` → 쌍 묶음(why = `both`).
+  4. 두 전극 모두 `both`: **허브** = 같은 (전극, 끝점 레이어, 부호)에서 서로 다른 상대가 `HUB_MIN = 3` 개 이상(잠정값, `summary.rules.hub_min` 에 기록). 집계 대상은 두 전극이 모두 both 인 원자뿐이다. 한쪽만 허브 → 그 전극 묶음(유형 `hub`), 양쪽 허브 → 쌍 묶음(why = `hubs`), 둘 다 아님 → 쌍 묶음(why = `nohub`).
+  - `_no_change(a, b)`(원자의 크기 합산 A·B 값, 허용 오차 `1e-12 + 1e-9 × |값|`) 안에 드는 원자는 **허브 집계와 부호에서만** 뺀다. 배정은 규칙 4 의 쌍 묶음(`nohub`)으로 하고, 합계와 몫에는 그대로 남는다.
+- **키·id**: 내부 키는 튜플이다(`('e', 전극, 레이어)`, `('mv', 전극)`, `('p', pair_id, 레이어)`). JSON 의 `bundle.key` 는 그 배열이다. 외부 id `bundle.id = "bd-" + sha256(canonical JSON key)[:16]`(소문자 hex)이고 충돌하면 길이 24 로 다시 만든다(`checks.bundles.id_unique`). 해시 화이트리스트는 `^bd-[0-9a-f]{16,24}$`.
+- **유형**: 전극 묶음이 B 에만 있음 → `new`, A 에만 → `gone`. 그 전극이 `moved` 이고 그 레이어 상태가 both 가 아니면 이동 묶음 `mv|<전극>`(from = A 에만 있는 레이어, to = B 에만 있는 레이어, `layer_order` 순) → `move`. both 이고 쌍 원자가 있으면 `hub`. CNO 만 있으면 `cno`. 쌍 묶음은 `pair`. 이동 판정은 ledger 의 `moved`(이름 기준)를 그대로 쓴다.
+- **사유 집합**: 쌍 묶음의 `why` 는 원자 사유의 정렬된 집합이다. 하나면 그 사유 문구, 여럿이면 "두 전극 중 한쪽에 맡길 수 없어 이 쌍 하나로 묶었습니다."
+- **묶음 값**: 종류별 net·abs·share, 상대 수, 늘어난·줄어든 원자 수, 상대 줄(종류·쌍·레이어별 net·abs·presence·item id·쌍 전체 Δ), 가장 큰 상대, 상충(line.net × pixel.net < 0 이고 두 share ≥ 0.02), 다른 카드로 간 상대(`partners_elsewhere`). 정렬 동률은 `bundle.id`·상대 이름 순이라 원자 순서를 바꿔도 `ledger.json` 바이트가 같다.
+- **순위·카드**: 종류별 abs 내림차순(동률 id 순). `k80` = 누적 share ≥ 0.8 이 되는 첫 개수. 카드 = 상위 6(`CARD_COUNT`). `cover` = 카드 share 합, "그 밖"(`rest`) = 나머지, `rest_share` = 나머지 몫.
+- **문턱(negligible)**: `|x| ≤ 1e-12 + 1e-9 × |vi_A(종류)|` 이하의 묶음은 카드·목록·k80 에 넣지 않는다(R10:4). 합계와 검산에는 남고 검산은 `cover + rest_share + (문턱 이하 몫) = 1` 로 닫는다.
+- **생략**: 그 종류 원자에 null 이 있거나 종류 계산 불가 → 그 종류 `status: not_evaluated`(몫·k80·카드 null). G_k 가 문턱 이하 → `no_change`.
+- **검산**(`checks.bundles`): 원자 중복 0, 배정 수 = 원자 수, Σ 묶음 net + crp = `totals.<kind>.delta`, Σ share = 1(평가 가능할 때), 카드 cover + 그 밖 = 1.
+- **crp 출처**: `summary.bundles.crp` 는 `totals` 의 actual CRP 이고 §32 의 구간 3 과 다르다. CA·F·CRP 가 함께 바뀌어도 두 검산이 각자 닫힌다.
+
+## 34. 설계 차이와 집중도 (`summary.design`, `summary.concentration`, rnarr/T5)
+
+**설계 차이**(보고서 6 절의 값). §32 의 구간 값을 이름 붙여 쓴다.
+- **이름 조건**: 구간 1 = "설계 차이". 구간 2 = F 가 W×H 만 다를 때 "해상도 차이", `r_rule`·`r_G`(glass)·`r_M`(가중) 중 하나라도 1 이 아니면 "해상도·조건 차이"(다른 항목을 `names.condition_differences` 에 둔다). 구간 3(CRP)·4(density)는 둘 중 하나가 문턱을 넘을 때만 "해상도 외 조건" 줄로 보인다(`show_outside_conditions`).
+- **A 대비 %** = 구간 값 ÷ vi_A(종류별). vi_A = 0 이면 null("—").
+- **negligible**: 문턱(§33)을 넘지 않는 구간은 `negligible` 목록에 올리고 부호·문구를 쓰지 않는다. 문턱 안의 쌍은 위·아래 목록에서 뺀다.
+- **상위 쌍**: 쌍마다 Σ item `ca_delta`(CNO 는 `CNO:<전극>@<layer>` 줄). 종류별 증가 상위 5·감소 상위 5, 줄마다 실제 Δ·설계 Δ·A 대비 %. 정렬 동률은 키 순. 환산이 `unavailable`·`not_evaluated` 면 목록은 비고 사유가 `reasons` 에 있다.
+- **쌍 사이 상쇄**: 위 목록은 쌍마다 따로 본다. 한 쌍의 증가와 다른 쌍의 감소가 서로 지워지는 몫은 합계에는 들어가지만 두 목록에는 각각 나타난다. 쌍 단위 값을 더해 종류 합계와 맞추려 하지 않는다.
+- 이 값의 의미는 "B 의 CA 를 A 의 계수로 읽었을 때"뿐이다. 인과 확정이나 line·pixel 합산을 쓰지 않는다.
+
+**집중도**(actual 기준만, ca 기준 없음). 같은 원자를 다섯 단계로 묶는다: 구분(같은 불량 증감·새 방식·없어진 방식·CNO·CRP) · 레이어 · 전극 · 쌍 · item.
+- 분모 G = Σ 원자 |Δ|. 단계마다 몫·순 Δ·내부 상쇄(Σ|Δ| − |ΣΔ|)·`k50`·`k80`·상위 1·3·5 누적 몫·상위 10 줄과 나머지 한 줄을 낸다. CNO 와 CRP 는 모든 단계에서 별도 묶음으로 분모에 남는다(CRP 만 변해도 Σ 몫 = 1).
+- G = 0 이거나 원자가 null 이면 몫·`k50`·`k80`·상위 몫은 null 이고 순 Δ 만 null 전파 규칙을 따른다. 몫 합 검산은 `not_evaluated` 다.
+- **판정 규칙**(잠정, `summary.rules`): 위에서 처음 맞는 것. (1) 생략: 종류 계산 불가·원자 null·`no_change`·원자 수 n < 8·`tie_at_cut`(k80 경계의 |Δ| 가 허용 오차 안에서 같음). (2) 집중: `k80 ≤ 3`. (3) 분산: `k80 / n ≥ 0.3`. (4) 중간. 숫자는 판정이 생략되어도 항상 보인다.
+
+## 35. 관측 연결 영역 (`ledger_maps.json` 의 `occurrence`, rnarr/T6)
+
+질문: 지도 지름 하나에서 hotspot 이 몇 덩어리로, 얼마나 크게 이어져 있는가. `ledger-maps` 가 hotspot 을 읽는 중에 표시 전 셀 기하(`geom_idx`)로 센다. 번호 그림·타일 membership 은 쓰지 않는다. `LEDGER_MAPS = True` 일 때만 생긴다.
+
+- **연결**: 셀 단위 4-이웃(`electrode_map._label_runs`). 같은 지름의 여러 그룹은 셀 합집합으로 한 번 센다. 대각선만 닿으면 두 영역이다.
+- **A_obs**: 관측 범위는 frame 전체이고 면적은 유효 셀 수 × pitch²다(유효 마스크가 없으면 H×W, 그 사실을 `observed_area.basis` 에 적는다).
+- **값**(item × 제품): `n`(영역 수), `area_um2`(합집합 면적), `mean_area_um2`(n = 0 이면 null), `largest_area_um2`, `boundary_regions`(frame 경계에 닿는 영역 수), `n_per_mm2 = n × 1e6 / A_obs`, `area_fraction = 면적 / A_obs`(A_obs = 0 이면 둘 다 null). `n_per_unit` 은 두 제품 모두 unit 이 설정값(`unit_source = config`)일 때만 낸다.
+- **상태 5 가지**: `observed`(item 이 있고 sink 가 왔고 n ≥ 1), `observed_empty`(sink 는 왔으나 셀이 비어 n = 0), `absent`(그 제품에 item 자체가 없음, n = 0 확인), `not_observed`(item 은 있으나 지도 지름 자료 없음), `pending`(예산·조각 수 때문에 값 없음, `reason` 이 `budget` 또는 `piece_count_mismatch`).
+- **compare.kind**: `both_observed`(n_A → n_B, 평균 a_A → a_B), `both_empty`(양쪽 모두 0), `from_empty`(0 → n), `to_empty`(n → 0), `new`·`gone`(구조적 신규·소멸, `absent` 쪽에만), `suppressed`(한쪽이 `pending` 또는 `not_observed` → 비교 문장 없음). 면적 S 는 지름 하나의 기하 면적이므로 vi 에 더하지 않는다.
+- **검산**: Σ 영역 셀 = 합집합 셀, n = 0 ⇔ 면적 0.
+- **메모리**(전용 hold): occurrence 가 쓰는 메모리는 `_Budget` 안의 별도 보유분(`occ_hold`)이다. 예약(`reserve_occ`)은 카드를 쫓아내지 않고 카드 hold 에도 들어가지 않는다. 조각 수는 ledger `by_size` 의 지도 지름 행에서 미리 센다. 조각이 1 개면 sink 안에서 바로 계산하고 보유하지 않는다. 2 개 이상이면 마지막 조각이 오는 즉시 계산해 돌려준다. 조각 수를 모르면 `finish` 까지 들고 있다(`hold_mode = deferred`). 센 수보다 조각이 더 오면 값을 지우고 `pending(piece_count_mismatch)` 로 둔다. 좌표 배열(셀당 16 B)도 만들기 전에 예약한다.
+- **양보**: 기존 연산(지도·카드)의 예약이 한도를 넘으려 하면 카드를 쫓아내기 전에 occurrence 가 쥔 바이트를 모두 돌려준다. 쥐고 있던 item 은 끝까지 `pending(budget)` 이다. 양보는 **실행 전체**의 사실이어서 이후 제품에서도 새로 쥐지 않는다(조각이 하나인 item 은 보유하지 않으므로 계속 값을 낸다). 그래서 occurrence 가 없을 때 성공하던 지도·카드·검산은 바이트까지 같다.
+- **budget 기록**: `occurrence.budget = {occ_peak_bytes, yielded_at_bytes, hold_mode, piece_count_mismatch_items}`. 대역 `occurrence_budget_reduced` 의 detail 은 부족한 만큼("about … more is needed")을 적는다. 필요량은 (최대 보유량 − 남은 여유)와 "맞지 않았던 예약 중 가장 큰 것"(`occ_failed_max`) 중 큰 값이다. 둘 다 0 이면 "필요량을 잴 수 없음"으로 적고 문장을 빼지 않는다(R11b:3).
+- **종료 3 의 뜻**: pending item 이 하나라도 있으면 문서는 partial 이고 종료 코드는 3 이다(`occurrence_budget_reduced`). 지도·카드·기존 검산은 그대로이고 연결 영역 값만 일부 비어 있다. 새 검산이 실패해도 문서는 partial(종료 3)이고 ledger 쪽 이유는 `ledger_summary_check_failed` 다.
+- **E7 예외(R10:5)**: 02 가 `inputs.layer_order`(real.yaml `layer_stack` 의 `stack_order` 오름차순, 두 제품 합집합, 같은 order 는 이름순, stack 밖 레이어는 뒤에 이름순)를 쓰고 ledger 가 그것을 복사한다. 이 키가 있으면 기존 레이어 **목록·CSV 의 칸 순서·지도 파일 번호의 순서**가 바뀐다(값은 같다). 키가 없는 옛 ledger 는 이름순 그대로다. "변경 전과 바이트 동일"의 예외이고, 그 밖의 예외는 provenance sha256 과 새 키뿐이다.
+- **후속 과제**: (R11b:1) share 가 0 인 행(거리 필터로 `entries` 에서 빠진 그룹, pixel 이 line 에 덮여 면적 0 인 그룹)은 sink 는 오지만 `by_size` 행으로 세지 않아 조각 수를 적게 셀 수 있다. 이때 결과는 틀린 값이 아니라 `pending(piece_count_mismatch)` 다. 실자료에서 `piece_count_mismatch_items > 0` 이면 `compare2.json` 의 `by_size` 로 조각 수를 세도록 바꾼다. (R11b:2) 즉시 계산이 빠듯한 시점(임시 138 B 규모)에는 기존 한도와 같은 테스트가 `OCCURRENCE_ENABLED=False` 로 돌아야 한다. 실자료 한도에서의 여유를 첫 실측에서 확인한다.

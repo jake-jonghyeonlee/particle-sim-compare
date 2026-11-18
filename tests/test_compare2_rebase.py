@@ -332,6 +332,34 @@ def test_a_density_missing_for_a_zero_area_is_zero_not_unavailable(tmp_path):
             assert item['lambda_s1'] == 0.0 and item['ca_delta'] == 0.0
 
 
+def test_a_density_missing_for_the_cno_layer_makes_pixel_unavailable(tmp_path):
+    """R9:4 (a): B has a CNO area, A's pixel density table has no CNO layer: `_rebase_cno_rows` reports it in missing[]."""
+    ref, tgt = two_sides()
+    no_cno_layer = {'P1': DENS_PIXEL['P1'], 'P2': DENS_PIXEL['P2']}
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(pixel=no_cno_layer), b=dict(group='watch', res=[10, 5]),
+                         tgt_cno={CNO_NAME: CNO_CSV})
+    rebase = doc['rebase']
+    assert rebase['states']['pixel']['status'] == 'unavailable'
+    assert rebase['states']['line']['status'] == 'available'
+    gaps = [m for m in rebase['missing'] if m['scope'] == 'cno']
+    assert gaps and all(m['kind'] == 'pixel' and m['case_name'] == CNO_NAME and m['density_layer'] == 'gcnt'
+                        and m['area_b_um2'] > 0 for m in gaps)
+    assert any(r.endswith(':pixel:gcnt') or ':pixel:gcnt' in r for r in rebase['reasons'])
+    assert 'segments' not in rebase['states']['pixel']
+
+
+def test_a_density_missing_only_outside_the_diameter_filter_keeps_the_kind_available(tmp_path):
+    """R9:4 (c): the gap is at a diameter the filter removed, so nothing of B uses it."""
+    ref, tgt = two_sides()
+    gap_at_3 = {'P1': DENS_LINE['P1'], 'P2': {1: 4.0, 2: 2.0}}
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(line=gap_at_3), b=dict(group='watch', res=[10, 5]), diameters=[1, 2])
+    rebase = doc['rebase']
+    assert rebase['states']['line']['status'] == 'available', rebase['reasons']
+    assert [m for m in rebase['missing'] if m['kind'] == 'line'] == []
+    for item in rebase['items']:
+        assert {s['diameter_um'] for s in item['by_size']} <= {1.0, 2.0}
+
+
 def test_glass_pending_makes_both_kinds_unavailable_and_keeps_02_status(tmp_path):
     ref, tgt = two_sides()
     code, doc, out = go(tmp_path, ref, tgt, a=dict(glass=None), b=dict(group='watch', res=[10, 5]))
@@ -368,6 +396,7 @@ def test_lambda_diameters_subset(tmp_path):
 # ---- the new keys are the only change ----------------------------------------------------------------------------
 
 def test_without_the_new_keys_the_outputs_are_the_old_bytes(tmp_path):
+    # R9:4 (b): the golden bytes of the old keys are test_compare2.GOLDEN's job; this test only compares with the old helper run
     ref, tgt = two_sides()
     code, doc, out = go(tmp_path, ref, tgt)
     assert code == 0
@@ -432,3 +461,9 @@ def test_layer_order_sd1_sd2_pxl_and_layers_outside_the_stack():
     # same order (2): by name; layers outside the stack (AA, CNO_L, ZZ) behind, by name
     assert compare2._layer_order(cfg, sides) == ['SD1', 'ALT', 'SD2', 'PXL', 'AA', 'CNO_L', 'ZZ']
     assert compare2._layer_order({}, sides) == ['AA', 'CNO_L', 'PXL', 'SD1', 'SD2', 'ZZ']
+
+
+def test_layer_order_ignores_layer_stack_rows_that_are_not_mappings():
+    """R9:5: a stray string or null in layer_stack is skipped, the other rows still count."""
+    cfg = {'reference': {'condition_assignment': {'layer_stack': ['SD1', None, 3, {'actual_layer': 'SD2', 'stack_order': 1}]}}}
+    assert compare2._layer_order(cfg, [_fake_side(['SD1', 'SD2'])]) == ['SD2', 'SD1']

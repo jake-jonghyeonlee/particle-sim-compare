@@ -147,6 +147,7 @@ class _Budget(object):
         self.occ_reduced = False         # an existing reservation took the occurrence bytes back: nothing new is held
         self.occ_yielded_at = None       # the occurrence bytes given back by the first yield
         self.occ_deferred = False        # some item was held to the end of its product (piece count unknown or short)
+        self.occ_failed_max = 0          # the largest occurrence reservation that did not fit (R11b:3)
         self.occ_mismatch = 0            # items whose sink pieces did not match the ledger piece count (set pending)
 
     def set_stage(self, role, stage):
@@ -157,6 +158,7 @@ class _Budget(object):
         """An occurrence reservation: never evicts, never yields, never enters a card hold; raises when it does not fit."""
         nbytes = int(nbytes)
         if self.used + nbytes > self.limit:
+            self.occ_failed_max = max(self.occ_failed_max, nbytes)      # R11b:3: the largest request that did not fit
             raise _BudgetExceeded(
                 'oversized_real_operation',
                 f'ledger-maps: occurrence {what}: estimated {self.used + nbytes} bytes ({nbytes} more on top of '
@@ -492,8 +494,7 @@ def _measure_regions(union, shape_yx, budget, what):
     coords = 16 * count
     budget.reserve_occ(coords, f'coordinates of {what} ({count} cells)')
     try:
-        ys = union // width
-        xs = union - ys * width
+        ys, xs = np.divmod(union, width)
         y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
         box_h, box_w = y1 - y0 + 1, x1 - x0 + 1
         nbytes = box_h * box_w + 8 * box_h + OCC_LABEL_BYTES_PER_CELL * count - coords
@@ -2707,7 +2708,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     occurrence = _occurrence_json(led_doc, window_json, occ_out, report_diameter) if len(occ_out) == len(ROLES) else None
     occ_pending = 0 if occurrence is None else sum(occurrence['counts'][role]['pending'] for role in ROLES)
     # rnarr/T6b: what the occurrence metric needed on top of the existing operations' peak (peaks exclude occurrence)
-    occ_needed = max(0, budget.occ_peak - max(0, budget.limit - budget.peak))
+    occ_needed = max(0, budget.occ_peak - max(0, budget.limit - budget.peak), budget.occ_failed_max)
     if occurrence is not None:
         occurrence['budget'] = {'occ_peak_bytes': budget.occ_peak, 'yielded_at_bytes': budget.occ_yielded_at,
                                 'hold_mode': 'deferred' if budget.occ_deferred else 'immediate',
@@ -2721,6 +2722,8 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         if occ_needed:
             size = f'{occ_needed / 1048576:.1f} MB' if occ_needed >= 1048576 else f'{occ_needed} bytes'
             detail += f'; about {size} more is needed for the connected-region metric'
+        else:
+            detail += '; the amount needed for the connected-region metric could not be measured'
         run.bands.append({'code': 'occurrence_budget_reduced', 'count': occ_pending, 'detail': detail})
     if failed:
         reasons.append('ledger_maps_value_check_failed')
