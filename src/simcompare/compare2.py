@@ -437,11 +437,11 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
     shared = {'line': _sum_opt(lam('line', ck, entries[ck]['item']['shared_l']) for ck in sorted(entries)),
               'pixel': _sum_opt(lam('pixel', ck, entries[ck]['item']['shared_p']) for ck in sorted(entries))}
 
-    ledger_items, ledger_check = _build_ledger(cells, entries, lam, conds, electrodes, shared,
-                                               {'line': total_line, 'pixel': total_pixel})
+    ledger_items, ledger_check, ledger_raw = _build_ledger(cells, entries, lam, conds, electrodes, shared,
+                                                           {'line': total_line, 'pixel': total_pixel})
 
     # CNO
-    cno_rows, cno_ok = {}, True
+    cno_rows, cno_ok, cno_raw = {}, True, {}
     for case in collect_cno(product.hotspot_root):
         observed.update(size_key(diameter) for diameter in case.rows)
         row = {'case_name': case.case_name, 'electrode_id': case.electrode_id, 'density_layer': case.density_layer,
@@ -455,7 +455,7 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
         elif factors['cno'] is None:
             row['reasons'].append(group.glass_area_reason or 'glass_area_pending')
         else:
-            parts, by_size = [], []
+            parts, by_size, raw_rows = [], [], []
             for diameter, area in sorted(case.rows.items()):
                 if diameters is not None and size_key(diameter) not in diameters:
                     continue
@@ -465,11 +465,13 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
                     parts = None
                     break
                 parts.append(value * area * factors['cno'])
+                raw_rows.append((diameter, area))   # unrounded CSV area, read by the rebase calculation
                 by_size.append({'diameter_um': _diameter_json(diameter), 'density_pixel': value, 'area_csv_um2': _area(area),
                                 'lambda': value * area * factors['cno']})
             if parts is not None:
                 row['lambda'] = sum(parts)
                 row['by_size'] = by_size      # the per-diameter density the location formula of compare2-report reads
+                cno_raw[case.case_name] = raw_rows
         row['reasons'] = sorted(set(row['reasons']))
         if row['lambda'] is None:
             cno_ok = False
@@ -483,7 +485,8 @@ def _compute_side(role, product, group, tables, extracted, meta, diameters=None)
     side = {
         'role': role, 'product': product, 'group': group, 'crp': crp, 'factors': factors, 'ok': ok,
         'reasons': reasons, 'entries': entries, 'size_lam': size_lam, 'layers': layer_rows, 'conds': conds,
-        'shared': shared, 'ledger_items': ledger_items, 'ledger_check': ledger_check, 'cno': cno_rows, 'lam': {'line': total_line, 'pixel': total_pixel, 'cno': total_cno},
+        'shared': shared, 'ledger_items': ledger_items, 'ledger_check': ledger_check, 'ledger_raw': ledger_raw,
+        'cno_raw': cno_raw, 'cno': cno_rows, 'lam': {'line': total_line, 'pixel': total_pixel, 'cno': total_cno},
         'x_pixel': x_pixel,
         'caa': {'line': None if total_line is None else _g(total_line),
                 'pixel': None if x_pixel is None or not ok['pixel'] else _g(x_pixel) / crp},
@@ -506,7 +509,7 @@ def _build_ledger(cells, entries, lam, conds, electrodes, shared, totals):
 
     Every item lambda goes through the same `lam` as the condition and layer lambdas (same density, factor, size
     filter, not-ok rule). `cells` holds every cell, `entries` the cells inside the diameter filter."""
-    acc = {}
+    acc, raw = {}, {}
     for ck in sorted(cells):
         for (kind, pid, failure_type, ekey), led in cells[ck]['ledger'].items():
             rec = acc.setdefault((ck[0], pid, failure_type, ekey, kind), {'led': led, 'rows': [], 'out': 0.0,
@@ -526,8 +529,10 @@ def _build_ledger(cells, entries, lam, conds, electrodes, shared, totals):
             reasons = sorted(rec['notes'])
         else:  # the diameter filter removed every cell of this item: a true 0, not a missing input
             total, reasons = 0.0, ['diameter_filter_removed_all']
+        item_id = _item_id(pid, failure_type, led['upper'], led['lower'], ekey)
+        raw[(item_id, kind)] = list(rec['rows'])   # (cell key, unrounded share um2, lambda) in size order
         items.append({
-            'item_id': _item_id(pid, failure_type, led['upper'], led['lower'], ekey), 'pair_id': pid, 'class': kind,
+            'item_id': item_id, 'pair_id': pid, 'class': kind,
             'failure_type': failure_type, 'analysis_layer': layer, 'upper_layer': led['upper'],
             'lower_layer': led['lower'], 'electrodes': electrodes.get((pid, layer)) or [e for e, _l in ekey],
             'endpoints': led['endpoints'], 'lambda': total,
@@ -535,7 +540,7 @@ def _build_ledger(cells, entries, lam, conds, electrodes, shared, totals):
             'by_size': [{'diameter_um': _diameter_json(ck[2]), 'density_layer': ck[1], 'area_share_um2': _area(share),
                          'lambda': value} for ck, share, value in rec['rows']],
             'transferred_out_area_um2': _area(rec['out']), 'computable': total is not None, 'reasons': reasons})
-    return items, _ledger_check(cells, items, conds, shared, totals)
+    return items, _ledger_check(cells, items, conds, shared, totals), raw
 
 
 def _ledger_check(cells, items, conds, shared, totals):
@@ -762,6 +767,319 @@ def _delta(a, b):
     out['check'] = {**checks, 'status': 'failed' if 'failed' in states else (
         'not_evaluated' if 'not_evaluated' in states else 'passed')}
     return out
+
+
+# ---- rebase: B's CA read with A's coefficients ------------------------------------------------------------------
+
+REBASE_BASIS = 'target_ca_reference_coefficients_v1'
+VI_DIVISOR = {'line': VI_LINE_DIVISOR, 'pixel': VI_PIXEL_DIVISOR}
+SEGMENTS = (('ca', 'S0', 'S1'), ('f', 'S1', 'S2'), ('crp', 'S2', 'S3'), ('density', 'S3', 'S4'))
+
+
+def _rebase_lam(table, factor, dlayer, diameter, count):
+    """(lambda, why): density * count * factor in the order of compare2's `lam`; a missing density counts as 0 only
+    for a zero area, otherwise the lambda is None and `why` is the density reason."""
+    value, why = table.lookup(dlayer, diameter)
+    if value is None:
+        return (0.0, None) if count == 0 else (None, why)
+    return value * count * factor, None
+
+
+def _cmp(lhs, rhs):
+    if lhs is None or rhs is None:
+        return {'status': 'not_evaluated', 'sum': lhs, 'total': rhs, 'abs_error': None}
+    error = lhs - rhs
+    return {'status': 'passed' if _within(error, rhs) else 'failed', 'sum': lhs, 'total': rhs, 'abs_error': abs(error)}
+
+
+def _rebase_cno_rows(side, table, factor):
+    """Per CNO case: lambda with `table` and `factor` over the unrounded CSV areas of `side`. Returns
+    ({case_name: (lambda, [row])}, missing[]); a case without a density for a non-zero area has lambda None."""
+    out, missing = {}, []
+    for name in side['cno']:
+        row = side['cno'][name]
+        raw = side['cno_raw'].get(name)
+        if raw is None:
+            out[name] = (None, [])
+            continue
+        parts, rows, bad = [], [], False
+        for diameter, area in raw:
+            value, why = _rebase_lam(table, factor, row['density_layer'], diameter, area)
+            density = table.lookup(row['density_layer'], diameter)[0]
+            rows.append({'diameter_um': _diameter_json(size_key(diameter)), 'density_a': density,
+                         'area_csv_um2': _area(area), 'lambda': value})
+            if value is None:
+                bad = True
+                missing.append({'scope': 'cno', 'kind': 'pixel', 'case_name': name, 'electrode_id': row['electrode_id'],
+                                'density_layer': row['density_layer'], 'diameter_um': _diameter_json(size_key(diameter)),
+                                'reason': why, 'area_b_um2': _area(area)})
+            else:
+                parts.append(value)
+        out[name] = (None if bad else sum(parts), rows)
+    return out, missing
+
+
+def _merge_cno(side, per_case):
+    """{(electrode, density_layer): {'case_name', 'electrode_id', 'density_layer', 'lambda', 'rows'}}: the
+    folder-name forms of one electrode and layer are one row, as _cno_by_layer merges them."""
+    merged = {}
+    for name in sorted(per_case):
+        row = side['cno'][name]
+        value, rows = per_case[name]
+        key = (row['electrode_id'], row['density_layer'])
+        if key not in merged:
+            merged[key] = {'case_name': name, 'electrode_id': row['electrode_id'], 'density_layer': row['density_layer'],
+                           'lambda': value, 'rows': list(rows)}
+        else:
+            merged[key]['lambda'] = _sum_opt([merged[key]['lambda'], value])
+            merged[key]['rows'].extend(rows)
+    return merged
+
+
+def _rebase_kind(kind, a, b, tables, delta_vi):
+    """One kind's rebase (S0..S4). Returns a dict: state, items, cno, missing, reasons, check."""
+    ta = tables['reference'][kind]
+    reasons = []
+    for role, side in (('reference', a), ('target', b)):
+        if side['factors'][kind] is None:
+            reasons.append(f'factor_unavailable:{role}:{side["group"].glass_area_reason or "glass_area_pending"}')
+        elif not side['ok'][kind]:
+            reasons.append(f'side_not_available:{role}')
+    result = {'items': [], 'cno': [], 'missing': [], 'reasons': reasons, 'check': {'status': 'not_evaluated'}}
+    crp_a, crp_b = (1.0, 1.0) if kind == 'line' else (a['crp'], b['crp'])
+    divisor = VI_DIVISOR[kind]
+    if reasons:
+        result['state'] = {'status': 'unavailable', 'reasons': sorted(reasons)}
+        return result
+    f_a, f_b = a['factors'][kind], b['factors'][kind]
+    missing = result['missing']
+
+    # item lambdas: density of A, area (share) of B, F of A (S1) or of B (S2)
+    index = {role: {(i['item_id'], i['class']): i for i in side['ledger_items'] if i['class'] == kind}
+             for role, side in (('reference', a), ('target', b))}
+    recs, failed = [], False
+    total_b = b['lam']['line'] if kind == 'line' else b['x_pixel']
+    for key in sorted(set(index['reference']) | set(index['target'])):
+        ia, ib = index['reference'].get(key), index['target'].get(key)
+        base = ib or ia
+        rec = {'item_id': key[0], 'class': kind, 'analysis_layer': base['analysis_layer'],
+               'presence': 'both' if ia is not None and ib is not None else ('new' if ib is not None else 'gone'),
+               'lambda_a': 0.0 if ia is None else ia['lambda'], 'lambda_b': 0.0 if ib is None else ib['lambda'],
+               'by_size': []}
+        l1, l2, bad = [], [], False
+        for ck, share, value_b in (b['ledger_raw'].get(key, ()) if ib is not None else ()):
+            v1, why = _rebase_lam(ta, f_a, ck[1], ck[2], share)
+            v2 = _rebase_lam(ta, f_b, ck[1], ck[2], share)[0]
+            rec['by_size'].append({'diameter_um': _diameter_json(ck[2]), 'density_layer': ck[1],
+                                   'density_a': ta.lookup(ck[1], ck[2])[0], 'area_share_um2': _area(share),
+                                   'lambda_s1': v1, 'lambda_s2': v2})
+            if v1 is None:
+                bad = True
+                missing.append({'scope': 'item', 'kind': kind, 'item_id': key[0], 'analysis_layer': rec['analysis_layer'],
+                                'density_layer': ck[1], 'diameter_um': _diameter_json(ck[2]), 'reason': why,
+                                'area_b_um2': _area(share), 'lambda_b': value_b,
+                                'lambda_b_share': _ratio(value_b, total_b)})
+            else:
+                l1.append(v1)
+                l2.append(v2)
+        rec['lambda_s1'] = None if bad else math.fsum(l1)
+        rec['lambda_s2'] = None if bad else math.fsum(l2)
+        if bad or rec['lambda_a'] is None or rec['lambda_b'] is None:
+            failed = True
+        recs.append(rec)
+
+    def direct(factor):
+        values = []
+        for ck in sorted(b['entries']):
+            entry = b['entries'][ck]
+            count = entry['item']['line'] if kind == 'line' else entry['item']['peff']
+            value, why = _rebase_lam(ta, factor, ck[1], ck[2], count)
+            if value is None:
+                if not any(m['density_layer'] == ck[1] and m['diameter_um'] == _diameter_json(ck[2])
+                           and m['scope'] != 'cno' for m in missing):
+                    missing.append({'scope': 'cell', 'kind': kind, 'analysis_layer': ck[0], 'density_layer': ck[1],
+                                    'diameter_um': _diameter_json(ck[2]), 'reason': why, 'area_b_um2': _area(count)})
+                return None
+            values.append(value)
+        return sum(values)
+
+    d1, d2 = direct(f_a), direct(f_b)
+    cno_recs, cno_tot = [], {'S1': None, 'S2': None}
+    if kind == 'pixel':
+        per1, miss1 = _rebase_cno_rows(b, ta, a['factors']['cno'])
+        per2, _miss2 = _rebase_cno_rows(b, ta, b['factors']['cno'])
+        missing.extend(miss1)
+        merged_a, merged_b = _cno_by_layer(a), _cno_by_layer(b)
+        m1, m2 = _merge_cno(b, per1), _merge_cno(b, per2)
+        for key in sorted(set(merged_a) | set(merged_b), key=lambda k: ((merged_b.get(k) or merged_a[k])['case_name'], str(k))):
+            ra, rb = merged_a.get(key), merged_b.get(key)
+            base = rb or ra
+            rec = {'case_name': base['case_name'], 'electrode_id': base['electrode_id'],
+                   'density_layer': base['density_layer'],
+                   'presence': 'both' if ra is not None and rb is not None else ('new' if rb is not None else 'gone'),
+                   'lambda_a': 0.0 if ra is None else ra['lambda'], 'lambda_b': 0.0 if rb is None else rb['lambda'],
+                   'lambda_s1': 0.0 if rb is None else m1[key]['lambda'],
+                   'lambda_s2': 0.0 if rb is None else m2[key]['lambda'],
+                   'by_size': [] if rb is None else [{'diameter_um': r['diameter_um'], 'density_a': r['density_a'],
+                                                      'area_csv_um2': r['area_csv_um2'], 'lambda_s1': r['lambda'],
+                                                      'lambda_s2': s['lambda']}
+                                                     for r, s in zip(m1[key]['rows'], m2[key]['rows'])]}
+            if any(rec[name] is None for name in ('lambda_a', 'lambda_b', 'lambda_s1', 'lambda_s2')):
+                failed = True
+            cno_recs.append(rec)
+        for name, per in (('S1', per1), ('S2', per2)):
+            values = [per[row][0] for row in b['cno']]
+            cno_tot[name] = None if any(v is None for v in values) else sum(values)
+    if failed or d1 is None or d2 is None or (kind == 'pixel' and (cno_tot['S1'] is None or cno_tot['S2'] is None)):
+        # a (kind, density layer, diameter) of B with area but no density in A: this kind is not converted
+        for rec in recs + cno_recs:
+            rec['ca_delta'] = rec['f_delta'] = rec['density_delta'] = None
+        result.update(items=recs, cno=cno_recs)
+        why = sorted({f'reference_{m["reason"]}:{kind}:{m["density_layer"]}' for m in missing})
+        result['reasons'] = why or ['item_lambda_unavailable']
+        result['state'] = {'status': 'unavailable', 'reasons': result['reasons']}
+        return result
+
+    lam_x = {'S0': a['lam']['line'] if kind == 'line' else a['x_pixel'],
+             'S1': d1 if kind == 'line' else d1 + cno_tot['S1'],
+             'S2': d2 if kind == 'line' else d2 + cno_tot['S2'],
+             'S4': b['lam']['line'] if kind == 'line' else b['x_pixel']}
+    lam_x['S3'] = lam_x['S2']
+    crp_of = {'S0': crp_a, 'S1': crp_a, 'S2': crp_a, 'S3': crp_b, 'S4': crp_b}
+    vi = {name: _g(lam_x[name]) / crp_of[name] / divisor for name in lam_x}
+    vi['S0'], vi['S4'] = a['vi'][kind], b['vi'][kind]
+    state = {'status': 'available', 'reasons': []}
+    for name in ('S0', 'S1', 'S2', 'S3', 'S4') if kind == 'pixel' else ('S0', 'S1', 'S2', 'S4'):
+        entry = {'x': lam_x[name], 'vi': vi[name]}
+        if kind == 'pixel':
+            entry['crp'] = crp_of[name]
+        if name == 'S1':
+            entry['lambda'] = d1
+            entry['lambda_cno'] = cno_tot['S1'] if kind == 'pixel' else None
+        elif name in ('S2', 'S3'):
+            entry['lambda'] = d2
+            entry['lambda_cno'] = cno_tot['S2'] if kind == 'pixel' else None
+        else:
+            side, role = (a, 'S0') if name == 'S0' else (b, 'S4')
+            entry['lambda'] = side['lam'][kind]
+            entry['lambda_cno'] = side['lam']['cno'] if kind == 'pixel' else None
+        if kind == 'line':
+            del entry['lambda_cno']
+        state[name] = entry
+
+    # segments: item value = slope x change of lambda; the slope of every segment is its own secant
+    sums, checks = {}, {}
+    to_from = {'ca': ('lambda_a', 'lambda_s1'), 'f': ('lambda_s1', 'lambda_s2'), 'density': ('lambda_s2', 'lambda_b')}
+    seg_state = {'ca': ('S0', 'S1'), 'f': ('S1', 'S2'), 'density': ('S3', 'S4')}   # S3 = S2 in x, B's CRP in vi
+    seg_crp = {'ca': crp_a, 'f': crp_a, 'density': crp_b}
+    segments = {}
+    for name in ('ca', 'f', 'density'):
+        src, dst = seg_state[name]
+        slope, method = _slope_g(lam_x[src], lam_x[dst])
+        value = slope / (seg_crp[name] * divisor)
+        l_from, l_to = to_from[name]
+        for rec in recs + cno_recs:
+            rec[f'{name}_delta'] = value * (rec[l_to] - rec[l_from])
+        item_values = [rec[f'{name}_delta'] for rec in recs]
+        cno_values = [rec[f'{name}_delta'] for rec in cno_recs]
+        total = math.fsum(item_values + cno_values)
+        sums[name] = total
+        segments[name] = {'slope': {'value': value, 'method': method}, 'items_sum': math.fsum(item_values),
+                          'cno_sum': math.fsum(cno_values) if kind == 'pixel' else None, 'sum': total,
+                          'delta_vi': vi[dst] - vi[src]}
+        checks[name] = _cmp(total, vi[dst] - vi[src])
+    if kind == 'pixel':
+        crp_value = _g(lam_x['S2']) * (1 / crp_b - 1 / crp_a) / divisor
+        segments['crp'] = {'sum': crp_value, 'delta_vi': vi['S3'] - vi['S2']}
+        sums['crp'] = crp_value
+        checks['crp'] = _cmp(crp_value, vi['S3'] - vi['S2'])
+    segments = {name: segments[name] for name in ('ca', 'f', 'crp', 'density') if name in segments}
+    state['segments'] = segments
+    state['sum_of_segments'] = math.fsum(sums.values())
+    state['delta'] = delta_vi
+    check = {'s1_lambda': _cmp(math.fsum(r['lambda_s1'] for r in recs), d1),
+             's2_lambda': _cmp(math.fsum(r['lambda_s2'] for r in recs), d2),
+             'segments': checks, 'total': _cmp(state['sum_of_segments'], delta_vi)}
+    if kind == 'pixel':
+        check['s1_cno'] = _cmp(math.fsum(r['lambda_s1'] for r in cno_recs), cno_tot['S1'])
+        check['s2_cno'] = _cmp(math.fsum(r['lambda_s2'] for r in cno_recs), cno_tot['S2'])
+    statuses = {check[n]['status'] for n in check if n != 'segments'} | {c['status'] for c in checks.values()}
+    check['status'] = 'failed' if 'failed' in statuses else ('not_evaluated' if 'not_evaluated' in statuses else 'passed')
+    result.update(state=state, items=recs, cno=cno_recs, check=check)
+    return result
+
+
+def _ratio_table(a, b, kind):
+    """r_WH, r_rule, r_M, r_G, r_F of B over A; None when the denominator is 0 or a value is pending."""
+    wh_a = a['product'].resolution[0] * a['product'].resolution[1]
+    wh_b = b['product'].resolution[0] * b['product'].resolution[1]
+    rule_a = None if wh_a == 0 else effective_resolution(a['product'], a['group']) / wh_a
+    rule_b = None if wh_b == 0 else effective_resolution(b['product'], b['group']) / wh_b
+    glass_a, glass_b = a['group'].glass_area_um2, b['group'].glass_area_um2
+    return {'r_WH': _ratio(wh_b, wh_a), 'r_rule': _ratio(rule_b, rule_a),
+            'r_M': _ratio(b['group'].weight(kind), a['group'].weight(kind)),
+            'r_G': None if glass_a is None or glass_b is None else _ratio(glass_b, glass_a),
+            'r_F': _ratio(b['factors'][kind], a['factors'][kind])}
+
+
+def _rebase(a, b, tables, delta):
+    """The `rebase` block of compare2.json: the change of each kind split along CA -> F -> CRP -> density."""
+    coefficients = {}
+    for role, side in (('reference', a), ('target', b)):
+        product, group = side['product'], side['group']
+        coefficients[role] = {
+            'model_group': group.name, 'resolution': list(product.resolution),
+            'effective_resolution': effective_resolution(product, group), 'glass_um2': group.glass_area_um2,
+            'weights': {'line': group.weight_line, 'pixel': group.weight_pixel},
+            'F': {'line': side['factors']['line'], 'pixel': side['factors']['pixel'], 'cno': side['factors']['cno']},
+            'crp': side['crp'],
+            'density_sha256': {kind: tables[role][kind].sha256 for kind in KINDS}}
+    coefficients['ratios'] = {kind: _ratio_table(a, b, kind) for kind in KINDS}
+    states, items, cno, missing, reasons, checks = {}, [], [], [], [], {}
+    for kind in KINDS:
+        got = _rebase_kind(kind, a, b, tables, delta['indicators'][f'delta_vi_{kind}'])
+        states[kind] = got['state']
+        items.extend(got['items'])
+        if kind == 'pixel':
+            cno.extend(got['cno'])
+        missing.extend(got['missing'])
+        reasons.extend(f'{kind}:{why}' for why in got['reasons'])
+        checks[kind] = got['check']
+    available = [states[kind]['status'] == 'available' for kind in KINDS]
+    status = 'available' if all(available) else ('partial' if any(available) else 'unavailable')
+    check_states = {checks[kind]['status'] for kind in KINDS}
+    checks['status'] = 'failed' if 'failed' in check_states else (
+        'not_evaluated' if 'not_evaluated' in check_states else 'passed')
+    missing.sort(key=lambda m: (m['scope'], m.get('kind', ''), str(m.get('item_id', m.get('case_name', ''))),
+                                m['density_layer'], m['diameter_um']))
+    return {'status': status, 'reasons': sorted(set(reasons)), 'missing': missing, 'coefficients': coefficients,
+            'states': states, 'items': items, 'cno': cno, 'check': checks}
+
+
+def _layer_order(cfg, sides):
+    """Layer names in layer_stack order: stack_order ascending over both products (lowest order wins when a layer is
+    listed twice, same order by name), then every other layer that appears in the results, by name."""
+    order = {}
+    for role in ROLES:
+        section = cfg.get(role)
+        assignment = section.get('condition_assignment') if isinstance(section, dict) else None
+        stack = assignment.get('layer_stack') if isinstance(assignment, dict) else None
+        for row in stack or ():
+            name, number = row.get('actual_layer'), row.get('stack_order')
+            if isinstance(name, str) and isinstance(number, (int, float)) and not isinstance(number, bool):
+                order[name] = number if name not in order else min(order[name], number)
+    seen = set()
+    for side in sides:
+        for layer, dlayer, _diameter in side['entries']:
+            seen.update((layer, dlayer))
+        for row in side['cno'].values():
+            seen.add(row['density_layer'])
+        for item in side['ledger_items']:
+            seen.update((item['analysis_layer'], item['upper_layer'], item['lower_layer']))
+            seen.update(endpoint['actual_layer'] for endpoint in item['endpoints'])
+    seen.discard(None)
+    inside = sorted(order, key=lambda name: (order[name], name))
+    return inside + sorted(name for name in seen if name not in order)
 
 
 # ---- output documents -------------------------------------------------------------------------------------------
@@ -1064,10 +1382,12 @@ def build_compare2(config_path):
                           'crp_one_groups': list(CRP_ONE_GROUPS), 'round_digits': ROUND_DIGITS,
                           'conservation_tolerance': CONSERVATION_TOL, 'slope_limit_eps': SLOPE_LIMIT_EPS,
                           'ratio_null_below': RATIO_EPS},
-            'area_basis': AREA_BASIS, 'ledger_basis': LEDGER_BASIS},
+            'area_basis': AREA_BASIS, 'ledger_basis': LEDGER_BASIS, 'rebase_basis': REBASE_BASIS,
+            'layer_order': _layer_order(cfg, [sides[role] for role in ROLES])},
         'products': {role: _product_json(sides[role], tables[role]) for role in ROLES},
         'sides': side_docs,
-        'delta': delta}
+        'delta': delta,
+        'rebase': _rebase(sides['reference'], sides['target'], tables, delta)}
     if subset is not None:
         observed = set().union(*(side['observed'] for side in full_sides.values()))
         not_observed = [key for key in listed if key not in observed]

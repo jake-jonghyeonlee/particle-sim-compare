@@ -26,6 +26,9 @@ def strip_new_keys(doc):
         for key in NEW_KEYS:
             side.pop(key, None)
     doc['inputs'].pop('ledger_basis', None)
+    doc['inputs'].pop('rebase_basis', None)   # rnarr/T4 keys
+    doc['inputs'].pop('layer_order', None)
+    doc.pop('rebase', None)
     return doc
 
 

@@ -138,6 +138,9 @@ def without_ledger_keys(text):
         side.pop('ledger_items', None)
         side.pop('ledger_check', None)
     doc['inputs'].pop('ledger_basis', None)
+    doc['inputs'].pop('rebase_basis', None)   # rnarr/T4 keys
+    doc['inputs'].pop('layer_order', None)
+    doc.pop('rebase', None)
     return _json_text(doc)
 
 
