@@ -160,7 +160,14 @@ def test_h4_nothing_changed_says_no_item_change_for_both_kinds(real):
 
 def test_h4_only_the_crp_changes(real):
     s1 = new_section(render(variant(real, lambda d: _statuses(d, 'no_change', 'no_change', -0.13))), 's1')
-    assert 'pixel 에는 item 변화가 없습니다.' in s1 and 'pixel 변화는 보정값(CRP) 차이에서 나왔습니다.' in s1
+    assert 'pixel 에는 item 변화가 없습니다.' in s1 and 'pixel 변화 −13.0000%p 는 보정값(CRP) 차이에서 나왔습니다.' in s1
+
+
+def test_r12b_3_no_change_with_a_crp_below_the_limit_has_no_crp_sentence_and_a_positive_one_keeps_its_sign(real):
+    tiny = new_section(render(variant(real, lambda d: _statuses(d, 'no_change', 'no_change', 1e-15))), 's1')
+    assert 'pixel 에는 item 변화가 없습니다.' in tiny and '보정값(CRP) 차이' not in tiny
+    plus = new_section(render(variant(real, lambda d: _statuses(d, 'no_change', 'no_change', 0.02))), 's1')
+    assert 'pixel 변화 +2.0000%p 는 보정값(CRP) 차이에서 나왔습니다.' in plus
 
 
 def test_h4_one_kind_that_cannot_be_computed_leaves_the_other_alone(real):
@@ -295,6 +302,8 @@ def test_6_other_conditions_differ_adds_a_column(real):
         d['summary']['design']['pixel']['segments']['crp'] = -0.01
     s6 = new_section(render(variant(real, edit)), 's6')
     assert '해상도 외 조건 몫' in s6 and '해상도 외 조건이 다름' in s6
+    # R12b:4: the note under the line that names the outside conditions
+    assert '환산 경로(설계 → 해상도 → 보정값 → 밀도)로 나눈 몫이라 1·4 의 보정값(CRP) 차이와 다를 수 있습니다.' in s6
 
 
 def test_6_waiting_conversion_and_not_evaluated_and_not_available(real):
@@ -421,30 +430,18 @@ def test_chrome_clearing_the_selection_clears_the_cause_candidate(real_page, rea
 
 # ---- rnarr/T7b (R12): the CRP sentences, the scroll, the move and odd-name cards, the 6 ratios --------------------------------------
 
-def _tag_attrs(page, element_id):
-    """(class list, attributes) of the element with this id in the DOM text (the page is parsed, so entities are decoded)."""
-    class Find(HTMLParser):
-        def __init__(self):
-            HTMLParser.__init__(self)
-            self.found = None
-
-        def handle_starttag(self, tag, attrs):
-            attrs = dict(attrs)
-            if attrs.get('id') == element_id and self.found is None:
-                self.found = attrs
-    f = Find()
-    f.feed(page)
-    return f.found
-
-
 def test_r12_1_the_crp_change_is_named_in_1_and_4_and_kept_out_of_the_cause_candidates(real):
     crp = real['summary']['bundles']['crp']['pixel']
     assert crp != 0.0
     page = render(real)
     s1, s4 = all_text(new_section(page, 's1')), all_text(new_section(page, 's4'))
-    assert 'pixel 변화 중 ±%.4f%%p 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % abs(crp * 100) in s1
+    signed = ledger_report.raw_pp(crp)
+    assert signed[0] in '+−'
+    sentence = 'pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % signed
+    assert sentence in s1 and '보정값(CRP) 차이 %s' % signed in s4          # the same signed text in 1 and 4
     assert 'pixel item 변화량' in s1 and '원인 후보 3 개에 모두 있습니다' in s1
-    assert '보정값(CRP) 차이 −%.4f%%p' % abs(crp * 100) in s4
+    # R12b:2: the CRP sentence comes right after the sentence that says how much of the item change the cards hold
+    assert s1.index('원인 후보 3 개에 모두 있습니다') < s1.index(sentence) < s1.index('가장 큰 pixel 원인 후보')
 
     zero = new_section(render(variant(real, lambda d: _statuses(d, crp=0.0))), 's1')
     assert '보정값(CRP) 차이에서 나왔' not in zero and 'pixel item 변화량' not in zero

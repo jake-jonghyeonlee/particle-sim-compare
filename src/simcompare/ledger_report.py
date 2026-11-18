@@ -681,9 +681,10 @@ def _unit_badge(b):
             'pair': '<span class="badge">이 쌍만 변함</span>', 'cno': '<span class="badge">CNO 만</span>'}[b['type']]
 
 
-def _kind_phrase(kind, b):
+def _kind_phrase(kind, b, ctx=None):
     s = b['kinds'][kind]
-    return '%s %s(%s 변화량의 %s)' % (kind, pp_txt(s['net']), kind, share_txt(s['share']))
+    word = 'item 변화량' if ctx is not None and _crp_outside(ctx, kind) is not None else '변화량'   # R12b:2
+    return '%s %s(%s %s의 %s)' % (kind, pp_txt(s['net']), kind, word, share_txt(s['share']))
 
 
 def _crp_outside(ctx, kind):
@@ -709,8 +710,9 @@ def _kind_lines(ctx, kind, mode, state):
         return ['%s 원인 후보는 계산할 수 없습니다(%s).' % (kind, esc(why))]
     if st == 'no_change':
         out = ['%s 에는 item 변화가 없습니다.' % kind]
-        if kind == 'pixel' and not _tiny((bd.get('crp') or {}).get('pixel')):
-            out.append('pixel 변화는 보정값(CRP) 차이에서 나왔습니다.')
+        crp_d = _crp_outside(ctx, kind)
+        if crp_d is not None:
+            out.append('pixel 변화 %s 는 보정값(CRP) 차이에서 나왔습니다.' % esc(pp_txt(crp_d)))
         return out
     cards = [ctx.bundle_by_id[i] for i in rk.get('cards') or [] if i in ctx.bundle_by_id]
     if not cards:
@@ -729,7 +731,7 @@ def _kind_lines(ctx, kind, mode, state):
     top = cards[0]
     out.append('가장 큰 %s 원인 후보는 %s 입니다.' % (kind, lk_bundle(top)))
     out.append(esc(unit_first(top)) + ('' if mode == 's3' else ' 이 원인 후보의 %s 변화는 %s 입니다.' % (
-        kind, '%s(%s 변화량의 %s)' % (pp_txt(top['kinds'][kind]['net']), kind, share_txt(top['kinds'][kind]['share'])))))
+        kind, '%s(%s %s의 %s)' % (pp_txt(top['kinds'][kind]['net']), kind, word, share_txt(top['kinds'][kind]['share'])))))
     return out
 
 
@@ -789,11 +791,12 @@ def _opinion(ctx):
     else:
         state = {'defined': False}
         for kind in KINDS:
-            ops.extend(_kind_lines(ctx, kind, 's1', state))
-        crp_d = _crp_outside(ctx, 'pixel')
-        if crp_d is not None and (ctx.bundles.get('status') or {}).get('pixel') not in ('no_change', 'not_evaluated'):
-            ops.append('pixel 변화 중 ±%s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % esc(
-                '%.4f%%p' % abs(crp_d * 100)))
+            lines = _kind_lines(ctx, kind, 's1', state)
+            crp_d = _crp_outside(ctx, kind)
+            if crp_d is not None and (ctx.bundles.get('status') or {}).get(kind) not in ('no_change', 'not_evaluated'):
+                # R12b:2: right after the sentence that says how much of the item change the cards hold
+                lines.insert(1, 'pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % esc(pp_txt(crp_d)))
+            ops.extend(lines)
         cards =[ctx.bundle_by_id[i] for kind in KINDS for i in ctx.bundles['ranking'][kind].get('cards') or [] if i in ctx.bundle_by_id]
         conflict = sorted((b for b in cards if b.get('conflict')), key=lambda b: (-max(b['kinds'][k]['share'] or 0.0 for k in KINDS), b['id']))
         if conflict:
@@ -1751,7 +1754,7 @@ def _bundle_card(ctx, b):
             len(rows) - 5, head, ''.join(_row_html(ctx, b, r) for r in rows[5:]))
     kinds = ' &nbsp;·&nbsp; '.join('%s%s %s <span class="muted">(%s)</span>' % (
         chip(k), k, pp_cell(b['kinds'][k]['net'], None), share_txt(b['kinds'][k]['share'])) for k in KINDS)
-    amount = ', '.join(_kind_phrase(k, b) for k in KINDS)
+    amount = ', '.join(_kind_phrase(k, b, ctx) for k in KINDS)
     parts = ['<div class="bcard" id="%s"><div class="bh"><b class="bt"><a class="lk" href="#unit=%s&amp;to=s2" title="2 제품 대응 표의 이 칸 보기">%s</a></b> %s%s'
              '<div class="bv">%s</div></div>' % (esc(b['id']), esc(b['id']), esc(bundle_title(b)), _unit_badge(b),
                                                 '<span class="badge b-mv">상충</span>' if b.get('conflict') else '', kinds),
@@ -1994,6 +1997,9 @@ def _section6(ctx):
             res = '해상도 차이는 <b>%s</b>' % esc(pp_txt(0.0 if 'resolution' in neg else seg['resolution']))
             sums.append('%s 중 설계 차이는 <b>%s</b>, %s%s 입니다.' % (parts[0], esc(pp_txt(seg['design'])), res, out_txt))
     out = ['<section id="s6">', head(sums)]
+    if outside:
+        out.append('<p class="muted" id="s6-outside-note">이 값은 환산 경로(설계 → 해상도 → 보정값 → 밀도)로 나눈 몫이라 '
+                   '1·4 의 보정값(CRP) 차이와 다를 수 있습니다.</p>')
     if any(avail[k].get('status') == 'unavailable' for k in KINDS):
         out.append('<div class="band"><b>환산 대기</b> — 한 종류의 환산 값이 없어 그 종류는 나누지 않았습니다. 다른 종류는 정상입니다.</div>')
     # the conditions of the two products
