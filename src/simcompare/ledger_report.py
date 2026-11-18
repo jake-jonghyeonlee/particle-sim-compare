@@ -362,10 +362,7 @@ def _bands(ctx, size_warning):
         if dropped:
             out.append('<div class="band partial" id="band-cards-budget"><b>카드 %d 장이 빠졌습니다</b> — 메모리 예산이 모자라 ledger-maps 가 '
                        '카드를 건너뛰었습니다(cards_budget_reduced). 지도와 값은 그대로입니다.</div>' % len(dropped))
-        status = ctx.link_status()
-        if status != 'ok':
-            out.append('<div class="band info" id="band-changes"><b>변경 위치 없음</b> — %s</div>' % esc(
-                BAND_TEXT.get('link_' + status, '04 변경 위치를 쓸 수 없습니다(%s).' % status)))
+        # R12:6: the missing 04 result is one muted line in the folded 04 reference (_locations_line), not a band
     if size_warning:
         out.append('<div class="band info" id="band-size"><b>큰 보고서</b> — HTML 이 8 MB 를 넘습니다. 열기가 느리면 '
                    '--top-cards 를 줄여 ledger-maps 를 다시 실행하세요.</div>')
@@ -550,7 +547,10 @@ def _tag_block(ctx):
 def _locations_line(ctx):
     status = ctx.link_status()
     if status != 'ok':
-        return '<div class="trust2" id="locations">변경 위치: 04 결과 없음 — 위 띠를 보세요.</div>'
+        why = esc(BAND_TEXT.get('link_' + status, '04 변경 위치를 쓸 수 없습니다(%s).' % status))
+        if ctx.maps is None:       # no --maps-dir: the band "지도 없음" already says it
+            return '<div class="trust2" id="locations">변경 위치: 04 결과 없음 — %s</div>' % why
+        return '<div class="trust2" id="locations">변경 위치: 04 결과 없음 — <span id="band-changes">%s</span></div>' % why
     s = ctx.changes.get('summary') or {}
     return ('<div class="trust2" id="locations">변경 위치 <b>%d곳</b>(04) · 위치에 연결된 쌍 <b>%d</b> · 미연결 쌍 <b>%d</b> '
             '<span class="muted">(보조 정보) (분모 %d 쌍 = 변화 없음을 뺀 쌍. 미연결은 "04 가 고른 상위 위치에 없음"이지 "변경 없음"이 아닙니다)</span></div>' % (
@@ -686,6 +686,19 @@ def _kind_phrase(kind, b):
     return '%s %s(%s 변화량의 %s)' % (kind, pp_txt(s['net']), kind, share_txt(s['share']))
 
 
+def _crp_outside(ctx, kind):
+    """The CRP change of the pixel kind when it is larger than the negligible limit (summary.rules.negligible), else None.
+    The CRP line belongs to no cause candidate (R12:1)."""
+    if kind != 'pixel' or not ctx.bundles:
+        return None
+    value = (ctx.bundles.get('crp') or {}).get('pixel')
+    if not isinstance(value, (int, float)):
+        return None
+    rule = ((ctx.summary.get('rules') or {}).get('negligible')) or {}
+    limit = (rule.get('abs') or 0.0) + (rule.get('rel') or 0.0) * abs(ctx.vi_a['pixel'] or 0.0)
+    return value if abs(value) > max(limit, 1e-12) else None
+
+
 def _kind_lines(ctx, kind, mode, state):
     """The sentences of one kind about its cause candidates (H4 suppression). mode 's1' or 's3'; state['defined'] says the
     amount of change was already defined once."""
@@ -703,7 +716,8 @@ def _kind_lines(ctx, kind, mode, state):
     if not cards:
         return ['%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.' % kind]
     where = '아래 카드' if mode == 's3' else '상위'
-    amount = '변화량' if state['defined'] else '변화량' + DEF_TEXT
+    word = 'item 변화량' if _crp_outside(ctx, kind) is not None else '변화량'
+    amount = word if state['defined'] else word + DEF_TEXT
     state['defined'] = True
     rest = rk.get('rest') or []
     if not rest:
@@ -729,13 +743,18 @@ def _vi_sentence(ctx, kind):
         kind, esc(vi_txt(kd['vi_a'])), esc(vi_txt(kd['vi_b'])), esc(pp_txt(d)), '높아졌습니다' if d > 0 else '낮아졌습니다')
 
 
+def _bundle_status(bd):
+    """checks.bundles.status of the ledger as it is (R12:8: never counted again here)."""
+    return bd.get('status') or 'not_evaluated'
+
+
 def check_statuses(ctx, with_rebase=False):
     """Every check status of the page: the ledger sums, the item breakdown, the bundles (and the rebase when asked)."""
     statuses = _sum_checks(ctx)[1] + _item_checks(ctx)[1]
     checks = ctx.doc.get('checks') or {}
     bd = checks.get('bundles')
     if isinstance(bd, dict):
-        statuses.append('passed' if bd.get('duplicates') == 0 and bd.get('assigned') == bd.get('atoms') and bd.get('id_unique') else 'failed')
+        statuses.append(_bundle_status(bd))
         for kind in KINDS:
             statuses.extend(c.get('status') for c in ((bd.get('kinds') or {}).get(kind) or {}).values())
     conc = checks.get('concentration')
@@ -771,7 +790,11 @@ def _opinion(ctx):
         state = {'defined': False}
         for kind in KINDS:
             ops.extend(_kind_lines(ctx, kind, 's1', state))
-        cards = [ctx.bundle_by_id[i] for kind in KINDS for i in ctx.bundles['ranking'][kind].get('cards') or [] if i in ctx.bundle_by_id]
+        crp_d = _crp_outside(ctx, 'pixel')
+        if crp_d is not None and (ctx.bundles.get('status') or {}).get('pixel') not in ('no_change', 'not_evaluated'):
+            ops.append('pixel 변화 중 ±%s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % esc(
+                '%.4f%%p' % abs(crp_d * 100)))
+        cards =[ctx.bundle_by_id[i] for kind in KINDS for i in ctx.bundles['ranking'][kind].get('cards') or [] if i in ctx.bundle_by_id]
         conflict = sorted((b for b in cards if b.get('conflict')), key=lambda b: (-max(b['kinds'][k]['share'] or 0.0 for k in KINDS), b['id']))
         if conflict:
             b = conflict[0]
@@ -965,7 +988,7 @@ def _appendix_extra(ctx):
     rows = []
     bd = checks.get('bundles')
     if isinstance(bd, dict):
-        rows.append(('원인 후보 묶음: 중복 0 · 배정 수 = 원자 수', 'passed' if bd.get('duplicates') == 0 and bd.get('assigned') == bd.get('atoms') and bd.get('id_unique') else 'failed'))
+        rows.append(('원인 후보 묶음 검산 전체(중복 0 · 배정 수 = 원자 수 포함)', _bundle_status(bd)))
         for kind in KINDS:
             for name, c in ((bd.get('kinds') or {}).get(kind) or {}).items():
                 rows.append(('원인 후보 %s · %s' % (kind, name), c.get('status', 'not_evaluated')))
@@ -1872,6 +1895,8 @@ def _section4(ctx):
         b = ctx.doc['kinds'][kind]['item_breakdown']
         gone = None if b.get('gone') is None else -b['gone']
         extra = ', CNO %s' % pp_txt(b.get('cno')) if kind == 'pixel' else ''
+        if kind == 'pixel' and ctx.crp_differs():
+            extra += ', 보정값(CRP) 차이 %s' % pp_txt(ctx.crp().get('delta'))
         return '%s 변화는 같은 불량의 증감 %s, 새 방식 %s, 없어진 방식 %s%s 로 이루어집니다.' % (
             kind, pp_txt(b.get('same')), pp_txt(b.get('new')), pp_txt(gone), extra)
     sums = [esc(line(k)) for k in KINDS]
@@ -1958,14 +1983,15 @@ def _section6(ctx):
         seg, neg = d['segments'], d.get('negligible') or []
         tops_present[k] = bool(d.get('top_increase') or d.get('top_decrease'))
         parts = ['%s vi 차이 <b>%s</b>' % (k, esc(pp_txt(d['delta'])))]
+        out_txt = ''
+        if (d.get('names') or {}).get('show_outside_conditions'):
+            out_txt = ', 해상도 외 조건 차이는 <b>%s</b>' % esc(pp_txt(math.fsum([seg['crp'] or 0.0, seg['density'] or 0.0])))
         if 'design' in neg:
             tail = ('설계 차이 합은 0 에 가깝지만 쌍 사이에서 오르고 내린 곳이 있습니다.' if tops_present[k] else '설계 차이는 거의 없습니다.')
-            sums.append('%s 중 해상도 차이는 <b>%s</b> 입니다. %s' % (parts[0], esc(pp_txt(0.0 if 'resolution' in neg else seg['resolution'])), tail))
+            sums.append('%s 중 해상도 차이는 <b>%s</b>%s 입니다. %s' % (
+                parts[0], esc(pp_txt(0.0 if 'resolution' in neg else seg['resolution'])), out_txt, tail))
         else:
             res = '해상도 차이는 <b>%s</b>' % esc(pp_txt(0.0 if 'resolution' in neg else seg['resolution']))
-            out_txt = ''
-            if (d.get('names') or {}).get('show_outside_conditions'):
-                out_txt = ', 해상도 외 조건 차이는 <b>%s</b>' % esc(pp_txt(math.fsum([seg['crp'] or 0.0, seg['density'] or 0.0])))
             sums.append('%s 중 설계 차이는 <b>%s</b>, %s%s 입니다.' % (parts[0], esc(pp_txt(seg['design'])), res, out_txt))
     out = ['<section id="s6">', head(sums)]
     if any(avail[k].get('status') == 'unavailable' for k in KINDS):
@@ -1978,14 +2004,20 @@ def _section6(ctx):
         r = (ratios.get('line') or {}).get(key)
         return '' if r is None else '%.3f' % r
 
-    def row(label, a, b, r, same):
+    def row(label, a, b, r, same, unknown=False):
+        verdict = '<span class="muted">판정 불가</span>' if unknown else (
+            '<span class="muted">같음</span>' if same else '<span class="warn">다름</span>')
         return '<tr><td class="l">%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
-            esc(label), esc(_fmt_val(a)), esc(_fmt_val(b)), '<span class="muted">같음</span>' if same else '<span class="warn">다름</span>', r)
+            esc(label), esc(_fmt_val(a)), esc(_fmt_val(b)), verdict, r)
     same_names, diff_rows = [], []
     for label, key, rk in (('유효 해상도 규칙(비)', None, 'r_rule'), ('glass 면적(µm²)', 'glass_um2', 'r_G'), ('가중 M', 'weights', 'r_M'),
                            ('이물 밀도 표(sha256)', 'density_sha256', None), ('CRP', 'crp', None)):
         if key is None:
-            same = abs((ratios.get('line') or {}).get(rk, 1.0) - 1.0) < 1e-12
+            value = (ratios.get('line') or {}).get(rk)
+            if not isinstance(value, (int, float)):       # R12:5: no ratio = cannot be judged (a dash, no error)
+                diff_rows.append(row(label, '—', '—', '—', False, unknown=True))
+                continue
+            same = abs(value - 1.0) < 1e-12
             (same_names if same else diff_rows).append(label if same else row(label, '—', '—', ratio(rk), False))
             continue
         a, b = A.get(key), B.get(key)

@@ -179,7 +179,7 @@ def test_h4_six_cards_or_fewer_hold_everything_and_more_say_the_rest(real):
         rk['rest_share'] = 0.1
         rk['cover'] = 0.9
     s1 = new_section(render(variant(real, more)), 's1')
-    assert '나머지 1 원인 후보가 10% 를 나눠 가집니다' in s1 and '모두 있습니다' not in s1.split('pixel 변화량')[0]
+    assert '나머지 1 원인 후보가 10% 를 나눠 가집니다' in s1 and '모두 있습니다' not in s1.split('pixel item 변화량')[0]
 
 
 def test_hub_without_partner_and_mixed_signs(real):
@@ -398,8 +398,9 @@ def test_chrome_normal_page_has_no_script_error_and_the_unit_hash_selects_a_card
         dom, text = dump_dom(real_page, fragment)
         assert 'data-err' not in dom.root, fragment
     dom, text = dump_dom(real_page, '#unit=%s&to=s3' % unit)
-    assert dom.root['data-unit'] == unit and 'class="bcard selcard"' in text.replace("class='bcard selcard'", 'class="bcard selcard"') or 'selcard' in text
-    assert '원인 후보 <b>' in text or '원인 후보' in text
+    assert dom.root['data-unit'] == unit
+    card = [a for t, a in dom.elements if a.get('id') == unit]
+    assert card and 'selcard' in (card[0].get('class') or '').split()      # R12:3: the card element itself carries the class
 
 
 def test_chrome_hash_values_outside_the_whitelist_are_ignored(real_page):
@@ -416,3 +417,151 @@ def test_chrome_clearing_the_selection_clears_the_cause_candidate(real_page, rea
               "document.documentElement.setAttribute('data-after',location.hash+'|'+document.documentElement.getAttribute('data-unit'));},200);},300);")
     dom, text = run_in_page(real_page, '#unit=%s' % unit, script)
     assert 'data-err' not in dom.root and dom.root['data-after'].endswith('|') and 'unit=' not in dom.root['data-after']
+
+
+# ---- rnarr/T7b (R12): the CRP sentences, the scroll, the move and odd-name cards, the 6 ratios --------------------------------------
+
+def _tag_attrs(page, element_id):
+    """(class list, attributes) of the element with this id in the DOM text (the page is parsed, so entities are decoded)."""
+    class Find(HTMLParser):
+        def __init__(self):
+            HTMLParser.__init__(self)
+            self.found = None
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if attrs.get('id') == element_id and self.found is None:
+                self.found = attrs
+    f = Find()
+    f.feed(page)
+    return f.found
+
+
+def test_r12_1_the_crp_change_is_named_in_1_and_4_and_kept_out_of_the_cause_candidates(real):
+    crp = real['summary']['bundles']['crp']['pixel']
+    assert crp != 0.0
+    page = render(real)
+    s1, s4 = all_text(new_section(page, 's1')), all_text(new_section(page, 's4'))
+    assert 'pixel 변화 중 ±%.4f%%p 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % abs(crp * 100) in s1
+    assert 'pixel item 변화량' in s1 and '원인 후보 3 개에 모두 있습니다' in s1
+    assert '보정값(CRP) 차이 −%.4f%%p' % abs(crp * 100) in s4
+
+    zero = new_section(render(variant(real, lambda d: _statuses(d, crp=0.0))), 's1')
+    assert '보정값(CRP) 차이에서 나왔' not in zero and 'pixel item 변화량' not in zero
+
+
+def test_r12_5_a_missing_rule_ratio_is_a_dash_not_an_error(real):
+    def edit(d):
+        d['summary']['rebase']['ratios']['line']['r_rule'] = None
+    s6 = new_section(render(variant(real, edit)), 's6')
+    row = re.search(r'<tr><td class="l">유효 해상도 규칙\(비\)</td>(.*?)</tr>', s6, re.S)
+    assert row and '판정 불가' in row.group(1) and '—' in row.group(1)
+
+
+def test_r12_6_the_missing_04_result_is_no_band_but_one_line_in_the_folded_reference(tmp_path):
+    from test_ledger_report_maps import setup as maps_setup
+    from test_ledger_report_v2 import ledger_report_run
+    doc, folder, maps = maps_setup(tmp_path)
+    page = html_of(ledger_report_run(tmp_path, folder, maps, 'rn_b6'))
+    assert '<div class="band info" id="band-changes"' not in page
+    pn = page[page.index('id="roi-ref"'):]
+    assert 'id="band-changes"' in pn[:pn.index('</details>')]
+
+
+def test_r12_9_the_nearly_no_design_difference_branch_names_the_outside_conditions(real):
+    def edit(d):
+        pix = d['summary']['design']['pixel']
+        pix['negligible'] = ['design']
+        pix['names']['show_outside_conditions'] = True
+        pix['segments']['crp'], pix['segments']['density'] = -0.02, 0.0
+    s6 = all_text(new_section(render(variant(real, edit)), 's6'))
+    assert '해상도 외 조건 차이는 −2.0000%p' in s6
+
+
+def test_r12_10_no_design_or_resolution_number_outside_6(real):
+    design = real['summary']['design']
+    values = set()
+    for kind in KINDS:
+        d = design[kind]
+        if d.get('status') != 'available':
+            continue
+        values.update([d['segments']['design'], d['segments']['resolution']])
+        values.update(e['design_delta'] for e in d['top_increase'] + d['top_decrease'])
+    actual = [real['totals'][k]['delta'] for k in KINDS]     # a design value that equals the real vi change is shown outside 6 as that change
+    texts = {ledger_report.raw_pp(v) for v in values if v and all(abs(v - a) > 1e-12 for a in actual)}
+    page = render(real)
+    outside = ''.join(all_text(new_section(page, s)) for s in ('s1', 's2', 's3', 's4', 's5'))
+    assert texts and not [t for t in texts if t in outside]
+
+
+def _move_doc(real):
+    def edit(d):
+        b = d['summary']['bundles']['list'][0]
+        b.update(type='move', electrode='E', layer=None, electrodes=None, pair_id=None, partner_count=0, partners=[], why=[])
+        b['from'], b['to'] = ['L1'], ['L2']
+        for row in b['rows']:
+            row['layer'] = 'L2'
+    return variant(real, edit)
+
+
+def test_r12_3a_a_move_card_has_its_title_type_and_row_layers(real):
+    doc = _move_doc(real)
+    uid = doc['summary']['bundles']['list'][0]['id']
+    page = render(doc)
+    card = page[page.index('<div class="bcard" id="%s"' % uid):]
+    card = card[:card.index('<h4>근거</h4>')]
+    assert '>E · L1 → L2</a>' in card and 'badge b-mv">레이어 이동' in card
+    assert 'E 전극이 A 의 L1 에서 B 의 L2 로 옮겨졌습니다.' in card
+    assert re.search(r'<span class="muted small">L2</span></td>', card)
+
+
+ODD = 'E|"q"한글'
+
+
+def _odd_doc(real):
+    text = json.dumps(real, ensure_ascii=False).replace('"C"', json.dumps(ODD, ensure_ascii=False))
+    return json.loads(text)
+
+
+def test_r12_3b_odd_electrode_names_are_escaped_everywhere(real):
+    doc = _odd_doc(real)
+    page = render(doc)
+    assert ODD in [e for p in doc['pairs'] for e in p['electrodes']]
+    assert 'data-el="E|&quot;q&quot;한글"' in page
+    head = re.sub(r'<script.*?</script>', '', page, flags=re.S)
+    assert not re.search(r'="[^"<>]*E\|"q"', head)           # a raw quote of the name never closes an attribute
+    data = re.search(r'id="report-data">(.*?)</script>', page, re.S).group(1)
+    assert '</script' not in data.lower() and json.dumps(ODD, ensure_ascii=False)[1:-1] in data
+
+
+def test_chrome_r12_3b_odd_names_select_the_card_and_mark_the_cell(tmp_path, real):
+    doc = _odd_doc(real)
+    unit = next(b['id'] for b in doc['summary']['bundles']['list'] if ODD in (b.get('electrodes') or []))
+    folder = write_ledger(tmp_path / 'led', doc)
+    out = tmp_path / 'out'
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None) == 0
+    dom, text = dump_dom(out / 'ledger_report.html', '#unit=%s&to=s3' % unit)
+    assert 'data-err' not in dom.root and dom.root['data-unit'] == unit
+    card = [a for t, a in dom.elements if a.get('id') == unit]
+    assert card and 'selcard' in (card[0].get('class') or '').split()
+    cells = [a for t, a in dom.elements if t == 'td' and 'unitcell' in (a.get('class') or '').split()]
+    assert cells and cells[0].get('data-layer')
+    rows = [a for t, a in dom.elements if t == 'tr' and a.get('data-row') == 'corr' and a.get('data-el') == ODD]
+    assert rows
+
+
+def test_chrome_r12_2_a_later_hash_change_does_not_pull_the_page_back_to_the_card(real_page, real):
+    unit = real['summary']['bundles']['ranking']['line']['cards'][0]
+    from test_ledger_report_v2 import run_in_page
+    script = ("setTimeout(function(){window.scrollTo(0,0);location.hash='#unit=%s&layer=L1';setTimeout(function(){"
+              "document.documentElement.setAttribute('data-y',String(Math.round(window.pageYOffset)));},300);},300);" % unit)
+    dom, text = run_in_page(real_page, '#unit=%s' % unit, script, tag='t7b_scroll')
+    assert 'data-err' not in dom.root and dom.root['data-y'] == '0'
+
+
+def test_chrome_r12_4_the_it_hash_marks_the_item_row(real_page, real):
+    pair = next(p for p in real['pairs'] if p.get('items'))
+    item = pair['items'][0]['item_id']
+    dom, text = dump_dom(real_page, '#sel=pair:%s&layer=L1&it=%s&to=explore' % (pair['pair_id'], item))
+    assert 'data-err' not in dom.root
+    assert [a for t, a in dom.elements if t == 'tr' and a.get('id') == 'pd-it-sel']

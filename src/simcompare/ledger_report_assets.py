@@ -85,7 +85,7 @@ canvas.mapcv{display:block;width:100%;height:auto;background:var(--surface-0);bo
 .how,.ex,.note{background:var(--surface-0);border:1px solid var(--border);border-radius:6px;padding:6px 12px;margin:8px 0}.ex{border-style:dashed}.ex td{border:0;padding:1px 14px 1px 0;text-align:left}.ex table{width:auto}
 .bgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
 .bcard{background:var(--surface-0);border:1px solid var(--border);border-radius:8px;padding:8px 12px}.bcard .bt{font-size:15px}.bcard h4{margin:8px 0 2px}.bcard .bp{margin:2px 0}
-.bt2 th,.bt2 td{padding:2px 5px;font-size:12px}.bcard.selcard{border:2px solid #e0b04a;background:var(--trade)}.unitcell{outline:2px solid #e0b04a}
+.bt2 th,.bt2 td{padding:2px 5px;font-size:12px}.bcard.selcard{border:2px solid #e0b04a;background:var(--trade)}#pd-items tr.itsel td{background:var(--trade);outline:1px solid #e0b04a}.unitcell{outline:2px solid #e0b04a}
 a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto;height:auto;border:1px solid var(--border);border-radius:14px;padding:0 10px;margin:0 2px;color:var(--text-primary);text-decoration:none}
 .warn{color:#b07d00}.bar{display:inline-block;height:9px;background:var(--common);border-radius:2px;vertical-align:middle}.bar.line{background:var(--line)}.bar.pixel{background:var(--pixel)}
 .small{font-size:11px}
@@ -103,7 +103,7 @@ window.onerror=function(m,u,l){document.documentElement.setAttribute('data-err',
 var D=JSON.parse(document.getElementById('report-data').textContent);
 var $=function(id){return document.getElementById(id);};
 var esc=function(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
-var PB=Object.create(null),EB=Object.create(null);
+var PB=Object.create(null),EB=Object.create(null),LORD=Array.isArray(D.layer_order)?D.layer_order:[];
 var SELT={pair:1,electrode:1,layer:1,roi:1};
 D.pairs.forEach(function(p){PB[p.id]=p;});
 var BU=Object.create(null),IT=Object.create(null),TOS=/^(s[1-6]|sA|explore)$/,UNIT=/^bd-[0-9a-f]{16,24}$/;
@@ -198,7 +198,7 @@ function unitsOfPair(p){var cu=[],tot=0;
  return '<div class="small" id="pd-units"><b>이 쌍의 변화가 들어간 원인 후보</b> ('+cu.length+' 개)<ul style="margin:2px 0 4px;padding-left:18px">'+cu.map(function(c){
   return '<li>'+(c.b.ic?'<a class="lk" href="#unit='+encodeURIComponent(c.b.id)+'&to=s3">'+esc(c.b.title)+'</a>':esc(c.b.title)+' <span class="muted">(그 밖)</span>')+
    ' — 카드 몫 '+sgx(c.q[0])+' <span class="muted">(쌍 변화의 '+(tot?Math.round(c.q[1]/tot*100):0)+'%, item '+c.q[2]+' 건)</span></li>';}).join('')+'</ul></div>';}
-function pairDetail(p){var rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.changes.pairs[p.id]&&D.changes.pairs[p.id].tags)||[],b=p.brk,eq,h;
+function pairDetail(p){var curIt=parseHash().kv.it,rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.changes.pairs[p.id]&&D.changes.pairs[p.id].tags)||[],b=p.brk,eq,h;
  var tags=tg.map(function(t){return '<span class="badge b-tag">'+esc(TAGN[t]||t)+'</span>';}).join('');
  if(!b||b.status==='not_evaluated'||b.same_delta==null||b.new_value==null||b.gone_value==null)eq='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
  else eq='쌍 Δ = 같은 불량 증감 <b>'+ppx(b.same_delta)+'</b> + 새 방식 <b>'+f4(b.new_value)+'</b> − 없어진 방식 <b>'+f4(b.gone_value)+'</b>';
@@ -206,7 +206,7 @@ function pairDetail(p){var rk=pairRois(p.id),tg=(D.changes&&D.changes.pairs&&D.c
   '<div style="margin:4px 0">'+ckBadge(p)+compLine(p)+tags+'</div><p class="headline" id="pd-eq" style="margin:6px 0">'+eq+'</p>'+
   '<table id="pd-total"><thead><tr><th class="l">쌍 전체 (장부)</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody><tr><td class="l">'+esc(p.e.join('–'))+'</td><td>'+(p.pa?f4(p.a):'없음')+'</td><td>'+(p.pb?f4(p.b):'없음')+'</td><td>'+sgx(p.d)+'</td></tr></tbody></table>'+
   '<details open><summary>item 펼침 ('+p.items.length+')</summary><table id="pd-items"><thead><tr><th class="l">방식 · 레이어</th><th class="l">구분</th><th>A</th><th>B</th><th>Δ</th></tr></thead><tbody>'+
-  p.items.map(function(it){return '<tr><td class="l">'+esc(it.label)+'</td><td class="l"><span class="badge '+(it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''))+'">'+(PRES[it.pres]||esc(it.pres))+'</span></td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+'</td><td>'+(it.pres==='both'?sgx(it.d):'<span class="muted">비교 없음</span>')+'</td></tr>';}).join('')+'</tbody></table></details>'+
+  p.items.map(function(it){return '<tr'+(it.id===curIt?' class="itsel" id="pd-it-sel"':'')+'><td class="l">'+esc(it.label)+'</td><td class="l"><span class="badge '+(it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''))+'">'+(PRES[it.pres]||esc(it.pres))+'</span></td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+'</td><td>'+(it.pres==='both'?sgx(it.d):'<span class="muted">비교 없음</span>')+'</td></tr>';}).join('')+'</tbody></table></details>'+
   unitsOfPair(p)+
   '<details><summary>관련 변경 위치(04, 보조) ▸</summary><div id="pd-rois">'+(rk.length?rk.map(function(k){return '<button type="button" data-href="#sel=roi:'+encodeURIComponent(k)+'&entry=loc">#'+roiNo(k)+'</button>';}).join(' ')+' <span class="muted">관련 쌍 전체값입니다. 위치별 합계는 없습니다.</span>':
    (D.changes&&D.changes.link_status==='ok'?'<span class="muted">변경 위치 미연결 — 04 가 고른 상위 위치에 없음</span>':'<span class="muted">04 결과가 없어 연결을 알 수 없습니다.</span>'))+'</div></details>'+
@@ -267,7 +267,7 @@ function colors(){CC={bg:rgb('--surface-0','#f4f3f0'),mid:rgb('--mid','#e4e2dc')
 function topPairs(){var seen={},out=[];['line','pixel'].forEach(function(k){(D.top.changed[k]||[]).forEach(function(id){if(!seen[id]&&PB[id]){seen[id]=1;out.push(PB[id]);}});});
  out.sort(function(a,b){return Math.abs(b.pct_d||0)-Math.abs(a.pct_d||0)||(a.id<b.id?-1:1);});return out.slice(0,3);}
 function pairLayer(p){var i,ks;for(i=0;i<p.items.length;i++){if(p.items[i].al&&MP.layers.indexOf(p.items[i].al)>=0)return p.items[i].al;}
- ks=Object.keys(layersOfPair(p)).sort();for(i=0;i<ks.length;i++){if(MP.layers.indexOf(ks[i])>=0)return ks[i];}return null;}
+ ks=Object.keys(layersOfPair(p)).sort(function(a,b){var ra=LORD.indexOf(a),rb=LORD.indexOf(b);ra=ra<0?LORD.length:ra;rb=rb<0?LORD.length:rb;return ra-rb||(a<b?-1:(a>b?1:0));});for(i=0;i<ks.length;i++){if(MP.layers.indexOf(ks[i])>=0)return ks[i];}return null;}
 function mapCfg(st,sel){var L=st.kv.layer,t;if(L!=='all'&&MP.layers.indexOf(L)<0)L=null;
  if(!L&&sel&&sel.t==='layer'&&MP.layers.indexOf(sel.id)>=0)L=sel.id;
  if(!L&&st.kv.unit){var uc0=unitCellOf(st.kv.unit);if(uc0&&MP.layers.indexOf(uc0.l)>=0)L=uc0.l;}   /* a chosen cause candidate shows its own layer */
@@ -445,7 +445,7 @@ function openUp(el){for(var n=el;n&&n!==document.body;n=n.parentNode){if(n.tagNa
 function routeScroll(first){var st=parseHash(),to=st.kv.to,u=st.kv.unit,t=null;
  if(to==='s3'&&u)t=$(u)||$('rest-line-'+u)||$('rest-pixel-'+u);
  if(!t&&to)t=$(to);
- if(!t&&!to&&u&&!selOf(st))t=$(u);
+ if(!t&&!to&&first&&u&&!selOf(st))t=$(u);   /* R12:2: a later hash change (a filter, a layer chip) never pulls the page back to the card */
  if(t){openUp(t);t.scrollIntoView({block:'start'});}
  if(to){delete st.kv.to;var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);}}
 function go(id){var el=$(id);if(el&&el.scrollIntoView)el.scrollIntoView({block:'start'});}
