@@ -61,7 +61,7 @@ def run_ledger_report(ledger_out, name='lrep'):
 
 
 def section(page, number):
-    match = re.search(r'<section id="s%d">(.*?)</section>' % number, page, re.S)
+    match = re.search(r'<section id="s%s">(.*?)</section>' % number, page, re.S)
     assert match, number
     return match.group(1)
 
@@ -91,12 +91,12 @@ def test_mixed_fixture_07_ledger_and_ledger_report(tmp_path, monkeypatch):
     # ledger-report (mrep/T5): the data bundle has GH-X (registered) and no GH-Y; section 5 has one row per block pair and
     # section 1 counts the left-out electrode pairs
     html = run_ledger_report(ledger_out)
-    s1, s5 = section(html, 1), section(html, 5)
+    s1, sA = section(html, 1), section(html, 'A')
     bundle_pairs = {tuple(p['e']) for p in bundle_of(html)['pairs']}
     assert ('GH', 'X') in bundle_pairs and not any('Y' in names or 'N_NODE' in names for names in bundle_pairs)
     assert {tuple(row['electrodes']) for row in doc['pairs']} >= {('GH', 'X')} and not any(
         'Y' in row['electrodes'] or 'N_NODE' in row['electrodes'] for row in doc['pairs'])
-    table = re.search(r'<table id="pair-excluded">(.*?)</table>', s5, re.S).group(1)
+    table = re.search(r'<table id="pair-excluded">(.*?)</table>', sA, re.S).group(1)
     assert table.count('<tr>') - 1 == sum(len(block['pairs']) for block in blocks.values()) == 4
     assert '기준 A' in table and '대상 B' in table and 'pairs.csv' not in table
     assert '제외 쌍 <b>2</b>' in s1
@@ -139,10 +139,10 @@ def test_marked_when_the_dl1_list_keeps_the_electrode(tmp_path):
     doc = tl.result(world)
     assert [row['electrode'] for row in doc['electrodes']] == ['Data', 'ELVDD', 'GH']
     html = run_ledger_report(world.out)
-    s4 = section(html, 4)
-    assert '<b>GH</b> <span class="muted">(계산 제외 쌍만 있음)</span>' in s4
-    assert 'Data</b> <span class="muted">(계산 제외' not in s4 and 'ELVDD</b> <span class="muted">(계산 제외' not in s4
-    assert s4.count('계산 제외 쌍만 있음') == 1          # one electrode ledger row per electrode (section 4)
+    s5 = section(html, 5)
+    assert '<b>GH</b> <span class="muted">(계산 제외 쌍만 있음)</span>' in s5
+    assert 'Data</b> <span class="muted">(계산 제외' not in s5 and 'ELVDD</b> <span class="muted">(계산 제외' not in s5
+    assert s5.count('계산 제외 쌍만 있음') == 1          # one electrode ledger row per electrode (section 5)
     assert '계산 제외 쌍만 있음' not in section(html, 2)
 
 
@@ -220,7 +220,7 @@ def test_table_exclusion_and_expected_only_counts(tmp_path, monkeypatch):
     world = build(tmp_path, monkeypatch, 'union', ref, tgt, inventory='union')
     ledger_out, doc = run_ledger(world)
     html = run_ledger_report(ledger_out)
-    table = re.search(r'<table id="pair-excluded">(.*?)</table>', section(html, 5), re.S).group(1)
+    table = re.search(r'<table id="pair-excluded">(.*?)</table>', section(html, 'A'), re.S).group(1)
     rows = re.findall(r'<tr><td class="l">(.*?)</tr>', table, re.S)
     assert len(rows) == 2
     assert '<td>1 / 0</td>' in rows[0] and '<td>0 / 1</td>' in rows[1]       # reference: found; target: expected only

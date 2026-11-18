@@ -38,7 +38,7 @@ def test_step_08_alone_keeps_02_04_07_and_writes_the_merged_report_with_a_relati
     assert ' --report07-dir data/compare2_report ' in text
     assert digest(base) == before                                              # 02, 04, 07 outputs: not touched, not moved
     page = (base / 'data/ledger_report/ledger_report.html').read_text(encoding='utf-8')
-    assert 'id="report-data"' in page and '<h2>⑤ 근거 · 검산</h2>' in page
+    assert 'id="report-data"' in page and '<h2>부록 근거 · 검산</h2>' in page
     record = json.loads((base / 'data/ledger_report/report.json').read_text(encoding='utf-8'))
     assert record['report07'] == 'linked'
     link = base / 'data/ledger_report' / '../compare2_report/report.html'
