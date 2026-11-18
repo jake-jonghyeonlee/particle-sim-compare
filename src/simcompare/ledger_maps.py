@@ -138,10 +138,32 @@ class _Budget(object):
         self.evictor = None              # () -> True when it freed one reference card, False when none is left
         self.stage = None                # (role, stage): the peak of `used` is kept per stage (execution.json)
         self.stage_peak = {}
+        # rnarr/T6 (E3, Z2): the occurrence metric owns its own hold. An owned reserve that does not fit first asks
+        # `yielder` to give every occurrence byte back (before the card scope check and before any card eviction).
+        self.occ_hold = _Hold()
+        self.occ_peak = 0                # the most bytes the occurrence hold owned at once
+        self.yielder = None            # () -> True when it gave occurrence bytes back, False when it holds none
 
     def set_stage(self, role, stage):
         self.stage = (role, stage)
-        self.stage_peak[self.stage] = max(self.stage_peak.get(self.stage, 0), self.used)
+        self.stage_peak[self.stage] = max(self.stage_peak.get(self.stage, 0), self.used - self.occ_hold.bytes)
+
+    def reserve_occ(self, nbytes, what):
+        """An occurrence reservation: never evicts, never yields, never enters a card hold; raises when it does not fit."""
+        nbytes = int(nbytes)
+        if self.used + nbytes > self.limit:
+            raise _BudgetExceeded(
+                'oversized_real_operation',
+                f'ledger-maps: occurrence {what}: estimated {self.used + nbytes} bytes ({nbytes} more on top of '
+                f'{self.used} in use) exceed the limit {self.limit} (max_operation_bytes); {REMEDY}')
+        self.used += nbytes
+        self.occ_hold.bytes += nbytes
+        self.occ_peak = max(self.occ_peak, self.occ_hold.bytes)
+
+    def release_occ(self, nbytes):
+        nbytes = int(nbytes)
+        self.used = max(0, self.used - nbytes)
+        self.occ_hold.bytes -= nbytes
 
     def reserve(self, nbytes, what, evict=None, owned=True):
         """evict: callback that frees one card (default `self.evictor`, False = never evict). owned=False keeps the
@@ -150,6 +172,8 @@ class _Budget(object):
         if evict is None:
             evict = self.evictor
         while self.used + nbytes > self.limit:
+            if self.yielder is not None and self.yielder():
+                continue
             if self.scope is None and evict and evict():
                 continue
             raise _BudgetExceeded(
@@ -157,9 +181,10 @@ class _Budget(object):
                 f'ledger-maps: {what}: estimated {self.used + nbytes} bytes ({nbytes} more on top of {self.used} '
                 f'in use) exceed the limit {self.limit} (max_operation_bytes); {REMEDY}')
         self.used += nbytes
-        self.peak = max(self.peak, self.used)
+        base = self.used - self.occ_hold.bytes      # the peaks are those of the existing operations (occurrence apart)
+        self.peak = max(self.peak, base)
         if self.stage is not None:
-            self.stage_peak[self.stage] = max(self.stage_peak.get(self.stage, 0), self.used)
+            self.stage_peak[self.stage] = max(self.stage_peak.get(self.stage, 0), base)
         if self.scope is not None and owned:
             self.scope.bytes += nbytes
 
@@ -270,6 +295,18 @@ def _read_inputs(compare2_dir, ledger_dir, config, cfg2, candidates):
 
 
 # ---- one side -------------------------------------------------------------------------------------------------------
+
+def _layer_order(led_doc):
+    """E10: `ledger.json inputs.layer_order` (list of names) or None (layers by name, as before)."""
+    raw = (led_doc.get('inputs') or {}).get('layer_order')
+    return list(raw) if isinstance(raw, list) and all(isinstance(name, str) for name in raw) else None
+
+
+def _layer_key(led_doc):
+    """Sort key of a layer name: its place in the layer order, then the other layers by name."""
+    rank = {name: index for index, name in enumerate(_layer_order(led_doc) or ())}
+    return lambda name: (rank.get(name, len(rank)), str(name))
+
 
 def _side_items(led_doc, role):
     """The ledger items that exist on this side, in ledger order, numbered 1..N."""
@@ -389,6 +426,8 @@ class _SideContext(object):
         self.total_px = {}               # item_id -> display pixels inside the region
         self.sparse = {}                 # item_id -> {'tiles', 'values', 'member'} after finalize
         self.sparse_bytes = 0
+        self.occ = None                  # the _Occurrence of this product (None = off)
+        self.layer_key = str             # E10: sort key of a layer name
         self.run = None                  # the shared card state (set by run_ledger_maps, None = no cards)
         self.tile_el = {}                # layer -> tile-resolution DL1 electrode numbers (edge repeat only)
         self.el_bytes = 0
@@ -399,6 +438,245 @@ def _tile_index(ctx, flat):
     y = flat // width
     x = flat - y * width
     return (y // ctx.tile_px) * ctx.ntx + (x // ctx.tile_px), y, x
+
+
+# ---- observed connected regions (rnarr/T6, PLAN-v3 2.3, PLAN-v3.1 E3 E5 E6 E7 E11) ---------------------------------------
+# Input: the hotspot cells (`geom_idx`) of one item at the map diameter. Several groups of one item give pieces; the cell
+# union is labelled with 4-neighbour runs (`electrode_map._label_runs`). Memory: the held pieces and every temporary are
+# reserved on the occurrence hold of the budget (never evicting). The first existing reservation that does not fit takes
+# every occurrence byte back (`give_back`); the items that still held pieces are `pending` (budget) for good.
+
+OCCURRENCE_ENABLED = True               # tests switch it off to get the run without occurrence
+OCC_STATES = ('observed', 'observed_empty', 'absent', 'not_observed', 'pending')
+# union step: concatenated copy + np.unique sort copy + mask + result (int64); label step on the bounding box: the bool
+# picture (reserved separately), y/x arrays (16 B per cell) and `_label_runs` (16 B per run, runs <= cells) with margin
+OCC_UNION_BYTES_PER_CELL = 32
+OCC_LABEL_BYTES_PER_CELL = 64
+
+
+def _measure_regions(union, shape_yx, budget, what):
+    """(n, cells, largest_cells, boundary_n) of the 4-neighbour regions of a sorted unique flat cell index array."""
+    height, width = shape_yx
+    count = int(len(union))
+    ys = union // width
+    xs = union - ys * width
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+    box_h, box_w = y1 - y0 + 1, x1 - x0 + 1
+    nbytes = box_h * box_w + 8 * box_h + OCC_LABEL_BYTES_PER_CELL * count
+    budget.reserve_occ(nbytes, f'labelling {what} (box {box_h}x{box_w}, {count} cells)')
+    try:
+        mask = np.zeros((box_h, box_w), dtype=bool)
+        mask[ys - y0, xs - x0] = True
+        del ys, xs
+        rows, starts, ends, root = _label_runs(mask, _run_counts(mask))
+        del mask
+        sizes_all = np.bincount(root, weights=(ends - starts).astype(np.float64))
+        is_root = (root == np.arange(root.size, dtype=np.int32))[:sizes_all.size]
+        sizes = sizes_all[is_root]
+        edge = ((rows + y0) == 0) | ((rows + y0) == height - 1) | ((starts + x0) == 0) | ((ends + x0) == width)
+        edge_all = np.bincount(root, weights=edge.astype(np.float64))
+        boundary = int(np.count_nonzero(edge_all[is_root] > 0))
+        return int(len(sizes)), int(round(float(sizes.sum()))), int(round(float(sizes.max()))), boundary
+    finally:
+        budget.release_occ(nbytes)
+
+
+class _Occurrence(object):
+    """The observed connected regions of one product: pieces held while it is read, values after `finish`."""
+
+    def __init__(self, ctx, budget, report_diameter):
+        self.ctx = ctx
+        self.budget = budget
+        self.diameter = report_diameter
+        height, width = ctx.info['frame'].shape_yx
+        self.shape = (int(height), int(width))
+        self.dtype = np.int32 if self.shape[0] * self.shape[1] < 2 ** 31 else np.int64
+        self.itemsize = np.dtype(self.dtype).itemsize
+        self.pieces = {}                # item_id -> [flat cell index arrays] (held)
+        self.held = {}                  # item_id -> held bytes
+        self.arrived = set()            # item ids whose sink call of the map diameter came (also an empty one)
+        self.failed = set()             # item ids without a value for lack of budget
+        self.reduced = False            # the budget took every occurrence byte back: nothing new is held
+        self.values = {}                # item_id -> measured regions
+        self.valid_cells = None
+        self.valid_basis = None
+        budget.yielder = self.give_back
+
+    def _drop(self, item_id):
+        self.pieces.pop(item_id, None)
+        self.budget.release_occ(self.held.pop(item_id, 0))
+
+    def _fail(self, item_id):
+        self.failed.add(item_id)
+        self._drop(item_id)
+
+    def give_back(self):
+        """The yield hook of `_Budget.reserve`: True when it gave bytes back (every holder becomes `pending`)."""
+        if self.budget.occ_hold.bytes <= 0:
+            return False
+        for item_id in list(self.pieces):
+            self._fail(item_id)
+        self.reduced = True
+        return True
+
+    def arrive(self, item_id, frame, geom_idx):
+        """One sink call of the map diameter (also an empty one): hold the cells as one piece of the item."""
+        if self.valid_cells is None:
+            valid = getattr(frame, 'valid', None)
+            if valid is None:
+                self.valid_cells, self.valid_basis = self.shape[0] * self.shape[1], 'frame_cells'
+            else:
+                self.valid_cells, self.valid_basis = int(np.count_nonzero(valid)), 'valid_mask'
+        self.arrived.add(item_id)
+        if not len(geom_idx) or item_id in self.failed:
+            return
+        if self.reduced:
+            self._fail(item_id)
+            return
+        nbytes = self.itemsize * len(geom_idx)
+        try:
+            self.budget.reserve_occ(nbytes, f'cells of {self.ctx.role} item {self.ctx.by_id[item_id]["number"]}')
+        except _BudgetExceeded:
+            self._fail(item_id)         # one piece missing: the item stays `pending` to the end (no partial value)
+            return
+        self.pieces.setdefault(item_id, []).append(geom_idx.astype(self.dtype))
+        self.held[item_id] = self.held.get(item_id, 0) + nbytes
+
+    def finish(self):
+        """Values of every held item (the pieces are given back one item after the other)."""
+        for item_id in [rec['item_id'] for rec in self.ctx.items]:
+            pieces = self.pieces.get(item_id)
+            if pieces is None:
+                continue
+            if len(pieces) > 1:
+                total = sum(len(piece) for piece in pieces)
+                nbytes = OCC_UNION_BYTES_PER_CELL * total
+                try:
+                    self.budget.reserve_occ(nbytes, f'union {self.ctx.role} item {self.ctx.by_id[item_id]["number"]}')
+                except _BudgetExceeded:
+                    self._fail(item_id)
+                    continue
+                try:
+                    union = np.unique(np.concatenate(pieces))
+                finally:
+                    self.budget.release_occ(nbytes)
+            else:
+                union = pieces[0]
+            pieces = None
+            try:
+                self.values[item_id] = _measure_regions(
+                    union, self.shape, self.budget, f'{self.ctx.role} item {self.ctx.by_id[item_id]["number"]}')
+            except _BudgetExceeded:
+                self.failed.add(item_id)
+            finally:
+                union = None
+                self._drop(item_id)
+
+    def close(self):
+        """Give back whatever is still held and stop yielding (also after an error)."""
+        for item_id in list(self.pieces):
+            self._drop(item_id)
+        if self.budget.yielder == self.give_back:
+            self.budget.yielder = None
+
+    def result(self):
+        """{item_id: {'state', 'n', 'cells', 'largest_cells', 'boundary'}} for the items of this product."""
+        out = {}
+        for rec in self.ctx.items:
+            item_id = rec['item_id']
+            if item_id in self.failed:
+                out[item_id] = {'state': 'pending', 'reason': 'budget'}
+            elif item_id in self.values:
+                n, cells, largest, boundary = self.values[item_id]
+                out[item_id] = {'state': 'observed', 'n': n, 'cells': cells, 'largest_cells': largest,
+                                'boundary': boundary}
+            elif item_id in self.arrived:
+                out[item_id] = {'state': 'observed_empty', 'n': 0, 'cells': 0, 'largest_cells': 0, 'boundary': 0}
+            else:
+                out[item_id] = {'state': 'not_observed'}
+        return out
+
+
+def _occ_value(state, pitch, a_obs_um2, unit_area_um2):
+    """The JSON value block of one item on one product (um2 areas, per-mm2 count, area fraction, per-unit count)."""
+    block = {'state': state['state']}
+    if state['state'] == 'absent':
+        state = dict(state, n=0, cells=0, largest_cells=0, boundary=0)
+    if state['state'] in ('pending', 'not_observed'):
+        block.update({'n': None, 'area_um2': None, 'mean_area_um2': None, 'largest_area_um2': None,
+                      'boundary_regions': None, 'n_per_mm2': None, 'area_fraction': None, 'n_per_unit': None})
+        if state.get('reason'):
+            block['reason'] = state['reason']
+        return block
+    n, area = int(state['n']), state['cells'] * pitch * pitch
+    block.update({
+        'n': n, 'area_um2': area, 'mean_area_um2': None if n == 0 else area / n,
+        'largest_area_um2': state['largest_cells'] * pitch * pitch, 'boundary_regions': int(state['boundary']),
+        'n_per_mm2': None if not a_obs_um2 else n * 1e6 / a_obs_um2,
+        'area_fraction': None if not a_obs_um2 else area / a_obs_um2,
+        'n_per_unit': None if (unit_area_um2 is None or not a_obs_um2) else n * unit_area_um2 / a_obs_um2})
+    return block
+
+
+def _occ_compare(a, b):
+    """The sentence basis of one item (E5 + Z1): which wording applies, or why none does."""
+    sa, sb = a['state'], b['state']
+    for state in ('pending', 'not_observed'):
+        if state in (sa, sb):
+            return {'kind': 'suppressed', 'reason': state}
+    if sa == 'absent':
+        kind = 'new'
+    elif sb == 'absent':
+        kind = 'gone'
+    elif sa == 'observed' and sb == 'observed':
+        kind = 'both_observed'
+    elif sa == 'observed_empty' and sb == 'observed_empty':
+        kind = 'both_empty'
+    elif sa == 'observed_empty':
+        kind = 'from_empty'
+    else:
+        kind = 'to_empty'
+    return {'kind': kind, 'n_a': a['n'], 'n_b': b['n'], 'mean_area_um2_a': a['mean_area_um2'],
+            'mean_area_um2_b': b['mean_area_um2']}
+
+
+def _occurrence_json(led_doc, windows, side_results, report_diameter):
+    """The `occurrence` block of ledger_maps.json. side_results[role] = {'states', 'pitch', 'valid_cells', 'basis'}."""
+    both_config = all(windows[role]['unit_source'] == 'config' for role in ROLES)
+    unit_area = {role: (windows[role]['unit_um'][0] * windows[role]['unit_um'][1]) if both_config else None
+                 for role in ROLES}
+    a_obs = {}
+    for role in ROLES:
+        res = side_results[role]
+        cells = res['valid_cells']
+        a_obs[role] = {'cells': cells, 'pitch_um': res['pitch'], 'basis': res['basis'],
+                       'um2': None if cells is None else cells * res['pitch'] * res['pitch']}
+    counts = {role: {state: 0 for state in OCC_STATES} for role in ROLES}
+    items = []
+    for pair in led_doc.get('pairs') or []:
+        for item in pair.get('items') or []:
+            row = {'item_id': item['item_id'], 'pair_id': pair['pair_id'], 'kind': item['class'],
+                   'layer': item['analysis_layer'], 'upper_layer': item.get('upper_layer'),
+                   'lower_layer': item.get('lower_layer'), 'presence': item['presence']}
+            blocks = {}
+            for role, present in (('reference', ('both', 'gone')), ('target', ('both', 'new'))):
+                res = side_results[role]
+                state = res['states'].get(item['item_id']) if item['presence'] in present else {'state': 'absent'}
+                if state is None:
+                    state = {'state': 'not_observed'}
+                blocks[role] = _occ_value(state, res['pitch'], a_obs[role]['um2'], unit_area[role])
+                counts[role][state['state']] += 1
+                row[role] = blocks[role]
+            row['compare'] = _occ_compare(blocks['reference'], blocks['target'])
+            items.append(row)
+    pending = sum(counts[role]['pending'] for role in ROLES)
+    return {
+        'basis': 'sink_geom_idx_cell_union_at_report_diameter', 'diameter_um': float(report_diameter),
+        'connectivity': '4_neighbour_cells', 'observation_range': 'frame',
+        'observed_area': a_obs,
+        'unit_conversion': {'applies': both_config,
+                            'reason': None if both_config else 'unit_size_not_from_config'},
+        'counts': counts, 'status': 'partial' if pending else 'ok', 'items': items}
 
 
 def _make_sink(ctx, budget, report_diameter, slope, tables, factors, subset, entries_limit):
@@ -458,6 +736,9 @@ def _make_sink(ctx, budget, report_diameter, slope, tables, factors, subset, ent
                         rank_flat[flat[win]] = rec['rank']
                         num_flat[flat[win]] = rec['number']
                         ctx.total_px[item_id] = ctx.total_px.get(item_id, 0) + int(len(flat))
+            # observed regions: the arrival is recorded for every sink call of the map diameter, an empty one too (Z1)
+            if ctx.occ is not None and diameter == report_diameter:
+                ctx.occ.arrive(item_id, frame, geom_idx)
             if ctx.entries > entries_limit:
                 raise NumericContractError(
                     'oversized_real_operation',
@@ -1044,7 +1325,8 @@ def _side_rows_planned(ctx, run, plan, member, vt, vv):
     run.budget.reserve(temp, f'card tiles {ctx.role} {plan["pair_id"]}')
     try:
         layers = sorted({layer for rec in ctx.items if rec['pair_id'] == plan['pair_id']
-                         for layer in (rec['layer'], rec['upper_layer'], rec['lower_layer']) if layer})
+                         for layer in (rec['layer'], rec['upper_layer'], rec['lower_layer']) if layer},
+                        key=ctx.layer_key)
         edge = _edge_env(ctx, run, member, layers)
         rows = place_rows(planned['rows'], ctx.ntx, ctx.nty, edge)
         # R2:3: the value of the places that are not listed, on the tiles no listed row owns
@@ -1919,7 +2201,8 @@ def _check_kinds(ctx, led_doc, key):
     return out
 
 
-def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings, run=None):
+def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings, run=None,
+                  occ_out=None):
     """Read one product once and return (side json, files, window json, checks, ctx-free summary)."""
     from .pipeline import _configured_real
     budget.set_stage(role, 'read')
@@ -1930,11 +2213,15 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     slope = {kind: ((led_doc.get('kinds') or {}).get(kind) or {}).get('slope') for kind in KINDS}
     subset = None if cfg2.lambda_diameters_um is None else set(cfg2.lambda_diameters_um)
     items, by_id = _side_items(led_doc, role)
-    layers = sorted({rec['layer'] for rec in items})
+    layer_key = _layer_key(led_doc)
+    layers = sorted({rec['layer'] for rec in items}, key=layer_key)
     window = geom['window']
     region, block = geom['region'], geom['block']
     ctx = _SideContext(role, info, window, geom['tile_px'], region, block, items, by_id, layers)
     ctx.run = run
+    ctx.layer_key = layer_key
+    occ = _Occurrence(ctx, budget, report_diameter) if OCCURRENCE_ENABLED and occ_out is not None else None
+    ctx.occ = occ
     key = 'a' if role == 'reference' else 'b'
 
     # estimate of the unchanged compute_areas holding (real_hotspot.estimate_area_bytes, via the dataset admission)
@@ -1961,10 +2248,19 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
         ctx.canvas[layer] = (np.zeros((ctx.dh, ctx.dw), dtype=np.uint16),
                              np.full((ctx.dh, ctx.dw), BIG_RANK, dtype=np.int32))
     sink = _make_sink(ctx, budget, report_diameter, slope, tables, factors, subset, options['max_tile_entries'])
-    _extracted, meta = _load_side(cfg, role, geom['top'], share_sink=sink)
-    del _extracted
-    _check_input_hash(role, doc_hash, meta.get('input_hash'))
-    budget.release(estimate, 'compute_areas holding')   # the masks and the dataset are gone
+    try:
+        _extracted, meta = _load_side(cfg, role, geom['top'], share_sink=sink)
+        del _extracted
+        _check_input_hash(role, doc_hash, meta.get('input_hash'))
+        budget.release(estimate, 'compute_areas holding')   # the masks and the dataset are gone
+        if occ is not None:
+            occ.finish()
+            occ_out[role] = {'states': occ.result(), 'pitch': info['pitch'], 'valid_cells': occ.valid_cells,
+                             'basis': occ.valid_basis}
+    finally:
+        if occ is not None:
+            occ.close()
+            ctx.occ = None
 
     # finalize items: merge the chunks of one item (np.unique + np.bincount), then drop the chunk copies
     budget.set_stage(role, 'merge')
@@ -2275,7 +2571,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     for role in ROLES:
         info = infos[role]
         items, _by_id = _side_items(led_doc, role)
-        side_layers[role] = sorted({rec['layer'] for rec in items})
+        side_layers[role] = sorted({rec['layer'] for rec in items}, key=_layer_key(led_doc))
         window = _window(info)
         has_dl1[role] = cfg2.report.dl1_root is not None and getattr(cfg2, role).dl1_model is not None
         geoms[role] = {'window': window, 'tile_px': _tile_px(info, opts['tile_um']), 'top': top,
@@ -2304,10 +2600,11 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         cand.update({'apply_align': corr.mode, 'status': 'ok' if corr.ok else corr.band, 'detail': corr.detail})
     texts_files, sides_json, window_json, checks, cards, metas = [], {}, {}, {}, [], {}
     warnings, reasons = [], []
+    occ_out = {}
     for role in ROLES:
         side, files, side_checks, side_cards, meta = _process_side(
             role, infos[role], cfg, cfg2, led_doc, recorded_hash[role], opts, budget, geoms[role],
-            report_diameter, warnings, run=run)
+            report_diameter, warnings, run=run, occ_out=occ_out)
         sides_json[role] = side
         window_json[role] = geoms[role]['window']
         checks[role] = side_checks
@@ -2322,7 +2619,15 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     if any(row['status'] == 'failed' for row in card_checks.values()):
         failed.append('cards')
     dropped = sorted(run.dropped, key=lambda d: (KINDS.index(d['kind']), d['rank'], d['pair_id']))
-    status = 'partial' if failed or dropped else 'ok'
+    occurrence = _occurrence_json(led_doc, window_json, occ_out, report_diameter) if len(occ_out) == len(ROLES) else None
+    occ_pending = 0 if occurrence is None else sum(occurrence['counts'][role]['pending'] for role in ROLES)
+    status = 'partial' if failed or dropped or occ_pending else 'ok'
+    if occ_pending:
+        # E3: the occurrence metric gave its memory back (or did not fit): those items have no value, nothing else changes
+        reasons.append('occurrence_budget_reduced')
+        run.bands.append({'code': 'occurrence_budget_reduced', 'count': occ_pending,
+                          'detail': f'{occ_pending} item value(s) of the observed connected regions are missing '
+                                    f'because of the memory budget (max_operation_bytes {budget.limit})'})
     if failed:
         reasons.append('ledger_maps_value_check_failed')
     if dropped:
@@ -2351,6 +2656,10 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         'checks': summary,
         'scale_steps': scale_steps,
         'warnings': warnings, 'bands': run.bands}
+    if occurrence is not None:
+        document['occurrence'] = occurrence
+    if _layer_order(led_doc) is not None:
+        document['inputs']['layer_order'] = _layer_order(led_doc)
     exit_code = 0 if status == 'ok' else 3
     texts_files.sort(key=lambda item: item[0])
     record = {'command': COMMAND, 'status': status, 'reasons': reasons,

@@ -472,7 +472,10 @@ def test_budget_exceeded_before_reading_exits_2_without_result_files(tmp_path):
     assert error['code'] == 'oversized_real_operation' and 'max_operation_bytes' in error['detail']
 
 
-def test_budget_in_range_records_the_peak_reservation(tmp_path):
+def test_budget_in_range_records_the_peak_reservation(tmp_path, monkeypatch):
+    # rnarr/T6: the exact-peak limit is the limit of the existing operations; the occurrence metric would give its
+    # memory back there (exit 3, tests/test_ledger_maps_occurrence.py), so this test runs without it
+    monkeypatch.setattr(ledger_maps, 'OCCURRENCE_ENABLED', False)
     chain(tmp_path)
     code, out = maps_direct(tmp_path)
     assert code == 0
@@ -615,6 +618,7 @@ def test_fsum_of_an_array_is_the_same_exact_value_without_a_list_of_the_whole_ar
 def test_card_step_arrays_are_reserved_before_they_are_built(tmp_path, monkeypatch):
     """R2:2: the component labelling (window picture + run arrays) and the window ids / observed-area arrays are reserved,
     so a limit that cannot hold them stops the run with exit 2 before they exist."""
+    monkeypatch.setattr(ledger_maps, 'OCCURRENCE_ENABLED', False)     # rnarr/T6: exact-peak limit, see the test above
     chain(tmp_path)
     code, out = maps_direct(tmp_path)
     limit = json.loads((out / 'execution.json').read_text())['max_reserved_bytes']

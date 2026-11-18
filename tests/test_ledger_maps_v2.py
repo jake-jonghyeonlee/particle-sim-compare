@@ -268,7 +268,9 @@ def test_a_reserve_that_fails_on_the_second_target_card_leaves_that_card_out_and
     assert_no_card_memory_left(capture, capture['budgets'][-1].used, base_used)
 
 
-def test_reference_cards_are_evicted_worst_rank_first_when_the_second_product_does_not_fit(tmp_path, big, capture):
+def test_reference_cards_are_evicted_worst_rank_first_when_the_second_product_does_not_fit(tmp_path, big, capture,
+                                                                                            monkeypatch):
+    monkeypatch.setattr(lm, 'OCCURRENCE_ENABLED', False)   # rnarr/T6: an exact-peak limit; occurrence has its own tests
     two_card_chain(tmp_path, big)
     code, doc = run_cards(tmp_path)
     budget = capture['budgets'][-1]
