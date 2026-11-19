@@ -722,6 +722,12 @@ null 규칙:
 - **검산**(`math.fsum`, `_within`): (1) Σ item S1 λ = 종류 S1 λ (2) 구간마다 Σ item + CNO (+ CRP 줄) = 그 구간의 실제 vi 차이 (3) 구간 합 = `totals.<kind>.delta` (4) 표·계수가 같으면 구간 2·3·4 가 0. 검산이 `passed` 가 아니면 ledger 는 그 종류를 `not_evaluated(rebase_check_failed)` 로 둔다.
 - **한계**: 값은 경로 순서(CA → F → CRP → density)에 의존한다. A 의 CA 를 B 의 계수로 읽는 반대 방향(A@B)은 내지 않는다. item 의 구간 값 합은 기존 item `delta` 와 다르다(종류 합계만 같다. 기존 값은 그대로다). 구간 1 에는 unit 형상 크기 차이가 남는다.
 - **새 키와 호환**: `inputs.rebase_basis = target_ca_reference_coefficients_v1`, `inputs.layer_order`, `rebase`. 기존 키·값·CSV 4 개는 바뀌지 않는다(골든은 `tests/test_compare2.py` 의 `GOLDEN` 이 지킨다). `inputs.layer_order` 는 §35 의 예외 참고.
+- **면적 기준 (상태 S1a, rnarr/T10, 계획 v3.3 K3)**: CA × N = (CA / U) × (U × N) 은 가정 없는 항등식이다. 면적당 불량 면적(ρ)과 화면 면적(U × N)으로 나눠 읽는다. U = `unit_size_um[0] × unit_size_um[1]`(compare2 config 의 제품 `unit_size_um`)다.
+  - **조건** `rebase.area_basis`: 두 제품 모두 `unit_size_um` 가 config 에 있어야 `status = available` 이다. 하나라도 없으면 `unavailable`(`unit_size_missing`)이고, 보고서 6 은 예전 unit 기준으로 내리고 한 줄로 알린다. 값은 `{status, reasons, u_area_a, u_area_b, ratio}`, `ratio = U_A / U_B` 다. 비율이 1 에 아주 가까우면(`rel_tol = 1e-15`) 정확히 1.0 으로 본다. 곱셈 순서 때문에 생기는 1 ulp 차이가 같은 면적을 다른 면적으로 읽지 않게 하려는 것이다(R16:3). 면적이 같으면 S1a 는 S1 과 비트까지 같다.
+  - **S1a** = B 의 CA 를 A 의 unit 면적으로 환산한 상태다. item × 크기 λ 는 `density_A × 몫 면적_B × (U_A / U_B) × F_A`, CNO 도 같은 식이다. 경로는 S0 → **S1a** → S1 → S2 → (S3) → S4 다.
+  - **구간**: 구간 1 을 둘로 나눈다. `design_area` = S0 → S1a(면적당 설계 차이), `unit_size` = S1a → S1(unit 크기 차이). 구간 2(F)는 그대로다. 각 구간이 자기 할선을 쓴다. 새 키는 `rebase.states.<kind>.S1a`, `segments.design_area`, `segments.unit_size`, item·CNO 의 `design_area_delta`·`unit_size_delta` 다.
+  - **검산**: `design_area + unit_size = ca` 는 **종류 합계에서만** 성립한다(`area_split`). item 별로는 성립하지 않는다. 구간마다 기울기가 다르기 때문이다(R16:2 가 CNO 로 확인한다). item 의 기존 `ca_delta` 는 그대로 남는다. 종류별로 환산할 수 없으면 그 종류에는 S1a 가 없다. 면적 정보의 존재(제품 단위)와 종류별 환산 가능 여부는 따로 판정한다.
+  - 한계: 2×2 창 경계 효과는 면적당 설계 몫에 남는다. ρ 비교는 "같은 면적이면" 으로만 읽는다.
 
 ## 33. 원인 후보 묶음 (`summary.bundles`, rnarr/T5)
 
@@ -730,27 +736,56 @@ null 규칙:
 - **원자**: 쌍 item(종류, analysis layer, 크기 합산 Δ)과 CNO 줄(전극, density layer, pixel). CRP 는 묶음에 넣지 않고 종류별 `crp` 한 줄로 둔다(기존 `totals.pixel.crp.delta`, line 은 0). 이 CRP 는 §32 의 구간 3 과 다른 값이다. 섞지 않는다(H6).
 - **변화량 G_k** = 종류 k 의 Σ 원자 |Δ|(CRP 제외). 묶음 몫 = 묶음의 Σ|Δ| ÷ G_k.
 - **끝점별 레이어**: 원자 끝점의 상태는 `layer_state[전극][끝점 actual_layer]` 다. 키가 없으면 `unknown` 이다(A·B 한쪽에만 있음과 구분). `unknown` 끝점과 `layer_state_status ≠ verified` 인 전극은 "상태 그대로"로 보고 이동 묶음을 만들지 않는다. 그 묶음에 `layer_state_unknown`·`layer_state_unverified` 를 표시하고 보고서가 한 줄로 알린다.
-- **배정**(원자마다 정확히 한 묶음, 위에서 처음 맞는 규칙):
-  0. CNO → 그 전극 묶음(layer = density layer). density layer 상태가 없으면 유형 `cno`.
-  1. 서로 다른 전극이 1 개(같은 이름 두 끝점) → 그 전극 묶음(analysis layer). 3 개 이상(multi) → 쌍 묶음(why = `multi`).
-  2. 그 레이어에서 한쪽 전극만 `layer_state ≠ both` → 그 전극 묶음.
-  3. 두 전극 모두 `≠ both` → 쌍 묶음(why = `both`).
-  4. 두 전극 모두 `both`: **허브** = 같은 (전극, 끝점 레이어, 부호)에서 서로 다른 상대가 `HUB_MIN = 3` 개 이상(잠정값, `summary.rules.hub_min` 에 기록). 집계 대상은 두 전극이 모두 both 인 원자뿐이다. 한쪽만 허브 → 그 전극 묶음(유형 `hub`), 양쪽 허브 → 쌍 묶음(why = `hubs`), 둘 다 아님 → 쌍 묶음(why = `nohub`).
-  - `_no_change(a, b)`(원자의 크기 합산 A·B 값, 허용 오차 `1e-12 + 1e-9 × |값|`) 안에 드는 원자는 **허브 집계와 부호에서만** 뺀다. 배정은 규칙 4 의 쌍 묶음(`nohub`)으로 하고, 합계와 몫에는 그대로 남는다.
-- **키·id**: 내부 키는 튜플이다(`('e', 전극, 레이어)`, `('mv', 전극)`, `('p', pair_id, 레이어)`). JSON 의 `bundle.key` 는 그 배열이다. 외부 id `bundle.id = "bd-" + sha256(canonical JSON key)[:16]`(소문자 hex)이고 충돌하면 길이 24 로 다시 만든다(`checks.bundles.id_unique`). 해시 화이트리스트는 `^bd-[0-9a-f]{16,24}$`.
-- **유형**: 전극 묶음이 B 에만 있음 → `new`, A 에만 → `gone`. 그 전극이 `moved` 이고 그 레이어 상태가 both 가 아니면 이동 묶음 `mv|<전극>`(from = A 에만 있는 레이어, to = B 에만 있는 레이어, `layer_order` 순) → `move`. both 이고 쌍 원자가 있으면 `hub`. CNO 만 있으면 `cno`. 쌍 묶음은 `pair`. 이동 판정은 ledger 의 `moved`(이름 기준)를 그대로 쓴다.
+- **묶음 계층 v2**(`summary.bundles.version = 2`, `rule = bundle_assign_v2`, rnarr/T11, 계획 v3.3 K2·L4). 위에서 아래로 큰 이유부터 본다.
+  1. 전극 신규·삭제(`electrode_new`·`electrode_removed`) → 전극 단위 묶음 `('ele', 전극)`. 그 전극의 모든 레이어와 CNO 가 한 묶음이다.
+  2. 레이어 변경(`layer_change`) → `('lyr', 전극)`. 공통 전극에서 레이어가 늘거나 줄었을 때다. 바뀐 레이어(`from`·`to`)를 모두 이 묶음에 넣는다.
+  3. 다중 쌍 변화(`hub`) → `('hub', 전극, 레이어)`. 아래 허브 기준을 쓴다.
+  4. 단일 쌍 변화(`pair`) → `('p', pair_id, 레이어)`.
+  5. 동일 전극(`self`) → `('self', 전극, 레이어)`. 불량이 한 전극 안에서 난 경우다.
+  6. CNO 단독(`cno`) → `('cno', 전극, density layer)`. 위 묶음이 없는 전극의 CNO 다.
+- **두 단계 배정**: 원자마다 정확히 한 묶음이다. 순서를 바꿔도 결과가 같다.
+  - 사전 고정: 전극 속성(`status` new·removed·common·unverifiable, 레이어 상태)과 허브 상대 수를 **배정 전에** 모두 계산한다. 어떤 묶음이 이미 있는지는 배정에 영향을 주지 않는다.
+  - A 단계(CNO 가 아닌 원자): 서로 다른 전극이 1 개이면 new·removed → `ele`, 레이어 상태가 바뀌었으면 `lyr`, 그 밖에는 `self`. 3 개 이상이면 쌍 묶음(why = `multi`). 2 개이면 위 1→4 를 순서대로 적용한다. 두 전극이 모두 new·removed 면 쌍 묶음(why = `both_new_removed`), 두 전극 모두 레이어가 바뀌었으면 쌍 묶음(why = `both`).
+  - B 단계(CNO): 전극 속성만 본다. new·removed → `ele`, 공통 전극이고 바뀐 레이어가 있으면 `lyr`, 그 밖에는 `cno`.
+  - `unverifiable` 전극은 new·removed·레이어 변경으로 추정하지 않는다. 상태 그대로로 보고 `layer_state_unknown`·`layer_state_unverified` 를 표시한다.
+- **허브 기준**(M4, 사용자 결정 2026-11-19). 허브는 **부호와 무관**하다. 증가·감소를 가리지 않고 (전극, 끝점 레이어)에서 변한 상대를 센다. 두 끝점 모두 공통 전극이고 상태가 그대로인 원자만 센다.
+  - (가) **잡음 제외**(항상): `_no_change(a, b)`(허용 오차 `1e-12 + 1e-9 × |값|`) 안이거나 |Δ| 가 문턱(`negligible`) 이하인 원자는 "변한 상대" 로 세지 않는다. 합계와 몫에는 그대로 남는다.
+  - (나) `HUB_MIN_FRACTION`(기본 0.5): 변한 상대 수 ÷ 전체 상대 수 가 이 값 이상이어야 한다. `HUB_MIN = 3` 은 그대로이고 변한 상대가 3 개 이상이어야 한다.
+  - (다) `HUB_MIN_SHARE`(기본 0 = 끔): 상대의 종류별 Σ|Δ| 가 `HUB_MIN_SHARE × G(종류)` 이상일 때만 변한 상대로 센다.
+  - 양쪽 끝점이 모두 허브이면 변한 상대가 더 많은 쪽이 가지고, 같으면 쌍 묶음(why = `hubs`)이다. 둘 다 아니면 쌍 묶음(why = `nohub`)이다.
+  - 값은 `summary.rules`(`hub_min`·`hub_min_fraction`·`hub_min_share`)와 `summary.bundles` 에 기록한다.
+- **`bundle.hub` 키의 뜻**: 허브 묶음에만 있다(다른 묶음은 `null`). `changed_partners`(변한 상대 이름)·`changed_count`·`partner_total`(전체 상대 수)·`fraction = changed_count ÷ partner_total`·`increase`·`decrease`(상대별 순 변화의 부호별 수). 묶음의 `partner_count` 와 다르다. `partner_count` 는 이 묶음 안에 원자가 있는 상대를 모두 센다(변하지 않은 상대 포함). `hub.changed_count` 는 실제로 변한 상대만 센다. 다른 카드로 간 상대는 `partners_elsewhere`(상대 + 그 원자가 간 `bundle_id`)에 있다. 변한 상대의 원자가 이 허브가 아닌 다른 묶음(예: 전극 신규 묶음)에 들어간 경우다.
+- **허브 민감도**(`summary.bundles.hub_sensitivity`): `HUB_MIN_FRACTION`{0, 0.3, 0.5} × `HUB_MIN_SHARE`{0, 0.01} 의 6 칸마다 같은 원자를 다시 배정해 허브 수·원자 수·몫을 센다. 실제 배정은 기본값 한 번뿐이고 이 표는 참고다. 칸의 원자 수는 그 설정이 허브 묶음에 넣을 모든 원자이며 변하지 않은 상대의 원자도 포함한다(`summary.rules.hub_sensitivity_atoms`). 보고서 부록 "허브 민감도" 표가 이를 보여 준다. 실데이터 표를 보고 설정값만 조정한다(usage.md 참고).
+- **unverifiable 허브 허용**(R17:2): 허브의 전극이 `unverifiable` 이어도 상태 그대로(`both`)로 보고 허브가 될 수 있다. 이때 묶음에 `layer_state_unverified` 를 표시하고 보고서가 한 줄로 알린다.
+- **키·id**: 내부 키는 위의 튜플이다. JSON 의 `bundle.key` 는 그 배열이다. 외부 id `bundle.id = "bd-" + sha256(canonical JSON key)[:16]`(소문자 hex)이고 충돌하면 길이 24 로 다시 만든다(`checks.bundles.id_unique`). 해시 화이트리스트는 `^bd-[0-9a-f]{16,24}$`.
+- **유형**(`bundle.type`): `electrode_new`, `electrode_removed`, `layer_change`, `hub`, `pair`, `self`, `cno`. 이동한 전극의 이동은 `layer_change` 안에 `from`(A 에만 있는 레이어)·`to`(B 에만 있는 레이어, `layer_order` 순)로 둔다. 이동 묶음 `mv|<전극>` 은 없어졌다.
 - **사유 집합**: 쌍 묶음의 `why` 는 원자 사유의 정렬된 집합이다. 하나면 그 사유 문구, 여럿이면 "두 전극 중 한쪽에 맡길 수 없어 이 쌍 하나로 묶었습니다."
 - **묶음 값**: 종류별 net·abs·share, 상대 수, 늘어난·줄어든 원자 수, 상대 줄(종류·쌍·레이어별 net·abs·presence·item id·쌍 전체 Δ), 가장 큰 상대, 상충(line.net × pixel.net < 0 이고 두 share ≥ 0.02), 다른 카드로 간 상대(`partners_elsewhere`). 정렬 동률은 `bundle.id`·상대 이름 순이라 원자 순서를 바꿔도 `ledger.json` 바이트가 같다.
-- **순위·카드**: 종류별 abs 내림차순(동률 id 순). `k80` = 누적 share ≥ 0.8 이 되는 첫 개수. 카드 = 상위 6(`CARD_COUNT`). `cover` = 카드 share 합, "그 밖"(`rest`) = 나머지, `rest_share` = 나머지 몫.
-- **문턱(negligible)**: `|x| ≤ 1e-12 + 1e-9 × |vi_A(종류)|` 이하의 묶음은 카드·목록·k80 에 넣지 않는다(R10:4). 합계와 검산에는 남고 검산은 `cover + rest_share + (문턱 이하 몫) = 1` 로 닫는다.
+- **순위·카드**: v2 는 |Δ| 크기가 아니라 **vi 변화 방향**으로 센다. §34 의 "방향 기준 순위" 를 본다. 옛 `share`(|Δ| 기준)는 이름과 뜻 그대로 남고(총 변동 기준, `gross_share` 의미), 방향 몫은 새 키 `direction_share` 다. 보고서는 `version` 이 없는 옛 ledger 를 옛 뜻(총 변동 기준)으로 표시하고 "02·08 다시 실행" 을 안내한다.
+- **문턱(negligible)**: `|x| ≤ 1e-12 + 1e-9 × |vi_A(종류)|` 이하를 "0 으로 읽는다"(R10:4). v2 에서는 문턱 이하 묶음의 순 변화도 **원래 부호의 방향 그룹**에 들어가 합계·항등식에 그대로 쓰인다(L1). 문턱은 표시(`cancelling`)와 허브의 "변한 상대" 판정에만 쓴다.
 - **생략**: 그 종류 원자에 null 이 있거나 종류 계산 불가 → 그 종류 `status: not_evaluated`(몫·k80·카드 null). G_k 가 문턱 이하 → `no_change`.
-- **검산**(`checks.bundles`): 원자 중복 0, 배정 수 = 원자 수, Σ 묶음 net + crp = `totals.<kind>.delta`, Σ share = 1(평가 가능할 때), 카드 cover + 그 밖 = 1.
+- **검산**(`checks.bundles`): 원자 중복 0, 배정 수 = 원자 수, Σ 묶음 net + crp = `totals.<kind>.delta`, Σ share = 1(평가 가능할 때), 방향 항등식, 유형 합 + crp = 종류 Δ(§34).
 - **crp 출처**: `summary.bundles.crp` 는 `totals` 의 actual CRP 이고 §32 의 구간 3 과 다르다. CA·F·CRP 가 함께 바뀌어도 두 검산이 각자 닫힌다.
 
-## 34. 설계 차이와 집중도 (`summary.design`, `summary.concentration`, rnarr/T5)
+## 34. 방향 기준 순위·유형 합계 · 설계 차이와 집중도 (`summary.bundles.ranking`·`types`, `summary.design`, `summary.concentration`, rnarr/T5·T11)
+
+**방향 기준 순위**(`summary.bundles.ranking.<kind>`, 계획 v3.3 K1·L1·L2). 질문: vi 는 어느 쪽으로 움직였고, 무엇이 그 방향을 만들었나.
+- **묶음 순 변화**(`net`) = 묶음 원자 Δ 의 합. 부호가 양수이면 증가 그룹, 음수이면 감소 그룹, 정확히 0 이면 `zero` 다. 문턱 이하여도 원래 부호의 그룹에 들어간다(L1). 문턱 이하인 net 은 합계에 그대로 쓴다.
+- **vi 변화 방향** = Σ 묶음 net 의 부호다(`direction = increase | decrease`). |Σ net| 이 문턱 이하이면 `balanced` 이고, 이때 `main` 은 |합계| 가 큰 쪽(같으면 decrease)이다.
+- **증가 요인·감소 요인**: 증가 그룹과 감소 그룹을 따로 순위 낸다. `ranking.<kind>.increase`·`decrease` 는 `{total, k80, cards[], rest[], cover}` 이고 몫은 `direction_share = net ÷ 그 방향 total` 이다(total 이 0 이면 null). 카드는 vi 변화 방향 쪽 상위 6(`CARD_COUNT`), **반대 방향 요인** 쪽 상위 3(`OPPOSITE_CARD_COUNT`)이다. `balanced` 면 양쪽 상위 6 이다. 카드에 못 든 묶음은 그 방향의 `rest`(기타)에 있다.
+- **`direction_share` 와 `share`**: `direction_share` 는 방향별 순 변화 몫이다. 옛 `share`(총 변동 = Σ|Δ| 기준 몫, gross)는 이름과 뜻 그대로 남는다. 둘을 섞어 쓰지 않는다.
+- **내부 상쇄**: 순 변화 ≈ 0 인데 총 변동(abs)이 큰 묶음이다(`cancelling = true`, `internal_cancel = abs − |net|`). 순위에서는 자연히 뒤에 가고 표시만 한다. 종류별 `cancel_ratio = 1 − |Σ net| ÷ G` 도 있다.
+- **항등식**: Σ 증가 그룹 net + Σ 감소 그룹 net + CRP = 종류 Δ(`direction_identity`). abs > 0 인 모든 묶음이 `cards`·`rest`·`zero` 중 정확히 한 곳에 한 번만 있다(`each_once`). 방향 몫 합과 `cover + 기타` 도 닫힌다(`direction_share_sum`, `cover_plus_rest`).
+- **k80**: 각 방향 안에서 누적 `direction_share` ≥ 0.8 이 되는 첫 개수다.
+
+**유형 합계 표**(`summary.bundles.types.<kind>`, L3). 묶음 유형별로 `{count, increase, decrease, net, gross}` 를 낸다. 유형은 `electrode_new`, `electrode_removed`, `layer_change`, `hub`, `pair`, `self`, `cno` 다.
+- **CNO 는 이중 계상하지 않는다**: 전극 묶음(`ele`·`lyr`) 안의 CNO 원자는 그 묶음 유형에 이미 들어 있다. `cno` 행은 독립 CNO 묶음(`('cno', …)`)만 센다. 참고 행 `cno_all` 은 모든 CNO 원자의 합이고 합계에 더하지 않는다(`reference: true`).
+- **CRP 는 표 밖**이다. `types.<kind>.crp = {net}` 에 한 줄만 두고, 보고서는 CRP ≠ 0 일 때 표 아래 한 문장으로 쓴다. 합계 행은 "합(원인 후보)" 이다.
+- **검산**: Σ 유형 net + CRP = 종류 Δ(`types_plus_crp`).
 
 **설계 차이**(보고서 6 절의 값). §32 의 구간 값을 이름 붙여 쓴다.
-- **이름 조건**: 구간 1 = "설계 차이". 구간 2 = F 가 W×H 만 다를 때 "해상도 차이", `r_rule`·`r_G`(glass)·`r_M`(가중) 중 하나라도 1 이 아니면 "해상도·조건 차이"(다른 항목을 `names.condition_differences` 에 둔다). 구간 3(CRP)·4(density)는 둘 중 하나가 문턱을 넘을 때만 "해상도 외 조건" 줄로 보인다(`show_outside_conditions`).
+- **기준**(`summary.design.<kind>.basis = area | unit`): `rebase.area_basis` 가 available 이면 `area` 다. 이때 합계는 `design_area`(면적당 설계 차이)와 `unit_size`(unit 크기 차이)를 쓰고, 보고서 6 의 기본 표는 "면적당 설계 차이", "화면 면적 차이 = unit 크기 + 구간 2"를 낸다. 접으면 둘을 따로 보인다. `unit` 이면 예전처럼 구간 1 `ca` 를 쓴다. 둘을 함께 더하지 않는다. 쌍별 설계 차이 상위도 `area` 이면 `design_area` 값을 쓴다. 6 의 한계 문구: 2×2 창 경계 효과는 면적당 설계 몫에 남고, ρ 비교는 "같은 면적이면" 으로 읽는다.
+- **이름 조건**: 구간 1 = "설계 차이"(area 기준이면 "면적당 설계 차이"). 구간 2 = F 가 W×H 만 다를 때 "해상도 차이", `r_rule`·`r_G`(glass)·`r_M`(가중) 중 하나라도 1 이 아니면 "해상도·조건 차이"(다른 항목을 `names.condition_differences` 에 둔다). 구간 3(CRP)·4(density)는 둘 중 하나가 문턱을 넘을 때만 "해상도 외 조건" 줄로 보인다(`show_outside_conditions`).
 - **A 대비 %** = 구간 값 ÷ vi_A(종류별). vi_A = 0 이면 null("—").
 - **negligible**: 문턱(§33)을 넘지 않는 구간은 `negligible` 목록에 올리고 부호·문구를 쓰지 않는다. 문턱 안의 쌍은 위·아래 목록에서 뺀다.
 - **상위 쌍**: 쌍마다 Σ item `ca_delta`(CNO 는 `CNO:<전극>@<layer>` 줄). 종류별 증가 상위 5·감소 상위 5, 줄마다 실제 Δ·설계 Δ·A 대비 %. 정렬 동률은 키 순. 환산이 `unavailable`·`not_evaluated` 면 목록은 비고 사유가 `reasons` 에 있다.
@@ -776,5 +811,33 @@ null 규칙:
 - **양보**: 기존 연산(지도·카드)의 예약이 한도를 넘으려 하면 카드를 쫓아내기 전에 occurrence 가 쥔 바이트를 모두 돌려준다. 쥐고 있던 item 은 끝까지 `pending(budget)` 이다. 양보는 **실행 전체**의 사실이어서 이후 제품에서도 새로 쥐지 않는다(조각이 하나인 item 은 보유하지 않으므로 계속 값을 낸다). 그래서 occurrence 가 없을 때 성공하던 지도·카드·검산은 바이트까지 같다.
 - **budget 기록**: `occurrence.budget = {occ_peak_bytes, yielded_at_bytes, hold_mode, piece_count_mismatch_items}`. 대역 `occurrence_budget_reduced` 의 detail 은 부족한 만큼("about … more is needed")을 적는다. 필요량은 (최대 보유량 − 남은 여유)와 "맞지 않았던 예약 중 가장 큰 것"(`occ_failed_max`) 중 큰 값이다. 둘 다 0 이면 "필요량을 잴 수 없음"으로 적고 문장을 빼지 않는다(R11b:3).
 - **종료 3 의 뜻**: pending item 이 하나라도 있으면 문서는 partial 이고 종료 코드는 3 이다(`occurrence_budget_reduced`). 지도·카드·기존 검산은 그대로이고 연결 영역 값만 일부 비어 있다. 새 검산이 실패해도 문서는 partial(종료 3)이고 ledger 쪽 이유는 `ledger_summary_check_failed` 다.
-- **E7 예외(R10:5)**: 02 가 `inputs.layer_order`(real.yaml `layer_stack` 의 `stack_order` 오름차순, 두 제품 합집합, 같은 order 는 이름순, stack 밖 레이어는 뒤에 이름순)를 쓰고 ledger 가 그것을 복사한다. 이 키가 있으면 기존 레이어 **목록·CSV 의 칸 순서·지도 파일 번호의 순서**가 바뀐다(값은 같다). 키가 없는 옛 ledger 는 이름순 그대로다. "변경 전과 바이트 동일"의 예외이고, 그 밖의 예외는 provenance sha256 과 새 키뿐이다.
+- **E7 예외(R10:5)**: 02 가 `inputs.layer_order`(real.yaml `layer_stack` 의 `stack_order` 오름차순, 두 제품 합집합, 같은 order 는 이름순, stack 밖 레이어는 뒤에 이름순)를 쓰고 ledger 가 그것을 복사한다. 이 키가 있으면 기존 레이어 **목록·CSV 의 칸 순서·지도 파일 번호의 순서**가 바뀐다(값은 같다). 키가 없는 옛 ledger 는 이름순 그대로다. "변경 전과 바이트 동일"의 예외이고, 그 밖의 예외는 provenance sha256 과 새 키뿐이다. v3.3 에서 새 키가 더 늘었다. `rebase.area_basis`·`states.<kind>.S1a`·`segments.design_area`·`segments.unit_size`·item 의 `design_area_delta`·`unit_size_delta`(§32), `summary.bundles.version = 2` 와 `ranking`·`types`·`hub_sensitivity`·묶음의 `direction_share`·`hub`(§33·§34)다. 옛 키의 이름과 뜻은 그대로다. 단 묶음의 순위·카드와 `bundle.type` 값(이동 `move`·`new`·`gone` 대신 `layer_change`·`electrode_new`·`electrode_removed` 등)은 v2 규칙으로 바뀌었다. 옛 ledger(`version` 없음)는 옛 뜻으로 표시하고 02·08 재실행을 안내한다.
 - **후속 과제**: (R11b:1) share 가 0 인 행(거리 필터로 `entries` 에서 빠진 그룹, pixel 이 line 에 덮여 면적 0 인 그룹)은 sink 는 오지만 `by_size` 행으로 세지 않아 조각 수를 적게 셀 수 있다. 이때 결과는 틀린 값이 아니라 `pending(piece_count_mismatch)` 다. 실자료에서 `piece_count_mismatch_items > 0` 이면 `compare2.json` 의 `by_size` 로 조각 수를 세도록 바꾼다. (R11b:2) 즉시 계산이 빠듯한 시점(임시 138 B 규모)에는 기존 한도와 같은 테스트가 `OCCURRENCE_ENABLED=False` 로 돌아야 한다. 실자료 한도에서의 여유를 첫 실측에서 확인한다.
+
+## 36. 보고서 화면 용어표와 지도 연결 (rnarr/T12, 계획 v3.3 M1·M3)
+
+보고서는 같은 뜻에 같은 말을 쓴다. 코드 이름(`increase` 등)은 ledger 의 키이고, 화면에는 아래 말만 나온다.
+
+| 화면 용어 | 뜻 | 옛 말·코드 이름 |
+|---|---|---|
+| 증가 / 감소 | 값이 늘었는가 줄었는가 | 늘어난 / 줄어든 |
+| 증가 요인 / 감소 요인 | 증가(감소)를 만든 원인 후보 | 늘린 변화 / 줄인 변화 |
+| vi 변화 방향 | Σ 순 변화의 부호. 보정값(CRP) 때문에 vi 부호와 다르면 "원인 후보 순 변화 방향" | 주 방향 |
+| 반대 방향 요인 | vi 변화 방향과 반대쪽 카드 | 상쇄 요인 |
+| 내부 상쇄 | 안에서 증가와 감소가 지워져 순 변화 ≈ 0 인 묶음 | 상쇄 묶음 |
+| 순 변화 | 묶음 원자 Δ 의 합 (`net`) | net |
+| 쌍 전체 변화 | 한 쌍의 모든 item Δ 의 합 | 쌍 전체 Δ |
+| 총 변동 | 증가·감소 크기의 합 Σ\|Δ\| (`share` 의 분모) | 변화량 |
+| 기타 | 카드에 들지 못한 나머지 (`rest`) | 그 밖 |
+| 레이어 변경 | 공통 전극의 레이어가 늘거나 줄거나 옮겨 감 (`layer_change`) | 레이어 구성 변경 |
+| 다중 쌍 변화 | 상대 여럿과 함께 변함 (`hub`). 제목 "Scan3 · SD1 — 다중 쌍 변화(8 쌍: 증가 4 · 감소 4)" | 상대 여럿과 함께 변함 |
+| 단일 쌍 변화 | 이 쌍만 변함 (`pair`) | 이 쌍만 변함 |
+| 동일 전극 | 한 전극 안에서 난 불량 (`self`) | 전극 안 불량 |
+| CNO 단독 | 독립 CNO 묶음 (`cno`) | — |
+| 전극 신규 / 전극 삭제 | B 에서 새로 생긴 / 없어진 전극 | 신규 / 삭제 |
+
+- **1 전체 요약**은 원인 후보 하나를 "이름 + 값" 한 문장으로 쓴다. 인과를 확정하는 말은 쓰지 않는다.
+- **유형 표**(3 맨 위)는 증가·감소·순 변화를 유형별로 보인다. 합계 행은 "합(원인 후보)" 이다. CRP 는 표 밖이고 CRP ≠ 0 이면 표 아래에 한 문장을 둔다. 1 의 CRP 문장은 그대로다.
+- **[지도에서 보기 ▸]**: 3 의 카드 제목 옆 버튼이다. 누르면 4 탐색으로 가서 그 원인 후보의 모든 쌍·item hotspot 을 강조하고, 레이어 칩은 그 묶음의 레이어만 보이며, 쌍 목록을 그 후보의 쌍으로 거른다. 4 맨 위에 "원인 후보: …" 띠와 "3 으로 돌아가기" 가 나온다. 선택값은 해시 `#sel=unit:<id>` 이다. `<id>` 는 알려진 원인 후보 id(`bd-…`)만 받는다(화이트리스트). 모르는 id 는 무시한다. 근거 줄은 숫자만 쓴다.
+- **[제품 대응 ▸]**: 2 의 대응 표에서 그 칸을 보인다(`#unit=<id>&to=s2`).
+- 옛 ledger(`summary.bundles.version` 없음)는 옛 뜻(총 변동 기준)으로 표시하고 "02·08 을 새 번들로 다시 실행하세요." 를 안내한다.

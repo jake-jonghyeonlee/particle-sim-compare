@@ -853,7 +853,9 @@ def _area_basis(a, b):
     if u_a is None or u_b is None or u_a <= 0 or u_b <= 0:
         return {'status': 'unavailable', 'reasons': ['unit_size_missing'], 'u_area_a': u_a, 'u_area_b': u_b,
                 'ratio': None}
-    return {'status': 'available', 'reasons': [], 'u_area_a': u_a, 'u_area_b': u_b, 'ratio': u_a / u_b}
+    ratio = u_a / u_b
+    ratio = 1.0 if math.isclose(ratio, 1.0, rel_tol=1e-15) else ratio     # R16:3: equal areas up to rounding keep S1a = S1
+    return {'status': 'available', 'reasons': [], 'u_area_a': u_a, 'u_area_b': u_b, 'ratio': ratio}
 
 
 def _rebase_kind(kind, a, b, tables, delta_vi, ratio=None):

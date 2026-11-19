@@ -62,7 +62,7 @@ REPORT_DIR = "data/compare2_report"
 # 08: 장부(ledger) → 지도 자료(ledger-maps) → 장부 보고서(ledger-report --maps-dir). 02 가 만든 data/compare2/compare2.json 을 읽으므로 02 를 이 번들로 다시 돌린 뒤 08 을 돌린다.
 # 02 없이 08 만 고르면 02 출력 폴더의 compare2.json 이 있어야 한다(없으면 실행 전에 종료 2). 08 은 폴더 셋(ledger, ledger_maps, ledger_report)을 만든다.
 # ledger-maps 는 hotspot 을 다시 읽어 지도 자료를 만들므로 02 와 비슷한 시간이 걸린다. 무거우면 LEDGER_MAPS = False (예전처럼 ledger, ledger-report 두 작업만 돈다).
-# 이 브랜치 뒤 처음 한 번은 STEPS = ["02", "08"] (02 가 rebase·layer_order 를 새로 낸다). 그 뒤 보고서만 바뀌면 STEPS = ["08"] (compare2.json 이 바뀌지 않으므로 02 는 필요 없다). 04 결과(CHANGES_DIR)가 있으면 지도의 좌표 대응에 쓴다.
+# 새 번들로 처음 한 번은 STEPS = ["02", "08"] (02 가 rebase·layer_order 를 새로 낸다). 그 뒤 보고서만 바뀌면 STEPS = ["08"] (compare2.json 이 바뀌지 않으므로 02 는 필요 없다). 04 결과(CHANGES_DIR)가 있으면 지도의 좌표 대응에 쓴다.
 # ledger-maps 종료 3(부분 결과)이면 실행기는 계속하고 ledger-report 가 띠를 보인다. 종료 2 이면 실행기가 멈추고 ledger-report 는 실행하지 않는다.
 LEDGER_DIR = "data/ledger"
 LEDGER_REPORT_DIR = "data/ledger_report"

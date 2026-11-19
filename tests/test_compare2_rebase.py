@@ -571,6 +571,50 @@ def test_document_example_proportions(tmp_path):
     assert line['S2']['x'] / line['S1a']['x'] == pytest.approx(1.008, rel=1e-9)
 
 
+def test_ca_ratio_one_and_a_half_gives_the_document_example_s1a_over_s0(tmp_path):
+    """R16:1: B's CA is 1.5 x A's (cells 2 -> 3), unit 50 -> 60 um: S1a.x / S0.x = 1.5 x 2500 / 3600 = 1.0417."""
+    a_cases = base_cases(AB={1: {0, 1}}, DE={1: {4, 5}}, AC=None, EF=None, GH=None, IJ=None)
+    b_cases = base_cases(AB={1: {0, 1, 2}}, DE={1: {4, 5, 6}}, AC=None, EF=None, GH=None, IJ=None)
+    code, doc, _out = go(tmp_path, (a_cases, PAIRS), (b_cases, PAIRS), a=dict(unit=[50, 50]), b=dict(unit=[60, 60]))
+    assert code == 0
+    assert_area_closed(doc)
+    for kind in KINDS:
+        state = doc['rebase']['states'][kind]
+        assert state['S1']['x'] / state['S0']['x'] == pytest.approx(1.5, rel=1e-12)
+        assert state['S1a']['x'] / state['S0']['x'] == pytest.approx(1.5 * 2500 / 3600, rel=1e-12)
+        assert state['S1a']['x'] / state['S0']['x'] == pytest.approx(1.0417, abs=5e-5)
+
+
+def test_cno_csv_differs_closes_the_area_check_but_not_item_by_item(tmp_path):
+    """R16:2: both sides' CNO files differ and the units differ: the area check passes on the kind total, while the CNO's own
+    design_area + unit_size does not have to equal its ca_delta (each segment has its own secant)."""
+    ref, tgt = two_sides()
+    changed = 'defect_size(um),Area(um2)\n1,0.5\n2,1.5\n3,5.0\n'
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(unit=[10, 20]), b=dict(OTHER, unit=[30, 10]),
+                         ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: changed})
+    assert code == 0
+    assert_area_closed(doc)
+    (row,) = doc['rebase']['cno']
+    assert row['presence'] == 'both' and row['lambda_a'] != row['lambda_b']
+    assert row['design_area_delta'] + row['unit_size_delta'] != pytest.approx(row['ca_delta'], abs=1e-15)
+    seg = segs(doc, 'pixel')
+    assert seg['design_area']['sum'] + seg['unit_size']['sum'] == pytest.approx(seg['ca']['sum'], abs=1e-12)
+
+
+def test_unit_areas_equal_up_to_rounding_count_as_equal(tmp_path):
+    """R16:3: 0.2 x 0.9 and 0.3 x 0.6 differ by one ulp; the ratio is 1.0 so S1a keeps S1's value bit for bit."""
+    assert (0.2 * 0.9) / (0.3 * 0.6) != 1.0
+    ref, tgt = two_sides()
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(unit=[0.2, 0.9]), b=dict(OTHER, unit=[0.3, 0.6]))
+    assert code == 0
+    assert_area_closed(doc)
+    assert doc['rebase']['area_basis']['ratio'] == 1.0
+    for kind in KINDS:
+        state = doc['rebase']['states'][kind]
+        assert state['S1a'] == dict(state['S1'])
+        assert state['segments']['unit_size']['sum'] == 0.0
+
+
 def test_pixel_crp_change_stays_after_the_area_segments_and_line_ignores_crp(tmp_path):
     ref, tgt = two_sides()
     code, doc, _out = go(sub(tmp_path, 'x'), ref, tgt, a=dict(unit=[10, 10]), b=dict(group='auto', res=[10, 5], unit=[12, 10]))
