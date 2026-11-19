@@ -87,6 +87,128 @@ def clear_cards(doc, kind):
         rk[name]['cards'] = []
 
 
+# ---- a builder of consistent version 2 cause candidate data (rnarr/T12) -----------------------------------------------------------
+
+TYPES = ('electrode_new', 'electrode_removed', 'layer_change', 'hub', 'pair', 'self', 'cno')
+OLD_TERMS = ('늘어난', '줄어든', '늘린', '줄인', '주 방향', '상쇄 요인', '상쇄 묶음', '쌍 전체 Δ', '변화량', '그 밖')
+
+
+def mk(doc, idx, type_, nets, layer='L1', **extra):
+    """One bundle (version 2 shape) whose rows point at a real pair and item of `doc`; nets = {kind: net}."""
+    p = doc['pairs'][idx % len(doc['pairs'])]
+    item = p['items'][0]['item_id']
+    pair_like = type_ == 'pair'
+    b = {'id': 'bd-%016x' % (0xabc000 + idx * 7 + extra.pop('salt', 0)), 'key': [type_, idx], 'why': extra.pop('why', []),
+         'layer_state_unverified': False, 'layer_state_unknown': False, 'independent_cno': type_ == 'cno', 'type': type_,
+         'pair_id': p['pair_id'] if pair_like else None, 'layer': layer, 'layers': [layer],
+         'electrodes': list(p['electrodes']) if pair_like else None, 'electrode': None if pair_like else 'E%d' % idx,
+         'partners': [], 'partner_count': 0, 'hub': None, 'top_partner': {'line': None, 'pixel': None}, 'conflict': False,
+         'partners_elsewhere': []}
+    kinds, rows, inc, dec = {}, [], 0, 0
+    for k in KINDS:
+        n = nets.get(k, 0.0)
+        a = (extra.get('abs') or {}).get(k, abs(n))
+        kinds[k] = {'net': n, 'abs': a, 'share': None, 'increase': int(n > 0), 'decrease': int(n < 0), 'atoms': 1 if a else 0,
+                    'sign': 'none' if a == 0 else 'increase' if n > 0 else 'decrease' if n < 0 else 'zero',
+                    'cancelling': abs(n) <= 1e-12 and a > 1e-12, 'internal_cancel': a - abs(n), 'direction_share': None}
+        if a:
+            rows.append({'kind': k, 'pair_id': p['pair_id'], 'cno': False, 'layer': layer or (extra.get('layers') or ['L1'])[0], 'partner': None,
+                         'electrodes': list(p['electrodes']) if pair_like else None, 'net': n, 'abs': a, 'presence': ['both'],
+                         'item_ids': [item], 'pair_delta': p.get('delta')})
+        inc, dec = inc + int(n > 0), dec + int(n < 0)
+    extra.pop('abs', None)
+    b.update(kinds=kinds, rows=rows, atoms={'increase': inc, 'decrease': dec, 'count': inc + dec})
+    b.update(extra)
+    return b
+
+
+def finish(doc, blist, crp=None):
+    """Write `summary.bundles` for `blist`: direction ranking (6 + 3 cards), type totals, the hub sensitivity grid."""
+    blist = copy.deepcopy(blist)
+    ranking, types, g = {}, {}, {}
+    for kind in KINDS:
+        g[kind] = sum(b['kinds'][kind]['abs'] for b in blist)
+        for b in blist:
+            b['kinds'][kind]['share'] = b['kinds'][kind]['abs'] / g[kind] if g[kind] else None
+        members = [b for b in blist if b['kinds'][kind]['abs'] > 0]
+        net = lambda b: b['kinds'][kind]['net']
+        groups = {'increase': sorted((b for b in members if net(b) > 0), key=lambda b: (-net(b), b['id'])),
+                  'decrease': sorted((b for b in members if net(b) < 0), key=lambda b: (net(b), b['id'])),
+                  'zero': sorted((b for b in members if net(b) == 0), key=lambda b: b['id'])}
+        total = {n: sum(net(b) for b in groups[n]) for n in ('increase', 'decrease')}
+        net_total = total['increase'] + total['decrease']
+        if abs(net_total) <= 1e-9:
+            direction, main = 'balanced', 'increase' if total['increase'] > -total['decrease'] else 'decrease'
+        else:
+            direction = main = 'increase' if net_total > 0 else 'decrease'
+        packed = {}
+        for n in ('increase', 'decrease'):
+            run, k80 = 0.0, None
+            for i, b in enumerate(groups[n], 1):
+                b['kinds'][kind]['direction_share'] = net(b) / total[n]
+                run += net(b) / total[n]
+                if k80 is None and run >= 0.8 - 1e-12:
+                    k80 = i
+            count = 6 if direction == 'balanced' or n == direction else 3
+            cards = groups[n][:count]
+            packed[n] = {'total': total[n], 'k80': k80, 'cards': [b['id'] for b in cards], 'rest': [b['id'] for b in groups[n][count:]],
+                         'cover': sum(b['kinds'][kind]['direction_share'] for b in cards) if cards else None}
+        ranking[kind] = dict({'status': 'ok', 'direction': direction, 'main': main}, zero=[b['id'] for b in groups['zero']],
+                             cancel_ratio=0.0, net_total=net_total, **packed)
+        types[kind] = {t: {'count': 0, 'increase': 0.0, 'decrease': 0.0, 'net': 0.0, 'gross': 0.0} for t in TYPES}
+        for b in members:
+            row = types[kind][b['type']]
+            row['count'] += 1
+            row['net'] += net(b)
+            row['gross'] += b['kinds'][kind]['abs']
+            row['increase' if net(b) > 0 else 'decrease'] += net(b) if net(b) else 0.0
+        types[kind]['crp'] = {'net': 0.0 if kind == 'line' else (crp or 0.0)}
+        types[kind]['cno_all'] = {'count': 0, 'net': 0.0, 'gross': 0.0, 'reference': True}
+    old = doc.get('summary', {}).get('bundles') or {}
+    doc.setdefault('summary', {})['bundles'] = {
+        'rule': 'bundle_assign_v2', 'version': 2, 'hub_min': 3, 'hub_min_fraction': 0.5, 'hub_min_share': 0.0,
+        'hub_sensitivity': [{'hub_min_fraction': f, 'hub_min_share': s, 'kinds': {k: {'hubs': 2, 'atoms': 5, 'share': 0.25} for k in KINDS}}
+                            for f in (0.0, 0.3, 0.5) for s in (0.0, 0.01)],
+        'status': {k: 'ok' for k in KINDS}, 'reasons': {k: [] for k in KINDS}, 'g': g, 'atoms': {k: 1 for k in KINDS},
+        'bundle_count': len(blist), 'list': blist, 'ranking': ranking, 'types': types,
+        'crp': {'line': 0.0, 'pixel': crp if crp is not None else (old.get('crp') or {}).get('pixel', 0.0)}}
+    return doc
+
+
+def hub(changed, total, inc, dec):
+    return {'changed_partners': ['P%d' % i for i in range(changed)], 'changed_count': changed, 'partner_total': total,
+            'fraction': changed / total, 'increase': inc, 'decrease': dec}
+
+
+def rich(real):
+    """Decrease first: a removed electrode, a layer change, two hubs carry the line decrease; two pair cards increase it."""
+    doc = copy.deepcopy(real)
+    b5 = mk(doc, 4, 'pair', {'line': 0.005})
+    blist = [
+        mk(doc, 0, 'electrode_removed', {'line': -0.04}, layer=None, electrode='Test2', layers=['SD1', 'PXL'],
+           layer_rows=[{'layer': 'SD1', 'state': 'a_only', 'line': -0.03, 'pixel': None, 'cno': None},
+                       {'layer': 'PXL', 'state': 'a_only', 'line': -0.01, 'pixel': None, 'cno': None}]),
+        mk(doc, 1, 'layer_change', {'line': -0.02, 'pixel': -0.003}, layer=None, electrode='Data', layers=['GAT2', 'SD1'],
+           layer_rows=[{'layer': 'GAT2', 'state': 'b_only', 'line': -0.015, 'pixel': -0.003, 'cno': None},
+                       {'layer': 'SD1', 'state': 'a_only', 'line': -0.005, 'pixel': None, 'cno': None}],
+           **{'from': ['SD1'], 'to': ['GAT2']}),
+        mk(doc, 2, 'hub', {'line': -0.01}, layer='SD1', electrode='Scan3', partner_count=9, hub=hub(8, 10, 4, 4),
+           partners_elsewhere=[{'partner': 'P1', 'bundle_id': b5['id']}, {'partner': 'P2', 'bundle_id': b5['id']}]),
+        mk(doc, 3, 'hub', {'line': -0.0001}, layer='SD1', electrode='Hub2', partner_count=6, hub=hub(5, 6, 5, 0)),
+        mk(doc, 5, 'pair', {'line': 0.015, 'pixel': 0.02}), b5,
+        mk(doc, 6, 'pair', {'line': 0.0}, abs={'line': 0.01}),
+    ]
+    return finish(doc, blist)
+
+
+def unit_of(doc, kind='line', pos=0):
+    return cards_of(doc, kind)[pos]
+
+
+def bundle_of_id(doc, uid):
+    return next(b for b in doc['summary']['bundles']['list'] if b['id'] == uid)
+
+
 # ---- the seven sections, the frame ------------------------------------------------------------------------------------------
 
 def test_seven_sections_in_order_with_a_head_and_a_pointer_each(real):
@@ -106,7 +228,8 @@ def test_seven_sections_in_order_with_a_head_and_a_pointer_each(real):
 def test_section_1_has_no_table_and_names_the_cause_candidates_with_links(real):
     s1 = new_section(render(real), 's1')
     assert '<table' not in s1
-    assert 'id="opinion"' in s1 and '검산' in s1 and '변화량(증가와 감소의 크기를 모두 더한 값)' in s1
+    # rnarr/T12 (M1): 변화량 is retired; the sentence names the two factors and the candidates that hold the main one
+    assert 'id="opinion"' in s1 and '검산' in s1 and '감소 요인은 <b>0%p</b>, 증가 요인은 <b>+' in s1 and '변화량' not in s1
     ids = re.findall(r'href="#unit=(bd-[0-9a-f]+)&amp;to=s3"', s1)
     assert ids and all(i in cards_of(real, 'line') + cards_of(real, 'pixel') for i in ids)
 
@@ -161,7 +284,9 @@ def _statuses(doc, line=None, pixel=None, crp=None):
     for kind, st in (('line', line), ('pixel', pixel)):
         if st:
             b['status'][kind] = st
-            b['ranking'][kind] = {'status': st, 'k80': None, 'cards': [], 'cover': None, 'rest_share': None, 'rest': []}
+            empty = {'total': None, 'k80': None, 'cards': [], 'rest': [], 'cover': None}
+            b['ranking'][kind] = {'status': st, 'direction': None, 'main': None, 'increase': dict(empty), 'decrease': dict(empty),
+                                  'zero': [], 'cancel_ratio': None, 'net_total': None}
             b['reasons'][kind] = ['kind_not_computable'] if st == 'not_evaluated' else []
     if crp is not None:
         b['crp']['pixel'] = crp
@@ -188,33 +313,58 @@ def test_r12b_3_no_change_with_a_crp_below_the_limit_has_no_crp_sentence_and_a_p
 def test_h4_one_kind_that_cannot_be_computed_leaves_the_other_alone(real):
     s1 = new_section(render(variant(real, lambda d: _statuses(d, None, 'not_evaluated'))), 's1')
     assert 'pixel 원인 후보는 계산할 수 없습니다' in s1 and '이 종류의 값을 계산할 수 없습니다' in s1
-    assert '가장 큰 line 원인 후보' in s1 and '가장 큰 pixel' not in s1
+    assert s1.count('가장 큰 증가 요인은') == 1 and 'line 증가 요인' not in s1.split('pixel 원인 후보는')[1]     # the line sentence stays, pixel names no candidate
 
 
 def test_h4_six_cards_or_fewer_hold_everything_and_more_say_the_rest(real):
     s1 = new_section(render(real), 's1')
-    assert 'line 변화량(증가와 감소의 크기를 모두 더한 값)은 원인 후보 3 개에 모두 있습니다' in s1 and '나머지' not in s1
+    assert '증가 요인은 원인 후보 3 개에 모두 있습니다' in s1 and '나머지' not in s1
 
     def more(d):
         rk = d['summary']['bundles']['ranking']['line']
         rk[rk['main']]['rest'] = [cards_of(d, 'pixel')[0]]
         rk[rk['main']]['cover'] = 0.9
     s1 = new_section(render(variant(real, more)), 's1')
-    assert '나머지 1 원인 후보가 10% 를 나눠 가집니다' in s1 and '모두 있습니다' not in s1.split('pixel item 변화량')[0]
+    assert '나머지 1 원인 후보가 10% 를 나눠 가집니다' in s1 and '모두 있습니다' not in s1.split('pixel vi 는')[0]
 
 
-def test_hub_without_partner_and_mixed_signs(real):
-    def edit(d):
+def test_a_one_electrode_card_and_the_hub_sentence_numbers(real):
+    def own(d):
         b = d['summary']['bundles']['list'][0]
-        b.update(type='hub', electrode='X', layer='L1', electrodes=None, pair_id=None, partner_count=0, partners=[], why=[])
-    s3 = new_section(render(variant(real, edit)), 's3')
-    assert '이 전극 안의 불량이 변했습니다' in s3 and '상대 0 개' not in s3
+        b.update(type='self', electrode='X', layer='L1', electrodes=None, pair_id=None, partner_count=0, partners=[], why=[])
+    s3 = new_section(render(variant(real, own)), 's3')
+    assert 'X 전극 안의 L1 불량이 변했습니다' in s3 and 'X · L1 — 동일 전극' in s3
 
     def mixed(d):
         b = d['summary']['bundles']['list'][0]
-        b.update(type='hub', electrode='X', layer='L1', electrodes=None, pair_id=None, partner_count=4, partners=['a', 'b', 'c', 'd'],
-                 atoms={'increase': 3, 'decrease': 1, 'count': 4})
-    assert '상대 4 개와의 불량이 함께 변했습니다(늘어난 3 · 줄어든 1)' in new_section(render(variant(real, mixed)), 's3')
+        b.update(type='hub', electrode='X', layer='L1', electrodes=None, pair_id=None, partner_count=9, partners=['a'] * 9,
+                 atoms={'increase': 1, 'decrease': 1, 'count': 2}, hub=hub(4, 5, 3, 1))
+    s3 = new_section(render(variant(real, mixed)), 's3')
+    # R17:3: the numbers are the judged partners (hub.*), not partner_count (9) nor the atom counts
+    assert '상대 4 개와의 불량이 함께 변했습니다(증가 3 · 감소 1)' in s3 and 'X · L1 — 다중 쌍 변화(4 쌍: 증가 3 · 감소 1)' in s3
+    assert '상대 9 개' not in s3
+
+
+def test_r17b_2_the_hub_verb_follows_the_judged_partners_not_the_bundle_net(real):
+    doc = rich(real)
+    s3 = new_section(render(doc), 's3')
+    hub2 = bundle_of_id(doc, next(b['id'] for b in doc['summary']['bundles']['list'] if b['electrode'] == 'Hub2'))
+    assert hub2['kinds']['line']['net'] < 0                       # the bundle net is a decrease ...
+    assert 'Hub2 전극의 SD1 에서 상대 5 개와의 불량이 함께 증가했습니다.' in s3   # ... the judged partners all increased
+    assert 'Scan3 전극의 SD1 에서 상대 8 개와의 불량이 함께 변했습니다(증가 4 · 감소 4).' in s3
+
+
+def test_r17b_3_a_hub_card_names_changed_partners_of_all_and_those_on_other_cards(real):
+    s3 = new_section(render(rich(real)), 's3')
+    assert '변한 상대 8 / 전체 10 · 그중 2 개는 다른 카드' in s3
+    assert '변한 상대 5 / 전체 6</p>' in s3                           # no other card: the clause is left out
+
+
+def test_r17b_1_the_assignment_rules_say_the_partner_signs_join_line_and_pixel(real):
+    s3 = new_section(render(real), 's3')
+    rules = s3[s3.index('id="assign-rules"'):]
+    assert '상대별 증가·감소는 line·pixel 순 변화를 합친 부호입니다.' in rules[:rules.index('</details>')]
+    assert '허브 기준: 변한 상대가 3 개 이상이고 전체 상대의 50% 이상입니다' in rules
 
 
 def test_conflict_sentence_and_card_badge(real):
@@ -223,7 +373,7 @@ def test_conflict_sentence_and_card_badge(real):
             b['conflict'] = True
             b['kinds']['line']['net'], b['kinds']['pixel']['net'] = 0.01, -0.01
     page = render(variant(real, edit))
-    assert '같은 변화가 pixel 을 줄였습니다' in new_section(page, 's1') and 'b-mv">상충' in new_section(page, 's3')
+    assert '같은 변화가 pixel 을 감소시켰습니다' in new_section(page, 's1') and 'b-mv">상충' in new_section(page, 's3')
 
 
 def test_why_texts_for_one_reason_and_mixed_reasons(real):
@@ -254,7 +404,7 @@ def test_the_card_has_the_four_parts_and_the_evidence_line(real):
     card = s3[s3.index('<div class="bcard"'):]
     for head in ('무엇이 바뀌었나', '어떤 불량이 어떻게', '얼마나', '근거'):
         assert '<h4>%s</h4>' % head in card, head
-    assert '쌍 전체 Δ' in card and '이 카드 몫' in card
+    assert '쌍 전체 변화' in card and '이 카드 순 변화' in card
     assert '지도 폴더가 없어 연결 영역 지표가 없습니다' in card
 
 
@@ -453,12 +603,12 @@ def test_r12_1_the_crp_change_is_named_in_1_and_4_and_kept_out_of_the_cause_cand
     assert signed[0] in '+−'
     sentence = 'pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % signed
     assert sentence in s1 and '보정값(CRP) 차이 %s' % signed in s4          # the same signed text in 1 and 4
-    assert 'pixel item 변화량' in s1 and '원인 후보 3 개에 모두 있습니다' in s1
-    # R12b:2: the CRP sentence comes right after the sentence that says how much of the item change the cards hold
-    assert s1.index('원인 후보 3 개에 모두 있습니다') < s1.index(sentence) < s1.index('가장 큰 pixel 원인 후보')
+    assert '원인 후보 3 개에 모두 있습니다' in s1
+    # rnarr/T12 (K4): the CRP sentence comes after the sentences that say what the cards hold (the pixel ones)
+    assert s1.rindex('원인 후보 3 개에 모두 있습니다') < s1.index(sentence)
 
     zero = new_section(render(variant(real, lambda d: _statuses(d, crp=0.0))), 's1')
-    assert '보정값(CRP) 차이에서 나왔' not in zero and 'pixel item 변화량' not in zero
+    assert '보정값(CRP) 차이에서 나왔' not in zero
 
 
 def test_r12_5_a_missing_rule_ratio_is_a_dash_not_an_error(real):
@@ -505,25 +655,18 @@ def test_r12_10_no_design_or_resolution_number_outside_6(real):
     assert texts and not [t for t in texts if t in outside]
 
 
-def _move_doc(real):
-    def edit(d):
-        b = d['summary']['bundles']['list'][0]
-        b.update(type='move', electrode='E', layer=None, electrodes=None, pair_id=None, partner_count=0, partners=[], why=[])
-        b['from'], b['to'] = ['L1'], ['L2']
-        for row in b['rows']:
-            row['layer'] = 'L2'
-    return variant(real, edit)
-
-
-def test_r12_3a_a_move_card_has_its_title_type_and_row_layers(real):
-    doc = _move_doc(real)
-    uid = doc['summary']['bundles']['list'][0]['id']
+def test_r12_3a_a_layer_change_card_has_its_title_type_layer_table_and_row_layers(real):
+    doc = rich(real)
+    uid = next(b['id'] for b in doc['summary']['bundles']['list'] if b['type'] == 'layer_change')
     page = render(doc)
     card = page[page.index('<div class="bcard" id="%s"' % uid):]
     card = card[:card.index('<h4>근거</h4>')]
-    assert '>E · L1 → L2</a>' in card and 'badge b-mv">레이어 이동' in card
-    assert 'E 전극이 A 의 L1 에서 B 의 L2 로 옮겨졌습니다.' in card
-    assert re.search(r'<span class="muted small">L2</span></td>', card)
+    assert '<b class="bt">Data — 레이어 변경(GAT2 추가 · SD1 제거)</b>' in card and 'badge b-mv">레이어 변경' in card
+    assert 'Data 전극의 레이어 구성이 바뀌었습니다(GAT2 추가 · SD1 제거).' in card
+    # the per-layer table shows every layer of the bundle (not the first one only)
+    table = card[card.index('<h4>레이어별 내역</h4>'):card.index('<h4>어떤 불량이 어떻게</h4>')]
+    assert '추가(B 에만)' in table and '제거(A 에만)' in table and '<b>GAT2</b>' in table and '<b>SD1</b>' in table
+    assert re.search(r'<span class="muted small">GAT2</span></td>', card)
 
 
 ODD = 'E|"q"한글'
@@ -576,3 +719,257 @@ def test_chrome_r12_4_the_it_hash_marks_the_item_row(real_page, real):
     dom, text = dump_dom(real_page, '#sel=pair:%s&layer=L1&it=%s&to=explore' % (pair['pair_id'], item))
     assert 'data-err' not in dom.root
     assert [a for t, a in dom.elements if t == 'tr' and a.get('id') == 'pd-it-sel']
+
+
+# ---- rnarr/T12: the direction reading (K4 / M1 / M2), the area reading of 6, the hub sensitivity, the old inputs -----------------
+
+def test_decrease_first_names_the_decrease_factor_then_the_biggest_opposite_one(real):
+    doc = rich(real)
+    line = doc['summary']['bundles']['ranking']['line']
+    assert line['direction'] == 'decrease' and line['decrease']['cards'][0] != line['increase']['cards'][0]
+    first, opposite = bundle_of_id(doc, line['decrease']['cards'][0]), bundle_of_id(doc, line['increase']['cards'][0])
+    assert first['kinds']['line']['net'] < 0 < opposite['kinds']['line']['net']
+    page = render(doc)
+    s1 = new_section(page, 's1')
+    assert '감소 요인은 <b>−' in s1 and 'href="#unit=%s&amp;to=s3">Test2 — B 에서 삭제(SD1·PXL)</a>, line −4.0000%%p' % first['id'] in s1
+    assert s1.index('가장 큰 감소 요인은') < s1.index('가장 큰 반대 방향 요인은')
+    assert 'href="#unit=%s&amp;to=s3"' % opposite['id'] in s1[s1.index('가장 큰 반대 방향 요인은'):]
+    assert '감소 요인의 ' in s1 and '% 는 \'전극 삭제\' 유형에서 나왔습니다' in s1            # the type sentence, one sentence per thought
+    s3 = new_section(page, 's3')
+    assert s3.index('id="cards-line"') < s3.index('id="cards-line-opposite"')
+    assert s3.index('id="%s"' % first['id']) < s3.index('id="%s"' % opposite['id'])
+    assert 'vi 변화 방향 — 감소 요인 상위 4 개' in s3 and '반대 방향 요인 — 증가 요인 상위 2 개' in s3
+
+
+def test_balanced_says_so_and_shows_both_directions(real):
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, 0, 'pair', {'line': 0.02}), mk(doc, 1, 'pair', {'line': -0.02}), mk(doc, 2, 'pair', {'pixel': 0.01})])
+    assert doc['summary']['bundles']['ranking']['line']['direction'] == 'balanced'
+    page = render(doc)
+    assert '증가 요인과 감소 요인이 비슷합니다' in new_section(page, 's1')
+    s3 = new_section(page, 's3')
+    assert 'id="cards-line"' in s3 and 'id="cards-line-decrease"' in s3 and 'id="cards-line-opposite"' not in s3
+
+
+def test_a_spread_out_direction_is_read_through_the_type_totals(real):
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, i, 'pair', {'line': -0.001}, salt=i * 1000) for i in range(30)] + [mk(doc, 0, 'pair', {'pixel': 0.01}, salt=77)])
+    rk = doc['summary']['bundles']['ranking']['line']
+    assert rk['decrease']['k80'] > 20 and len(rk['decrease']['cards']) == 6
+    page = render(doc)
+    assert '변화가 넓게 퍼져 있어 유형별 합계로 봅니다' in new_section(page, 's1')
+    assert 'id="spread-line"' in new_section(page, 's3') and 'id="spread-pixel"' not in new_section(page, 's3')
+
+
+def test_m2_the_type_table_has_no_crp_row_and_a_crp_difference_gets_one_line_below_it(real):
+    s3 = new_section(render(real), 's3')
+    table = s3[s3.index('id="type-table"'):s3.index('</table>', s3.index('id="type-table"'))]
+    assert 'CRP' not in table and '합(원인 후보)' in table and '모든 CNO 합(합계 제외)' in table
+    assert all(name in table for name in ('전극 신규', '전극 삭제', '레이어 변경', '다중 쌍 변화', '단일 쌍 변화', '동일 전극', 'CNO 단독'))
+    note = s3[s3.index('id="types-crp"'):]
+    note = note[:note.index('</p>')]
+    assert 'pixel 의 보정값(CRP) 차이' in note and ledger_report.pp_txt(real['summary']['bundles']['crp']['pixel']) in note
+    zero = new_section(render(variant(real, lambda d: _statuses(d, crp=0.0))), 's3')
+    assert 'id="types-crp"' not in zero
+    assert 'class="sum"' in table and table.count('<tr data-type=') == 7
+
+
+def test_an_electrode_card_lists_every_layer_and_a_removed_electrode_says_so(real):
+    doc = rich(real)
+    uid = next(b['id'] for b in doc['summary']['bundles']['list'] if b['type'] == 'electrode_removed')
+    page = render(doc)
+    card = page[page.index('<div class="bcard" id="%s"' % uid):]
+    card = card[:card.index('<h4>근거</h4>')]
+    table = card[card.index('<h4>레이어별 내역</h4>'):card.index('<h4>어떤 불량이 어떻게</h4>')]
+    assert 'Test2 전극이 B 에서 삭제되었습니다(SD1·PXL).' in card and table.count('<td class="l">삭제</td>') == 2
+    assert '<b>SD1</b>' in table and '<b>PXL</b>' in table
+    assert '이 카드 순 변화' in card and '쌍 전체 변화' in card
+
+
+def test_m3_every_card_has_the_map_and_the_correspondence_buttons_with_a_whitelisted_id(real):
+    doc = rich(real)
+    s3 = new_section(render(doc), 's3')
+    for b in doc['summary']['bundles']['list']:
+        if b['id'] in cards_of(doc, 'line'):
+            assert 'href="#sel=unit:%s&amp;to=explore"' % b['id'] in s3 and 'href="#unit=%s&amp;to=s2"' % b['id'] in s3
+    assert '지도에서 보기 ▸' in s3 and '제품 대응 ▸' in s3
+    assert all(re.fullmatch(r'bd-[0-9a-f]{16,24}', i) for i in re.findall(r'#sel=unit:([^&"]+)', s3))
+
+
+def test_a_card_with_an_internal_cancel_says_so(real):
+    s3 = new_section(render(rich(real)), 's3')
+    assert '내부 상쇄' in s3
+    assert 'id="bd-rest-line"' in s3 and '순 변화 0' in s3[s3.index('id="bd-rest-line"'):]
+
+
+def test_every_screen_text_uses_the_m1_names(real):
+    pages = [render(real), render(rich(real))]
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, 0, 'pair', {'line': 0.02}), mk(doc, 1, 'pair', {'line': -0.02})])
+    pages.append(render(doc))
+    for page in pages:
+        text = all_text(page)
+        for old in OLD_TERMS:
+            assert old not in text, old
+        assert not re.search(r'\bnet\b', text)
+        assert '때문' not in text
+    assert '증가 요인' in all_text(pages[1]) and '다중 쌍 변화' in all_text(pages[1])
+
+
+def _area_doc(real, unit_a=(50.0, 50.0), unit_b=(60.0, 60.0)):
+    def edit(d):
+        d['inputs']['products']['reference']['unit_size_um'] = list(unit_a)
+        d['inputs']['products']['target']['unit_size_um'] = list(unit_b)
+        for kind, base in (('line', 0.0123), ('pixel', 0.0045)):
+            des = d['summary']['design'][kind]
+            des['basis'] = 'area'
+            des['negligible'] = []
+            des['segments'].update(design=0.0777, design_area=base, unit_size=base / 3, resolution=base / 5)
+            des['names']['show_outside_conditions'] = False
+    return variant(real, edit)
+
+
+def test_r12_10b_no_design_or_screen_area_number_outside_6_when_the_area_basis_is_used(real):
+    doc = _area_doc(real)
+    page = render(doc)
+    seg = doc['summary']['design']['line']['segments']
+    s6 = new_section(page, 's6')
+    for value in (seg['design_area'], seg['unit_size']):
+        assert ledger_report.pp_txt(value) in s6
+        for sid in ('s1', 's2', 's3', 's4', 's5', 'sA'):
+            assert ledger_report.pp_txt(value) not in all_text(new_section(page, sid)), (sid, value)
+
+
+def test_6_area_basis_names_the_area_design_and_the_screen_area_with_its_two_parts(real):
+    doc = _area_doc(real)
+    s6 = new_section(render(doc), 's6')
+    seg = doc['summary']['design']['line']['segments']
+    pp = ledger_report.pp_txt
+    assert '같은 면적이면 설계 차이는, 화면 면적 차이는?' in s6 and '면적당 설계' in s6
+    assert '면적당 설계 차이는 <b>%s</b>' % pp(seg['design_area']) in s6
+    assert '(unit 크기 %s + unit 수 %s)' % (pp(seg['unit_size']), pp(seg['resolution'])) in s6
+    table = s6[s6.index('id="design-table"'):s6.index('</table>', s6.index('id="design-table"'))]
+    assert '= 면적당 설계 차이' in table and '화면 면적' in table and pp(seg['design']) not in s6      # ca is not added next to design_area
+    fold = s6[s6.index('id="area-split"'):]
+    fold = fold[:fold.index('</details>')]
+    assert 'unit 크기 몫' in fold and 'unit 수 몫' in fold
+    cond = s6[s6.index('id="cond6"'):s6.index('</table>', s6.index('id="cond6"'))]
+    assert 'unit 면적(크기², µm²)' in cond and '2500' in cond and '3600' in cond and '화면 면적(unit 면적 × unit 수, µm²)' in cond
+    assert '2×2 창 경계 효과는 면적당 설계 몫에 남습니다' in s6 and '"같은 면적이면" 의 비교입니다' in s6
+    assert 'id="s6-unit-basis"' not in s6
+
+
+def test_6_unit_basis_without_unit_sizes_keeps_the_old_reading_and_says_why(real):
+    s6 = new_section(render(real), 's6')
+    assert 'id="s6-unit-basis"' in s6 and 'unit 크기 정보가 없어 unit 기준으로 비교합니다' in s6
+    assert '설계 차이' in s6 and '면적당 설계' not in s6 and 'id="area-split"' not in s6
+
+
+def test_6_the_head_sentence_of_an_area_basis_uses_the_design_area_not_the_old_design(real):
+    doc = _area_doc(real)
+    head = new_section(render(doc), 's6').split('<h3>')[0]
+    pp = ledger_report.pp_txt
+    assert pp(doc['summary']['design']['line']['segments']['design_area']) in head
+    assert pp(doc['summary']['design']['line']['segments']['design']) not in head
+
+
+def test_m4_the_appendix_has_the_hub_sensitivity_table_with_the_current_setting_marked(real):
+    sA = new_section(render(real), 'sA')
+    table = sA[sA.index('id="hub-sensitivity"'):sA.index('</table>', sA.index('id="hub-sensitivity"'))]
+    assert table.count('<tr') == 1 + 6                                  # head + 3 ratios x 2 sizes
+    assert table.count('현재 설정') == 1 and '<tr class="sum"><td class="l">50%</td><td class="l">0</td>' in table
+    assert '<td class="l">30%</td><td class="l">1%</td>' in table
+    checks = sA[sA.index('id="bundle-checks"'):sA.index('</table>', sA.index('id="bundle-checks"'))]
+    for text in ('방향 검산', '목록 검산', '유형 검산'):
+        assert text in checks, text
+
+
+def _legacy(real):
+    def edit(d):
+        b = d['summary']['bundles']
+        for key in ('version', 'types', 'hub_sensitivity', 'hub_min_fraction', 'hub_min_share'):
+            b.pop(key, None)
+        for kind in KINDS:
+            rk = b['ranking'][kind]
+            main = rk['main']
+            cover = rk[main]['cover']
+            b['ranking'][kind] = {'status': 'ok', 'k80': rk[main]['k80'], 'cards': list(rk[main]['cards']), 'cover': cover,
+                                  'rest_share': 1.0 - cover, 'rest': list(rk[main]['rest'])}
+    return variant(real, edit)
+
+
+def test_an_older_ledger_without_a_bundle_version_keeps_the_old_reading_and_says_to_rerun(real):
+    page = render(_legacy(real))
+    for sid in ('s1', 's3'):
+        s = new_section(page, sid)
+        assert '총 변동 기준으로 순위 매긴 옛 방식' in s and '02·08 을 새 번들로 다시 실행하세요' in s, sid
+    s3 = new_section(page, 's3')
+    assert 'id="type-table"' not in s3 and 'id="cards-line"' in s3 and 'id="cards-pixel"' in s3
+    assert '총 변동의' in new_section(page, 's1')
+    assert '02·08' in new_section(page, 'sA')
+    assert render(_legacy(real)) == page
+
+
+def test_an_older_compare2_without_the_area_basis_still_renders_the_unit_reading(real):
+    def edit(d):
+        for kind in KINDS:
+            d['summary']['design'][kind].pop('basis', None)
+            for key in ('design_area', 'unit_size'):
+                d['summary']['design'][kind]['segments'].pop(key, None)
+    s6 = new_section(render(variant(real, edit)), 's6')
+    assert 'unit 크기 정보가 없어 unit 기준으로 비교합니다' in s6 and 'id="design-table"' in s6
+
+
+def test_the_rich_page_is_the_same_bytes_twice_and_section_1_has_no_table(real):
+    doc = rich(real)
+    assert render(doc) == render(copy.deepcopy(doc))
+    assert '<table' not in new_section(render(doc), 's1')
+
+
+# ---- #sel=unit:<id> (M3), headless Chrome -----------------------------------------------------------------------------------------
+
+def _unit_page(tmp_path):
+    doc = sample_doc()
+    p0, p1 = doc['pairs'][0], doc['pairs'][1]
+    layer = p0['items'][0]['analysis_layer']
+    one = mk(doc, 0, 'pair', {'line': -0.01}, layer=layer)
+    two = mk(doc, 1, 'pair', {'line': 0.01}, layer=p1['items'][0]['analysis_layer'])
+    finish(doc, [one, two])
+    doc, maps, out = map_report(tmp_path, doc=doc, changes=ok_changes())
+    return doc, one, p0, layer, out / 'ledger_report.html'
+
+
+def test_chrome_sel_unit_shows_only_that_candidates_pairs_layers_and_a_band(tmp_path):
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    assert len(doc['pairs']) > 2
+    dom, text = dump_dom(page, '#sel=unit:%s&to=explore' % one['id'])
+    assert 'data-err' not in dom.root and dom.root['data-sel'] == 'unit:' + one['id']
+    shown = {a['data-pair'] for t, a in dom.elements if t == 'tr' and 'plrow' in (a.get('class') or '').split() and 'hide' not in (a.get('class') or '').split()}
+    assert shown == {p0['pair_id']}                                              # the pair list is filtered to the candidate
+    chips = {a['data-mlayer'] for t, a in dom.elements if t == 'button' and 'data-mlayer' in a and 'hidden' not in a}
+    assert chips == {layer}                                                      # only the layers of the candidate
+    band = [a for t, a in dom.elements if a.get('id') == 'unit-band']
+    assert band and 'hidden' not in band[0] and '3 으로 돌아가기' in text and one['id'] in text
+    assert dom.root.get('data-map-layer') == layer
+
+
+def test_chrome_an_unknown_or_malformed_unit_selection_is_ignored(tmp_path):
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    for fragment in ('#sel=unit:bd-0123456789abcdef', '#sel=unit:%3Cscript%3E', '#sel=unit:' + one['id'][:-1] + 'Z', '#sel=unit:'):
+        dom, text = dump_dom(page, fragment)
+        assert 'data-err' not in dom.root and dom.root.get('data-sel', '') == '', fragment
+        band = [a for t, a in dom.elements if a.get('id') == 'unit-band']
+        assert band and 'hidden' in band[0], fragment
+    dom, text = dump_dom(page, '#sel=pair:%s' % p0['pair_id'])             # the old selections still work
+    assert 'data-err' not in dom.root and dom.root['data-sel'] == 'pair:' + p0['pair_id']
+
+
+def test_chrome_the_rich_page_runs_without_a_script_error(tmp_path, real):
+    doc = rich(real)
+    folder = write_ledger(tmp_path / 'led', doc)
+    out = tmp_path / 'out'
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None) == 0
+    uid = unit_of(doc)
+    for fragment in ('#', '#sel=unit:%s&to=explore' % uid, '#unit=%s&to=s3' % uid):
+        dom, text = dump_dom(out / 'ledger_report.html', fragment)
+        assert 'data-err' not in dom.root, fragment

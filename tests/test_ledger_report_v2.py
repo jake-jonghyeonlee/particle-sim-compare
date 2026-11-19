@@ -58,7 +58,7 @@ def test_opinion_says_the_direction_of_each_kind_and_waits_for_a_pending_kind(tm
     up_down = make_ledger([spec('A', ['E1', 'E2'], 'line', 0.001, 0.002), spec('B', ['E3', 'E4'], 'pixel', 0.002, 0.001)])
     pending = make_ledger([spec('A', ['E1', 'E2'], 'line', None, 0.002, change='value_pending'), spec('B', ['E3', 'E4'], 'pixel', 0.001, 0.002)])
     s1 = new_section(html_of(run_report(tmp_path, up_down, name='a')[1]), 's1')
-    assert 'line vi 는' in s1 and '높아졌습니다' in s1 and 'pixel vi 는' in s1 and '낮아졌습니다' in s1
+    assert 'line vi 는' in s1 and '증가했습니다' in s1 and 'pixel vi 는' in s1 and '감소했습니다' in s1     # rnarr/T12 (M1): 높아졌습니다/낮아졌습니다 -> 증가/감소
     s1 = new_section(html_of(run_report(tmp_path, pending, name='c')[1]), 's1')
     assert 'line vi 는 값이 대기라 비교하지 않습니다' in s1
 

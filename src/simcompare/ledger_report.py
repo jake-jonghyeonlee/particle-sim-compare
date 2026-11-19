@@ -241,43 +241,6 @@ def _report07_link(report07_dir, out):
 
 # ---- context ------------------------------------------------------------------------------------------------------------
 
-_COMPAT_TYPES = {'electrode_new': 'new', 'electrode_removed': 'gone', 'layer_change': 'move', 'self': 'hub'}
-
-
-def _compat_bundles(bundles):
-    """rnarr/T11 (L5): the page of T7 reads the old bundle shape. A version 2 ledger (direction ranking, electrode bundles,
-    new type names) is shown through that shape until T12 draws it: unknown type names become the nearest old one and the
-    ranking lists the main-direction cards first, then the opposite ones. A ledger without `version` is left as it is."""
-    if not isinstance(bundles, dict) or bundles.get('version') != 2:
-        return bundles
-    out = dict(bundles)
-    out['list'] = []
-    for b in bundles.get('list') or []:
-        b = dict(b)
-        b['type'] = _COMPAT_TYPES.get(b.get('type'), b.get('type'))
-        if b.get('layer') is None and b['type'] not in ('move',) and b.get('layers'):
-            b['layer'] = b['layers'][0]
-        if b['type'] == 'move' and b.get('from') is None:
-            b['from'], b['to'] = [], []
-        out['list'].append(b)
-    ranking = {}
-    for kind, rk in (bundles.get('ranking') or {}).items():
-        main = rk.get('main')
-        if main not in ('increase', 'decrease'):
-            ranking[kind] = {'status': rk.get('status'), 'k80': None, 'cards': [], 'cover': None, 'rest_share': None,
-                             'rest': []}
-            continue
-        other = 'decrease' if main == 'increase' else 'increase'
-        cover = (rk.get(main) or {}).get('cover')
-        ranking[kind] = {'status': rk.get('status'), 'k80': (rk.get(main) or {}).get('k80'),
-                         'cards': list((rk.get(main) or {}).get('cards') or []) + list((rk.get(other) or {}).get('cards') or []),
-                         'cover': cover, 'rest_share': None if cover is None else 1.0 - cover,
-                         'rest': list((rk.get(main) or {}).get('rest') or []) + list((rk.get(other) or {}).get('rest') or []),
-                         'direction': rk.get('direction'), 'main': main}
-    out['ranking'] = ranking
-    return out
-
-
 class Ctx(object):
     """Lookup tables of one report."""
 
@@ -303,8 +266,10 @@ class Ctx(object):
         self.lk = lambda name: (rank.get(name, len(rank)), str(name))
         # the narrative summary of ledger.py (rnarr/T5); an older ledger has none of it (E8: the text is left out)
         self.summary = doc.get('summary') if isinstance(doc.get('summary'), dict) else {}
-        bundles = self.summary.get('bundles') if isinstance(self.summary.get('bundles'), dict) else None
-        self.bundles = _compat_bundles(bundles)
+        self.bundles = self.summary.get('bundles') if isinstance(self.summary.get('bundles'), dict) else None
+        # rnarr/T12: `summary.bundles.version == 2` is the direction reading (net change, direction shares); a ledger without it
+        # is the older gross (|delta|) reading, shown with its old meaning and the rerun hint (L5)
+        self.v2 = bool(self.bundles) and self.bundles.get('version') == 2
         self.bundle_by_id = {b['id']: b for b in (self.bundles or {}).get('list') or []}
         self.design = self.summary.get('design') if isinstance(self.summary.get('design'), dict) else None
         self.rebase = self.summary.get('rebase') if isinstance(self.summary.get('rebase'), dict) else None
@@ -615,11 +580,19 @@ RERUN = '02·08 을 새 번들로 다시 실행하세요.'
 SECTION_NAMES = (('s1', '1 전체 요약'), ('s2', '2 제품 대응'), ('s3', '3 원인 후보'), ('s4', '4 결과'), ('s5', '5 분포'),
                  ('s6', '6 해상도 차이 비교'), ('sA', '부록 근거·검산'))
 KIND_REASON = {'kind_not_computable': '이 종류의 값을 계산할 수 없습니다', 'atom_null': '값이 대기인 항목이 있습니다'}
-DEF_TEXT = '(증가와 감소의 크기를 모두 더한 값)'
+TOTAL_TEXT = '총 변동(증가·감소 크기 합)'
+# M1: the names of the cause candidate types (older ledgers: new / gone / move are the nearest new names)
+TYPE_NAME = {'electrode_new': '전극 신규', 'electrode_removed': '전극 삭제', 'layer_change': '레이어 변경', 'hub': '다중 쌍 변화',
+             'pair': '단일 쌍 변화', 'self': '동일 전극', 'cno': 'CNO 단독'}
+TYPE_ORDER = ('electrode_new', 'electrode_removed', 'layer_change', 'hub', 'pair', 'self', 'cno')
+LEGACY_TYPE = {'new': 'electrode_new', 'gone': 'electrode_removed', 'move': 'layer_change'}
+DIR_WORD = {'increase': '증가', 'decrease': '감소'}
 WHY_TEXT = {'both': '두 전극 모두 이 레이어의 상태가 바뀌었습니다.',
-            'hubs': '두 전극 모두 상대 여럿과 함께 변하므로, 한쪽에 맡기지 않고 이 쌍 하나로 묶었습니다.',
-            'multi': '전극이 셋 이상 걸린 item 이라 이 쌍 하나로 묶었습니다.'}
+            'hubs': '두 전극 모두 상대 여럿과 함께 변하고 변한 상대 수가 같아 이 쌍 하나로 묶었습니다.',
+            'multi': '전극 3 개 이상이 걸린 불량이라 전극 규칙을 적용하지 않고 이 쌍 하나로 묶었습니다.',
+            'both_new_removed': '두 전극이 모두 신규·삭제라서 이 쌍 하나로 묶었습니다.'}
 MIXED_WHY = '두 전극 중 한쪽에 맡길 수 없어 이 쌍 하나로 묶었습니다.'
+SPREAD_K80 = 20      # M1/K4: a direction that needs more cause candidates than this for 80 % reads as "spread out"
 
 
 def share_txt(x):
@@ -651,81 +624,103 @@ def _tiny(value):
     return value is None or abs(value) < 1e-12
 
 
+def btype(b):
+    """The type of a bundle in the version 2 names (an older ledger's new / gone / move are the nearest new names)."""
+    return LEGACY_TYPE.get(b.get('type'), b.get('type'))
+
+
+def _hub_numbers(b):
+    """(partners that changed, increase, decrease) of a hub bundle: the judged partners of `bundle.hub` (R17:3 / T11b);
+    an older ledger has no `hub` and keeps the numbers of the bundle."""
+    hub = b.get('hub')
+    if hub:
+        return hub['changed_count'], hub['increase'], hub['decrease']
+    atoms = b.get('atoms') or {}
+    return b.get('partner_count') or 0, atoms.get('increase') or 0, atoms.get('decrease') or 0
+
+
+def _layer_change_text(b):
+    """'GAT2 추가 · SD1 제거' of a layer change bundle (B only layers added, A only layers removed)."""
+    parts = []
+    if b.get('to'):
+        parts.append('%s 추가' % '·'.join(b['to']))
+    if b.get('from'):
+        parts.append('%s 제거' % '·'.join(b['from']))
+    return ' · '.join(parts) or '레이어 구성'
+
+
 def bundle_title(b):
-    if b['type'] == 'pair':
-        return '%s · %s' % ('–'.join(b.get('electrodes') or []), b.get('layer'))
-    if b['type'] == 'move':
-        return '%s · %s → %s' % (b['electrode'], '·'.join(b.get('from') or []) or '—', '·'.join(b.get('to') or []) or '—')
-    return '%s · %s' % (b['electrode'], b.get('layer'))
+    """M1 title of a cause candidate, e.g. 'Scan3 · SD1 — 다중 쌍 변화(8 쌍: 증가 4 · 감소 4)'."""
+    t, e, layers = btype(b), b.get('electrode'), '·'.join(b.get('layers') or ([b['layer']] if b.get('layer') else []))
+    if t == 'pair':
+        return '%s · %s — %s' % ('–'.join(b.get('electrodes') or []), b.get('layer'), TYPE_NAME['pair'])
+    if t == 'electrode_new':
+        return '%s — B 에 신규(%s)' % (e, layers or '—')
+    if t == 'electrode_removed':
+        return '%s — B 에서 삭제(%s)' % (e, layers or '—')
+    if t == 'layer_change':
+        return '%s — 레이어 변경(%s)' % (e, _layer_change_text(b))
+    if t == 'hub':
+        n, inc, dec = _hub_numbers(b)
+        return '%s · %s — %s(%d 쌍: 증가 %d · 감소 %d)' % (e, b.get('layer'), TYPE_NAME['hub'], n, inc, dec)
+    return '%s · %s — %s' % (e, b.get('layer'), TYPE_NAME.get(t, t))
 
 
 def lk_bundle(b, label=None, to='s3'):
     return '<a class="lk" href="#unit=%s&amp;to=%s">%s</a>' % (esc(b['id']), to, esc(label or bundle_title(b)))
 
 
-def _bundle_up(b):
-    ln, pn = b['kinds']['line']['net'], b['kinds']['pixel']['net']
-    big = ln if abs(ln or 0.0) >= abs(pn or 0.0) else pn
-    return (big or 0.0) > 0
-
-
 def unit_first(b):
-    """What changed, in one sentence (the card head and the 1 summary use the same words)."""
-    t, n = b['type'], b.get('partner_count') or 0
+    """What changed, in one sentence (the card head)."""
+    t, n = btype(b), b.get('partner_count') or 0
     e, layer = b.get('electrode'), b.get('layer')
-    if t == 'new':
-        return '%s 전극이 B 에서 %s 에 새로 놓였습니다.' % (e, layer)
-    if t == 'gone':
-        return '%s 전극이 B 의 %s 에서 빠졌습니다.' % (e, layer)
-    if t == 'move':
-        return '%s 전극이 A 의 %s 에서 B 의 %s 로 옮겨졌습니다.' % (e, '·'.join(b.get('from') or []) or '—', '·'.join(b.get('to') or []) or '—')
+    layers = '·'.join(b.get('layers') or ([layer] if layer else [])) or '—'
+    if t == 'electrode_new':
+        return '%s 전극이 B 에 신규로 놓였습니다(%s).' % (e, layers)
+    if t == 'electrode_removed':
+        return '%s 전극이 B 에서 삭제되었습니다(%s).' % (e, layers)
+    if t == 'layer_change':
+        return '%s 전극의 레이어 구성이 바뀌었습니다(%s).' % (e, _layer_change_text(b))
     if t == 'hub':
-        if n == 0:                      # R10:6: a hub with no partner is one electrode with itself at both ends
-            return '%s 전극의 %s 에서 이 전극 안의 불량이 변했습니다.' % (e, layer)
-        hub = b.get('hub')              # R17:1: the judged partners; an older ledger has no `hub` and keeps the bundle numbers
-        if hub:
-            n, inc, dec = hub['changed_count'], hub['increase'], hub['decrease']
-        else:
-            inc, dec = b['atoms']['increase'], b['atoms']['decrease']
-        if inc and dec:                 # R8:7: the signs are mixed
-            return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 변했습니다(늘어난 %d · 줄어든 %d).' % (e, layer, n, inc, dec)
-        return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 %s.' % (e, layer, n, '늘었습니다' if _bundle_up(b) else '줄었습니다')
+        number, inc, dec = _hub_numbers(b)
+        if inc and not dec:        # R17b:2: the verb follows the judged partners (hub.increase / hub.decrease), not the bundle net
+            return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 증가했습니다.' % (e, layer, number)
+        if dec and not inc:
+            return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 감소했습니다.' % (e, layer, number)
+        return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 변했습니다(증가 %d · 감소 %d).' % (e, layer, number, inc, dec)
+    if t == 'self':
+        return '%s 전극 안의 %s 불량이 변했습니다.' % (e, layer)
     if t == 'pair':
         return '%s 쌍의 %s 불량이 변했습니다.' % ('–'.join(b.get('electrodes') or []), layer)
     return '%s 전극의 %s CNO 가 변했습니다.' % (e, layer)
 
 
 def unit_what(ctx, b):
-    t, n = b['type'], b.get('partner_count') or 0
+    t, n = btype(b), b.get('partner_count') or 0
     first = unit_first(b)
-    if t == 'new':
-        return first + (' 그 전극과 상대 %d 개 사이에 새 불량 방식이 생겼습니다.' % n if n else '')
-    if t == 'gone':
-        return first + (' 상대 %d 개와의 불량 방식이 없어졌습니다.' % n if n else '')
-    if t == 'move':
-        return first + (' 상대 %d 개와의 불량이 두 레이어에서 함께 바뀌었습니다.' % n if n else '')
-    if t == 'pair':
-        why = b.get('why') or []
-        if len(why) > 1:
-            return first + ' ' + MIXED_WHY
-        if why == ['nohub']:
-            return first + ' 같은 방향으로 함께 변한 상대가 %d 개 미만이어서 이 쌍 하나로 묶었습니다.' % (ctx.bundles.get('hub_min') or 3)
-        return first + (' ' + WHY_TEXT[why[0]] if why and why[0] in WHY_TEXT else '')
+    if t in ('electrode_new', 'electrode_removed'):
+        return first + ' 모든 레이어의 불량과 CNO 를 이 카드 하나에 넣었습니다(상대 %d 개).' % n
+    if t == 'layer_change':
+        return first + ' 바뀐 레이어의 불량과 CNO 를 이 카드 하나에 넣었습니다(상대 %d 개).' % n
     if t == 'hub':
-        return first
-    return first + ' 전극 단독 항목입니다.'
+        return first + ' 한쪽 전극만 여러 상대와 함께 변해서, 증가한 것과 감소한 것을 모두 그 전극의 이 카드에 넣었습니다.'
+    if t == 'self':
+        return first + ' 전극이 하나인 불량이라 그 전극에 맡깁니다.'
+    if t == 'cno':
+        return first + ' 전극 단독 항목이며 그 전극의 레이어 상태는 바뀌지 않았습니다.'
+    why = b.get('why') or []
+    if len(why) > 1:
+        return first + ' ' + MIXED_WHY
+    if why == ['nohub']:
+        return first + ' 설계가 변한 상대가 %d 개 미만이거나 전체 상대의 %s 미만이어서 이 쌍 하나로 묶었습니다.' % (
+            ctx.bundles.get('hub_min') or 3, share_txt(ctx.bundles.get('hub_min_fraction') or 0.5))
+    return first + (' ' + WHY_TEXT[why[0]] if why and why[0] in WHY_TEXT else '')
 
 
 def _unit_badge(b):
-    return {'new': '<span class="badge b-new">B 에 새로 놓임</span>', 'gone': '<span class="badge b-gone">B 에서 빠짐</span>',
-            'move': '<span class="badge b-mv">레이어 이동</span>', 'hub': '<span class="badge">상대 여럿과 함께 변함</span>',
-            'pair': '<span class="badge">이 쌍만 변함</span>', 'cno': '<span class="badge">CNO 만</span>'}[b['type']]
-
-
-def _kind_phrase(kind, b, ctx=None):
-    s = b['kinds'][kind]
-    word = 'item 변화량' if ctx is not None and _crp_outside(ctx, kind) is not None else '변화량'   # R12b:2
-    return '%s %s(%s %s의 %s)' % (kind, pp_txt(s['net']), kind, word, share_txt(s['share']))
+    t = btype(b)
+    cls = {'electrode_new': ' b-new', 'electrode_removed': ' b-gone', 'layer_change': ' b-mv'}.get(t, '')
+    return '<span class="badge%s">%s</span>' % (cls, esc(TYPE_NAME.get(t, t)))
 
 
 def _crp_outside(ctx, kind):
@@ -741,11 +736,10 @@ def _crp_outside(ctx, kind):
     return value if abs(value) > max(limit, 1e-12) else None
 
 
-def _kind_lines(ctx, kind, mode, state):
-    """The sentences of one kind about its cause candidates (H4 suppression). mode 's1' or 's3'; state['defined'] says the
-    amount of change was already defined once."""
+def _skip_lines(ctx, kind):
+    """The H4 sentences of a kind that has no cause candidates to name (None = it has some)."""
     bd = ctx.bundles
-    rk, st = bd['ranking'][kind], (bd.get('status') or {}).get(kind)
+    st = (bd.get('status') or {}).get(kind)
     if st == 'not_evaluated':
         why = ' · '.join(KIND_REASON.get(r, r) for r in (bd.get('reasons') or {}).get(kind) or []) or '값이 없습니다'
         return ['%s 원인 후보는 계산할 수 없습니다(%s).' % (kind, esc(why))]
@@ -755,24 +749,107 @@ def _kind_lines(ctx, kind, mode, state):
         if crp_d is not None:
             out.append('pixel 변화 %s 는 보정값(CRP) 차이에서 나왔습니다.' % esc(pp_txt(crp_d)))
         return out
-    cards = [ctx.bundle_by_id[i] for i in rk.get('cards') or [] if i in ctx.bundle_by_id]
+    return None
+
+
+def _cards_of(ctx, ids):
+    return [ctx.bundle_by_id[i] for i in ids or [] if i in ctx.bundle_by_id]
+
+
+def _ranked_ids(ctx, kind):
+    """Every card id of a kind, the vi change direction first (an older ledger: its one `cards` list)."""
+    rk = ctx.bundles['ranking'][kind]
+    if not ctx.v2:
+        return list(rk.get('cards') or [])
+    main = rk.get('main')
+    if main not in DIR_WORD:
+        return []
+    other = 'decrease' if main == 'increase' else 'increase'
+    return list((rk.get(main) or {}).get('cards') or []) + list((rk.get(other) or {}).get('cards') or [])
+
+
+def _top_type(ctx, kind, direction):
+    """(type, share) of the type that holds most of one direction of a kind; None without a type table or a total."""
+    types = ((ctx.bundles.get('types') or {}).get(kind)) or {}
+    total = ((ctx.bundles['ranking'][kind].get(direction)) or {}).get('total')
+    if not total:
+        return None
+    best = None
+    for name in TYPE_ORDER:
+        value = (types.get(name) or {}).get(direction)
+        if value and (best is None or abs(value) > abs(best[1])):
+            best = (name, value)
+    return None if best is None else (best[0], best[1] / total)
+
+
+def _factor_sentence(ctx, kind, b, direction, label):
+    """'가장 큰 감소 요인은 <name>, line −0.1%p(감소 요인의 12%) 입니다.' — one candidate, one sentence (R15:2)."""
+    s = b['kinds'][kind]
+    share = '' if direction is None or s.get('direction_share') is None else '(%s 요인의 %s)' % (DIR_WORD[direction], share_txt(s['direction_share']))
+    return '가장 큰 %s은 %s, %s %s%s 입니다.' % (label, lk_bundle(b), kind, esc(pp_txt(s['net'])), share)
+
+
+def _kind_lines_v2(ctx, kind):
+    """The sentences of one kind about its cause candidates (K4 / M1): factors, how many candidates hold them, the first
+    candidate, the biggest opposite one, the type, the CRP part."""
+    skip = _skip_lines(ctx, kind)
+    if skip is not None:
+        return skip
+    rk = ctx.bundles['ranking'][kind]
+    inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
+    out = ['감소 요인은 <b>%s</b>, 증가 요인은 <b>%s</b> 입니다.' % (esc(pp_txt(dec.get('total'))), esc(pp_txt(inc.get('total'))))]
+    if rk.get('direction') == 'balanced':
+        n = max(len(inc.get('cards') or []), len(dec.get('cards') or []))
+        out.append('증가 요인과 감소 요인이 비슷합니다. 두 방향을 각각 상위 %d 개까지 보여 줍니다.' % n)
+        for name in ('increase', 'decrease'):
+            cards = _cards_of(ctx, (rk.get(name) or {}).get('cards'))
+            if cards:
+                out.append(_factor_sentence(ctx, kind, cards[0], name, '%s 요인' % DIR_WORD[name]))
+        return out
+    main = rk['main']
+    opposite = 'decrease' if main == 'increase' else 'increase'
+    cards = _cards_of(ctx, (rk.get(main) or {}).get('cards'))
+    if not cards:
+        out.append('%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.' % kind)
+        return out
+    m, word = rk[main], DIR_WORD[main]
+    if (m.get('k80') or 0) > SPREAD_K80:
+        out.append('변화가 넓게 퍼져 있어 유형별 합계로 봅니다(%s 요인의 80%% 까지 원인 후보 %d 개). 상위 %d 개는 %s 입니다.' % (
+            word, m['k80'], len(cards), share_txt(m.get('cover'))))
+    elif not m.get('rest'):
+        out.append('%s 요인은 원인 후보 %d 개에 모두 있습니다.' % (word, len(cards)))
+    else:
+        out.append('%s 요인의 %s 가 원인 후보 %d 개에서 나왔습니다.' % (word, share_txt(m.get('cover')), len(cards)))
+        out.append('나머지 %d 원인 후보가 %s 를 나눠 가집니다.' % (len(m['rest']), share_txt(1.0 - (m.get('cover') or 0.0))))
+    out.append(_factor_sentence(ctx, kind, cards[0], main, '%s 요인' % word))
+    others = _cards_of(ctx, (rk.get(opposite) or {}).get('cards'))
+    if others:
+        out.append(_factor_sentence(ctx, kind, others[0], None, '반대 방향 요인'))
+    top = _top_type(ctx, kind, main)
+    if top is not None:
+        out.append('%s %s 요인의 %s 는 \'%s\' 유형에서 나왔습니다.' % (kind, word, share_txt(top[1]), TYPE_NAME[top[0]]))
+    return out
+
+
+def _kind_lines_legacy(ctx, kind):
+    """An older ledger (no `bundles.version`): the ranking is by total variation (|delta| sum) — the old reading, said so."""
+    skip = _skip_lines(ctx, kind)
+    if skip is not None:
+        return skip
+    bd = ctx.bundles
+    rk = bd['ranking'][kind]
+    cards = _cards_of(ctx, rk.get('cards'))
     if not cards:
         return ['%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.' % kind]
-    where = '아래 카드' if mode == 's3' else '상위'
-    word = 'item 변화량' if _crp_outside(ctx, kind) is not None else '변화량'
-    amount = word if state['defined'] else word + DEF_TEXT
-    state['defined'] = True
     rest = rk.get('rest') or []
     if not rest:
-        out = ['%s %s은 원인 후보 %d 개에 모두 있습니다.' % (kind, amount, len(cards))]
+        out = ['%s %s은 원인 후보 %d 개에 모두 있습니다.' % (kind, TOTAL_TEXT, len(cards))]
     else:
-        out = ['%s %s의 %s 는 %s %d 원인 후보의 변화입니다.' % (kind, amount, share_txt(rk['cover']), where, len(cards)),
-               '80%% 까지는 %d 원인 후보가 필요합니다.' % rk['k80'],
-               '나머지 %d 원인 후보가 %s 를 나눠 가집니다.' % (len(rest), share_txt(rk['rest_share']))]
+        out = ['%s %s의 %s 는 상위 %d 원인 후보의 변화입니다.' % (kind, TOTAL_TEXT, share_txt(rk.get('cover')), len(cards)),
+               '나머지 %d 원인 후보가 %s 를 나눠 가집니다.' % (len(rest), share_txt(rk.get('rest_share')))]
     top = cards[0]
-    out.append('가장 큰 %s 원인 후보는 %s 입니다.' % (kind, lk_bundle(top)))
-    out.append(esc(unit_first(top)) + ('' if mode == 's3' else ' 이 원인 후보의 %s 변화는 %s 입니다.' % (
-        kind, '%s(%s %s의 %s)' % (pp_txt(top['kinds'][kind]['net']), kind, word, share_txt(top['kinds'][kind]['share'])))))
+    out.append('가장 큰 %s 원인 후보는 %s, %s %s(총 변동의 %s) 입니다.' % (
+        kind, lk_bundle(top), kind, esc(pp_txt(top['kinds'][kind]['net'])), share_txt(top['kinds'][kind]['share'])))
     return out
 
 
@@ -783,7 +860,7 @@ def _vi_sentence(ctx, kind):
     if d == 0:
         return '%s vi 는 A %s 에서 B %s 로 변하지 않았습니다.' % (kind, esc(vi_txt(kd['vi_a'])), esc(vi_txt(kd['vi_b'])))
     return '%s vi 는 A <b>%s</b> 에서 B <b>%s</b> 로 <b>%s</b> %s.' % (
-        kind, esc(vi_txt(kd['vi_a'])), esc(vi_txt(kd['vi_b'])), esc(pp_txt(d)), '높아졌습니다' if d > 0 else '낮아졌습니다')
+        kind, esc(vi_txt(kd['vi_a'])), esc(vi_txt(kd['vi_b'])), esc(pp_txt(d)), '증가했습니다' if d > 0 else '감소했습니다')
 
 
 def _bundle_status(bd):
@@ -826,25 +903,28 @@ def rebase_statuses(ctx):
 
 def _opinion(ctx):
     """The overall opinion of 1: what changed, which cause candidates carry it, the conflict, the resolution notice, the trust."""
-    ops = [_vi_sentence(ctx, kind) for kind in KINDS]
+    ops = []
     if ctx.bundles is None:
+        ops.extend(_vi_sentence(ctx, kind) for kind in KINDS)
         ops.append('원인 후보 요약은 이 입력에 없어 쓰지 않습니다. ' + RERUN)
     else:
-        state = {'defined': False}
+        if not ctx.v2:
+            ops.append('이 ledger 는 원인 후보를 총 변동 기준으로 순위 매긴 옛 방식입니다. 증가·감소 방향 기준으로 보려면 ' + RERUN)
         for kind in KINDS:
-            lines = _kind_lines(ctx, kind, 's1', state)
+            ops.append(_vi_sentence(ctx, kind))
+            lines = (_kind_lines_v2 if ctx.v2 else _kind_lines_legacy)(ctx, kind)
+            ops.extend(lines)
             crp_d = _crp_outside(ctx, kind)
             if crp_d is not None and (ctx.bundles.get('status') or {}).get(kind) not in ('no_change', 'not_evaluated'):
-                # R12b:2: right after the sentence that says how much of the item change the cards hold
-                lines.insert(1, 'pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % esc(pp_txt(crp_d)))
-            ops.extend(lines)
-        cards =[ctx.bundle_by_id[i] for kind in KINDS for i in ctx.bundles['ranking'][kind].get('cards') or [] if i in ctx.bundle_by_id]
+                # R12:1 / M2: the CRP part is named once, after the sentences that say what the cards hold
+                ops.append('pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % esc(pp_txt(crp_d)))
+        cards = [ctx.bundle_by_id[i] for kind in KINDS for i in _ranked_ids(ctx, kind) if i in ctx.bundle_by_id]
         conflict = sorted((b for b in cards if b.get('conflict')), key=lambda b: (-max(b['kinds'][k]['share'] or 0.0 for k in KINDS), b['id']))
         if conflict:
             b = conflict[0]
             ops.append('%s 변화는 line 을 %s. 같은 변화가 pixel 을 %s.' % (
-                lk_bundle(b), '늘렸습니다' if b['kinds']['line']['net'] > 0 else '줄였습니다',
-                '늘렸습니다' if b['kinds']['pixel']['net'] > 0 else '줄였습니다'))
+                lk_bundle(b), '증가시켰습니다' if b['kinds']['line']['net'] > 0 else '감소시켰습니다',
+                '증가시켰습니다' if b['kinds']['pixel']['net'] > 0 else '감소시켰습니다'))
     design = ctx.design or {}
     states = {k: (design.get(k) or {}).get('status') for k in KINDS}
     if any(s == 'available' and 'resolution' not in (design[k].get('negligible') or []) for k, s in states.items()):
@@ -1025,6 +1105,36 @@ NUMBER_RULES = (('없음', '그 제품에 그 전극·쌍·item 이 없습니다
                 ('확인 불가', '입력이 부족해 판정하지 못했습니다(예: DL1 이 없어 전극 목록이 관측 기준).'))
 
 
+BUNDLE_CHECK_TEXT = {
+    'net_plus_crp': '순 변화 합 + CRP = 종류 전체 변화', 'direction_identity': '방향 검산 — 증가 요인 합 + 감소 요인 합 + CRP = 종류 전체 변화(L1)',
+    'share_sum': '총 변동 몫 합 = 1', 'direction_share_sum': '방향별 몫 합 = 1(L2)', 'cover_plus_rest': '목록 검산 — 카드 몫 + 기타 몫 = 1(L2)',
+    'each_once': '목록 검산 — 카드 + 기타 + 순 변화 0 에 모든 원인 후보가 한 번씩(L2)', 'types_plus_crp': '유형 검산 — 유형 순 변화 합 + CRP = 종류 전체 변화(L3)'}
+
+
+def _hub_sensitivity(ctx):
+    """M4: how many hubs (and how much of the total variation) each hub setting would make; the setting in use is marked."""
+    bd = ctx.bundles
+    grid = bd.get('hub_sensitivity') if isinstance(bd, dict) else None
+    if not grid:
+        return _rerun_line('허브 민감도')
+    cur = (bd.get('hub_min_fraction'), bd.get('hub_min_share'))
+
+    def cell(entry, kind, key, fmt):
+        v = (entry.get('kinds') or {}).get(kind)
+        return '<td>%s</td>' % (fmt(v[key]) if v and v.get(key) is not None else '—')
+    body = []
+    for e in grid:
+        now = (e.get('hub_min_fraction'), e.get('hub_min_share')) == cur
+        cells = ''.join(cell(e, k, 'hubs', str) + cell(e, k, 'share', share_txt) for k in KINDS)
+        body.append('<tr%s><td class="l">%s</td><td class="l">%s</td>%s<td class="l">%s</td></tr>' % (
+            ' class="sum"' if now else '', '%g%%' % ((e.get('hub_min_fraction') or 0.0) * 100), '%g%%' % (e['hub_min_share'] * 100) if e.get('hub_min_share') else '0',
+            cells, '현재 설정' if now else ''))
+    return ('<h3>허브 민감도 <span class="muted" style="font-weight:400">(허브 기준을 바꿨을 때 다중 쌍 변화 카드가 얼마나 달라지나)</span></h3>'
+            '<table id="hub-sensitivity"><thead><tr><th class="l">변한 상대 비율 ≥</th><th class="l">상대 크기 ≥</th><th>line 허브 수</th><th>line 허브 몫</th>'
+            '<th>pixel 허브 수</th><th>pixel 허브 몫</th><th class="l"></th></tr></thead><tbody>%s</tbody></table>'
+            '<p class="muted small">허브 몫 = 허브로 묶인 item 의 총 변동이 그 종류 총 변동에서 차지하는 비율입니다. 상대 크기는 그 종류 총 변동에 대한 비율입니다.</p>' % ''.join(body))
+
+
 def _appendix_extra(ctx):
     """Checks of the bundles and the rebase, and the occurrence state counts (kept in the appendix)."""
     out = []
@@ -1035,7 +1145,7 @@ def _appendix_extra(ctx):
         rows.append(('원인 후보 묶음 검산 전체(중복 0 · 배정 수 = 원자 수 포함)', _bundle_status(bd)))
         for kind in KINDS:
             for name, c in ((bd.get('kinds') or {}).get(kind) or {}).items():
-                rows.append(('원인 후보 %s · %s' % (kind, name), c.get('status', 'not_evaluated')))
+                rows.append(('원인 후보 %s · %s' % (kind, BUNDLE_CHECK_TEXT.get(name, name)), c.get('status', 'not_evaluated')))
     rs = rebase_statuses(ctx)
     if rs:
         rows.append(('해상도 비교(rebase) 검산 %d 건' % len(rs), 'passed' if all(s == 'passed' for s in rs) else (
@@ -1045,6 +1155,7 @@ def _appendix_extra(ctx):
             '<tr><td class="l">%s</td>%s</tr>' % (esc(n), _check_cell(s)) for n, s in rows))
     else:
         out.append(_rerun_line('원인 후보·해상도 비교 검산'))
+    out.append(_hub_sensitivity(ctx))
     if ctx.occ is not None:
         counts = ctx.occ.get('counts') or {}
         out.append('<h3>연결 영역 지표 상태</h3><table id="occ-counts"><tr><th class="l">제품</th><th class="l">상태별 item 수</th></tr>%s</table>' % ''.join(
@@ -1759,7 +1870,9 @@ def _row_html(ctx, b, row):
     if row.get('cno'):
         name, method = 'CNO(전극 단독)', '—'
     else:
-        label = '–'.join(row.get('electrodes') or []) if b['type'] == 'pair' else (row.get('partner') or '–'.join(row.get('electrodes') or []))
+        pair = ctx.pair_by_id.get(row.get('pair_id')) or {}
+        label = '–'.join(row.get('electrodes') or []) if btype(b) == 'pair' else (
+            row.get('partner') or '–'.join(row.get('electrodes') or pair.get('electrodes') or []))
         if best is None:
             name = esc(label)
         else:
@@ -1777,29 +1890,85 @@ def _row_html(ctx, b, row):
         change = '<span class="badge">%s</span>' % ('증가' if row['net'] > 0 else '감소')
     total = row.get('pair_delta')
     whole = ' <span class="muted small">(전부)</span>' if total is not None and abs(total - row['net']) < 1e-12 else ''
-    lay = ' <span class="muted small">%s</span>' % esc(row['layer']) if b['type'] == 'move' else ''
+    lay = ' <span class="muted small">%s</span>' % esc(row['layer']) if btype(b) in ('electrode_new', 'electrode_removed', 'layer_change') else ''
     return '<tr><td class="l">%s%s</td><td class="l">%s%s</td><td class="l wrap">%s</td><td class="l">%s</td><td>%s</td><td>%s%s</td></tr>' % (
         name, lay,
         chip(row['kind']), row['kind'], esc(method), change, pp_cell(row['net'], None),
         pp_cell(total, None) if total is not None else '<span class="muted">—</span>', whole)
 
 
+def _mag_pp(v):
+    return '%.4f%%p' % (abs(v) * 100)
+
+
+def _role_text(ctx, b, kind):
+    """What the card is to the vi change of one kind: its direction share (older ledger: its share of the total variation)."""
+    s = b['kinds'][kind]
+    if s.get('net') is None:
+        return '대기'
+    if not ctx.v2:
+        return '총 변동의 %s' % share_txt(s.get('share'))
+    sign = s.get('sign')
+    if sign == 'none':
+        return '변화 없음'
+    if sign == 'zero':
+        return '순 변화 0'
+    word, share = DIR_WORD.get(sign, ''), share_txt(s.get('direction_share'))
+    direction = ctx.bundles['ranking'][kind].get('direction')
+    if direction == 'balanced':
+        text = '%s 요인의 %s' % (word, share)
+    elif sign == direction:
+        text = 'vi 변화 방향(%s 요인)의 %s' % (word, share)
+    else:
+        text = '반대 방향 요인(%s 요인의 %s)' % (word, share)
+    return text + (' · 내부 상쇄(순 변화 ≈ 0)' if s.get('cancelling') else '')
+
+
+def _layer_rows_html(b):
+    """The per-layer table of an electrode card (new / removed electrode, layer change): every layer the bundle touches."""
+    rows = b.get('layer_rows') or []
+    if not rows:
+        return ''
+    t = btype(b)
+    names = {'both': '그대로', 'a_only': '제거(A 에만)', 'b_only': '추가(B 에만)'}
+
+    def cell(v):
+        return '<td>%s</td>' % (pp_cell(v, None) if v else '<span class="muted">—</span>')
+    body = ''.join('<tr><td class="l"><b>%s</b></td><td class="l">%s</td>%s%s%s</tr>' % (
+        esc(r['layer']), '신규' if t == 'electrode_new' else '삭제' if t == 'electrode_removed' else esc(names.get(r.get('state'), '—')),
+        cell(r.get('line')), cell(r.get('pixel')), cell(r.get('cno'))) for r in rows)
+    return ('<h4>레이어별 내역</h4><table class="bt2"><thead><tr><th class="l">레이어</th><th class="l">상태</th><th>line</th><th>pixel</th>'
+            '<th>그중 CNO</th></tr></thead><tbody>%s</tbody></table>' % body)
+
+
+def _hub_partner_line(b):
+    """R17b:2: 'changed partners n / all m' of the judgement, and how many of them went to another card."""
+    hub = b.get('hub')
+    if not hub:
+        return ''
+    elsewhere = len({e['partner'] for e in b.get('partners_elsewhere') or []})
+    return '<p class="bp small hubnum">변한 상대 %d / 전체 %d%s</p>' % (
+        hub['changed_count'], hub['partner_total'], ' · 그중 %d 개는 다른 카드' % elsewhere if elsewhere else '')
+
+
 def _bundle_card(ctx, b):
     rows = b.get('rows') or []
-    head = '<table class="bt2"><thead><tr><th class="l">%s</th><th class="l">종류</th><th class="l">방식</th><th class="l">변화</th><th>이 카드 몫</th>' \
-           '<th>쌍 전체 Δ</th></tr></thead><tbody>' % ('쌍' if b['type'] == 'pair' else '상대')
+    head = ('<table class="bt2"><thead><tr><th class="l">%s</th><th class="l">종류</th><th class="l">방식</th><th class="l">변화</th>'
+            '<th>이 카드 순 변화</th><th>쌍 전체 변화</th></tr></thead><tbody>' % ('쌍' if btype(b) == 'pair' else '상대'))
     shown = ''.join(_row_html(ctx, b, r) for r in rows[:5])
     more = ''
     if len(rows) > 5:
-        more = '<details><summary class="small">그 밖 줄 %d 개 ▸</summary>%s%s</tbody></table></details>' % (
+        more = '<details><summary class="small">기타 줄 %d 개 ▸</summary>%s%s</tbody></table></details>' % (
             len(rows) - 5, head, ''.join(_row_html(ctx, b, r) for r in rows[5:]))
-    kinds = ' &nbsp;·&nbsp; '.join('%s%s %s <span class="muted">(%s)</span>' % (
-        chip(k), k, pp_cell(b['kinds'][k]['net'], None), share_txt(b['kinds'][k]['share'])) for k in KINDS)
-    amount = ', '.join(_kind_phrase(k, b, ctx) for k in KINDS)
-    parts = ['<div class="bcard" id="%s"><div class="bh"><b class="bt"><a class="lk" href="#unit=%s&amp;to=s2" title="2 제품 대응 표의 이 칸 보기">%s</a></b> %s%s'
-             '<div class="bv">%s</div></div>' % (esc(b['id']), esc(b['id']), esc(bundle_title(b)), _unit_badge(b),
-                                                '<span class="badge b-mv">상충</span>' if b.get('conflict') else '', kinds),
-             '<h4>무엇이 바뀌었나</h4><p class="bp">%s</p>' % esc(unit_what(ctx, b))]
+    kinds = '<br>'.join('%s%s %s <span class="muted">%s</span>' % (chip(k), k, pp_cell(b['kinds'][k]['net'], None), esc(_role_text(ctx, b, k)))
+                        for k in KINDS)
+    uid = esc(b['id'])
+    buttons = ('<span class="cbtns"><a class="lkbtn" href="%s&amp;to=explore" title="4 결과의 탐색에서 이 원인 후보의 쌍·item 을 강조">지도에서 보기 ▸</a>'
+               '<a class="lkbtn" href="#unit=%s&amp;to=s2" title="2 제품 대응 표의 이 칸 보기">제품 대응 ▸</a></span>' % (esc(_href('unit:' + b['id'])), uid))
+    cancel = '<span class="badge b-mv">내부 상쇄(순 변화 ≈ 0)</span>' if any((b['kinds'][k].get('cancelling')) for k in KINDS) else ''
+    parts = ['<div class="bcard" id="%s"><div class="bh"><b class="bt">%s</b> %s%s%s%s<div class="bv">%s</div></div>' % (
+        uid, esc(bundle_title(b)), _unit_badge(b), '<span class="badge b-mv">상충</span>' if b.get('conflict') else '', cancel, buttons, kinds),
+             '<h4>무엇이 바뀌었나</h4><p class="bp">%s</p>' % esc(unit_what(ctx, b)), _layer_rows_html(b), _hub_partner_line(b)]
     if b.get('layer_state_unverified'):
         parts.append('<p class="bp muted small">레이어 상태 미확인 — DL1 전극 목록이 없어 이 전극의 레이어 상태를 확인하지 못했습니다(상태 그대로로 계산).</p>')
     if b.get('layer_state_unknown'):
@@ -1809,12 +1978,14 @@ def _bundle_card(ctx, b):
         if other is not None:
             parts.append('<p class="bp small">%s 와의 변화는 \'%s\' 카드에 있습니다.</p>' % (esc(el['partner']), lk_bundle(other)))
     parts.append('<h4>어떤 불량이 어떻게</h4>%s%s</tbody></table>%s' % (head, shown, more))
-    parts.append('<p class="muted small" style="margin:3px 0">이 카드 몫 = 이 카드에 배정된 item 의 합입니다. 쌍 전체 Δ = 그 쌍의 모든 레이어·방식 item 의 합이며, '
+    parts.append('<p class="muted small" style="margin:3px 0">이 카드 순 변화 = 이 카드에 배정된 item 의 부호 있는 합입니다. 쌍 전체 변화 = 그 쌍의 모든 레이어·방식 item 의 합이며, '
                  '다른 카드에 나뉜 몫도 들어 있습니다. CNO 는 그 전극의 카드에 전부 들어갑니다.</p>')
     inc, dec = b['atoms']['increase'], b['atoms']['decrease']
-    parts.append('<h4>얼마나</h4><p class="bp">%s. 늘어난 item %d 건 · 줄어든 item %d 건.%s</p>' % (
+    amount = ', '.join('%s %s%s' % (k, pp_txt(b['kinds'][k]['net']), (
+        '(내부 상쇄 %s)' % _mag_pp(b['kinds'][k]['internal_cancel'])) if (b['kinds'][k].get('internal_cancel') or 0) > 1e-12 else '') for k in KINDS)
+    parts.append('<h4>얼마나</h4><p class="bp">%s. 증가 item %d 건 · 감소 item %d 건.%s</p>' % (
         esc(amount), inc, dec, ' <b class="warn">line 과 pixel 의 방향이 반대입니다(상충).</b>' if b.get('conflict') else ''))
-    tp = ['가장 큰 상대 %s 가 이 묶음 %s 변화량의 %s입니다.' % (esc(b['top_partner'][k]['partner']), k, share_txt(b['top_partner'][k]['fraction']))
+    tp = ['가장 큰 상대 %s 가 이 묶음 %s %s의 %s입니다.' % (esc(b['top_partner'][k]['partner']), k, '총 변동', share_txt(b['top_partner'][k]['fraction']))
           for k in KINDS if (b.get('top_partner') or {}).get(k) and (b.get('partner_count') or 0) > 1]
     if tp:
         parts.append('<p class="bp">%s</p>' % ' '.join(tp))
@@ -1823,73 +1994,201 @@ def _bundle_card(ctx, b):
 
 
 def _card_ref(b, other_kind, kind):
-    return '<div class="bcard muted small">(%s 목록의 %s 카드 — %s 몫 %s)</div>' % (
-        other_kind, lk_bundle(b), kind, share_txt(b['kinds'][kind]['share']))
+    return '<div class="bcard muted small">(%s 목록의 %s 카드 — %s 순 변화 %s)</div>' % (
+        other_kind, lk_bundle(b), kind, esc(pp_txt(b['kinds'][kind]['net'])))
 
 
-def _rest_rows(ctx, kind, ids):
-    bs = [ctx.bundle_by_id[i] for i in ids if i in ctx.bundle_by_id]
+def _rest_rows(ctx, kind, entries):
+    """entries: [(bundle id, direction word or '')]; the table of the 기타 fold (largest |net| first)."""
+    bs = [(ctx.bundle_by_id[i], d) for i, d in entries if i in ctx.bundle_by_id]
+    bs.sort(key=lambda x: (-abs(x[0]['kinds'][kind]['net'] or 0.0), x[0]['id']))
 
-    def row(b):
-        name = esc(bundle_title(b))
-        return ('<tr id="rest-%s-%s"><td class="l"><a class="lk" href="#unit=%s&amp;to=s2">%s</a></td><td class="l">%s</td><td>%s <span class="muted small">%s</span></td></tr>' % (
-            kind, esc(b['id']), esc(b['id']), name, _unit_badge(b), pp_cell(b['kinds'][kind]['net'], None), share_txt(b['kinds'][kind]['share'])))
-    head = '<table><thead><tr><th class="l">묶음</th><th class="l">유형</th><th>%s Δ (몫)</th></tr></thead><tbody>' % kind
+    def row(item):
+        b, d = item
+        s = b['kinds'][kind]
+        share = s.get('direction_share') if ctx.v2 else s.get('share')
+        return ('<tr id="rest-%s-%s"><td class="l"><a class="lk" href="#unit=%s&amp;to=s2">%s</a></td><td class="l">%s</td><td class="l">%s</td>'
+                '<td>%s <span class="muted small">%s</span></td></tr>' % (
+                    kind, esc(b['id']), esc(b['id']), esc(bundle_title(b)), _unit_badge(b), esc(d or '—'),
+                    pp_cell(s['net'], None), '' if share is None else share_txt(share)))
+    head = ('<table><thead><tr><th class="l">원인 후보</th><th class="l">유형</th><th class="l">방향</th><th>%s 순 변화 (몫)</th></tr></thead><tbody>' % kind)
     shown, tail = bs[:50], bs[50:]
-    out = '<div class="scrl">%s%s</tbody></table></div>' % (head, ''.join(row(b) for b in shown))
+    out = '<div class="scrl">%s%s</tbody></table></div>' % (head, ''.join(row(x) for x in shown))
     if tail:
-        out += '<details><summary class="small">%d 개 더 ▸</summary>%s%s</tbody></table></details>' % (len(tail), head, ''.join(row(b) for b in tail))
+        out += '<details><summary class="small">%d 개 더 ▸</summary>%s%s</tbody></table></details>' % (len(tail), head, ''.join(row(x) for x in tail))
     return out
+
+
+def _types_table(ctx):
+    """M2: the type table of 3 — per kind: count, increase, decrease, net. No CRP row; the sum is the sum of the cause candidates."""
+    types = ctx.bundles.get('types') or {}
+
+    def cells(kind, r, show_count=True):
+        if r is None:
+            return '<td colspan="4" class="muted">대기</td>'
+        def v(x):
+            return pp_cell(x, None) if x else '<span class="muted">—</span>'
+        return '<td>%s</td><td>%s</td><td>%s</td><td>%s</td>' % (r['count'] if show_count else '', v(r['increase']), v(r['decrease']),
+                                                              v(r['net']) if r['count'] else '<span class="muted">—</span>')
+    head = ('<table id="type-table"><thead><tr><th class="l" rowspan="2">유형</th>%s</tr><tr>%s</tr></thead><tbody>' % (
+        ''.join('<th colspan="4" class="l">%s%s</th>' % (chip(k), k) for k in KINDS),
+        ''.join('<th>원인 후보</th><th>증가</th><th>감소</th><th>순 변화</th>' for _k in KINDS)))
+    body = ''.join('<tr data-type="%s"><td class="l">%s</td>%s</tr>' % (name, esc(TYPE_NAME[name]), ''.join(
+        cells(k, (types.get(k) or {}).get(name) if types.get(k) else None) for k in KINDS)) for name in TYPE_ORDER)
+    sums = []
+    for k in KINDS:
+        t = types.get(k)
+        if not t:
+            sums.append(cells(k, None))
+            continue
+        rows = [t[name] for name in TYPE_ORDER]
+        sums.append(cells(k, {'count': sum(r['count'] for r in rows), 'increase': math.fsum(r['increase'] for r in rows),
+                              'decrease': math.fsum(r['decrease'] for r in rows), 'net': math.fsum(r['net'] for r in rows)}))
+    body += '<tr class="sum" id="type-sum"><td class="l">합(원인 후보)</td>%s</tr>' % ''.join(sums)
+    ref = ''.join('<td></td><td></td><td></td><td>%s</td>' % (
+        (pp_cell(types[k]['cno_all']['net'], None) if types[k]['cno_all']['net'] else '<span class="muted">해당 없음</span>') if types.get(k) else
+        '<span class="muted">대기</span>') for k in KINDS)
+    body += '<tr class="muted" id="type-cno-all"><td class="l">모든 CNO 합(합계 제외)<span class="sub2">위 유형에 나뉘어 들어 있음 · 합에 더하지 않음</span></td>%s</tr>' % ref
+    return head + body + '</tbody></table>'
+
+
+def _types_crp_line(ctx):
+    lines = []
+    for k in KINDS:
+        crp = _crp_outside(ctx, k)
+        if crp is not None:
+            lines.append('%s 의 보정값(CRP) 차이 %s 는 위 합계에 들어 있지 않습니다(종류 전체 변화 = 합(원인 후보) + 보정값).' % (k, pp_txt(crp)))
+    return '<p class="muted small" id="types-crp" style="margin:3px 0">%s</p>' % esc(' '.join(lines)) if lines else ''
+
+
+def _s3_sums(ctx):
+    """The summary lines under the head of 3: per kind the direction of the vi change and what the cards hold."""
+    out = []
+    for kind in KINDS:
+        skip = _skip_lines(ctx, kind)
+        if skip is not None:
+            out.extend(skip)
+            continue
+        rk = ctx.bundles['ranking'][kind]
+        inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
+        if rk.get('direction') == 'balanced':
+            out.append('%s: 증가 요인 %s 와 감소 요인 %s 가 비슷해 순 변화는 %s 입니다.' % (
+                kind, esc(pp_txt(inc.get('total'))), esc(pp_txt(dec.get('total'))), esc(pp_txt(rk.get('net_total')))))
+            continue
+        main = rk.get('main')
+        m = rk.get(main) or {}
+        n = len(m.get('cards') or [])
+        out.append('%s: vi 변화 방향은 %s 입니다. %s 요인 %s 의 80%% 까지는 원인 후보 %s 개가 필요하고, 아래 카드 %d 개는 %s 입니다.' % (
+            kind, DIR_WORD.get(main, '—'), DIR_WORD.get(main, '—'), esc(pp_txt(m.get('total'))), m.get('k80') if m.get('k80') is not None else '—',
+            n, share_txt(m.get('cover'))))
+    return out
+
+
+def _kind_cards(ctx, kind, rk, line_rk=None):
+    """The card lists of one kind: the vi change direction first (top 6), then the opposite direction (top 3); a balanced kind
+    shows both directions (top 6 each). The rest of both directions and the zero-net candidates are folded as 기타."""
+    inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
+    shown_line = set(_ranked_ids(ctx, 'line')) if line_rk is not None else set()
+
+    def block(name, title, ident):
+        d = rk.get(name) or {}
+        cards = _cards_of(ctx, d.get('cards'))
+        if not cards:
+            return ''
+        cover = '' if d.get('cover') is None else ' · 카드 몫 합 %s' % share_txt(d['cover'])
+        k80 = '' if d.get('k80') is None else ' · 80%% 까지 %d 개' % d['k80']
+        return '<h4>%s <span class="muted" style="font-weight:400">(합 %s%s%s)</span></h4><div class="bgrid" id="%s">%s</div>' % (
+            esc(title), esc(pp_txt(d.get('total'))), cover, k80, ident,
+            ''.join(_card_ref(b, 'line', kind) if b['id'] in shown_line else _bundle_card(ctx, b) for b in cards))
+    direction = rk.get('direction')
+    parts = []
+    if direction == 'balanced':
+        parts.append(block('increase', '증가 요인 상위 %d 개' % len(inc.get('cards') or []), 'cards-%s' % kind))
+        parts.append(block('decrease', '감소 요인 상위 %d 개' % len(dec.get('cards') or []), 'cards-%s-decrease' % kind))
+        head = '증가 요인과 감소 요인이 비슷합니다'
+    else:
+        main = rk['main']
+        other = 'decrease' if main == 'increase' else 'increase'
+        parts.append(block(main, 'vi 변화 방향 — %s 요인 상위 %d 개' % (DIR_WORD[main], len(rk[main].get('cards') or [])), 'cards-%s' % kind))
+        parts.append(block(other, '반대 방향 요인 — %s 요인 상위 %d 개' % (DIR_WORD[other], len(rk[other].get('cards') or [])), 'cards-%s-opposite' % kind))
+        head = 'vi 변화 방향은 %s 입니다' % DIR_WORD[main]
+        if (rk[main].get('k80') or 0) > SPREAD_K80:
+            parts.insert(0, '<div class="band info" id="spread-%s">변화가 넓게 퍼져 있어 유형별 합계로 봅니다. %s 요인의 80%% 까지 원인 후보 %d 개가 필요하고, 아래 카드 %d 개는 %s 입니다.</div>' % (
+                kind, DIR_WORD[main], rk[main]['k80'], len(rk[main].get('cards') or []), share_txt(rk[main].get('cover'))))
+    if not any('class="bgrid"' in p for p in parts):
+        return '<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.</p>' % (kind, kind, kind)
+    entries = [(i, DIR_WORD[name]) for name in ('increase', 'decrease') for i in (rk.get(name) or {}).get('rest') or []]
+    entries += [(i, '순 변화 0') for i in rk.get('zero') or []]
+    rest = ''
+    if entries:
+        rest = ('<details id="bd-rest-%s"><summary>기타 %s 원인 후보 %d 개 — 반대 방향 4 위 이하와 순 변화 0 포함 ▸</summary>%s</details>' % (
+            kind, kind, len(entries), _rest_rows(ctx, kind, entries)))
+    return '<h3>%s · %s</h3>%s%s' % (chip(kind) + esc(kind), esc(head), ''.join(parts), rest)
 
 
 def _section3(ctx):
     if ctx.bundles is None:
         return ('<section id="s3">%s%s%s</section>' % (_hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?'),
                                                          _rerun_line('원인 후보'), _nx([('s4', '4 결과'), ('s2', '2 제품 대응')])))
-    state = {'defined': False}
-    sums = []
-    for kind in KINDS:
-        sums.extend(_kind_lines(ctx, kind, 's3', state))
+    if ctx.v2:
+        sums = _s3_sums(ctx)
+    else:
+        sums = ['이 ledger 는 원인 후보를 총 변동 기준으로 순위 매긴 옛 방식입니다. 증가·감소 방향 기준으로 보려면 ' + RERUN]
+        for kind in KINDS:
+            sums.extend(_kind_lines_legacy(ctx, kind))
     design = ctx.design or {}
     same_res = all((design.get(k) or {}).get('status') == 'available' and 'resolution' in (design[k].get('negligible') or []) for k in KINDS)
-    how = ['<p style="margin:3px 0">한 layout 변화는 여러 전극 쌍의 불량을 함께 바꿉니다. 그래서 변화 하나(쌍 × 방식 × 레이어)를 \'무엇이 바뀌었나\' 기준으로 정확히 한 원인 후보(묶음)에 통째로 넣습니다. '
-           '모든 원인 후보를 더하면 전체 변화와 같고, 같은 변화가 두 카드에 나오지 않습니다.</p>',
+    how = ['<p style="margin:3px 0">한 layout 변화는 여러 전극 쌍의 불량을 함께 바꿉니다. 그래서 변화 하나(쌍 × 방식 × 레이어)를 \'무엇이 바뀌었나\' 기준으로 정확히 한 원인 후보에 통째로 넣습니다. '
+           '카드의 값은 증가한 것과 감소한 것을 부호대로 더한 순 변화입니다. 모든 원인 후보의 순 변화를 더하면 보정값(CRP)을 뺀 전체 변화와 같고, 같은 변화가 두 카드에 나오지 않습니다.</p>',
+           '<p style="margin:3px 0">순위와 몫은 종류별 <b>vi 변화 방향</b>(전체 순 변화의 부호)으로 셉니다. 그 방향 카드 상위 6 개 다음에 반대 방향 요인의 큰 카드 3 개를 보여 주고, 나머지는 기타에 있습니다. '
+           '총 변동은 %s 입니다. 카드 안에서 증가와 감소가 서로 지우면 "내부 상쇄" 로 표시합니다.</p>' % TOTAL_TEXT,
            '<p style="margin:3px 0"><a href="#s4" data-go="s4">4 결과</a>의 \'가장 많이 달라진 쌍\' 은 쌍마다 모든 레이어의 변화를 합친 값이고, 여기 카드는 같은 변화를 \'무엇이 바뀌었나\' 기준으로 다시 묶은 값입니다. '
            '쌍 하나가 두 카드 이상으로 나뉠 수 있어 1 의 쌍 기준과 다를 수 있습니다.</p>',
-           '<p style="margin:3px 0">카드 이름을 누르면 2 제품 대응의 그 칸이 강조되고, 상대 쌍 이름을 누르면 4 결과의 탐색에서 그 쌍이 선택됩니다.</p>']
+           '<p style="margin:3px 0">[지도에서 보기] 는 4 결과의 탐색에서 그 원인 후보의 쌍·item 만 강조합니다. [제품 대응] 은 2 제품 대응의 그 칸을 강조합니다.</p>']
     if not same_res:
         how.append('<p style="margin:3px 0">원인 후보 값은 실제 vi 차이이며 해상도 차이 몫도 들어 있습니다. 해상도 몫을 뺀 값은 <a href="#s6" data-go="s6">6 해상도 차이 비교</a>에 있습니다.</p>')
     hub = ctx.bundles.get('hub_min') or 3
-    how.append('<details><summary class="small">배정 규칙 ▸</summary><ol class="small">'
-               '<li>그 레이어에서 한쪽 전극만 상태가 바뀌었으면(B 에만 · A 에만 · 이동) 그 전극의 묶음에 전부 넣습니다. CNO 는 항상 그 전극의 묶음에 넣습니다.</li>'
-               '<li>두 전극 모두 그대로이면, 그 레이어에서 같은 방향으로 변한 상대가 %d 개 이상인 전극이 한쪽뿐일 때 그 전극의 묶음("상대 여럿과 함께 변함")에 전부 넣습니다.</li>'
-               '<li>그 밖(두 전극 모두 바뀜 · 허브 없음 · 양쪽 모두 허브)은 쌍 묶음("이 쌍만 변함")에 전부 넣습니다.</li></ol></details>' % hub)
-    out = ['<section id="s3">', _hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?', sums),
-           '<div class="how" id="how-to-read"><b>읽는 법</b>%s</div>' % ''.join(how),
-           '<div class="ex"><b>용어 예시</b><table><tr><td class="muted">묶음 (전극 · 레이어)</td><td>Data · GAT2 <span class="muted">(Data 전극이 GAT2 레이어에 새로 놓이면서 생긴 쌍들의 변화)</span></td></tr>'
-           '<tr><td class="muted">묶음 (쌍 · 레이어)</td><td>Sense–Guard · SD1 <span class="muted">(이 쌍만 변한 경우)</span></td></tr>'
-           '<tr><td class="muted">유형</td><td>B 에 새로 놓임 · B 에서 빠짐 · 레이어 이동 · 상대 여럿과 함께 변함 · 이 쌍만 변함</td></tr>'
-           '<tr><td class="muted">해석</td><td>상대 여럿과 함께 변한 묶음은 그 전극의 형상·배치 변화로 보일 수 있습니다. 원인은 확정하지 않습니다.</td></tr>'
-           '<tr><td class="muted">몫</td><td>그 종류(line 또는 pixel) 변화량(|Δ| 합)에서 묶음이 차지하는 비율</td></tr></table></div>']
+    fraction = ctx.bundles.get('hub_min_fraction')
+    share = ctx.bundles.get('hub_min_share')
+    how.append('<details id="assign-rules"><summary class="small">배정 규칙 ▸</summary><ol class="small">'
+               '<li>CNO 는 전극 속성으로만 정합니다. 신규·삭제 전극이면 그 전극 카드, 바뀐 레이어가 있는 공통 전극이면 그 전극의 레이어 변경 카드, 아니면 CNO 단독 카드입니다.</li>'
+               '<li>전극이 하나인 불량은 그 전극이 신규·삭제면 전극 카드, 그 레이어 상태가 바뀌었으면 레이어 변경 카드, 아니면 동일 전극 카드입니다. 전극이 3 개 이상 걸리면 쌍 카드입니다.</li>'
+               '<li>두 전극 중 한쪽만 신규·삭제이면 그 전극 카드(모든 레이어와 CNO)입니다. 둘 다이면 쌍 카드입니다.</li>'
+               '<li>두 전극이 모두 공통이고 한쪽만 그 레이어 상태가 바뀌었으면 그 전극의 레이어 변경 카드입니다. 둘 다 바뀌었으면 쌍 카드입니다.</li>'
+               '<li>나머지에서는 설계가 변한 상대가 많은 전극을 다중 쌍 변화(허브)로 봅니다. 증가인지 감소인지는 묻지 않습니다. 한쪽만 허브이면 그 허브 카드, 양쪽이면 변한 상대가 더 많은 쪽, 같으면 쌍 카드입니다. 허브가 없으면 쌍 카드입니다.</li></ol>'
+               '<p class="small" style="margin:3px 0">허브 기준: 변한 상대가 %d 개 이상이고 전체 상대의 %s 이상입니다. 허용 오차 안의 변화(잡음)는 변한 상대로 세지 않습니다%s. 기준을 바꿨을 때의 차이는 부록의 허브 민감도 표에 있습니다.</p>'
+               '<p class="small" style="margin:3px 0">상대별 증가·감소는 line·pixel 순 변화를 합친 부호입니다.</p></details>' % (
+                   hub, share_txt(fraction if fraction is not None else 0.5),
+                   '' if not share else '. 한 종류의 총 변동 %s 이상인 상대만 셉니다' % share_txt(share)))
+    out = ['<section id="s3">', _hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?', sums)]
+    if ctx.v2:
+        out.append('<h3>유형별 합계 <span class="muted" style="font-weight:400">(원인 후보를 유형으로 묶은 값 · 증가는 순 변화 &gt; 0 인 후보의 합, 감소는 &lt; 0 인 후보의 합)</span></h3>'
+                   '<div class="scrl" style="max-height:none">%s</div>%s'
+                   '<p class="muted small" style="margin:3px 0">CNO 는 전극 카드(신규·삭제·레이어 변경)에 들어가면 그 유형에 포함됩니다. 독립 CNO 만 "CNO 단독" 행에 있습니다.</p>' % (
+                       _types_table(ctx), _types_crp_line(ctx)))
+    out.append('<div class="how" id="how-to-read"><b>읽는 법</b>%s</div>' % ''.join(how))
+    out.append('<div class="ex"><b>용어 예시</b><table><tr><td class="muted">전극 카드</td><td>Test2 — B 에서 삭제(SD1·PXL) <span class="muted">(전극의 모든 레이어와 CNO 를 한 카드에)</span></td></tr>'
+               '<tr><td class="muted">레이어 변경</td><td>Data — 레이어 변경(GAT2 추가 · SD1 제거)</td></tr>'
+               '<tr><td class="muted">다중 쌍 변화</td><td>Scan3 · SD1 — 다중 쌍 변화(8 쌍: 증가 4 · 감소 4)</td></tr>'
+               '<tr><td class="muted">몫</td><td>그 종류·그 방향 합계에서 카드의 순 변화가 차지하는 비율</td></tr></table></div>')
     ranking = ctx.bundles['ranking']
     for kind in KINDS:
-        lines = _kind_lines(ctx, kind, 's3', {'defined': True})
         rk = ranking[kind]
         if rk.get('status') != 'ok':
-            out.append('<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s</p>' % (kind, kind, ' '.join(lines)))
+            out.append('<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s</p>' % (kind, kind, ' '.join(_skip_lines(ctx, kind) or [])))
             continue
-        cards = [ctx.bundle_by_id[i] for i in rk.get('cards') or [] if i in ctx.bundle_by_id]
-        if not cards:
-            out.append('<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s</p>' % (kind, kind, esc(lines[0])))
+        if not ctx.v2:
+            cards = _cards_of(ctx, rk.get('cards'))
+            if not cards:
+                out.append('<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.</p>' % (kind, kind, kind))
+                continue
+            out.append('<h3>%s 을 바꾼 변화 %d 개 <span class="muted" style="font-weight:400">(총 변동 몫 큰 순 · 카드 몫 합 %s)</span></h3><div class="bgrid" id="cards-%s">%s</div>' % (
+                kind, len(cards), share_txt(rk.get('cover')), kind, ''.join(_bundle_card(ctx, b) for b in cards)))
+            if rk.get('rest'):
+                out.append('<details id="bd-rest-%s"><summary>기타 %s 원인 후보 %d 개 ▸</summary>%s</details>' % (
+                    kind, kind, len(rk['rest']), _rest_rows(ctx, kind, [(i, '') for i in rk['rest']])))
             continue
-        other = ranking['line'].get('cards') or [] if kind == 'pixel' else []
-        out.append('<h3>%s 을 바꾼 변화 %d 개 <span class="muted" style="font-weight:400">(%s 몫 큰 순 · 카드 몫 합 %s)</span></h3><div class="bgrid" id="cards-%s">%s</div>' % (
-            kind, len(cards), kind, share_txt(rk.get('cover')), kind,
-            ''.join(_card_ref(b, 'line', kind) if b['id'] in other else _bundle_card(ctx, b) for b in cards)))
-        rest = rk.get('rest') or []
-        if rest:
-            out.append('<details id="bd-rest-%s"><summary>그 밖 %s 묶음 %d 개 — %s 변화량의 %s ▸</summary>%s</details>' % (
-                kind, kind, len(rest), kind, share_txt(rk.get('rest_share')), _rest_rows(ctx, kind, rest)))
+        out.append(_kind_cards(ctx, kind, rk, ranking['line'] if kind == 'pixel' else None))
     out.append(_nx([('s4', '4 결과 — 불량은 어떻게 변했나'), ('s2', '2 제품 대응'), ('s6', '6 해상도 차이 비교')]))
     out.append('</section>')
     return ''.join(out)
@@ -1905,7 +2204,7 @@ VERDICT_TEXT = {'concentrated': '집중입니다', 'dispersed': '분산입니다
 def _conc_html(ctx):
     if ctx.conc is None:
         return _rerun_line('집중도')
-    out = ['<div class="note">막대는 각 쌍이 변화량(|Δ| 합)에서 차지하는 비율입니다. 실제 vi 기준이고 line 과 pixel 은 나누어 봅니다.</div><div class="g2">']
+    out = ['<div class="note">막대는 각 쌍이 총 변동(증가·감소 크기 합)에서 차지하는 비율입니다. 실제 vi 기준이고 line 과 pixel 은 나누어 봅니다.</div><div class="g2">']
     for kind in KINDS:
         st = ((ctx.conc.get(kind) or {}).get('actual') or {}).get('pair') or {}
         if st.get('verdict') == 'omitted':
@@ -1913,7 +2212,7 @@ def _conc_html(ctx):
         else:
             verdict = VERDICT_TEXT.get(st.get('verdict'), '—')
         k80 = st.get('k80')
-        out.append('<div><h3>%s%s 쌍 단계</h3><p class="small">%s 변화량의 80%% 는 쌍 %s 개에 있고, %s.</p>' % (
+        out.append('<div><h3>%s%s 쌍 단계</h3><p class="small">%s 총 변동의 80%% 는 쌍 %s 개에 있고, %s.</p>' % (
             chip(kind), kind, kind, '—' if k80 is None or st.get('status') != 'ok' else k80, esc(verdict)))
         rows = []
         for g in st.get('groups') or []:
@@ -1928,7 +2227,7 @@ def _conc_html(ctx):
                 label, kind, min(width, 100) * 2, share_txt(share)))
         rest = st.get('rest')
         if rest:
-            rows.append('<tr><td class="l muted">그 밖 %d 개</td><td class="l">%s</td></tr>' % (rest['count'], share_txt(rest.get('share'))))
+            rows.append('<tr><td class="l muted">기타 %d 개</td><td class="l">%s</td></tr>' % (rest['count'], share_txt(rest.get('share'))))
         out.append('<table>%s</table></div>' % ''.join(rows))
     out.append('</div>')
     return ''.join(out)
@@ -1950,6 +2249,7 @@ def _section4(ctx):
         sums.append('레이어로는 <a class="lk" href="#layer=%s&amp;to=explore">%s</a> 에 line 변화가 가장 많이 몰려 있습니다(%s).' % (
             quote(top[0]['key'], safe=''), esc(top[0]['key']), share_txt(top[0]['share'])))
     out = ['<section id="s4">', _hd('4', '결과', '불량은 어떻게 변했나(어느 조합, 어떤 방식)?', sums),
+           '<div class="band info" id="unit-band" hidden></div>',      # the script fills it for #sel=unit:<id> (M3)
            '<div class="g2"><div><h3>변화의 구성 — item 단위 분해 <span class="muted" style="font-weight:400">(위 = 증가, 아래 = 감소 · 합이 종류 전체 Δ)</span></h3>%s</div>' % _breakdown_table(ctx),
            '<div><h3>가장 많이 달라진 쌍 <span class="muted" style="font-weight:400">(실제 vi Δ, 종류별로 나눔 · 위 5)</span></h3>%s</div></div>' % _lists(ctx),
            '<div id="explore">%s</div>' % _explore(ctx),
@@ -1983,7 +2283,7 @@ def _design_unavailable(kind, d):
     return '%s 은 지금 나눌 수 없습니다(%s).' % (kind, reasons)
 
 
-def _design_list(ctx, kind, d, increase):
+def _design_list(ctx, kind, d, increase, area=False):
     entries = d.get('top_increase' if increase else 'top_decrease') or []
     allp = sorted((p for p in ctx.doc['pairs'] if p['kind'] == kind and isinstance(p.get('delta'), (int, float))),
                   key=lambda p: (-p['delta'] if increase else p['delta'], p['pair_id']))
@@ -1998,12 +2298,38 @@ def _design_list(ctx, kind, d, increase):
             i + 1, name, ('<span class="badge b-mv">실제 순위 %d위</span>' % rank[pid]) if moved else '',
             pp_cell(e['design_delta'], None), esc(spct(e['design_a_relative']) if e.get('design_a_relative') is not None else '—'), esc(pp_txt(e.get('actual_delta')))))
     return '<div><div class="muted">%s%s · %s 상위 5 쌍</div><ul class="lst" id="d-%s-%s">%s</ul></div>' % (
-        chip(kind), kind, '악화(설계 몫 증가)' if increase else '개선(설계 몫 감소)', 'w' if increase else 'b', kind,
+        chip(kind), kind, ('악화(%s 증가)' if increase else '개선(%s 감소)') % ('면적당 설계 몫' if area else '설계 몫'), 'w' if increase else 'b', kind,
         ''.join(lis) or '<li class="muted">해당하는 쌍이 없습니다</li>')
 
 
+def _unit_area(product):
+    """unit area (µm²) of a product from `unit_size_um` (config value), or None."""
+    size = product.get('unit_size_um')
+    if isinstance(size, (list, tuple)) and len(size) == 2 and all(isinstance(v, (int, float)) for v in size):
+        return size[0] * size[1]
+    return None
+
+
+def _screen_name(d):
+    """The name of the unit size + unit count segment: '화면 면적 차이', or '화면 면적·조건 차이' when other conditions differ."""
+    return '화면 면적·조건 차이' if (d.get('names') or {}).get('condition_differences') else '화면 면적 차이'
+
+
+def _area_rows(A, B, row, area):
+    """The unit area and screen area rows of the condition table (area reading only)."""
+    if not area:
+        return ''
+    ua, ub = _unit_area(A), _unit_area(B)
+    res_a, res_b = A.get('resolution'), B.get('resolution')
+    out = row('unit 면적(크기², µm²)', ua, ub, '' if not ua or not ub else '%.3f' % (ub / ua), ua == ub)
+    if ua and ub and isinstance(res_a, (list, tuple)) and isinstance(res_b, (list, tuple)) and len(res_a) == len(res_b) == 2:
+        sa, sb = ua * res_a[0] * res_a[1], ub * res_b[0] * res_b[1]
+        out += row('화면 면적(unit 면적 × unit 수, µm²)', sa, sb, '%.3f' % (sb / sa) if sa else '', sa == sb)
+    return out
+
+
 def _section6(ctx):
-    head = lambda sums=None: _hd('6', '해상도 차이 비교', '제품 크기(unit 개수) 차이를 빼면 설계 차이는?', sums)
+    head = lambda sums=None, q='제품 크기(unit 개수) 차이를 빼면 설계 차이는?': _hd('6', '해상도 차이 비교', q, sums)
     nxt = _nx([('sA', '부록 근거·검산'), ('s4', '4 결과로 돌아가기')])
     design = ctx.design
     if design is None:
@@ -2011,13 +2337,25 @@ def _section6(ctx):
     avail = {k: (design.get(k) or {}) for k in KINDS}
     ok = [k for k in KINDS if avail[k].get('status') == 'available']
     outside = any((avail[k].get('names') or {}).get('show_outside_conditions') for k in ok)
-    if ok and len(ok) == 2 and all('resolution' in (avail[k].get('negligible') or []) for k in ok) and not outside:
+    # K3 / L6: the area reading (per-area design + screen area) when every calculable kind has it; else the unit reading
+    area = bool(ok) and all(avail[k].get('basis') == 'area' and 'design_area' in (avail[k].get('segments') or {}) and
+                            'unit_size' in (avail[k].get('segments') or {}) for k in ok)
+    if ok and len(ok) == 2 and all('resolution' in (avail[k].get('negligible') or []) for k in ok) and not outside and (
+            not area or all('unit_size' in (avail[k].get('negligible') or []) for k in ok)):
         return '<section id="s6">%s%s</section>' % (head(['두 제품의 해상도가 같아 나눌 몫이 없습니다.']), nxt)
     ratios = ((ctx.rebase or {}).get('ratios') or {})
     wh = (ratios.get('line') or {}).get('r_WH')
-    sums = ['<b>B 의 설계를 A 의 해상도(unit 개수)에 맞춰 다시 계산했습니다(기준 = A).</b>']
-    if wh is not None:
-        sums.append('B 는 panel 의 unit 개수(해상도 W×H)가 A 의 <b>%.1f 배</b>입니다.' % wh)
+    prods = ctx.doc['inputs']['products']
+    A, B = prods['reference'], prods['target']
+    u_a, u_b = _unit_area(A), _unit_area(B)
+    if area:
+        sums = ['<b>불량 면적(CA)을 unit 면적으로 나눈 "면적당 설계" 와 "화면 면적(unit 면적 × unit 수)" 으로 나눠 봤습니다(기준 = A).</b>']
+        if wh is not None and u_a and u_b:
+            sums.append('B 는 unit 수가 A 의 <b>%.2f 배</b>, unit 면적이 A 의 <b>%.2f 배</b>입니다.' % (wh, u_b / u_a))
+    else:
+        sums = ['<b>B 의 설계를 A 의 해상도(unit 개수)에 맞춰 다시 계산했습니다(기준 = A).</b>']
+        if wh is not None:
+            sums.append('B 는 panel 의 unit 개수(해상도 W×H)가 A 의 <b>%.1f 배</b>입니다.' % wh)
     tops_present = {}
     for k in KINDS:
         d = avail[k]
@@ -2030,6 +2368,12 @@ def _section6(ctx):
         out_txt = ''
         if (d.get('names') or {}).get('show_outside_conditions'):
             out_txt = ', 해상도 외 조건 차이는 <b>%s</b>' % esc(pp_txt(math.fsum([seg['crp'] or 0.0, seg['density'] or 0.0])))
+        if area:
+            screen = math.fsum([seg['unit_size'], seg['resolution']])
+            sums.append('%s 중 면적당 설계 차이는 <b>%s</b>, %s는 <b>%s</b>(unit 크기 %s + unit 수 %s)%s 입니다.' % (
+                parts[0], esc(pp_txt(0.0 if 'design_area' in neg else seg['design_area'])), _screen_name(d),
+                esc(pp_txt(screen)), esc(pp_txt(seg['unit_size'])), esc(pp_txt(seg['resolution'])), out_txt))
+            continue
         if 'design' in neg:
             tail = ('설계 차이 합은 0 에 가깝지만 쌍 사이에서 오르고 내린 곳이 있습니다.' if tops_present[k] else '설계 차이는 거의 없습니다.')
             sums.append('%s 중 해상도 차이는 <b>%s</b>%s 입니다. %s' % (
@@ -2037,15 +2381,15 @@ def _section6(ctx):
         else:
             res = '해상도 차이는 <b>%s</b>' % esc(pp_txt(0.0 if 'resolution' in neg else seg['resolution']))
             sums.append('%s 중 설계 차이는 <b>%s</b>, %s%s 입니다.' % (parts[0], esc(pp_txt(seg['design'])), res, out_txt))
-    out = ['<section id="s6">', head(sums)]
+    out = ['<section id="s6">', head(sums, '같은 면적이면 설계 차이는, 화면 면적 차이는?') if area else head(sums)]
+    if not area and ok:
+        out.append('<p class="muted" id="s6-unit-basis">unit 크기 정보가 없어 unit 기준으로 비교합니다. 설계 차이에 unit 크기 차이가 함께 들어 있습니다.</p>')
     if outside:
         out.append('<p class="muted" id="s6-outside-note">이 값은 환산 경로(설계 → 해상도 → 보정값 → 밀도)로 나눈 몫이라 '
                    '1·4 의 보정값(CRP) 차이와 다를 수 있습니다.</p>')
     if any(avail[k].get('status') == 'unavailable' for k in KINDS):
         out.append('<div class="band"><b>환산 대기</b> — 한 종류의 환산 값이 없어 그 종류는 나누지 않았습니다. 다른 종류는 정상입니다.</div>')
     # the conditions of the two products
-    prods = ctx.doc['inputs']['products']
-    A, B = prods['reference'], prods['target']
 
     def ratio(key):
         r = (ratios.get('line') or {}).get(key)
@@ -2074,14 +2418,19 @@ def _section6(ctx):
     out.append('<h3>비교 조건</h3><table id="cond6"><tr><th class="l">항목</th><th>A</th><th>B</th><th>판정</th><th>비 B/A</th></tr>%s%s%s%s</table>' % (
         row('해상도 W×H', A.get('resolution'), B.get('resolution'), ratio('r_WH'), A.get('resolution') == B.get('resolution')),
         row('유효 해상도', A.get('effective_resolution'), B.get('effective_resolution'), '', A.get('effective_resolution') == B.get('effective_resolution')),
-        row('unit 크기(µm)', A.get('unit_size_um'), B.get('unit_size_um'), '', A.get('unit_size_um') == B.get('unit_size_um')), ''.join(diff_rows)))
+        row('unit 크기(µm)', A.get('unit_size_um'), B.get('unit_size_um'), '', A.get('unit_size_um') == B.get('unit_size_um')),
+        _area_rows(A, B, row, area) + ''.join(diff_rows)))
     if same_names:
         out.append('<p class="muted small" id="cond6-same" style="margin:3px 0">같음: %s</p>' % esc(', '.join(same_names)))
     if outside:
         out.append('<div class="band"><b>해상도 외 조건이 다름</b> — 이 분리는 그 차이도 함께 담습니다(아래 "해상도 외 조건 몫").</div>')
     # the result table
-    cols = '<th class="l">종류</th><th>실제 vi 차이</th><th>= 설계 차이 몫</th><th>+ %s 몫</th>%s<th>설계 차이(A 대비 %%)</th>' % (
-        esc(((avail[ok[0]].get('names') or {}).get('resolution')) if ok else '해상도 차이'), '<th>+ 해상도 외 조건 몫</th>' if outside else '')
+    if area:
+        cols = ('<th class="l">종류</th><th>실제 vi 차이</th><th>= 면적당 설계 차이</th><th>+ %s<span class="sub2">(unit 크기 + unit 수)</span></th>%s'
+                '<th>면적당 설계 차이(A 대비 %%)</th>' % (esc(_screen_name(avail[ok[0]])), '<th>+ 해상도 외 조건</th>' if outside else ''))
+    else:
+        cols = '<th class="l">종류</th><th>실제 vi 차이</th><th>= 설계 차이 몫</th><th>+ %s 몫</th>%s<th>설계 차이(A 대비 %%)</th>' % (
+            esc(((avail[ok[0]].get('names') or {}).get('resolution')) if ok else '해상도 차이'), '<th>+ 해상도 외 조건 몫</th>' if outside else '')
     rows = []
     for k in KINDS:
         d = avail[k]
@@ -2093,37 +2442,75 @@ def _section6(ctx):
 
         def cell(name, value):
             return '<td>%s</td>' % (pp_cell(0.0, None) if name in neg else pp_cell(value, None))
+        if area:
+            screen = '<td>%s</td>' % pp_cell(math.fsum([seg['unit_size'], seg['resolution']]), None)
+            rows.append('<tr><td class="l"><span class="badge">%s</span></td><td>%s <span class="muted small">(A 대비 %s)</span></td>%s%s%s<td><b>%s</b></td></tr>' % (
+                k, pp_cell(d['delta'], None), esc(spct(d['delta_a_relative']) if d.get('delta_a_relative') is not None else '—'),
+                cell('design_area', seg['design_area']), screen,
+                ('<td>%s</td>' % pp_cell(math.fsum([seg['crp'] or 0.0, seg['density'] or 0.0]), None)) if outside else '',
+                esc('0%' if 'design_area' in neg else (spct(rel.get('design_area')) if rel.get('design_area') is not None else '—'))))
+            continue
         rows.append('<tr><td class="l"><span class="badge">%s</span></td><td>%s <span class="muted small">(A 대비 %s)</span></td>%s%s%s<td><b>%s</b></td></tr>' % (
             k, pp_cell(d['delta'], None), esc(spct(d['delta_a_relative']) if d.get('delta_a_relative') is not None else '—'),
             cell('design', seg['design']), cell('resolution', seg['resolution']),
             ('<td>%s</td>' % pp_cell(math.fsum([seg['crp'] or 0.0, seg['density'] or 0.0]), None)) if outside else '',
             esc('0%' if 'design' in neg else (spct(rel.get('design')) if rel.get('design') is not None else '—'))))
-    out.append('<h3>결과 — 실제 차이 = 설계 차이 몫 + 해상도 차이 몫%s</h3><table id="design-table"><tr>%s</tr>%s</table>' % (
-        ' + 해상도 외 조건 몫' if outside else '', cols, ''.join(rows)))
+    if area:
+        out.append('<h3>결과 — 실제 차이 = 면적당 설계 차이 + %s%s</h3><table id="design-table"><tr>%s</tr>%s</table>' % (
+            esc(_screen_name(avail[ok[0]])), ' + 해상도 외 조건' if outside else '', cols, ''.join(rows)))
+        split = ''.join('<tr><td class="l"><span class="badge">%s</span></td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            k, pp_cell(avail[k]['segments']['unit_size'], None), pp_cell(avail[k]['segments']['resolution'], None),
+            pp_cell(math.fsum([avail[k]['segments']['unit_size'], avail[k]['segments']['resolution']]), None)) for k in ok)
+        out.append('<details id="area-split"><summary>화면 면적 차이를 unit 크기와 unit 수로 나눠 보기 ▸</summary><table><tr><th class="l">종류</th>'
+                   '<th>unit 크기 몫</th><th>unit 수 몫</th><th>합 = 화면 면적 차이</th></tr>%s</table>'
+                   '<p class="muted small">%s</p></details>' % (split, 'unit 크기가 같아 unit 크기 몫은 0 입니다.' if u_a == u_b else
+                   'unit 면적이 커지면 같은 면적당 설계라도 unit 당 불량 면적이 늘고(unit 크기 몫), unit 수가 줄면 그만큼 줄어듭니다(unit 수 몫).'))
+    else:
+        out.append('<h3>결과 — 실제 차이 = 설계 차이 몫 + 해상도 차이 몫%s</h3><table id="design-table"><tr>%s</tr>%s</table>' % (
+            ' + 해상도 외 조건 몫' if outside else '', cols, ''.join(rows)))
     # top pairs
     if ok:
-        out.append('<div class="note">해상도 몫을 뺄 때 모든 쌍의 B 값에 같은 비율(A unit 개수 ÷ B unit 개수)을 곱합니다. 그래서 빠지는 양은 B 값이 큰 쌍일수록 큽니다. '
-                   '%p 순위가 바뀌고, 실제로는 악화지만 늘어난 폭이 unit 개수 증가율보다 작으면 설계로는 개선으로 보일 수 있습니다. A 대비 % 의 순서는 바뀌지 않습니다.</div>')
-        lists = ''.join(_design_list(ctx, k, avail[k], inc) for k in ok for inc in (True, False))
-        out.append('<h3 id="design-top">설계 차이 상위 쌍 <span class="muted" style="font-weight:400">(설계 차이 몫 기준 · 실제 Δ 순위와 달라진 쌍에 "실제 순위" 표시)</span></h3>'
-                   '<p class="muted small">"A 대비 %" = 설계 차이 몫 ÷ A 값입니다. 쌍을 누르면 4 결과의 탐색에서 그 쌍이 선택됩니다.</p><div class="g2">' + lists + '</div>')
-    out.append('<div class="how"><b>어떻게 계산하나 (요약)</b><ol>'
-               '<li>같은 제품군이면 밀도 표·glass·가중·CRP 가 같아 해상도만 다릅니다.</li>'
-               '<li>λ 는 해상도(unit 개수)에 정비례합니다. B 의 λ 를 A/B unit 개수 비로 줄이면 "B 설계 @ A 해상도"가 됩니다.</li>'
-               '<li>기준은 A 입니다. B 의 unit 개수가 A 보다 많으면 줄이고, 적으면 늘려서 A 해상도에 맞춥니다.</li>'
-               '<li><b>설계 차이</b> = vi(B@A) − vi(A), <b>해상도 차이</b> = vi(B) − vi(B@A) 이며, 합 = 실제 차이입니다.</li>'
-               '<li>vi 는 λ 에 정비례하지 않아, 각 몫을 나눌 때 그 단계의 시작·끝 값으로 비율을 따로 구합니다.</li></ol></div>')
-    out.append('<div class="g2"><div class="panel"><b>장점</b><ul style="margin:4px 0 0;padding-left:18px"><li>unit 개수 차이로 달라진 vi 몫을 따로 보여 주어, 설계끼리 비교하기 쉽습니다.</li>'
-               '<li>같은 제품군이면 추가 가정 없이 계산합니다(λ 가 해상도에 정비례합니다).</li></ul></div>'
-               '<div class="panel"><b>한계</b><ul style="margin:4px 0 0;padding-left:18px"><li>unit 크기(형상) 차이는 설계 몫에 남습니다.</li>'
-               '<li>몫의 순서(설계 먼저 → 해상도) 기준이며, 반대 순서와 약간 다를 수 있습니다.</li>'
-               '<li>쌍 하나의 설계 몫 + 해상도 몫은 그 쌍의 실제 Δ 와 조금 다를 수 있습니다. 같아지는 것은 종류 전체 합계뿐입니다.</li></ul></div></div>')
+        if area:
+            out.append('<div class="note">면적당 설계 몫은 B 의 불량 면적을 unit 면적비(A ÷ B)로 맞춰 구합니다. 그래서 unit 크기가 달라도 같은 면적끼리 비교됩니다. '
+                       '쌍마다 %p 순위가 바뀔 수 있고, 실제로는 악화지만 설계로는 개선으로 보일 수 있습니다. A 대비 % 의 순서는 바뀌지 않습니다.</div>')
+        else:
+            out.append('<div class="note">해상도 몫을 뺄 때 모든 쌍의 B 값에 같은 비율(A unit 개수 ÷ B unit 개수)을 곱합니다. 그래서 빠지는 양은 B 값이 큰 쌍일수록 큽니다. '
+                       '%p 순위가 바뀌고, 실제로는 악화지만 증가한 폭이 unit 개수 증가율보다 작으면 설계로는 개선으로 보일 수 있습니다. A 대비 % 의 순서는 바뀌지 않습니다.</div>')
+        lists = ''.join(_design_list(ctx, k, avail[k], inc, area) for k in ok for inc in (True, False))
+        out.append('<h3 id="design-top">%s 상위 쌍 <span class="muted" style="font-weight:400">(%s 기준 · 실제 Δ 순위와 달라진 쌍에 "실제 순위" 표시)</span></h3>'
+                   '<p class="muted small">"A 대비 %%" = %s ÷ A 값입니다. 쌍을 누르면 4 결과의 탐색에서 그 쌍이 선택됩니다.</p><div class="g2">%s</div>' % (
+                       '면적당 설계 차이' if area else '설계 차이', '면적당 설계 차이 몫' if area else '설계 차이 몫',
+                       '면적당 설계 몫' if area else '설계 차이 몫', lists))
+    if area:
+        out.append('<div class="how"><b>어떻게 계산하나 (요약)</b><ol>'
+                   '<li>λ = 이물 밀도 × 불량 면적(CA) × 화면 환산 계수입니다. CA × unit 수 = (CA ÷ unit 면적) × (unit 면적 × unit 수) 이므로 "면적당 불량 면적" 과 "화면 면적" 의 곱으로 쓸 수 있습니다.</li>'
+                   '<li>B 의 CA 를 A 의 unit 면적으로 환산한 상태를 중간에 둡니다. 경로는 A → <b>면적당 설계</b> → <b>unit 크기</b> → <b>unit 수</b>%s → B 입니다.</li>'
+                   '<li>합 = 실제 차이이고, 구간마다 그 단계의 시작·끝 값으로 비율을 따로 구합니다(vi 는 λ 에 정비례하지 않기 때문).</li></ol></div>' % (
+                       ' → 해상도 외 조건' if outside else ''))
+        out.append('<div class="g2"><div class="panel"><b>장점</b><ul style="margin:4px 0 0;padding-left:18px"><li>unit 크기가 달라도 같은 면적 기준으로 설계를 비교할 수 있습니다.</li>'
+                   '<li>같은 제품군이면 추가 가정 없이 계산합니다.</li></ul></div>'
+                   '<div class="panel"><b>한계</b><ul style="margin:4px 0 0;padding-left:18px"><li>2×2 창 경계 효과는 면적당 설계 몫에 남습니다.</li>'
+                   '<li>면적당 설계 차이는 "같은 면적이면" 의 비교입니다. 실제 panel 의 면적 차이는 화면 면적 차이에 있습니다.</li>'
+                   '<li>unit 크기가 config 값일 때만 씁니다(유도 값이면 unit 기준으로 내립니다).</li>'
+                   '<li>몫의 순서 기준이며, 쌍 하나의 몫 합은 그 쌍의 실제 Δ 와 조금 다를 수 있습니다. 같아지는 것은 종류 전체 합계뿐입니다.</li></ul></div></div>')
+    else:
+        out.append('<div class="how"><b>어떻게 계산하나 (요약)</b><ol>'
+                   '<li>같은 제품군이면 밀도 표·glass·가중·CRP 가 같아 해상도만 다릅니다.</li>'
+                   '<li>λ 는 해상도(unit 개수)에 정비례합니다. B 의 λ 를 A/B unit 개수 비로 줄이면 "B 설계 @ A 해상도"가 됩니다.</li>'
+                   '<li>기준은 A 입니다. B 의 unit 개수가 A 보다 많으면 줄이고, 적으면 늘려서 A 해상도에 맞춥니다.</li>'
+                   '<li><b>설계 차이</b> = vi(B@A) − vi(A), <b>해상도 차이</b> = vi(B) − vi(B@A) 이며, 합 = 실제 차이입니다.</li>'
+                   '<li>vi 는 λ 에 정비례하지 않아, 각 몫을 나눌 때 그 단계의 시작·끝 값으로 비율을 따로 구합니다.</li></ol></div>')
+        out.append('<div class="g2"><div class="panel"><b>장점</b><ul style="margin:4px 0 0;padding-left:18px"><li>unit 개수 차이로 달라진 vi 몫을 따로 보여 주어, 설계끼리 비교하기 쉽습니다.</li>'
+                   '<li>같은 제품군이면 추가 가정 없이 계산합니다(λ 가 해상도에 정비례합니다).</li></ul></div>'
+                   '<div class="panel"><b>한계</b><ul style="margin:4px 0 0;padding-left:18px"><li>unit 크기(형상) 차이는 설계 몫에 남습니다.</li>'
+                   '<li>몫의 순서(설계 먼저 → 해상도) 기준이며, 반대 순서와 약간 다를 수 있습니다.</li>'
+                   '<li>쌍 하나의 설계 몫 + 해상도 몫은 그 쌍의 실제 Δ 와 조금 다를 수 있습니다. 같아지는 것은 종류 전체 합계뿐입니다.</li></ul></div></div>')
     # detail steps + missing cells
     steps = []
     for k in ok:
         stt = ((ctx.rebase or {}).get(k) or {}).get('states') or {}
         steps.append('<tr><td class="l"><span class="badge">%s</span></td><td class="l wrap">%s</td></tr>' % (
-            k, esc(' → '.join('%s %s' % (s, vi_txt(stt[s].get('vi'))) for s in ('S0', 'S1', 'S2', 'S3', 'S4') if s in stt))))
+            k, esc(' → '.join('%s %s' % (s, vi_txt(stt[s].get('vi'))) for s in ('S0', 'S1a', 'S1', 'S2', 'S3', 'S4') if s in stt))))
     miss = []
     for k in KINDS:
         for c in avail[k].get('missing_cells') or []:
@@ -2281,23 +2668,28 @@ def _bundles_data(ctx):
     """What the script needs of the cause candidates: id, title, the (electrode, layer) cells, the pairs with their share, card flag."""
     if ctx.bundles is None:
         return []
-    in_cards = {i for kind in KINDS for i in ((ctx.bundles.get('ranking') or {}).get(kind) or {}).get('cards') or []}
+    in_cards = {i for kind in KINDS for i in _ranked_ids(ctx, kind)}
     out = []
     for b in ctx.bundles.get('list') or []:
-        if b['type'] == 'pair':
+        t = btype(b)
+        if t == 'pair':
             cells = [[e, b['layer']] for e in b.get('electrodes') or []]
-        elif b['type'] == 'move':
+        elif t == 'layer_change' and b.get('from') is not None and not b.get('layers'):
             cells = [[b['electrode'], l] for l in (b.get('from') or []) + (b.get('to') or [])]
+        elif t in ('electrode_new', 'electrode_removed', 'layer_change'):
+            cells = [[b['electrode'], l] for l in b.get('layers') or ([b['layer']] if b.get('layer') else [])]
         else:
             cells = [[b['electrode'], b['layer']]]
-        pairs = {}
+        pairs, items = {}, []
         for r in b.get('rows') or []:
             if r.get('pair_id'):
                 p = pairs.setdefault(r['pair_id'], [0.0, 0.0, 0])
                 p[0] += r['net']
                 p[1] += r['abs']
                 p[2] += len(r.get('item_ids') or [])
-        out.append({'id': b['id'], 'title': bundle_title(b), 'ic': b['id'] in in_cards, 'cells': cells, 'pairs': pairs})
+                items.extend(r.get('item_ids') or [])
+        out.append({'id': b['id'], 'title': bundle_title(b), 'ic': b['id'] in in_cards, 'cells': cells, 'pairs': pairs,
+                    'its': sorted(items), 'layers': ctx.sort_layers({c[1] for c in cells}), 'els': sorted({c[0] for c in cells})})
     return out
 
 
