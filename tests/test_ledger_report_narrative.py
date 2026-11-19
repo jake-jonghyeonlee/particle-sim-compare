@@ -241,7 +241,7 @@ def test_section_1_has_no_table_and_names_the_cause_candidates_with_links(real):
     s1 = new_section(render(real), 's1')
     assert '<table' not in s1
     # rnarr/T12 (M1): 변화량 is retired; the sentence names the two factors and the candidates that hold the main one
-    assert 'id="opinion"' in s1 and '검산' in s1 and '감소 요인은 <b>0%p</b>, 증가 요인은 <b>+' in s1 and '변화량' not in s1
+    assert 'id="opinion"' in s1 and '검산' in s1 and '감소 요인은 없고, 증가 요인은 <b>+' in s1 and '0%p</b>, 증가' not in s1 and '변화량' not in s1
     ids = re.findall(r'href="#unit=(bd-[0-9a-f]+)&amp;to=s3"', s1)
     assert ids and all(i in cards_of(real, 'line') + cards_of(real, 'pixel') for i in ids)
 
@@ -937,7 +937,7 @@ def test_an_older_compare2_without_the_area_basis_still_renders_the_unit_reading
             for key in ('design_area', 'unit_size'):
                 d['summary']['design'][kind]['segments'].pop(key, None)
     s6 = new_section(render(variant(real, edit)), 's6')
-    assert '02 를 새 번들로 다시 실행하면 면적 기준이 나옵니다' in s6 and 'id="design-table"' in s6
+    assert '02·08 을 새 번들로 다시 실행하면 면적 기준이 나옵니다' in s6 and 'id="design-table"' in s6
 
 
 def test_the_rich_page_is_the_same_bytes_twice_and_section_1_has_no_table(real):
@@ -1012,7 +1012,7 @@ def test_r18_1_a_crp_dominated_kind_says_the_cause_candidate_direction_not_the_v
     pixel = s1[s1.index('pixel vi 는'):]
     pixel = pixel[:pixel.index('원인 후보 값에는') if '원인 후보 값에는' in pixel else len(pixel)]
     print('R18 1 pixel part:', pixel)
-    assert '−0.4000%p 감소했습니다' in pixel and '증가 요인은 +0.2000%p' in pixel
+    assert '−0.4000%p 감소했습니다' in pixel and '감소 요인은 없고, 증가 요인은 +0.2000%p' in pixel
     assert '보정값(CRP) 차이 −0.6000%p 를 빼면 원인 후보의 순 변화는 증가입니다.' in pixel
     assert pixel.index('증가 요인은') < pixel.index('를 빼면') and s1.count('보정값(CRP)') == 1       # said once, not twice
     head = [l for l in s3.split('pixel: ') if l.startswith('원인 후보 순 변화 방향은')]
@@ -1051,7 +1051,7 @@ def test_r18_5_section_6_names_why_the_unit_basis_is_used(real):
     assert 'unit 크기 정보가 없어 unit 기준으로 비교합니다' in new_section(render(real), 's6')
     old = variant(real, lambda d: [d['summary']['design'][k].pop('basis', None) for k in KINDS])
     s6 = all_text(new_section(render(old), 's6'))
-    assert '02 를 새 번들로 다시 실행하면 면적 기준이 나옵니다' in s6 and 'unit 크기 정보가 없어' not in s6
+    assert '02·08 을 새 번들로 다시 실행하면 면적 기준이 나옵니다' in s6 and 'unit 크기 정보가 없어' not in s6
 
     def edit(d):
         for k in KINDS:

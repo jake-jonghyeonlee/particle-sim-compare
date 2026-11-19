@@ -818,7 +818,14 @@ def _kind_lines_v2(ctx, kind):
         return skip
     rk = ctx.bundles['ranking'][kind]
     inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
-    out = ['감소 요인은 <b>%s</b>, 증가 요인은 <b>%s</b> 입니다.' % (esc(pp_txt(dec.get('total'))), esc(pp_txt(inc.get('total'))))]
+    # R18b:1: a side whose total is zero is named as absent, not as '0%p'
+    dec_t, inc_t = dec.get('total'), inc.get('total')
+    if not dec_t and inc_t:
+        out = ['감소 요인은 없고, 증가 요인은 <b>%s</b> 입니다.' % esc(pp_txt(inc_t))]
+    elif not inc_t and dec_t:
+        out = ['증가 요인은 없고, 감소 요인은 <b>%s</b> 입니다.' % esc(pp_txt(dec_t))]
+    else:
+        out = ['감소 요인은 <b>%s</b>, 증가 요인은 <b>%s</b> 입니다.' % (esc(pp_txt(dec_t)), esc(pp_txt(inc_t)))]
     if _crp_dominates(ctx, kind):
         # R18:1: the bridge between the vi change and the direction of the cause candidates; the CRP part is named here once
         out.append('보정값(CRP) 차이 %s 를 빼면 원인 후보의 순 변화는 %s입니다.' % (
@@ -2360,7 +2367,7 @@ def _unit_basis_reason(ctx):
     design = ctx.design or {}
     kinds = [design.get(k) or {} for k in KINDS if (design.get(k) or {}).get('status') == 'available']
     if kinds and all('basis' not in d for d in kinds):
-        return '이 ledger 는 면적 기준이 없는 옛 compare2 로 만들었습니다. 02 를 새 번들로 다시 실행하면 면적 기준이 나옵니다.'
+        return '이 ledger 는 면적 기준이 없는 옛 compare2 로 만들었습니다. 02·08 을 새 번들로 다시 실행하면 면적 기준이 나옵니다.'
     basis = (ctx.rebase or {}).get('area_basis') or {}
     reasons = [str(r) for r in basis.get('reasons') or []]
     if not reasons:
