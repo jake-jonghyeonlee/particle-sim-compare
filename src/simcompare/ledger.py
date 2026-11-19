@@ -34,6 +34,7 @@ OWNED_NAMES = {'ledger.json', 'ledger_pairs.csv', 'ledger_electrodes.csv', 'exec
 TMP_PREFIX = '.ledger-'
 NO_CHANGE_ABS, NO_CHANGE_REL = 1e-12, 1e-9
 TOP_CONTRIBUTORS = 2
+_DELTA_NAMES = ('ca_delta', 'f_delta', 'density_delta', 'design_area_delta', 'unit_size_delta')
 
 # change kinds (README 8): code -> label; the order is the display order
 CHANGE_KINDS = (
@@ -401,7 +402,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             item_rows[-1]['by_size'] = by_size
             # rnarr/T5: B's CA read with A's coefficients (compare2 `rebase`); null when it is not available
             rb_rec = rb_items.get((item_id, ikind)) if rb_ok[ikind] else None
-            for name in ('ca_delta', 'f_delta', 'density_delta'):
+            for name in _DELTA_NAMES if (rebase or {}).get('area_basis') is not None else _DELTA_NAMES[:3]:
                 item_rows[-1][name] = None if rb_rec is None else rb_rec.get(name)
             for entry in by_size:
                 entry['lambda_b_at_a'] = _lambda_b_at_a(rb_rec, ib is not None, entry['diameter_um'],
@@ -523,7 +524,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             'pct_a': _pct(a, side_a.vi['pixel']), 'pct_b': _pct(b, side_a.vi['pixel']),
             'pct_delta': _pct(d, side_a.vi['pixel'])})
         rb_rec = rb_cno.get(key) if rb_ok['pixel'] else None
-        for name in ('ca_delta', 'f_delta', 'density_delta'):
+        for name in _DELTA_NAMES if (rebase or {}).get('area_basis') is not None else _DELTA_NAMES[:3]:
             cno_rows[-1][name] = None if rb_rec is None else rb_rec.get(name)
         for target in (electrode(key[0])['cno'], electrode(key[0])['pixel'],
                        electrode_layer(key[0], key[1], 'pixel'), cno_layer.setdefault(key[1], _Tri())):
@@ -852,9 +853,16 @@ def _size_value(s, item, sizes, diameter):
 # ---- rnarr/T5: summary (rebase split, design difference, cause-candidate bundles, concentration) -------------------------
 # Plan: docs of Run 20261118-report-narrative, PLAN-v3 3, v3.1 E1/E4/E10/E11, v3.2 G1-G3 and H1-H6.
 
-BUNDLE_RULE = 'bundle_assign_v1'
-HUB_MIN = 3              # same (electrode, layer, sign) with this many different partners = a hub (provisional)
+BUNDLE_RULE = 'bundle_assign_v2'
+BUNDLE_VERSION = 2       # L5: summary.bundles.version; a ledger without it is the gross (|delta|) reading
+HUB_MIN = 3              # (electrode, layer) with this many partners whose pair changed (any sign) = a hub (provisional)
+HUB_MIN_FRACTION = 0.5   # ... and at least this fraction of all its partners changed (user decision 2026-11-19)
+HUB_MIN_SHARE = 0.0      # ... a partner counts only if its |delta| >= this x G of the kind (0.0 = off)
+HUB_SENSITIVITY_FRACTIONS = (0.0, 0.3, 0.5)
+HUB_SENSITIVITY_SHARES = (0.0, 0.01)
+TYPES = ('electrode_new', 'electrode_removed', 'layer_change', 'hub', 'pair', 'self', 'cno')
 CARD_COUNT = 6
+OPPOSITE_CARD_COUNT = 3
 CONFLICT_SHARE = 0.02
 K_SHARE, K_EPS = 0.8, 1e-12
 TOP_GROUPS = 10
@@ -863,7 +871,9 @@ CONCENTRATED_K80, DISPERSED_RATIO, MIN_ATOMS = 3, 0.3, 8
 CONC_STAGES = ('division', 'layer', 'electrode', 'pair', 'item')
 DESIGN_SEGMENTS = (('design', 'ca'), ('resolution', 'f'), ('crp', 'crp'), ('density', 'density'))
 SUMMARY_RULES = {
-    'bundle_rule': BUNDLE_RULE, 'hub_min': HUB_MIN, 'card_count': CARD_COUNT, 'conflict_share': CONFLICT_SHARE,
+    'bundle_rule': BUNDLE_RULE, 'hub_min': HUB_MIN, 'hub_min_fraction': HUB_MIN_FRACTION, 'hub_min_share': HUB_MIN_SHARE,
+    'card_count': CARD_COUNT,
+    'opposite_card_count': OPPOSITE_CARD_COUNT, 'conflict_share': CONFLICT_SHARE,
     'k_share': K_SHARE, 'concentrated_k80_max': CONCENTRATED_K80, 'dispersed_k80_ratio': DISPERSED_RATIO,
     'min_atoms': MIN_ATOMS, 'top_groups': TOP_GROUPS, 'top_design': TOP_DESIGN,
     'no_change_abs': NO_CHANGE_ABS, 'no_change_rel': NO_CHANGE_REL,
@@ -945,9 +955,16 @@ def _rebase_summary(rebase, basis, pair_rows, cno_rows, totals):
             continue
         segments = state.get('segments') or {}
         values = {name: (segments[name]['sum'] if name in segments else 0.0) for _label, name in DESIGN_SEGMENTS}
-        entry['segments'] = values
-        entry['states'] = {name: copy.deepcopy(state[name]) for name in ('S0', 'S1', 'S2', 'S3', 'S4') if name in state}
+        entry['states'] = {name: copy.deepcopy(state[name]) for name in ('S0', 'S1a', 'S1', 'S2', 'S3', 'S4')
+                           if name in state}
+        extra = [name for name in ('design_area', 'unit_size') if name in segments]
         per = {}
+        for name in extra:        # K3: the old `ca` segment is also split in two; these two never join `values`
+            parts = [item[f'{name}_delta'] for _row, rows in _item_pairs(pair_rows, kind) for item in rows]
+            if kind == 'pixel':
+                parts += [row[f'{name}_delta'] for row in cno_rows]
+            per[name] = _check(_osum(parts), segments[name]['delta_vi'])
+        entry['segments'] = dict(values, **{name: segments[name]['sum'] for name in extra})
         for _label, name in DESIGN_SEGMENTS:
             if name == 'crp':
                 per[name] = _check(values[name], segments[name]['delta_vi'] if name in segments else 0.0)
@@ -968,7 +985,7 @@ def _rebase_summary(rebase, basis, pair_rows, cno_rows, totals):
 def _design_summary(kind, rebase, basis_status, pair_rows, cno_rows, vi_a, totals, lk=str):
     """G1: the four segments as design / resolution / CRP / density differences, as a share of vi_A, the top pairs."""
     if rebase is None:
-        return {'status': 'not_available', 'reasons': ['compare2_without_rebase'], 'segments': None,
+        return {'status': 'not_available', 'basis': 'unit', 'reasons': ['compare2_without_rebase'], 'segments': None,
                 'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': []}
     cells = {}
     for miss in rebase.get('missing') or ():     # R9:2: compare2 lists item x size rows; sum them per cell
@@ -991,19 +1008,27 @@ def _design_summary(kind, rebase, basis_status, pair_rows, cno_rows, vi_a, total
                               'share_partial': len(shares) != len(c['share']),
                               'item_count': len(c['items']), 'cno_count': len(c['cno'])})
     if basis_status['status'] != 'available':
-        return {'status': 'unavailable', 'reasons': list(basis_status['reasons']), 'segments': None,
+        return {'status': 'unavailable', 'basis': 'unit', 'reasons': list(basis_status['reasons']), 'segments': None,
                 'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': missing_cells}
     if ((rebase.get('check') or {}).get(kind) or {}).get('status') != 'passed':   # R9:3
-        return {'status': 'not_evaluated', 'reasons': ['rebase_check_failed'], 'segments': None,
+        return {'status': 'not_evaluated', 'basis': 'unit', 'reasons': ['rebase_check_failed'], 'segments': None,
                 'a_relative': None, 'top_increase': [], 'top_decrease': [], 'missing_cells': missing_cells}
     values = basis_status['segments']
     segments = {label: values[name] for label, name in DESIGN_SEGMENTS}
+    # K3 / L6: `area` when compare2 split the old design segment by unit area (both products have unit_size_um and this
+    # kind converted); the report adds design_area + unit_size or ca, never both.
+    area = ((rebase.get('area_basis') or {}).get('status') == 'available'
+            and 'design_area' in values and 'unit_size' in values)
+    basis = 'area' if area else 'unit'
+    item_key = 'design_area_delta' if area else 'ca_delta'
+    if area:
+        segments['design_area'], segments['unit_size'] = values['design_area'], values['unit_size']
     ratios = ((rebase.get('coefficients') or {}).get('ratios') or {}).get(kind) or {}
     differs = [label for label, key in (('rule', 'r_rule'), ('glass', 'r_G'), ('weight', 'r_M'))
                if ratios.get(key) is not None and abs(ratios[key] - 1.0) > 1e-12]
     entries = []
     for row, rows in _item_pairs(pair_rows, kind):
-        design, actual = _osum(item['ca_delta'] for item in rows), _osum(item['delta'] for item in rows)
+        design, actual = _osum(item[item_key] for item in rows), _osum(item['delta'] for item in rows)
         entries.append({'key': row['pair_id'], 'pair_id': row['pair_id'], 'electrodes': list(row['electrodes']),
                         'design_delta': design, 'actual_delta': actual, 'design_a_relative': _pct(design, vi_a),
                         'actual_a_relative': _pct(actual, vi_a)})
@@ -1011,17 +1036,17 @@ def _design_summary(kind, rebase, basis_status, pair_rows, cno_rows, vi_a, total
         for row in cno_rows:
             key = f'CNO:{row["electrode_id"]}@{row["density_layer"]}'
             entries.append({'key': key, 'pair_id': None, 'electrodes': [row['electrode_id']],
-                            'design_delta': row['ca_delta'], 'actual_delta': row['delta'],
-                            'design_a_relative': _pct(row['ca_delta'], vi_a),
+                            'design_delta': row[item_key], 'actual_delta': row['delta'],
+                            'design_a_relative': _pct(row[item_key], vi_a),
                             'actual_a_relative': _pct(row['delta'], vi_a)})
     limit = _negligible_limit(vi_a)       # R10:1: a design difference inside the limit is 0: no sign, not listed
     entries = [e for e in entries if e['design_delta'] is not None and abs(e['design_delta']) > limit]
     up = sorted((e for e in entries if e['design_delta'] > 0), key=lambda e: (-e['design_delta'], e['key']))
     down = sorted((e for e in entries if e['design_delta'] < 0), key=lambda e: (e['design_delta'], e['key']))
-    negligible = [label for label, _name in DESIGN_SEGMENTS if segments[label] is not None
-                  and abs(segments[label]) <= limit]
+    negligible = [label for label in list(segments)
+                  if segments[label] is not None and abs(segments[label]) <= limit]
     outside = not _no_change(0.0, segments['crp']) or not _no_change(0.0, segments['density'])
-    return {'status': 'available', 'reasons': [], 'vi_a': vi_a, 'delta': totals[kind]['delta'],
+    return {'status': 'available', 'basis': basis, 'reasons': [], 'vi_a': vi_a, 'delta': totals[kind]['delta'],
             'delta_a_relative': _pct(totals[kind]['delta'], vi_a),
             'segments': segments, 'negligible': negligible,
             'a_relative': {label: _pct(value, vi_a) for label, value in segments.items()},
@@ -1070,9 +1095,19 @@ def _bundle_id(key, length):
 
 
 def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
-    """summary.bundles and checks.bundles. `kstat[kind] = (status, reasons, G)`. Atom order never changes the result."""
+    """summary.bundles and checks.bundles. `kstat[kind] = (status, reasons, G)`. Atom order never changes the result.
+
+    rnarr/T11 (PLAN-v3.3 K1 K2 L1-L5): two assignment stages (non-CNO atoms, then CNO by electrode attributes), electrode
+    bundles over all layers, a sign-free hub, direction based ranking and a per-type sum."""
     live = [a for a in atoms if kstat[a['kind']][0] != 'not_evaluated']
-    moved = {name: row.get('moved') is True for name, row in erows.items()}
+    vi_a = vi_a or {}
+    limit = {kind: _negligible_limit(vi_a.get(kind)) for kind in KINDS}
+    hub_min, hub_fraction, hub_share = HUB_MIN, HUB_MIN_FRACTION, HUB_MIN_SHARE
+    changed_states = ('a_only', 'b_only')
+
+    def status_of(electrode):
+        row = erows.get(electrode)
+        return 'unknown' if row is None else row.get('status', 'common')
 
     def state_of(electrode, layer):
         """(state, unknown, unverified): an unverified electrode or a missing key is read as 'both' (H1)."""
@@ -1084,9 +1119,18 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         state = (row.get('layer_state') or {}).get(layer)
         return ('both', True, False) if state is None else (state, False, False)
 
+    def layer_changed(electrode, layer):
+        return state_of(electrode, layer)[0] in changed_states
+
+    def changed_layers(electrode):
+        row = erows.get(electrode)
+        if row is None or row.get('layer_state_status') != 'verified':
+            return []
+        return sorted((l for l, s in (row.get('layer_state') or {}).items() if s in changed_states), key=lk)
+
     for a in live:
-        a['sign'] = '+' if a['d'] > 0 else '-'
         a['tol'] = _no_change(a['a'], a['b'])
+        a['moved_enough'] = abs(a['d']) > limit[a['kind']]
         a['names'] = sorted({name for name, _layer in a['ends']})
         a['two'] = None
         if not a['cno'] and len(a['names']) == 2:
@@ -1094,45 +1138,91 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
             for name, layer in sorted(a['ends'], key=lambda end: (end[0], lk(end[1]))):
                 layer_of.setdefault(name, layer)
             a['two'] = [(name, layer_of[name]) for name in a['names']]
-    hubs = {}    # (electrode, endpoint layer, sign) -> {partner: {atom id}}; both electrodes 'both', outside tolerance
+
+    # fixed before any assignment (L4): per (electrode, endpoint layer) every partner of an eligible atom and the
+    # partners whose atom really changed (not inside the tolerance, |delta| above the negligible limit)
+    hubs = {}
     for a in live:
         two = a['two']
-        if two is None or a['tol'] or any(state_of(*end)[0] != 'both' for end in two):
+        if two is None or any(status_of(n) in ('new', 'removed') or state_of(n, l)[0] != 'both' for n, l in two):
             continue
+        changed = not a['tol'] and a['moved_enough']
         for i in (0, 1):
-            hubs.setdefault((two[i][0], two[i][1], a['sign']), {}).setdefault(two[1 - i][0], set()).add(a['id'])
+            slot = hubs.setdefault((two[i][0], two[i][1]), {'all': set(), 'by': {}})
+            slot['all'].add(two[1 - i][0])
+            if changed:
+                part = slot['by'].setdefault(two[1 - i][0], {})
+                entry = part.setdefault(a['kind'], [])
+                entry.append((abs(a['d']), a['id']))
 
-    def is_hub(end, sign):
-        return len(hubs.get((end[0], end[1], sign), ())) >= HUB_MIN
+    def judge(fraction, share):
+        """{(electrode, layer): {partner: {atom id}}} of the changed partners (|delta| of the partner >= share x G of
+        the kind), and the hub test of that setting. A partner counts when its summed |delta| of one kind reaches
+        `share` x G(kind); share 0 keeps every partner with a changed atom."""
+        changed = {}
+        for end, slot in hubs.items():
+            mine = {}
+            for partner, per_kind in slot['by'].items():
+                if any(math.fsum(v for v, _i in rows) >= share * (g[k] or 0.0) for k, rows in per_kind.items()):
+                    mine[partner] = {i for rows in per_kind.values() for _v, i in rows}
+            changed[end] = mine
 
-    def e_key(electrode, layer):
-        state = state_of(electrode, layer)[0]
-        return ('mv', electrode) if moved.get(electrode) and state != 'both' else ('e', electrode, layer)
+        def count(end):
+            return len(changed.get((end[0], end[1]), ()))
 
-    def assign(a):
-        if a['cno']:
-            return e_key(*a['ends'][0]), None
-        if len(a['names']) == 1:      # one electrode at both ends: the electrode's bundle, no rule 1/3
-            return e_key(a['names'][0], a['layer']), None
+        def hub(end):
+            slot = hubs.get((end[0], end[1]))
+            if slot is None:
+                return False
+            number = count(end)
+            return number >= hub_min and number / len(slot['all']) >= fraction
+        return changed, count, hub
+
+    g = {kind: kstat[kind][2] for kind in KINDS}
+    judged, n_changed, is_hub = judge(hub_fraction, hub_share)
+
+    def assign(a, n_changed=n_changed, is_hub=is_hub):
+        """(bundle key, why) of one atom."""
+        if a['cno']:      # stage B: the electrode attributes decide, never the bundles that exist
+            name, layer = a['ends'][0]
+            if status_of(name) in ('new', 'removed'):
+                return ('ele', name), None
+            if changed_layers(name):
+                return ('lyr', name), None
+            return ('cno', name, layer), None
+        names = a['names']
         pair = ('p', a['pair_id'], a['layer'])
-        two = a['two']
-        if two is None:               # three electrodes or more
+        if len(names) >= 3:
             return pair, 'multi'
-        changed = [state_of(*end)[0] != 'both' for end in two]
-        if changed[0] and not changed[1]:
-            return e_key(*two[0]), None
-        if changed[1] and not changed[0]:
-            return e_key(*two[1]), None
-        if changed[0] and changed[1]:
+        if len(names) == 1:
+            name = names[0]
+            if status_of(name) in ('new', 'removed'):
+                return ('ele', name), None
+            if any(layer_changed(name, layer) for _n, layer in a['ends']):
+                return ('lyr', name), None
+            return ('self', name, a['layer']), None
+        two = a['two']
+        new_removed = [i for i in (0, 1) if status_of(two[i][0]) in ('new', 'removed')]
+        if len(new_removed) == 1:
+            return ('ele', two[new_removed[0]][0]), None
+        if len(new_removed) == 2:
+            return pair, 'both_new_removed'
+        flipped = [i for i in (0, 1) if layer_changed(*two[i])]
+        if len(flipped) == 1:
+            return ('lyr', two[flipped[0]][0]), None
+        if len(flipped) == 2:
             return pair, 'both'
-        if a['tol']:
-            return pair, 'nohub'
-        h0, h1 = is_hub(two[0], a['sign']), is_hub(two[1], a['sign'])
-        if h0 and not h1:
-            return e_key(*two[0]), None
-        if h1 and not h0:
-            return e_key(*two[1]), None
-        return pair, ('hubs' if h0 and h1 else 'nohub')
+        h0, h1 = is_hub(two[0]), is_hub(two[1])
+        if h0 and h1:
+            n0, n1 = n_changed(two[0]), n_changed(two[1])
+            if n0 == n1:
+                return pair, 'hubs'
+            h0, h1 = n0 > n1, n1 > n0
+        if h0:
+            return ('hub', two[0][0], two[0][1]), None
+        if h1:
+            return ('hub', two[1][0], two[1][1]), None
+        return pair, 'nohub'
 
     buckets, assigned_to, assignments = {}, {}, 0
     for a in sorted(live, key=lambda x: x['id']):
@@ -1143,7 +1233,7 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         bucket['atoms'].append(a)
         if why:
             bucket['why'].add(why)
-        owned = {key[1]} if key[0] in ('e', 'mv') else set(a['names'])
+        owned = set(a['names']) if key[0] == 'p' else {key[1]}
         for end in a['ends']:
             if end[0] in owned:
                 _state, unknown, unverified = state_of(*end)
@@ -1158,14 +1248,34 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
 
     # partners that took part in a hub judgement but went to another bundle (R8:7)
     elsewhere = {}
-    for (name, layer, _sign), partners in hubs.items():
-        if len(partners) < HUB_MIN:
+    for (name, layer) in hubs:
+        if not is_hub((name, layer)):
             continue
-        here = ('e', name, layer)
-        for partner, atom_ids in partners.items():
+        here = ('hub', name, layer)
+        for partner, atom_ids in judged[(name, layer)].items():
             for atom_id in atom_ids:
                 if assigned_to[atom_id] != here:
                     elsewhere.setdefault(here, set()).add((partner, ids[assigned_to[atom_id]]))
+
+    # how much the hub setting matters: every setting of the grid assigns the atoms again, apart from the real
+    # assignment above (default setting only)
+    sensitivity = []
+    for fraction in HUB_SENSITIVITY_FRACTIONS:
+        for share in HUB_SENSITIVITY_SHARES:
+            _c, count_s, hub_s = judge(fraction, share)
+            per_kind = {kind: {'hubs': set(), 'atoms': 0, 'abs': []} for kind in KINDS}
+            for a in sorted(live, key=lambda x: x['id']):
+                key, _why = assign(a, count_s, hub_s)
+                if key[0] == 'hub':
+                    row = per_kind[a['kind']]
+                    row['hubs'].add((key[1], key[2]))
+                    row['atoms'] += 1
+                    row['abs'].append(abs(a['d']))
+            sensitivity.append({'hub_min_fraction': fraction, 'hub_min_share': share, 'kinds': {
+                kind: (None if kstat[kind][0] == 'not_evaluated' else
+                       {'hubs': len(per_kind[kind]['hubs']), 'atoms': per_kind[kind]['atoms'],
+                        'share': (math.fsum(per_kind[kind]['abs']) / g[kind]) if g[kind] else None})
+                for kind in KINDS}})
 
     g = {kind: kstat[kind][2] for kind in KINDS}
     blist, nets = [], {kind: [] for kind in KINDS}
@@ -1178,13 +1288,18 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
             mine = [a for a in bucket['atoms'] if a['kind'] == kind]
             if status == 'not_evaluated':
                 kinds[kind] = {'net': None, 'abs': None, 'share': None, 'increase': None, 'decrease': None,
-                               'atoms': None}
+                               'atoms': None, 'sign': None, 'cancelling': None, 'internal_cancel': None,
+                               'direction_share': None}
                 continue
             net, total = math.fsum(a['d'] for a in mine), math.fsum(abs(a['d']) for a in mine)
             nets[kind].append(net)
             kinds[kind] = {'net': net, 'abs': total, 'share': (total / g[kind]) if status == 'ok' else None,
                            'increase': sum(1 for a in mine if a['d'] > 0), 'decrease': sum(1 for a in mine if a['d'] < 0),
-                           'atoms': len(mine)}
+                           'atoms': len(mine),
+                           'sign': ('none' if total == 0.0 else 'increase' if net > 0 else 'decrease' if net < 0
+                                    else 'zero'),
+                           'cancelling': abs(net) <= limit[kind] and total > limit[kind],
+                           'internal_cancel': total - abs(net), 'direction_share': None}
         out['kinds'] = kinds
         out['_abs'] = sum(1 for kind in KINDS if (kinds[kind]['abs'] or 0.0) > 0.0)
         blist.append((key, bucket, out))
@@ -1197,20 +1312,37 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         out['atoms'] = {'increase': sum(1 for a in atoms_here if a['d'] > 0),
                         'decrease': sum(1 for a in atoms_here if a['d'] < 0), 'count': len(atoms_here)}
         pair_atoms = [a for a in atoms_here if not a['cno']]
+        out['independent_cno'] = key[0] == 'cno'
         if key[0] == 'p':
-            out.update(type='pair', pair_id=key[1], layer=key[2], electrodes=list(pair_rows[key[1]]['electrodes']),
-                       electrode=None)
+            out.update(type='pair', pair_id=key[1], layer=key[2], layers=[key[2]],
+                       electrodes=list(pair_rows[key[1]]['electrodes']), electrode=None)
         else:
             out.update(electrode=key[1], pair_id=None, electrodes=None)
-            if key[0] == 'mv':
-                states = (erows.get(key[1]) or {}).get('layer_state') or {}
-                out.update(type='move', layer=None,
-                           **{'from': sorted((l for l, s in states.items() if s == 'a_only'), key=lk),
-                              'to': sorted((l for l, s in states.items() if s == 'b_only'), key=lk)})
+            if key[0] in ('ele', 'lyr'):
+                # every layer the electrode's atoms sit on (its own end point), one row per layer (K2)
+                per_layer = {}
+                for a in atoms_here:
+                    own = [layer for name, layer in a['ends'] if name == key[1]] or [a['layer']]
+                    layer = sorted(own, key=lk)[0]
+                    row = per_layer.setdefault(layer, {'line': [], 'pixel': [], 'cno': []})
+                    row[a['kind']].append(a['d'])
+                    if a['cno']:
+                        row['cno'].append(a['d'])
+                layer_rows = [{'layer': layer, 'state': state_of(key[1], layer)[0],
+                               'line': math.fsum(per_layer[layer]['line']) if per_layer[layer]['line'] else None,
+                               'pixel': math.fsum(per_layer[layer]['pixel']) if per_layer[layer]['pixel'] else None,
+                               'cno': math.fsum(per_layer[layer]['cno']) if per_layer[layer]['cno'] else None}
+                              for layer in sorted(per_layer, key=lk)]
+                out.update(layer=None, layers=[r['layer'] for r in layer_rows], layer_rows=layer_rows)
+                if key[0] == 'ele':
+                    out['type'] = 'electrode_new' if status_of(key[1]) == 'new' else 'electrode_removed'
+                else:
+                    states = (erows.get(key[1]) or {}).get('layer_state') or {}
+                    out.update(type='layer_change',
+                               **{'from': sorted((l for l, s in states.items() if s == 'a_only'), key=lk),
+                                  'to': sorted((l for l, s in states.items() if s == 'b_only'), key=lk)})
             else:
-                state = state_of(key[1], key[2])[0]
-                out.update(layer=key[2], type=('new' if state == 'b_only' else 'gone' if state == 'a_only'
-                                                else 'hub' if pair_atoms else 'cno'))
+                out.update(layer=key[2], layers=[key[2]], type=key[0])      # hub | self | cno
         # partner lines (one per kind, pair or CNO, layer) and the largest partner per kind
         rows, partner_abs = {}, {kind: {} for kind in KINDS}
         for a in atoms_here:
@@ -1234,7 +1366,7 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         for row in rows.values():
             lines.append(dict(row, net=math.fsum(row['net']), abs=math.fsum(row['abs']),
                               presence=sorted(row['presence']), item_ids=sorted(row['item_ids'])))
-        lines.sort(key=lambda r: (-r['abs'], r['kind'], str(r['pair_id']), r['layer']))
+        lines.sort(key=lambda r: (-abs(r['net']), r['kind'], str(r['pair_id']), r['layer']))      # K1: |net| first
         out['rows'] = lines
         out['partners'] = sorted({a['names'][0] if a['names'][1] == key[1] else a['names'][1]
                                   for a in pair_atoms if key[0] != 'p' and len(a['names']) == 2})
@@ -1258,48 +1390,115 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         final.append(out)
     final.sort(key=lambda b: (-max((b['kinds'][k]['share'] or 0.0) for k in KINDS), b['id']))
 
-    ranking, cover_checks, share_checks = {}, {}, {}
+    crp_part = {'line': 0.0 if kstat['line'][0] != 'not_evaluated' else None, 'pixel': crp}
+    ranking, types = {}, {}
+    direction_checks = {}
     for kind in KINDS:
         status = kstat[kind][0]
-        if status != 'ok':
-            ranking[kind] = {'status': status, 'k80': None, 'cards': [], 'cover': None, 'rest_share': None, 'rest': []}
-            cover_checks[kind] = share_checks[kind] = _check(None, 1.0)
+        empty_dir = {'total': None, 'k80': None, 'cards': [], 'rest': [], 'cover': None}
+        if status == 'not_evaluated':
+            ranking[kind] = {'status': status, 'direction': None, 'main': None, 'increase': dict(empty_dir),
+                             'decrease': dict(empty_dir), 'zero': [], 'cancel_ratio': None, 'net_total': None}
+            types[kind] = None
+            direction_checks[kind] = None
             continue
-        limit = _negligible_limit((vi_a or {}).get(kind))      # R10:4: below the limit = no card, no list, no k80
-        members = sorted((b for b in final if (b['kinds'][kind]['abs'] or 0.0) > limit),
-                         key=lambda b: (-b['kinds'][kind]['abs'], b['id']))
-        tiny = math.fsum((b['kinds'][kind]['share'] or 0.0) for b in final
-                         if 0 < (b['kinds'][kind]['abs'] or 0.0) <= limit)
-        running, k80 = 0.0, None
-        for index, b in enumerate(members, 1):
-            running += b['kinds'][kind]['share']
-            if running >= K_SHARE - K_EPS:
-                k80 = index
-                break
-        if k80 is None:
-            k80 = len(members)
-        cards, rest = members[:CARD_COUNT], members[CARD_COUNT:]
-        cover = math.fsum(b['kinds'][kind]['share'] for b in cards)
-        rest_share = math.fsum(b['kinds'][kind]['share'] for b in rest)
-        ranking[kind] = {'status': 'ok', 'k80': k80, 'cards': [b['id'] for b in cards], 'cover': cover,
-                         'rest_share': rest_share, 'rest': [b['id'] for b in rest]}
-        cover_checks[kind] = _check(cover + rest_share + tiny, 1.0)
-        share_checks[kind] = _check(math.fsum(b['kinds'][kind]['share'] for b in final), 1.0)
-
-    crp_part = {'line': 0.0 if kstat['line'][0] != 'not_evaluated' else None, 'pixel': crp}
-    status_doc = {kind: kstat[kind][0] for kind in KINDS}
-    summary = {'rule': BUNDLE_RULE, 'hub_min': HUB_MIN, 'status': status_doc,
-               'reasons': {kind: list(kstat[kind][1]) for kind in KINDS}, 'g': g,
-               'atoms': {kind: sum(1 for a in live if a['kind'] == kind) for kind in KINDS},
-               'bundle_count': len(buckets), 'list': final, 'ranking': ranking, 'crp': crp_part}
-    net_checks = {}
-    for kind in KINDS:
-        if kstat[kind][0] == 'not_evaluated':
-            net_checks[kind] = _check(None, totals[kind]['delta'])
+        ok = status == 'ok'
+        members = [b for b in final if (b['kinds'][kind]['abs'] or 0.0) > 0.0]
+        net_of = lambda b: b['kinds'][kind]['net']
+        groups = {'increase': sorted((b for b in members if net_of(b) > 0), key=lambda b: (-net_of(b), b['id'])),
+                  'decrease': sorted((b for b in members if net_of(b) < 0), key=lambda b: (net_of(b), b['id'])),
+                  'zero': sorted((b for b in members if net_of(b) == 0), key=lambda b: b['id'])}
+        totals_dir = {name: math.fsum(net_of(b) for b in groups[name]) for name in ('increase', 'decrease')}
+        net_total = math.fsum([totals_dir['increase'], totals_dir['decrease']])
+        if abs(net_total) <= limit[kind]:       # L2: the main direction of a balanced kind is the larger |total|
+            direction = 'balanced'
+            main = 'increase' if totals_dir['increase'] > -totals_dir['decrease'] else 'decrease'
         else:
-            net_checks[kind] = _check(_osum([math.fsum(nets[kind]), crp_part[kind]]), totals[kind]['delta'])
-    kind_checks = {kind: {'net_plus_crp': net_checks[kind], 'share_sum': share_checks[kind],
-                          'cover_plus_rest': cover_checks[kind]} for kind in KINDS}
+            direction = main = 'increase' if net_total > 0 else 'decrease'
+        packed = {}
+        for name in ('increase', 'decrease'):
+            members_dir, total = groups[name], totals_dir[name]
+            shares = {}
+            for b in members_dir:
+                share = (net_of(b) / total) if ok and total != 0 else None
+                b['kinds'][kind]['direction_share'] = share
+                shares[b['id']] = share
+            count = CARD_COUNT if direction == 'balanced' or name == direction else OPPOSITE_CARD_COUNT
+            running, k80 = 0.0, None
+            if ok and total != 0:
+                for index, b in enumerate(members_dir, 1):
+                    running += shares[b['id']]
+                    if running >= K_SHARE - K_EPS:
+                        k80 = index
+                        break
+                if k80 is None:
+                    k80 = len(members_dir)
+            cards, rest = members_dir[:count], members_dir[count:]
+            packed[name] = {'total': total, 'k80': k80, 'cards': [b['id'] for b in cards],
+                            'rest': [b['id'] for b in rest],
+                            'cover': math.fsum(shares[b['id']] for b in cards) if ok and total != 0 and cards else None}
+        gross = g[kind]
+        ranking[kind] = dict({'status': status, 'direction': direction, 'main': main}, **packed,
+                             zero=[b['id'] for b in groups['zero']],
+                             cancel_ratio=(1.0 - abs(net_total) / gross) if gross else None, net_total=net_total)
+        # L3: additive types hold every bundle once (a CNO atom inside an electrode bundle sits in that type);
+        # `cno` is the independent CNO bundles only and `cno_all` (reference, never added) is every CNO atom
+        types[kind] = {name: {'count': 0, 'increase': [], 'decrease': [], 'net': [], 'gross': []} for name in TYPES}
+        for b in members:
+            row = types[kind][b['type']]
+            row['count'] += 1
+            row['net'].append(net_of(b))
+            row['gross'].append(b['kinds'][kind]['abs'])
+            (row['increase'] if net_of(b) > 0 else row['decrease'] if net_of(b) < 0 else []).append(net_of(b))
+        for name in TYPES:
+            row = types[kind][name]
+            types[kind][name] = {'count': row['count'], 'increase': math.fsum(row['increase']),
+                                 'decrease': math.fsum(row['decrease']), 'net': math.fsum(row['net']),
+                                 'gross': math.fsum(row['gross'])}
+        cno_atoms = [a for a in live if a['kind'] == kind and a['cno']]
+        types[kind]['crp'] = {'net': crp_part[kind]}
+        types[kind]['cno_all'] = {'count': len(cno_atoms), 'net': math.fsum(a['d'] for a in cno_atoms),
+                                  'gross': math.fsum(abs(a['d']) for a in cno_atoms), 'reference': True}
+        direction_checks[kind] = (groups, packed, totals_dir, members)
+
+    status_doc = {kind: kstat[kind][0] for kind in KINDS}
+    summary = {'rule': BUNDLE_RULE, 'version': BUNDLE_VERSION, 'hub_min': hub_min, 'hub_min_fraction': hub_fraction,
+               'hub_min_share': hub_share, 'hub_sensitivity': sensitivity, 'status': status_doc, 'reasons': {kind: list(kstat[kind][1]) for kind in KINDS}, 'g': g,
+               'atoms': {kind: sum(1 for a in live if a['kind'] == kind) for kind in KINDS},
+               'bundle_count': len(buckets), 'list': final, 'ranking': ranking, 'types': types, 'crp': crp_part}
+    kind_checks = {}
+    for kind in KINDS:
+        delta = totals[kind]['delta']
+        if direction_checks[kind] is None:
+            none = _check(None, delta)
+            kind_checks[kind] = {'net_plus_crp': none, 'direction_identity': none, 'share_sum': _check(None, 1.0),
+                                 'direction_share_sum': _check(None, 1.0), 'cover_plus_rest': _check(None, 1.0),
+                                 'each_once': {'status': 'not_evaluated'}, 'types_plus_crp': none}
+            continue
+        groups, packed, totals_dir, members = direction_checks[kind]
+        ok = kstat[kind][0] == 'ok'
+        filled = [name for name in ('increase', 'decrease') if groups[name] and totals_dir[name] != 0]
+        listed = [i for name in ('increase', 'decrease') for i in packed[name]['cards'] + packed[name]['rest']]
+        listed += ranking[kind]['zero']
+        wanted = sorted(b['id'] for b in members)
+        rest_ids = {n: set(packed[n]['rest']) for n in filled}
+        covered = _check(math.fsum((packed[n]['cover'] or 0.0) + math.fsum(
+            b['kinds'][kind]['direction_share'] for b in groups[n] if b['id'] in rest_ids[n])
+            for n in filled), float(len(filled))) if ok else _check(None, 1.0)
+        share_sum = (math.fsum(b['kinds'][kind]['direction_share'] for n in filled for b in groups[n])
+                     if ok else None)
+        type_net = math.fsum(row['net'] for name, row in types[kind].items() if name in TYPES)
+        kind_checks[kind] = {
+            'net_plus_crp': _check(_osum([math.fsum(nets[kind]), crp_part[kind]]), delta),
+            'direction_identity': _check(_osum([totals_dir['increase'], totals_dir['decrease'], crp_part[kind]]),
+                                         delta),
+            'share_sum': _check(math.fsum(b['kinds'][kind]['share'] for b in final), 1.0) if ok
+            else _check(None, 1.0),
+            'direction_share_sum': _check(share_sum, float(len(filled))) if ok else _check(None, 1.0),
+            'cover_plus_rest': covered,
+            'each_once': {'status': 'passed' if sorted(listed) == wanted else 'failed', 'listed': len(listed),
+                          'expected': len(wanted)},
+            'types_plus_crp': _check(_osum([type_net, crp_part[kind]]), delta)}
     atom_ids = [a['id'] for a in live]
     structural = {'atoms': len(live), 'assigned': len(assigned_to), 'assignments': assignments,
                   'duplicates': assignments - len(set(atom_ids)), 'id_unique': id_unique,
@@ -1458,7 +1657,8 @@ def _build_summary(doc, rebase, fam, vi_a, totals, crp_d, pair_rows, cno_rows, e
     conc_status = {kind: _kind_status(kind, atoms, fam[kind], vi_a[kind]) for kind in KINDS}
     concentration, conc_checks = _concentration(atoms, conc_status, crp_d if fam['pixel'] else None, totals,
                                               vi_a)
-    summary = {'rules': dict(SUMMARY_RULES), 'rebase': rebase_doc, 'design': design, 'bundles': bundles,
+    summary = {'rules': dict(SUMMARY_RULES, hub_min=HUB_MIN, hub_min_fraction=HUB_MIN_FRACTION,
+                                                  hub_min_share=HUB_MIN_SHARE), 'rebase': rebase_doc, 'design': design, 'bundles': bundles,
                'concentration': concentration}
     new_checks = {'rebase': rebase_checks, 'bundles': bundle_checks, 'concentration': conc_checks}
     new_checks['status'] = _worst([rebase_checks['status'], bundle_checks['status'], conc_checks['status']])

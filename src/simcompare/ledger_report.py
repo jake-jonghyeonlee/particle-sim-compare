@@ -241,6 +241,43 @@ def _report07_link(report07_dir, out):
 
 # ---- context ------------------------------------------------------------------------------------------------------------
 
+_COMPAT_TYPES = {'electrode_new': 'new', 'electrode_removed': 'gone', 'layer_change': 'move', 'self': 'hub'}
+
+
+def _compat_bundles(bundles):
+    """rnarr/T11 (L5): the page of T7 reads the old bundle shape. A version 2 ledger (direction ranking, electrode bundles,
+    new type names) is shown through that shape until T12 draws it: unknown type names become the nearest old one and the
+    ranking lists the main-direction cards first, then the opposite ones. A ledger without `version` is left as it is."""
+    if not isinstance(bundles, dict) or bundles.get('version') != 2:
+        return bundles
+    out = dict(bundles)
+    out['list'] = []
+    for b in bundles.get('list') or []:
+        b = dict(b)
+        b['type'] = _COMPAT_TYPES.get(b.get('type'), b.get('type'))
+        if b.get('layer') is None and b['type'] not in ('move',) and b.get('layers'):
+            b['layer'] = b['layers'][0]
+        if b['type'] == 'move' and b.get('from') is None:
+            b['from'], b['to'] = [], []
+        out['list'].append(b)
+    ranking = {}
+    for kind, rk in (bundles.get('ranking') or {}).items():
+        main = rk.get('main')
+        if main not in ('increase', 'decrease'):
+            ranking[kind] = {'status': rk.get('status'), 'k80': None, 'cards': [], 'cover': None, 'rest_share': None,
+                             'rest': []}
+            continue
+        other = 'decrease' if main == 'increase' else 'increase'
+        cover = (rk.get(main) or {}).get('cover')
+        ranking[kind] = {'status': rk.get('status'), 'k80': (rk.get(main) or {}).get('k80'),
+                         'cards': list((rk.get(main) or {}).get('cards') or []) + list((rk.get(other) or {}).get('cards') or []),
+                         'cover': cover, 'rest_share': None if cover is None else 1.0 - cover,
+                         'rest': list((rk.get(main) or {}).get('rest') or []) + list((rk.get(other) or {}).get('rest') or []),
+                         'direction': rk.get('direction'), 'main': main}
+    out['ranking'] = ranking
+    return out
+
+
 class Ctx(object):
     """Lookup tables of one report."""
 
@@ -267,8 +304,8 @@ class Ctx(object):
         # the narrative summary of ledger.py (rnarr/T5); an older ledger has none of it (E8: the text is left out)
         self.summary = doc.get('summary') if isinstance(doc.get('summary'), dict) else {}
         bundles = self.summary.get('bundles') if isinstance(self.summary.get('bundles'), dict) else None
-        self.bundles = bundles
-        self.bundle_by_id = {b['id']: b for b in (bundles or {}).get('list') or []}
+        self.bundles = _compat_bundles(bundles)
+        self.bundle_by_id = {b['id']: b for b in (self.bundles or {}).get('list') or []}
         self.design = self.summary.get('design') if isinstance(self.summary.get('design'), dict) else None
         self.rebase = self.summary.get('rebase') if isinstance(self.summary.get('rebase'), dict) else None
         self.conc = self.summary.get('concentration') if isinstance(self.summary.get('concentration'), dict) else None

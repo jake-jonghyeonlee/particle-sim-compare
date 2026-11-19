@@ -72,6 +72,21 @@ def variant(real, edit):
     return doc
 
 
+def cards_of(doc, kind):
+    """The cards of a ranking as the T7 page shows them (rnarr/T11: the main direction first, then the opposite one)."""
+    rk = doc['summary']['bundles']['ranking'][kind]
+    if rk.get('main') not in ('increase', 'decrease'):
+        return []
+    other = 'decrease' if rk['main'] == 'increase' else 'increase'
+    return list(rk[rk['main']]['cards']) + list(rk[other]['cards'])
+
+
+def clear_cards(doc, kind):
+    rk = doc['summary']['bundles']['ranking'][kind]
+    for name in ('increase', 'decrease'):
+        rk[name]['cards'] = []
+
+
 # ---- the seven sections, the frame ------------------------------------------------------------------------------------------
 
 def test_seven_sections_in_order_with_a_head_and_a_pointer_each(real):
@@ -93,7 +108,7 @@ def test_section_1_has_no_table_and_names_the_cause_candidates_with_links(real):
     assert '<table' not in s1
     assert 'id="opinion"' in s1 and '검산' in s1 and '변화량(증가와 감소의 크기를 모두 더한 값)' in s1
     ids = re.findall(r'href="#unit=(bd-[0-9a-f]+)&amp;to=s3"', s1)
-    assert ids and all(i in real['summary']['bundles']['ranking']['line']['cards'] + real['summary']['bundles']['ranking']['pixel']['cards'] for i in ids)
+    assert ids and all(i in cards_of(real, 'line') + cards_of(real, 'pixel') for i in ids)
 
 
 def test_design_and_resolution_numbers_are_only_in_section_6(real):
@@ -182,9 +197,8 @@ def test_h4_six_cards_or_fewer_hold_everything_and_more_say_the_rest(real):
 
     def more(d):
         rk = d['summary']['bundles']['ranking']['line']
-        rk['rest'] = [d['summary']['bundles']['ranking']['pixel']['cards'][0]]
-        rk['rest_share'] = 0.1
-        rk['cover'] = 0.9
+        rk[rk['main']]['rest'] = [cards_of(d, 'pixel')[0]]
+        rk[rk['main']]['cover'] = 0.9
     s1 = new_section(render(variant(real, more)), 's1')
     assert '나머지 1 원인 후보가 10% 를 나눠 가집니다' in s1 and '모두 있습니다' not in s1.split('pixel item 변화량')[0]
 
@@ -224,14 +238,14 @@ def test_why_texts_for_one_reason_and_mixed_reasons(real):
 
 def test_r10b2_cards_come_from_the_ranking_only_and_an_empty_list_says_so(real):
     def edit(d):
-        d['summary']['bundles']['ranking']['line']['cards'] = []
+        clear_cards(d, 'line')
     page = render(variant(real, edit))
     s3 = new_section(page, 's3')
     assert 'id="cards-line-none"' in s3 and 'id="cards-line"' not in s3
     # the bundles of the line list that no pixel card shows have no card at all
-    line_only = [i for i in real['summary']['bundles']['ranking']['line']['cards'] if i not in real['summary']['bundles']['ranking']['pixel']['cards']]
+    line_only = [i for i in cards_of(real, 'line') if i not in cards_of(real, 'pixel')]
     assert line_only and all('id="%s"' % i not in s3 for i in line_only)
-    s3b = new_section(render(variant(real, lambda d: d['summary']['bundles']['ranking']['line'].update(cards=[], status='ok'))), 's3')
+    s3b = new_section(render(variant(real, lambda d: clear_cards(d, 'line'))), 's3')
     assert '원인 후보마다 아주 작아' in s3b
 
 
@@ -402,7 +416,7 @@ def real_page(tmp_path_factory, real):
 
 
 def test_chrome_normal_page_has_no_script_error_and_the_unit_hash_selects_a_card(real_page, real):
-    unit = real['summary']['bundles']['ranking']['line']['cards'][0]
+    unit = cards_of(real, 'line')[0]
     for fragment in ('#', '#unit=%s&to=s3' % unit, '#unit=%s&to=s2' % unit, '#to=s6', '#to=explore'):
         dom, text = dump_dom(real_page, fragment)
         assert 'data-err' not in dom.root, fragment
@@ -420,7 +434,7 @@ def test_chrome_hash_values_outside_the_whitelist_are_ignored(real_page):
 
 
 def test_chrome_clearing_the_selection_clears_the_cause_candidate(real_page, real):
-    unit = real['summary']['bundles']['ranking']['line']['cards'][0]
+    unit = cards_of(real, 'line')[0]
     from test_ledger_report_v2 import run_in_page
     script = ("setTimeout(function(){document.getElementById('sel-clear').click();setTimeout(function(){"
               "document.documentElement.setAttribute('data-after',location.hash+'|'+document.documentElement.getAttribute('data-unit'));},200);},300);")
@@ -548,7 +562,7 @@ def test_chrome_r12_3b_odd_names_select_the_card_and_mark_the_cell(tmp_path, rea
 
 
 def test_chrome_r12_2_a_later_hash_change_does_not_pull_the_page_back_to_the_card(real_page, real):
-    unit = real['summary']['bundles']['ranking']['line']['cards'][0]
+    unit = cards_of(real, 'line')[0]
     from test_ledger_report_v2 import run_in_page
     script = ("setTimeout(function(){window.scrollTo(0,0);location.hash='#unit=%s&layer=L1';setTimeout(function(){"
               "document.documentElement.setAttribute('data-y',String(Math.round(window.pageYOffset)));},300);},300);" % unit)
