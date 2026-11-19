@@ -165,14 +165,26 @@ def finish(doc, blist, crp=None):
         types[kind]['crp'] = {'net': 0.0 if kind == 'line' else (crp or 0.0)}
         types[kind]['cno_all'] = {'count': 0, 'net': 0.0, 'gross': 0.0, 'reference': True}
     old = doc.get('summary', {}).get('bundles') or {}
+    crp_value = {'line': 0.0, 'pixel': crp if crp is not None else (old.get('crp') or {}).get('pixel', 0.0)}
+    for kind in KINDS:          # R18:2: the identity of the ledger — sum of increase + sum of decrease + CRP = the kind's vi change
+        delta = ranking[kind]['net_total'] + crp_value[kind]
+        doc['totals'][kind]['delta'] = delta
+        doc['kinds'][kind]['vi_b'] = doc['kinds'][kind]['vi_a'] + delta
     doc.setdefault('summary', {})['bundles'] = {
         'rule': 'bundle_assign_v2', 'version': 2, 'hub_min': 3, 'hub_min_fraction': 0.5, 'hub_min_share': 0.0,
         'hub_sensitivity': [{'hub_min_fraction': f, 'hub_min_share': s, 'kinds': {k: {'hubs': 2, 'atoms': 5, 'share': 0.25} for k in KINDS}}
                             for f in (0.0, 0.3, 0.5) for s in (0.0, 0.01)],
         'status': {k: 'ok' for k in KINDS}, 'reasons': {k: [] for k in KINDS}, 'g': g, 'atoms': {k: 1 for k in KINDS},
         'bundle_count': len(blist), 'list': blist, 'ranking': ranking, 'types': types,
-        'crp': {'line': 0.0, 'pixel': crp if crp is not None else (old.get('crp') or {}).get('pixel', 0.0)}}
+        'crp': crp_value}
     return doc
+
+
+def identity_holds(doc):
+    """Σ increase + Σ decrease + CRP = Δ, per kind, of the bundles of a fixture."""
+    bd = doc['summary']['bundles']
+    return all(abs(bd['ranking'][k]['increase']['total'] + bd['ranking'][k]['decrease']['total'] + bd['crp'][k] - doc['totals'][k]['delta']) < 1e-9
+               and abs(doc['kinds'][k]['vi_b'] - doc['kinds'][k]['vi_a'] - doc['totals'][k]['delta']) < 1e-9 for k in KINDS)
 
 
 def hub(changed, total, inc, dec):
@@ -601,11 +613,19 @@ def test_r12_1_the_crp_change_is_named_in_1_and_4_and_kept_out_of_the_cause_cand
     s1, s4 = all_text(new_section(page, 's1')), all_text(new_section(page, 's4'))
     signed = ledger_report.raw_pp(crp)
     assert signed[0] in '+−'
-    sentence = 'pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % signed
-    assert sentence in s1 and '보정값(CRP) 차이 %s' % signed in s4          # the same signed text in 1 and 4
-    assert '원인 후보 3 개에 모두 있습니다' in s1
-    # rnarr/T12 (K4): the CRP sentence comes after the sentences that say what the cards hold (the pixel ones)
-    assert s1.rindex('원인 후보 3 개에 모두 있습니다') < s1.index(sentence)
+    # the real fixture is CRP-dominated (pixel vi decreases, the cause candidates increase): R18:1 names the CRP once, as the bridge sentence
+    bridge = '보정값(CRP) 차이 %s 를 빼면 원인 후보의 순 변화는 증가입니다.' % signed
+    assert bridge in s1 and '보정값(CRP) 차이 %s' % signed in s4          # the same signed text in 1 and 4
+    assert '원인 후보 3 개에 모두 있습니다' in s1 and '는 보정값(CRP) 차이에서 나왔고' not in s1
+    assert s1.index('증가 요인은 +') < s1.index(bridge) < s1.rindex('원인 후보 3 개에 모두 있습니다')
+
+    # not dominated (the vi change and the cause candidates go the same way): the old CRP sentence after the card sentences
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, 0, 'pair', {'line': 0.01, 'pixel': -0.02}), mk(doc, 1, 'pair', {'pixel': -0.01})], crp=-0.01)
+    assert identity_holds(doc)
+    s1b = all_text(new_section(render(doc), 's1'))
+    sentence = 'pixel 변화 중 %s 는 보정값(CRP) 차이에서 나왔고, 원인 후보에는 들어 있지 않습니다.' % ledger_report.raw_pp(-0.01)
+    assert sentence in s1b and '를 빼면' not in s1b and s1b.rindex('원인 후보 2 개에 모두 있습니다') < s1b.index(sentence)
 
     zero = new_section(render(variant(real, lambda d: _statuses(d, crp=0.0))), 's1')
     assert '보정값(CRP) 차이에서 나왔' not in zero
@@ -917,7 +937,7 @@ def test_an_older_compare2_without_the_area_basis_still_renders_the_unit_reading
             for key in ('design_area', 'unit_size'):
                 d['summary']['design'][kind]['segments'].pop(key, None)
     s6 = new_section(render(variant(real, edit)), 's6')
-    assert 'unit 크기 정보가 없어 unit 기준으로 비교합니다' in s6 and 'id="design-table"' in s6
+    assert '02 를 새 번들로 다시 실행하면 면적 기준이 나옵니다' in s6 and 'id="design-table"' in s6
 
 
 def test_the_rich_page_is_the_same_bytes_twice_and_section_1_has_no_table(real):
@@ -973,3 +993,121 @@ def test_chrome_the_rich_page_runs_without_a_script_error(tmp_path, real):
     for fragment in ('#', '#sel=unit:%s&to=explore' % uid, '#unit=%s&to=s3' % uid):
         dom, text = dump_dom(out / 'ledger_report.html', fragment)
         assert 'data-err' not in dom.root, fragment
+
+
+# ---- rnarr/T12b (R18) --------------------------------------------------------------------------------------------------------------
+
+def _crp_dominated(real):
+    """pixel: Σ net +0.2%p, CRP −0.6%p, Δ −0.4%p (the identity holds); line: −1.0%p, no CRP."""
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, 0, 'pair', {'line': -0.01, 'pixel': 0.002}), mk(doc, 1, 'pair', {'line': -0.0002})], crp=-0.006)
+    return doc
+
+
+def test_r18_1_a_crp_dominated_kind_says_the_cause_candidate_direction_not_the_vi_direction(real):
+    doc = _crp_dominated(real)
+    assert identity_holds(doc) and abs(doc['totals']['pixel']['delta'] + 0.004) < 1e-12
+    page = render(doc)
+    s1, s3 = all_text(new_section(page, 's1')), all_text(new_section(page, 's3'))
+    pixel = s1[s1.index('pixel vi 는'):]
+    pixel = pixel[:pixel.index('원인 후보 값에는') if '원인 후보 값에는' in pixel else len(pixel)]
+    print('R18 1 pixel part:', pixel)
+    assert '−0.4000%p 감소했습니다' in pixel and '증가 요인은 +0.2000%p' in pixel
+    assert '보정값(CRP) 차이 −0.6000%p 를 빼면 원인 후보의 순 변화는 증가입니다.' in pixel
+    assert pixel.index('증가 요인은') < pixel.index('를 빼면') and s1.count('보정값(CRP)') == 1       # said once, not twice
+    head = [l for l in s3.split('pixel: ') if l.startswith('원인 후보 순 변화 방향은')]
+    assert head, s3
+    print('R18 3 head:', 'pixel: ' + head[0][:120])
+    assert 'pixel: vi 변화 방향' not in s3 and 'line: vi 변화 방향은 감소 입니다' in s3
+    assert '원인 후보 순 변화 방향 — 증가 요인 상위' in s3 and '원인 후보 순 변화 방향(증가 요인)의 100%' in s3
+    assert 'vi 변화 방향 — 감소 요인 상위' in s3                                    # line is not CRP-dominated
+    assert '원인 후보 순 변화(보정값 차이 제외)의 부호' in s3 and 'pixel vi 는 A' in s1
+    for text in (s1, s3):                                                          # no sentence says the pixel vi direction is "increase"
+        assert not re.search(r'pixel[^.]*vi 변화 방향은 증가', text)
+
+
+def test_r18_1_a_kind_that_goes_the_same_way_keeps_the_vi_direction_wording(real):
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, 0, 'pair', {'line': -0.01, 'pixel': -0.003})], crp=-0.001)
+    s3 = all_text(new_section(render(doc), 's3'))
+    assert 'pixel: vi 변화 방향은 감소 입니다' in s3 and '원인 후보 순 변화 방향' not in s3.replace('\'원인 후보 순 변화 방향\' 이라고', '')
+
+
+def test_r18_2_the_fixture_identity_holds_for_every_finished_fixture(real):
+    for doc in (rich(real), _crp_dominated(real)):
+        assert identity_holds(doc)
+
+
+def test_r18_4_an_older_ledger_hub_without_a_partner_is_the_same_electrode_type(real):
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, 0, 'hub', {'line': -0.01}, layer='SD1', electrode='Solo', partner_count=0, hub=None), mk(doc, 1, 'pair', {'pixel': 0.01})])
+    page = render(_legacy(doc))
+    text = all_text(new_section(page, 's3'))
+    assert 'Solo · SD1 — 동일 전극' in text and 'Solo 전극 안의 SD1 불량이 변했습니다.' in text
+    assert '상대 0 개' not in text and '0 쌍' not in text
+
+
+def test_r18_5_section_6_names_why_the_unit_basis_is_used(real):
+    assert 'unit 크기 정보가 없어 unit 기준으로 비교합니다' in new_section(render(real), 's6')
+    old = variant(real, lambda d: [d['summary']['design'][k].pop('basis', None) for k in KINDS])
+    s6 = all_text(new_section(render(old), 's6'))
+    assert '02 를 새 번들로 다시 실행하면 면적 기준이 나옵니다' in s6 and 'unit 크기 정보가 없어' not in s6
+
+    def edit(d):
+        for k in KINDS:
+            d['summary']['design'][k]['basis'] = 'unit'
+        d['summary']['rebase']['area_basis'] = {'status': 'unavailable', 'reasons': ['u_area_nonpositive']}
+        for role in ('reference', 'target'):
+            d['inputs']['products'][role]['unit_size_um'] = [50.0, 50.0]
+    s6 = all_text(new_section(render(variant(real, edit)), 's6'))
+    assert '면적 기준을 계산할 수 없어(u_area_nonpositive) unit 기준으로 비교합니다' in s6
+
+
+def _two_layer_page(tmp_path):
+    doc = sample_doc()
+    p0 = doc['pairs'][0]
+    p1 = next(p for p in doc['pairs'][1:] if p['items'][0]['analysis_layer'] != p0['items'][0]['analysis_layer'])
+    l0, l1 = p0['items'][0]['analysis_layer'], p1['items'][0]['analysis_layer']
+    b = mk(doc, 0, 'electrode_removed', {'line': -0.01}, layer=None, electrode=p0['electrodes'][0], layers=[l0, l1])
+    row0 = b['rows'][0]
+    b['rows'] = [dict(row0, layer=l0), dict(row0, pair_id=p1['pair_id'], layer=l1, item_ids=[p1['items'][0]['item_id']]),
+                 {'kind': 'pixel', 'pair_id': None, 'cno': True, 'layer': l0, 'partner': None, 'electrodes': None, 'net': 0.001, 'abs': 0.001,
+                  'presence': ['gone'], 'item_ids': ['CNO:%s' % p0['electrodes'][0]], 'pair_delta': None}]
+    finish(doc, [b])
+    doc, maps, out = map_report(tmp_path, doc=doc, changes=ok_changes())
+    return doc, b, p0, p1, l0, l1, out / 'ledger_report.html'
+
+
+def test_chrome_r18_3_a_two_layer_candidate_has_both_layers_both_pairs_and_counts_cno_apart(tmp_path):
+    doc, b, p0, p1, l0, l1, page = _two_layer_page(tmp_path)
+    dom, text = dump_dom(page, '#sel=unit:%s&to=explore' % b['id'])
+    assert 'data-err' not in dom.root and dom.root['data-sel'] == 'unit:' + b['id']
+    assert dom.root['data-sel-items'] == '2'                                          # the two item ids of the two pairs, not the CNO id
+    shown = {a['data-pair'] for t, a in dom.elements if t == 'tr' and 'plrow' in (a.get('class') or '').split() and 'hide' not in (a.get('class') or '').split()}
+    assert shown == {p0['pair_id'], p1['pair_id']}
+    chips = {a['data-mlayer'] for t, a in dom.elements if t == 'button' and 'data-mlayer' in a and 'hidden' not in a}
+    assert chips == {l0, l1}
+    band = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', text[text.index('id="unit-band"'):]))[:240]
+    assert '쌍 2 개 · item 2 건 · CNO 1 건(지도에 없음)' in band
+    dom2, _text2 = dump_dom(page, '#sel=unit:%s&layer=%s&to=explore' % (b['id'], l1))     # the second layer: the candidate stays selected
+    assert 'data-err' not in dom2.root and dom2.root.get('data-map-layer') == l1 and dom2.root['data-sel-items'] == '2'
+
+
+def test_r18_6_the_bundle_data_carries_item_positions_not_item_ids(tmp_path):
+    n = 500
+    pairs = [spec('P%d' % i, ['E%d' % i, 'F%d' % i], 'line', 0.001, 0.002) for i in range(n)]
+    doc = make_ledger(pairs)
+    b = mk(doc, 0, 'electrode_removed', {'line': -0.01}, layer=None, electrode='E0', layers=['L1'])
+    row0 = b['rows'][0]
+    b['rows'] = [dict(row0, pair_id=p['pair_id'], item_ids=[i['item_id'] for i in p['items']]) for p in doc['pairs']]
+    finish(doc, [b])
+    page = ledger_report.render_html(doc, 'a' * 64, 30, 30)[0]
+    data = json.loads(re.search(r'<script type="application/json" id="report-data">(.*?)</script>', page, re.S).group(1))
+    unit = data['bundles'][0]
+    assert 'its' not in unit and len(unit['pairs']) == n and unit['cno'] == 0
+    assert all(v[3] == [0] for v in unit['pairs'].values())
+    old_bytes = len(json.dumps(sorted(i['item_id'] for p in doc['pairs'] for i in p['items']), ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    new_bytes = len(json.dumps([v[3] for v in unit['pairs'].values()], separators=(',', ':')).encode('utf-8'))
+    print('R18 6 html bytes after:', len(page.encode('utf-8')), '| its before:', old_bytes, 'after:', new_bytes,
+          '| html before ~', len(page.encode('utf-8')) - new_bytes + old_bytes)
+    assert new_bytes < old_bytes / 3

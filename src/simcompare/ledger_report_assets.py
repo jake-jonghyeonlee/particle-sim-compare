@@ -129,7 +129,7 @@ function layersOfPair(p){var out={};p.items.forEach(function(it){[it.ul,it.ll].f
  (p.la||[]).concat(p.lb||[]).forEach(function(l){out[l]=true;});return out;}
 function related(sel){var r={pairs:{},els:{},layers:{},rois:{},items:{}};if(!sel)return r;
  if(sel.t==='unit'&&BU[sel.id]){var ub=BU[sel.id];Object.keys(ub.pairs).forEach(function(id){if(PB[id])r.pairs[id]=1;});
-  ub.els.forEach(function(e){r.els[e]=1;});ub.layers.forEach(function(l){r.layers[l]=1;});ub.its.forEach(function(i){r.items[i]=1;});}   /* M3: the pairs and items of one cause candidate */
+  ub.els.forEach(function(e){r.els[e]=1;});ub.layers.forEach(function(l){r.layers[l]=1;});Object.keys(ub.pairs).forEach(function(id){var pp=PB[id];if(pp)ub.pairs[id][3].forEach(function(n){if(pp.items[n])r.items[pp.items[n].id]=1;});});}   /* M3: the pairs and items of one cause candidate */
  else if(sel.t==='pair'&&PB[sel.id]){r.pairs[sel.id]=1;}
  else if(sel.t==='electrode'){r.els[sel.id]=1;D.pairs.forEach(function(p){if(p.e.indexOf(sel.id)>=0)r.pairs[p.id]=1;});}
  else if(sel.t==='layer'){D.pairs.forEach(function(p){if(layersOfPair(p)[sel.id])r.pairs[p.id]=1;});}
@@ -447,9 +447,10 @@ function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel),ms=msel(st,sel
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
  var lab=$('sel-label');if(lab)lab.innerHTML=label(sel,st.kv.unit);var clr=$('sel-clear');if(clr)clr.disabled=!(sel||st.kv.unit);
  mark(ms,mpr);markUnit(st);cellCards(st);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');
- document.documentElement.setAttribute('data-unit',st.kv.unit||'');
+ document.documentElement.setAttribute('data-unit',st.kv.unit||'');document.documentElement.setAttribute('data-sel-items',String(Object.keys(pr.items).length));
  var ubd=$('unit-band');if(ubd){if(sel&&sel.t==='unit'&&BU[sel.id]){var bu=BU[sel.id];ubd.hidden=false;   /* M3: the band at the top of 4 */
-  ubd.innerHTML='원인 후보: <b>'+esc(bu.title)+'</b> — 쌍 '+Object.keys(bu.pairs).length+' 개 · item '+bu.its.length+' 건 · 레이어 '+esc(bu.layers.join(', '))+
+  var nit=0;Object.keys(bu.pairs).forEach(function(id){nit+=bu.pairs[id][3].length;});
+  ubd.innerHTML='원인 후보: <b>'+esc(bu.title)+'</b> — 쌍 '+Object.keys(bu.pairs).length+' 개 · item '+nit+' 건'+(bu.cno?' · CNO '+bu.cno+' 건(지도에 없음)':'')+' · 레이어 '+esc(bu.layers.join(', '))+
    ' · <a class="lk" href="#unit='+encodeURIComponent(bu.id)+'&to=s3">3 으로 돌아가기</a>';}else{ubd.hidden=true;ubd.innerHTML='';}}
  var mk=mapKey(st,ms);if(mk!==MKEY){MKEY=mk;drawMaps(st,ms,mpr);}}   /* the maps are redrawn only when a map state changed (not by search, tab, filter or scroll) */
 function mapKey(st,sel){return [sel?sel.t+':'+sel.id:'',st.kv.layer||'',st.kv.unit||'',st.kv.layers==null?'':st.kv.layers,st.kv.ov||'',ALPHA].join('|');}
