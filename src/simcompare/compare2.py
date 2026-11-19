@@ -836,8 +836,29 @@ def _merge_cno(side, per_case):
     return merged
 
 
-def _rebase_kind(kind, a, b, tables, delta_vi):
-    """One kind's rebase (S0..S4). Returns a dict: state, items, cno, missing, reasons, check."""
+def _scale_area(value, ratio):
+    """Lambda of state S1a: B's CA read at A's unit area. A ratio of exactly 1 keeps S1's value (bit identical)."""
+    if value is None:
+        return None
+    return value if ratio == 1.0 else value * ratio
+
+
+def _area_basis(a, b):
+    """rebase.area_basis: U_area = unit_size_um[0] x unit_size_um[1] of each product (the value of `products.<role>`)."""
+    areas = []
+    for side in (a, b):
+        unit = side['product'].unit_size_um
+        areas.append(None if unit is None else unit[0] * unit[1])
+    u_a, u_b = areas
+    if u_a is None or u_b is None or u_a <= 0 or u_b <= 0:
+        return {'status': 'unavailable', 'reasons': ['unit_size_missing'], 'u_area_a': u_a, 'u_area_b': u_b,
+                'ratio': None}
+    return {'status': 'available', 'reasons': [], 'u_area_a': u_a, 'u_area_b': u_b, 'ratio': u_a / u_b}
+
+
+def _rebase_kind(kind, a, b, tables, delta_vi, ratio=None):
+    """One kind's rebase (S0..S4, plus S1a when `ratio` = U_area,A / U_area,B is given). Returns a dict: state,
+    items, cno, missing, reasons, check."""
     ta = tables['reference'][kind]
     reasons = []
     for role, side in (('reference', a), ('target', b)):
@@ -884,6 +905,8 @@ def _rebase_kind(kind, a, b, tables, delta_vi):
                 l2.append(v2)
         rec['lambda_s1'] = None if bad else math.fsum(l1)
         rec['lambda_s2'] = None if bad else math.fsum(l2)
+        if ratio is not None:
+            rec['lambda_s1a'] = None if bad else math.fsum([_scale_area(v, ratio) for v in l1])
         if bad or rec['lambda_a'] is None or rec['lambda_b'] is None:
             failed = True
         recs.append(rec)
@@ -920,6 +943,7 @@ def _rebase_kind(kind, a, b, tables, delta_vi):
                    'lambda_a': 0.0 if ra is None else ra['lambda'], 'lambda_b': 0.0 if rb is None else rb['lambda'],
                    'lambda_s1': 0.0 if rb is None else m1[key]['lambda'],
                    'lambda_s2': 0.0 if rb is None else m2[key]['lambda'],
+                   **({} if ratio is None else {'lambda_s1a': 0.0 if rb is None else _scale_area(m1[key]['lambda'], ratio)}),
                    'by_size': [] if rb is None else [{'diameter_um': r['diameter_um'], 'density_a': r['density_a'],
                                                       'area_csv_um2': r['area_csv_um2'], 'lambda_s1': r['lambda'],
                                                       'lambda_s2': s['lambda']}
@@ -934,6 +958,7 @@ def _rebase_kind(kind, a, b, tables, delta_vi):
         # a (kind, density layer, diameter) of B with area but no density in A: this kind is not converted
         for rec in recs + cno_recs:
             rec['ca_delta'] = rec['f_delta'] = rec['density_delta'] = None
+            rec['design_area_delta'] = rec['unit_size_delta'] = None
         result.update(items=recs, cno=cno_recs)
         why = sorted({f'reference_{m["reason"]}:{kind}:{m["density_layer"]}' for m in missing})
         result['reasons'] = why or ['item_lambda_unavailable']
@@ -946,14 +971,26 @@ def _rebase_kind(kind, a, b, tables, delta_vi):
              'S4': b['lam']['line'] if kind == 'line' else b['x_pixel']}
     lam_x['S3'] = lam_x['S2']
     crp_of = {'S0': crp_a, 'S1': crp_a, 'S2': crp_a, 'S3': crp_b, 'S4': crp_b}
+    d1a = cno1a = None
+    if ratio is not None:
+        d1a = _scale_area(d1, ratio)
+        cno1a = _scale_area(cno_tot['S1'], ratio) if kind == 'pixel' else None
+        lam_x['S1a'] = d1a if kind == 'line' else d1a + cno1a
+        crp_of['S1a'] = crp_a
     vi = {name: _g(lam_x[name]) / crp_of[name] / divisor for name in lam_x}
     vi['S0'], vi['S4'] = a['vi'][kind], b['vi'][kind]
     state = {'status': 'available', 'reasons': []}
-    for name in ('S0', 'S1', 'S2', 'S3', 'S4') if kind == 'pixel' else ('S0', 'S1', 'S2', 'S4'):
+    order = ('S0', 'S1a', 'S1', 'S2', 'S3', 'S4') if kind == 'pixel' else ('S0', 'S1a', 'S1', 'S2', 'S4')
+    for name in order:
+        if name == 'S1a' and ratio is None:
+            continue
         entry = {'x': lam_x[name], 'vi': vi[name]}
         if kind == 'pixel':
             entry['crp'] = crp_of[name]
-        if name == 'S1':
+        if name == 'S1a':
+            entry['lambda'] = d1a
+            entry['lambda_cno'] = cno1a if kind == 'pixel' else None
+        elif name == 'S1':
             entry['lambda'] = d1
             entry['lambda_cno'] = cno_tot['S1'] if kind == 'pixel' else None
         elif name in ('S2', 'S3'):
@@ -993,7 +1030,30 @@ def _rebase_kind(kind, a, b, tables, delta_vi):
         segments['crp'] = {'sum': crp_value, 'delta_vi': vi['S3'] - vi['S2']}
         sums['crp'] = crp_value
         checks['crp'] = _cmp(crp_value, vi['S3'] - vi['S2'])
-    segments = {name: segments[name] for name in ('ca', 'f', 'crp', 'density') if name in segments}
+    area_sums = {}
+    if ratio is not None:
+        # K3: the old segment `ca` is kept; it is also split into design_area (S0 -> S1a) and unit_size (S1a -> S1).
+        # These two are not part of sum_of_segments (that would count the CA change twice).
+        area_seg = {'design_area': ('S0', 'S1a', 'lambda_a', 'lambda_s1a'),
+                    'unit_size': ('S1a', 'S1', 'lambda_s1a', 'lambda_s1')}
+        for name, (src, dst, l_from, l_to) in area_seg.items():
+            slope, method = _slope_g(lam_x[src], lam_x[dst])
+            value = slope / (crp_a * divisor)
+            for rec in recs + cno_recs:
+                rec[f'{name}_delta'] = value * (rec[l_to] - rec[l_from])
+            item_values = [rec[f'{name}_delta'] for rec in recs]
+            cno_values = [rec[f'{name}_delta'] for rec in cno_recs]
+            total = math.fsum(item_values + cno_values)
+            area_sums[name] = total
+            segments[name] = {'slope': {'value': value, 'method': method}, 'items_sum': math.fsum(item_values),
+                              'cno_sum': math.fsum(cno_values) if kind == 'pixel' else None, 'sum': total,
+                              'delta_vi': vi[dst] - vi[src]}
+            checks[name] = _cmp(total, vi[dst] - vi[src])
+    else:
+        for rec in recs + cno_recs:
+            rec['design_area_delta'] = rec['unit_size_delta'] = None
+    segments = {name: segments[name] for name in ('ca', 'design_area', 'unit_size', 'f', 'crp', 'density')
+                if name in segments}
     state['segments'] = segments
     state['sum_of_segments'] = math.fsum(sums.values())
     state['delta'] = delta_vi
@@ -1003,6 +1063,11 @@ def _rebase_kind(kind, a, b, tables, delta_vi):
     if kind == 'pixel':
         check['s1_cno'] = _cmp(math.fsum(r['lambda_s1'] for r in cno_recs), cno_tot['S1'])
         check['s2_cno'] = _cmp(math.fsum(r['lambda_s2'] for r in cno_recs), cno_tot['S2'])
+    if ratio is not None:
+        check['s1a_lambda'] = _cmp(math.fsum(r['lambda_s1a'] for r in recs), d1a)
+        if kind == 'pixel':
+            check['s1a_cno'] = _cmp(math.fsum(r['lambda_s1a'] for r in cno_recs), cno1a)
+        check['area_split'] = _cmp(area_sums['design_area'] + area_sums['unit_size'], sums['ca'])
     statuses = {check[n]['status'] for n in check if n != 'segments'} | {c['status'] for c in checks.values()}
     check['status'] = 'failed' if 'failed' in statuses else ('not_evaluated' if 'not_evaluated' in statuses else 'passed')
     result.update(state=state, items=recs, cno=cno_recs, check=check)
@@ -1035,9 +1100,10 @@ def _rebase(a, b, tables, delta):
             'crp': side['crp'],
             'density_sha256': {kind: tables[role][kind].sha256 for kind in KINDS}}
     coefficients['ratios'] = {kind: _ratio_table(a, b, kind) for kind in KINDS}
+    area_basis = _area_basis(a, b)
     states, items, cno, missing, reasons, checks = {}, [], [], [], [], {}
     for kind in KINDS:
-        got = _rebase_kind(kind, a, b, tables, delta['indicators'][f'delta_vi_{kind}'])
+        got = _rebase_kind(kind, a, b, tables, delta['indicators'][f'delta_vi_{kind}'], area_basis['ratio'])
         states[kind] = got['state']
         items.extend(got['items'])
         if kind == 'pixel':
@@ -1053,7 +1119,7 @@ def _rebase(a, b, tables, delta):
     missing.sort(key=lambda m: (m['scope'], m.get('kind', ''), str(m.get('item_id', m.get('case_name', ''))),
                                 m['density_layer'], m['diameter_um']))
     return {'status': status, 'reasons': sorted(set(reasons)), 'missing': missing, 'coefficients': coefficients,
-            'states': states, 'items': items, 'cno': cno, 'check': checks}
+            'area_basis': area_basis, 'states': states, 'items': items, 'cno': cno, 'check': checks}
 
 
 def _layer_order(cfg, sides):

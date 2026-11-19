@@ -43,8 +43,10 @@ def run2(tmp, ref, tgt, a=None, b=None, ref_cno=None, tgt_cno=None, stack=None, 
            'model_groups': {group: {'glass_area': {'value': glass, 'unit': 'um2'}, 'weight_line': weights[0],
                                     'weight_pixel': weights[1]}
                             for group, (_l, _p, glass, weights) in groups.items()},
-           'products': {'reference': {'model_group': a['group'], 'resolution': a['res'], 'hotspot_root': str(ref_root)},
-                        'target': {'model_group': b['group'], 'resolution': b['res'], 'hotspot_root': str(tgt_root)}}}
+           'products': {'reference': {'model_group': a['group'], 'resolution': a['res'], 'hotspot_root': str(ref_root),
+                                      **({'unit_size_um': a['unit']} if a.get('unit') else {})},
+                        'target': {'model_group': b['group'], 'resolution': b['res'], 'hotspot_root': str(tgt_root),
+                                   **({'unit_size_um': b['unit']} if b.get('unit') else {})}}}
     if diameters is not None:
         cfg['lambda_diameters_um'] = diameters
     (tmp / 'compare2.yaml').write_text(yaml.safe_dump(cfg), encoding='utf-8')
@@ -467,3 +469,169 @@ def test_layer_order_ignores_layer_stack_rows_that_are_not_mappings():
     """R9:5: a stray string or null in layer_stack is skipped, the other rows still count."""
     cfg = {'reference': {'condition_assignment': {'layer_stack': ['SD1', None, 3, {'actual_layer': 'SD2', 'stack_order': 1}]}}}
     assert compare2._layer_order(cfg, [_fake_side(['SD1', 'SD2'])]) == ['SD2', 'SD1']
+
+
+# ---- rnarr/T10: area basis (S1a, design_area, unit_size) ----------------------------------------------------------------
+
+NEW_SEGMENTS = ('design_area', 'unit_size')
+OTHER = dict(group='auto', res=[7, 9], glass=40.0)   # a different group: F, CRP and glass differ from SAME
+
+
+def old_view(rebase):
+    """The rebase block without any key added by T10."""
+    out = json.loads(json.dumps(rebase))
+    out.pop('area_basis', None)
+    for state in out['states'].values():
+        state.pop('S1a', None)
+        for name in NEW_SEGMENTS:
+            state.get('segments', {}).pop(name, None)
+    for row in out['items'] + out['cno']:
+        for key in ('lambda_s1a', 'design_area_delta', 'unit_size_delta'):
+            row.pop(key, None)
+    for check in out['check'].values():
+        if isinstance(check, dict):
+            for key in ('s1a_lambda', 's1a_cno', 'area_split'):
+                check.pop(key, None)
+            for name in NEW_SEGMENTS:
+                check.get('segments', {}).pop(name, None)
+    return out
+
+
+def assert_area_closed(doc):
+    assert_closed(doc)
+    assert doc['rebase']['area_basis']['status'] == 'available'
+    for kind in KINDS:
+        state = doc['rebase']['states'][kind]
+        seg = state['segments']
+        assert seg['design_area']['sum'] + seg['unit_size']['sum'] == pytest.approx(seg['ca']['sum'], abs=1e-12)
+        for name in NEW_SEGMENTS:
+            cno = math.fsum(r[f'{name}_delta'] for r in doc['rebase']['cno']) if kind == 'pixel' else 0.0
+            assert item_total(doc, kind, name) + cno == pytest.approx(seg[name]['delta_vi'], abs=1e-12)
+        assert state['S1a']['vi'] - state['S0']['vi'] == pytest.approx(seg['design_area']['delta_vi'], abs=1e-15)
+        assert doc['rebase']['check'][kind]['area_split']['status'] == 'passed'
+        assert doc['rebase']['check'][kind]['s1a_lambda']['status'] == 'passed'
+
+
+@pytest.mark.parametrize('unit_a, unit_b', [([10, 10], [10, 10]), ([10, 20], [20, 10]), ([5, 8], [8, 5])])
+def test_equal_unit_area_makes_s1a_bit_identical_to_s1(tmp_path, unit_a, unit_b):
+    ref, tgt = two_sides()
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(unit=unit_a), b=dict(OTHER, unit=unit_b))
+    assert code == 0
+    assert_area_closed(doc)
+    basis = doc['rebase']['area_basis']
+    assert basis['ratio'] == 1.0 and basis['u_area_a'] == basis['u_area_b']
+    for kind in KINDS:
+        state = doc['rebase']['states'][kind]
+        assert state['S1a'] == dict(state['S1'])           # x, vi, lambda, lambda_cno (and crp) bit identical
+        seg = state['segments']
+        assert seg['design_area'] == seg['ca']
+        assert seg['unit_size']['sum'] == 0.0 and seg['unit_size']['items_sum'] == 0.0
+    for row in doc['rebase']['items']:
+        assert row['lambda_s1a'] == row['lambda_s1']
+        assert row['design_area_delta'] == row['ca_delta'] and row['unit_size_delta'] == 0.0
+
+
+def test_non_square_units_scale_s1a_by_the_area_ratio_and_keep_the_old_ca_segment(tmp_path):
+    ref, tgt = two_sides()
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(unit=[10, 20]), b=dict(OTHER, unit=[30, 10]),
+                         ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: CNO_CSV})
+    assert code == 0
+    assert_area_closed(doc)
+    basis = doc['rebase']['area_basis']
+    assert basis == {'status': 'available', 'reasons': [], 'u_area_a': 200, 'u_area_b': 300, 'ratio': 200 / 300}
+    for kind in KINDS:
+        state = doc['rebase']['states'][kind]
+        assert state['S1a']['x'] == pytest.approx(state['S1']['x'] * basis['ratio'], rel=1e-12)
+        assert state['S1a']['lambda'] == state['S1']['lambda'] * basis['ratio']
+        assert list(state['segments']) == [n for n in ('ca', 'design_area', 'unit_size', 'f', 'crp', 'density')
+                                           if n in state['segments']]
+        assert state['segments']['unit_size']['sum'] != 0.0 and state['segments']['design_area']['sum'] != 0.0
+        # the sum of segments still counts the CA change once
+        assert state['sum_of_segments'] == pytest.approx(doc['delta']['indicators'][f'delta_vi_{kind}'], abs=1e-12)
+    for row in doc['rebase']['items']:
+        assert row['ca_delta'] is not None and row['design_area_delta'] is not None
+    (cno,) = doc['rebase']['cno']
+    assert cno['lambda_s1a'] == pytest.approx(cno['lambda_s1'] * basis['ratio'], rel=1e-12)
+    assert segs(doc, 'pixel')['design_area']['cno_sum'] == pytest.approx(cno['design_area_delta'], abs=1e-15)
+    assert segs(doc, 'pixel')['unit_size']['cno_sum'] == pytest.approx(cno['unit_size_delta'], abs=1e-15)
+    assert segs(doc, 'line')['design_area']['cno_sum'] is None
+
+
+def test_document_example_proportions(tmp_path):
+    """A 50 um unit, N 1000k, B 60 um unit, N 700k: design per area follows CA x U_A/U_B, screen area is +0.8 %."""
+    ref, tgt = two_sides()
+    code, doc, _out = go(tmp_path, ref, tgt, a=dict(res=[100, 40], unit=[50, 50]), b=dict(res=[70, 40], unit=[60, 60]))
+    assert code == 0
+    assert_area_closed(doc)
+    line = doc['rebase']['states']['line']
+    ratio = 2500 / 3600
+    assert doc['rebase']['area_basis']['ratio'] == ratio
+    assert line['S1a']['x'] / line['S0']['x'] == pytest.approx(line['S1']['x'] / line['S0']['x'] * ratio, rel=1e-12)
+    assert line['S4']['x'] / line['S1a']['x'] == pytest.approx(1.008, rel=1e-9)   # (U_B x N_B) / (U_A x N_A)
+    assert line['S2']['x'] / line['S1a']['x'] == pytest.approx(1.008, rel=1e-9)
+
+
+def test_pixel_crp_change_stays_after_the_area_segments_and_line_ignores_crp(tmp_path):
+    ref, tgt = two_sides()
+    code, doc, _out = go(sub(tmp_path, 'x'), ref, tgt, a=dict(unit=[10, 10]), b=dict(group='auto', res=[10, 5], unit=[12, 10]))
+    assert code == 0
+    assert_area_closed(doc)
+    pixel = doc['rebase']['states']['pixel']
+    assert pixel['S1a']['crp'] == 1.0 and pixel['segments']['crp']['sum'] != 0.0
+    assert 'crp' not in doc['rebase']['states']['line']['S1a']
+    # line: both sides crp 2.92 against both sides crp 1 gives the same line states, S1a included
+    code, with_crp, _o = go(sub(tmp_path, 'a'), ref, tgt, a=dict(group='auto', res=[10, 5], unit=[10, 10]),
+                            b=dict(group='auto', res=[10, 5], unit=[12, 10]))
+    code, without, _o = go(sub(tmp_path, 'b'), ref, tgt, a=dict(unit=[10, 10]), b=dict(unit=[12, 10]))
+    assert_area_closed(with_crp)
+    assert with_crp['rebase']['states']['line'] == without['rebase']['states']['line']
+
+
+def test_one_kind_not_converted_has_no_s1a_but_the_other_keeps_it(tmp_path):
+    only_l1 = (base_cases(GH=None, IJ=None), PAIRS)
+    full = (base_cases(), PAIRS)
+    code, doc, _out = go(tmp_path, only_l1, full, a=dict(line={'P1': DENS_LINE['P1']}, unit=[10, 10]),
+                         b=dict(group='watch', res=[10, 5], unit=[20, 10]))
+    rebase = doc['rebase']
+    assert rebase['area_basis']['status'] == 'available'
+    assert rebase['states']['line']['status'] == 'unavailable' and 'S1a' not in rebase['states']['line']
+    assert all(i['design_area_delta'] is None and i['unit_size_delta'] is None
+               for i in rebase['items'] if i['class'] == 'line')
+    assert 'S1a' in rebase['states']['pixel'] and 'design_area' in rebase['states']['pixel']['segments']
+    assert rebase['check']['pixel']['area_split']['status'] == 'passed'
+
+
+@pytest.mark.parametrize('units', [(None, None), ([10, 10], None), (None, [10, 10])])
+def test_missing_unit_size_makes_area_basis_unavailable_and_changes_nothing_else(tmp_path, units):
+    ref, tgt = two_sides()
+    code, doc, _out = go(sub(tmp_path, 'x'), ref, tgt, a=dict(unit=units[0]), b=dict(OTHER, unit=units[1]),
+                         ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: CNO_CSV})
+    code0, base, _o = go(sub(tmp_path, 'y'), ref, tgt, b=OTHER, ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: CNO_CSV})
+    assert code == code0 == 0
+    basis = doc['rebase']['area_basis']
+    assert basis['status'] == 'unavailable' and basis['reasons'] == ['unit_size_missing'] and basis['ratio'] is None
+    for kind in KINDS:
+        assert 'S1a' not in doc['rebase']['states'][kind]
+        assert not set(NEW_SEGMENTS) & set(segs(doc, kind))
+    assert all(r['design_area_delta'] is None and r['unit_size_delta'] is None and 'lambda_s1a' not in r
+               for r in doc['rebase']['items'] + doc['rebase']['cno'])
+    assert old_view(doc['rebase']) == old_view(base['rebase'])
+    assert doc['rebase']['status'] == 'available' and doc['rebase']['check']['status'] == 'passed'
+
+
+def test_new_keys_are_the_only_change_and_runs_are_reproducible(tmp_path):
+    ref, tgt = two_sides()
+    kwargs = dict(b=OTHER, ref_cno={CNO_NAME: CNO_CSV}, tgt_cno={CNO_NAME: CNO_CSV})
+    code, plain, out_plain = go(sub(tmp_path, 'p'), ref, tgt, **kwargs)
+    code2, doc, out = go(sub(tmp_path, 'u'), ref, tgt, a=dict(unit=[10, 20]), **dict(kwargs, b=dict(OTHER, unit=[30, 10])))
+    assert code == code2 == 0
+    assert old_view(doc['rebase']) == old_view(plain['rebase'])
+    for name in ('compare2_summary.csv', 'compare2_layers.csv', 'compare2_conditions.csv', 'compare2_cno.csv'):
+        assert (out / name).read_bytes().replace(str(tmp_path / 'u').encode(), b'T') == \
+            (out_plain / name).read_bytes().replace(str(tmp_path / 'p').encode(), b'T'), name
+    texts = []
+    for name in ('one', 'two'):
+        folder = sub(tmp_path, name)
+        code3, _doc, out3 = go(folder, ref, tgt, a=dict(unit=[10, 20]), b=dict(OTHER, unit=[30, 10]))
+        texts.append(re.sub(r'[0-9a-f]{64}', 'H', (out3 / 'compare2.json').read_text(encoding='utf-8').replace(str(folder), 'T')))
+    assert texts[0] == texts[1]
