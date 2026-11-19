@@ -877,7 +877,10 @@ SUMMARY_RULES = {
     'k_share': K_SHARE, 'concentrated_k80_max': CONCENTRATED_K80, 'dispersed_k80_ratio': DISPERSED_RATIO,
     'min_atoms': MIN_ATOMS, 'top_groups': TOP_GROUPS, 'top_design': TOP_DESIGN,
     'no_change_abs': NO_CHANGE_ABS, 'no_change_rel': NO_CHANGE_REL,
-    'negligible': {'abs': NO_CHANGE_ABS, 'rel': NO_CHANGE_REL, 'rule': '|x| <= abs + rel x |vi_A(kind)|'}}
+    'negligible': {'abs': NO_CHANGE_ABS, 'rel': NO_CHANGE_REL, 'rule': '|x| <= abs + rel x |vi_A(kind)|'},
+    # R17:5: what the numbers of a bundle and of the sensitivity grid count
+    'hub_sensitivity_atoms': 'every atom that the setting would put into a hub bundle (the partner atoms that did not '
+                             'change are included); bundle.hub.changed_count counts only the changed partners'}
 
 
 def _negligible_limit(vi_a):
@@ -976,6 +979,10 @@ def _rebase_summary(rebase, basis, pair_rows, cno_rows, totals):
         total = _check(_osum(values.values()), totals[kind]['delta'])
         checks[kind] = {'status': _worst([c['status'] for c in per.values()] + [total['status']]),
                         'segments': per, 'total': total}
+        if len(extra) == 2:        # R17:4: basis area only; design_area + unit_size must give the design segment
+            split = _check(segments['design_area']['sum'] + segments['unit_size']['sum'], values['ca'])
+            checks[kind]['area_split'] = split
+            checks[kind]['status'] = _worst([checks[kind]['status'], split['status']])
         states.append(checks[kind]['status'])
         summary[kind] = entry
     checks['status'] = _worst(states)
@@ -1277,7 +1284,7 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
                         'share': (math.fsum(per_kind[kind]['abs']) / g[kind]) if g[kind] else None})
                 for kind in KINDS}})
 
-    g = {kind: kstat[kind][2] for kind in KINDS}
+    atom_d = {a['id']: a['d'] for a in live}
     blist, nets = [], {kind: [] for kind in KINDS}
     for key, bucket in buckets.items():
         out = {'id': ids[key], 'key': list(key), 'why': sorted(bucket['why']),
@@ -1370,7 +1377,19 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         out['rows'] = lines
         out['partners'] = sorted({a['names'][0] if a['names'][1] == key[1] else a['names'][1]
                                   for a in pair_atoms if key[0] != 'p' and len(a['names']) == 2})
-        out['partner_count'] = len(out['partners'])
+        out['partner_count'] = len(out['partners'])       # every partner inside the bundle (changed or not)
+        out['hub'] = None
+        if key[0] == 'hub':
+            # R17:1: the judgement of the default setting. `partner_count` above counts every partner whose atom sits
+            # in the bundle; these numbers count only the partners that really changed.
+            end = (key[1], key[2])
+            mine = judged.get(end, {})
+            nets_by = {p: math.fsum(atom_d[i] for i in ids_) for p, ids_ in mine.items()}
+            out['hub'] = {'changed_partners': sorted(mine), 'changed_count': len(mine),
+                          'partner_total': len(hubs[end]['all']),
+                          'fraction': len(mine) / len(hubs[end]['all']),
+                          'increase': sum(1 for v in nets_by.values() if v > 0),
+                          'decrease': sum(1 for v in nets_by.values() if v < 0)}
         top = {}
         for kind in KINDS:
             parts = {name: math.fsum(values) for name, values in partner_abs[kind].items()}

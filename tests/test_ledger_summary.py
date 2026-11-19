@@ -168,6 +168,13 @@ def test_b6_the_fraction_condition_keeps_a_partly_changed_electrode_from_being_a
     (tmp_path / 'off').mkdir()
     off, _ = run(tmp_path / 'off', pairs, dl1=dl1_all(names))
     assert ('hub', 'Data', 'SD1') in bundles(off) and off['summary']['rules']['hub_min_fraction'] == 0.0
+    hub = bundles(off)[('hub', 'Data', 'SD1')]                  # R17:1: 17 unchanged partners are inside, not changed
+    assert hub['partner_count'] == 20 and hub['hub']['changed_count'] == 3
+    assert hub['hub']['changed_partners'] == ['C0', 'C1', 'C2'] and hub['hub']['partner_total'] == 20
+    assert hub['hub']['fraction'] == pytest.approx(0.15)
+    assert hub['hub']['increase'] == 3 and hub['hub']['decrease'] == 0
+    assert 'hub_sensitivity_atoms' in off['summary']['rules']
+    assert all(b['hub'] is None for b in bundles(doc).values())    # the default run has no hub bundle
 
 
 def test_b6b_the_share_condition_drops_tiny_partner_changes(tmp_path, monkeypatch):
@@ -182,11 +189,34 @@ def test_b6b_the_share_condition_drops_tiny_partner_changes(tmp_path, monkeypatc
     doc, _ = run(tmp_path / 'b', pairs, dl1=dl1_all(names))        # the three tiny changes are < 1 % of G
     got = bundles(doc)
     assert ('hub', 'S', 'SD1') in got and got[('hub', 'S', 'SD1')]['partner_count'] == 6   # D, E, F + the tiny ones that
+    hub = got[('hub', 'S', 'SD1')]['hub']                          # R17:1: the tiny partners are not changed partners
+    assert hub['changed_partners'] == ['D', 'E', 'F'] and hub['changed_count'] == 3 and hub['partner_total'] == 6
+    assert hub['fraction'] == pytest.approx(0.5) and hub['increase'] == 3 and hub['decrease'] == 0
     only_tiny = hub_pairs('S', ['A', 'B', 'C'], 'T', .010, .010 * (1 + 1e-6)) + [up('Big', ('X', 'Y'), None, .010, .5)]
     (tmp_path / 'c').mkdir()
     doc, _ = run(tmp_path / 'c', only_tiny, dl1=dl1_all(['S', 'A', 'B', 'C', 'X', 'Y']))
     assert ('hub', 'S', 'SD1') not in bundles(doc)                 # 3 tiny changes only: not a hub with share 0.01
     assert doc['summary']['rules']['hub_min_share'] == 0.01
+
+
+def test_b6d_hub_with_mixed_signs_counts_changed_partners_by_direction(tmp_path):
+    names = ['S', 'U0', 'U1', 'D0', 'D1', 'Z0']
+    pairs = (hub_pairs('S', ['U0', 'U1'], 'U') + hub_pairs('S', ['D0', 'D1'], 'D', lam_a=.020, lam_b=.010) +
+             [up('Q', ('S', 'Z0'), None, .010, .010)])
+    doc, _ = run(tmp_path, pairs, dl1=dl1_all(names))
+    hub = bundles(doc)[('hub', 'S', 'SD1')]
+    assert hub['hub'] == {'changed_partners': ['D0', 'D1', 'U0', 'U1'], 'changed_count': 4, 'partner_total': 5,
+                          'fraction': pytest.approx(0.8), 'increase': 2, 'decrease': 2}
+    assert hub['partner_count'] == 5
+
+
+def test_b6e_unverifiable_electrodes_still_judge_a_hub_as_unchanged_state(tmp_path):
+    names = ['S', 'P0', 'P1', 'P2']
+    pairs = hub_pairs('S', ['P0', 'P1', 'P2'], 'H')
+    doc, _ = run(tmp_path, pairs)                                  # no DL1 inventory: every electrode is unverifiable
+    hub = bundles(doc)[('hub', 'S', 'SD1')]
+    assert hub['layer_state_unverified'] is True
+    assert hub['hub']['changed_count'] == 3 and hub['hub']['partner_total'] == 3 and hub['hub']['increase'] == 3
 
 
 def test_b6c_hub_sensitivity_has_six_settings_and_leaves_the_real_assignment_alone(tmp_path):
@@ -1019,6 +1049,9 @@ def test_k3_area_basis_splits_the_design_segment_and_the_top_pairs_use_it(tmp_pa
             row = [r for r in doc['pairs'] if r['pair_id'] == entry['pair_id']][0]
             mine = [i for i in row['items'] if i['class'] == kind]
             assert entry['design_delta'] == pytest.approx(math.fsum(i['design_area_delta'] for i in mine), abs=1e-15)
+    for kind in ('line', 'pixel'):                      # R17:4
+        split = doc['checks']['rebase'][kind]['area_split']
+        assert split['status'] == 'passed' and split['sum'] == pytest.approx(split['target'], abs=1e-12)
     some = next(i for i in items.values() if i['design_area_delta'] is not None)
     assert some['ca_delta'] is not None and some['unit_size_delta'] is not None   # the old ca_delta stays
     assert doc['summary']['rebase']['line']['states']['S1a']['x'] > 0

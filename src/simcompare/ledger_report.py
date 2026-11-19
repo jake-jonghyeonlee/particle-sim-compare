@@ -682,7 +682,11 @@ def unit_first(b):
     if t == 'hub':
         if n == 0:                      # R10:6: a hub with no partner is one electrode with itself at both ends
             return '%s 전극의 %s 에서 이 전극 안의 불량이 변했습니다.' % (e, layer)
-        inc, dec = b['atoms']['increase'], b['atoms']['decrease']
+        hub = b.get('hub')              # R17:1: the judged partners; an older ledger has no `hub` and keeps the bundle numbers
+        if hub:
+            n, inc, dec = hub['changed_count'], hub['increase'], hub['decrease']
+        else:
+            inc, dec = b['atoms']['increase'], b['atoms']['decrease']
         if inc and dec:                 # R8:7: the signs are mixed
             return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 변했습니다(늘어난 %d · 줄어든 %d).' % (e, layer, n, inc, dec)
         return '%s 전극의 %s 에서 상대 %d 개와의 불량이 함께 %s.' % (e, layer, n, '늘었습니다' if _bundle_up(b) else '줄었습니다')
