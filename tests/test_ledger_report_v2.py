@@ -453,6 +453,20 @@ def test_section_2_without_dl1_says_unknown_once_in_a_band(tmp_path):
     assert '확인 불가 <b>' in s2                                  # the status of the rows is `unverifiable`
 
 
+def test_epres_complete_list_with_an_unverifiable_electrode_and_a_value_without_folder(tmp_path):
+    """epres/T1 D6: the band names the DL1 folder (not a missing list); a value on a side without the folder is shown, marked."""
+    doc = corr_doc()
+    _el(doc, 'Vint').update(status='unverifiable', present_a=False, present_b=False, layer_state={}, layer_state_status='unverified',
+                            moved=None)
+    _el(doc, 'Scan2').update(present_a=False)
+    _el(doc, 'Scan2')['line']['a'] = 0.0042
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+    assert s2.count('id="band-no-dl1"') == 1 and 'DL1 전극 폴더에 없는 전극 1 개는' in s2
+    assert 'DL1 전극 목록이 없어' not in s2 and 'id="corr-observed"' not in s2
+    assert page.count('(DL1 폴더 없음)') >= 1
+
+
 def test_electrode_name_colour_is_red_for_up_blue_for_down_with_four_steps(tmp_path):
     doc = corr_doc()
     for name, line, pixel in (('Data', 0.5, None), ('Scan1', -7.0, None), ('Scan2', 30.0, 0.0), ('EM', 0.0, 0.0), ('Anode', None, None),

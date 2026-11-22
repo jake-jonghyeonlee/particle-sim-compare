@@ -108,6 +108,62 @@ def test_a4_two_new_electrodes_make_a_pair_bundle(tmp_path):
     assert list(got) == [('p', 'B1', 'SD1')] and got[('p', 'B1', 'SD1')]['why'] == ['both_new_removed']
 
 
+def test_epres_zero_area_in_a_makes_the_one_sided_electrode_new_not_layer_change(tmp_path):
+    """epres/T1 real-data case: A has area-0 conditions for X1 but no X1 folder; B has the folder and a value."""
+    dl1 = dl1_all(['E1', 'X1', 'X2'])
+    del dl1['reference']['X1']
+    pairs = [pair('N1', ['E1', 'X1'], 'line', [lateral(['E1', 'X1'], 0.0, 'SD1')], [lateral(['E1', 'X1'], .01, 'SD1')]),
+             pair('N2', ['E1', 'X2'], 'line', [lateral(['E1', 'X2'], .01, 'SD1')], [lateral(['E1', 'X2'], .02, 'SD1')])]
+    doc, _ = run(tmp_path, pairs, dl1=dl1)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['X1']['status'] == 'new' and elec['X1']['present_a'] is False
+    got = bundles(doc)
+    assert got[('ele', 'X1')]['type'] == 'electrode_new'
+    assert doc['summary']['bundles']['types']['line']['electrode_new']['count'] == 1
+    assert doc['summary']['bundles']['types']['line'].get('layer_change', {'count': 0})['count'] == 0
+    warn = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert [(w['role'], w['electrodes'], w['electrodes_with_value']) for w in warn] == [('reference', ['X1'], [])]
+    all_passed(doc)
+
+
+def test_epres_symmetric_removed_electrode_bundle(tmp_path):
+    dl1 = dl1_all(['E1', 'X1', 'X2'])
+    del dl1['target']['X1']
+    pairs = [pair('N1', ['E1', 'X1'], 'line', [lateral(['E1', 'X1'], .01, 'SD1')], [lateral(['E1', 'X1'], 0.0, 'SD1')]),
+             pair('N2', ['E1', 'X2'], 'line', [lateral(['E1', 'X2'], .01, 'SD1')], [lateral(['E1', 'X2'], .02, 'SD1')])]
+    doc, _ = run(tmp_path, pairs, dl1=dl1)
+    assert bundles(doc)[('ele', 'X1')]['type'] == 'electrode_removed'
+    assert doc['summary']['bundles']['types']['line']['electrode_removed']['count'] == 1
+    all_passed(doc)
+
+
+def test_epres_new_plus_removed_ends_make_a_pair_bundle(tmp_path):
+    dl1 = dl1_all(['E1', 'N1', 'R1'])
+    del dl1['reference']['N1']
+    del dl1['target']['R1']
+    pairs = [pair('B1', ['N1', 'R1'], 'line', [lateral(['N1', 'R1'], 0.0, 'SD1')], [lateral(['N1', 'R1'], .01, 'SD1')])]
+    doc, _ = run(tmp_path, pairs, dl1=dl1)
+    got = bundles(doc)
+    assert list(got) == [('p', 'B1', 'SD1')] and got[('p', 'B1', 'SD1')]['why'] == ['both_new_removed']
+    all_passed(doc)
+
+
+def test_epres_unverifiable_end_plus_new_end_goes_to_the_new_electrode(tmp_path):
+    dl1 = dl1_all(['E1', 'N1'])
+    del dl1['reference']['N1']
+    pairs = [pair('B1', ['N1', 'Ghost'], 'line', [lateral(['N1', 'Ghost'], .005, 'SD1')],
+                  [lateral(['N1', 'Ghost'], .01, 'SD1')]),
+             pair('B2', ['E1', 'Ghost'], 'line', [lateral(['E1', 'Ghost'], .005, 'SD1')],
+                  [lateral(['E1', 'Ghost'], .006, 'SD1')])]
+    doc, _ = run(tmp_path, pairs, dl1=dl1)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['Ghost']['status'] == 'unverifiable' and elec['N1']['status'] == 'new'
+    got = bundles(doc)
+    assert ('ele', 'N1') in got and got[('ele', 'N1')]['type'] == 'electrode_new'
+    assert got[('ele', 'N1')]['layer_state_unverified'] is False          # owner N1 is verified; Ghost does not own it
+    all_passed(doc)
+
+
 def test_b_hub_takes_its_partners_and_the_larger_hub_wins(tmp_path):
     partners = ['P0', 'P1', 'P2', 'P3', 'P4']
     names = ['Scan3'] + partners + ['Q1', 'Q2']

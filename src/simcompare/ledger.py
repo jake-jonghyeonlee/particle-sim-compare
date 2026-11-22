@@ -259,14 +259,16 @@ def _pair_kinds(sides):
 # ---- electrode inventory (README 8, X3) ------------------------------------------------------------------------------
 
 def _inventory(cfg2, role, side):
-    from .adapters.electrode_png import scan_electrode_shapes
+    from .adapters.electrode_png import scan_electrode_folders, scan_electrode_shapes
     product = getattr(cfg2, role)
-    shapes = {}
+    shapes, folders = {}, []
     if cfg2.report.dl1_root is not None and product.dl1_model is not None:
         shapes = scan_electrode_shapes(cfg2.report.dl1_root, product.dl1_model)
-    if shapes:
-        names = sorted(shapes)
-        layers = {name: sorted(shapes[name]) for name in names}
+        folders = scan_electrode_folders(cfg2.report.dl1_root, product.dl1_model)
+    if shapes or folders:
+        # epres/T1: presence = electrode folder name (a folder without PNG still exists; its layer list is empty)
+        names = sorted(set(folders) | set(shapes))
+        layers = {name: sorted(shapes.get(name, ())) for name in names}
         return {'electrodes': names, 'layers': layers, 'source': 'dl1', 'status': 'complete',
                 'sha256': _sha256_json({'electrodes': names, 'layers': layers})}
     names = sorted(side.observed)
@@ -308,6 +310,8 @@ def build_ledger(doc, doc_sha256, cfg2):
     # electrode inventories, presence, conflicts
     inventory = {role: _inventory(cfg2, role, sides[role]) for role in ROLES}
     warnings, present = [], {}
+    complete = all(inventory[role]['status'] == 'complete' for role in ROLES)
+    conflicts = {}                                  # role -> warning dict; electrodes_with_value is filled later (D4)
     for role in ROLES:
         inv, side = inventory[role], sides[role]
         if inv['status'] == 'incomplete':
@@ -316,9 +320,22 @@ def build_ledger(doc, doc_sha256, cfg2):
         else:
             outside = sorted(side.observed - set(inv['electrodes']))
             if outside:
-                warnings.append({'code': 'electrode_inventory_conflict', 'role': role, 'electrodes': outside})
-            present[role] = set(inv['electrodes']) | side.observed
-    complete = all(inventory[role]['status'] == 'complete' for role in ROLES)
+                conflicts[role] = {'code': 'electrode_inventory_conflict', 'role': role, 'electrodes': outside,
+                                   'electrodes_with_value': []}
+                warnings.append(conflicts[role])
+            # epres/T1 (D1): both lists complete -> presence is the DL1 electrode folder only (observed names never count)
+            present[role] = set(inv['electrodes']) if complete else set(inv['electrodes']) | side.observed
+
+    def electrode_state(name):
+        """epres/T1 (D2): common / new / removed / unverifiable (one function for the pair kind and the electrode row)."""
+        if not complete:
+            return 'unverifiable'
+        in_a, in_b = name in present['reference'], name in present['target']
+        if in_a and in_b:
+            return 'common'
+        if in_b:
+            return 'new'
+        return 'removed' if in_a else 'unverifiable'
 
     # pairs and their items
     pair_rows, unavailable = {}, []
@@ -333,7 +350,9 @@ def build_ledger(doc, doc_sha256, cfg2):
 
     def electrode(name):
         return electrodes.setdefault(name, {'line': _Tri(), 'pixel': _Tri(), 'cno': _Tri(), 'layers': {},
-                                            'partners': {'reference': set(), 'target': set()}})
+                                            'partners': {'reference': set(), 'target': set()},
+                                            # epres/T1 (D4): a non-zero λ on that side (line, pixel or CNO), whatever the slope
+                                            'lam_nz': {'reference': False, 'target': False}})
 
     def electrode_layer(name, layer, kind):
         return electrode(name)['layers'].setdefault(layer, {'line': _Tri(), 'pixel': _Tri()})[kind]
@@ -383,6 +402,9 @@ def build_ledger(doc, doc_sha256, cfg2):
                 share = 1.0 / len(ends)
                 parts = [None if v is None else v * share for v in (a, b, d)]
                 electrode(end['electrode_id'])[ikind].add(*parts)
+                for role, lam in (('reference', lam_a), ('target', lam_b)):
+                    if lam is not None and lam != 0:
+                        electrode(end['electrode_id'])['lam_nz'][role] = True
                 electrode_layer(end['electrode_id'], end['actual_layer'], ikind).add(*parts)
             layer_acc[ikind].setdefault(base['analysis_layer'], _Tri()).add(a, b, d)
             pair_layer[ikind].setdefault((base['analysis_layer'], pid), _Tri()).add(a, b, d)
@@ -452,8 +474,7 @@ def build_ledger(doc, doc_sha256, cfg2):
     # change kinds (README 8)
     for pid in sorted(pair_rows):
         row = pair_rows[pid]
-        if (complete and any(name not in present['reference'] or name not in present['target']
-                             for name in row['electrodes'])):
+        if complete and any(electrode_state(name) in ('new', 'removed') for name in row['electrodes']):
             code = 'electrode_added_removed'
         elif row['present_b'] and not row['present_a']:
             code = 'new_pair'
@@ -526,6 +547,9 @@ def build_ledger(doc, doc_sha256, cfg2):
         rb_rec = rb_cno.get(key) if rb_ok['pixel'] else None
         for name in _DELTA_NAMES if (rebase or {}).get('area_basis') is not None else _DELTA_NAMES[:3]:
             cno_rows[-1][name] = None if rb_rec is None else rb_rec.get(name)
+        for role, lam in (('reference', lam_a), ('target', lam_b)):
+            if lam is not None and lam != 0:
+                electrode(key[0])['lam_nz'][role] = True
         for target in (electrode(key[0])['cno'], electrode(key[0])['pixel'],
                        electrode_layer(key[0], key[1], 'pixel'), cno_layer.setdefault(key[1], _Tri())):
             target.add(a, b, d)
@@ -579,12 +603,7 @@ def build_ledger(doc, doc_sha256, cfg2):
     for name in electrode_names:
         acc = electrode(name)
         in_a, in_b = name in present['reference'], name in present['target']
-        if not complete:
-            status = 'unverifiable'
-        elif in_a and in_b:
-            status = 'common'
-        else:
-            status = 'new' if in_b else 'removed'
+        status = electrode_state(name)
         layers_ab = {}
         for role in ROLES:
             inv = inventory[role]
@@ -600,8 +619,9 @@ def build_ledger(doc, doc_sha256, cfg2):
         row['layer_state'] = {layer: ('both' if layer in row['layers_a'] and layer in row['layers_b']
                                       else ('a_only' if layer in row['layers_a'] else 'b_only'))
                               for layer in sorted(set(row['layers_a']) | set(row['layers_b']), key=lk)}
-        row['layer_state_status'] = 'verified' if complete else 'unverified'
-        row['moved'] = (bool(in_a and in_b and only_a and only_b)) if complete else None
+        verified = complete and status != 'unverifiable'
+        row['layer_state_status'] = 'verified' if verified else 'unverified'
+        row['moved'] = (bool(in_a and in_b and only_a and only_b)) if verified else None
         for kind in KINDS:
             out = acc[kind].out(fam[kind])
             out.update(pct_a=_pct(out['a'], side_a.vi[kind]), pct_b=_pct(out['b'], side_a.vi[kind]),
@@ -613,6 +633,9 @@ def build_ledger(doc, doc_sha256, cfg2):
         row['layers'] = {layer: {kind: acc['layers'][layer][kind].out(fam[kind]) for kind in KINDS}
                          for layer in sorted(acc['layers'], key=lk)}
         electrode_rows.append(row)
+    for role, warning in conflicts.items():
+        warning['electrodes_with_value'] = sorted(name for name in warning['electrodes']
+                                                  if name in electrodes and electrodes[name]['lam_nz'][role])
 
     # checks: electrode sums, pair delta against compare2
     electrode_sum = {}

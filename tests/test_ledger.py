@@ -502,7 +502,8 @@ def test_complete_inventories_judge_real_addition(tmp_path):
     assert doc['warnings'] == []
 
 
-def test_inventory_conflict_warns_and_counts_electrode_as_present(tmp_path):
+def test_electrode_in_no_folder_is_unverifiable_and_warns_with_value(tmp_path):
+    # epres/T1 D1/D2/D4: presence = the DL1 folder only; a name in neither folder is unverifiable (never "common")
     inv = {'E1': ['SD1'], 'E2': ['SD1']}
     pairs = [pair('P1', ['E1', 'Ghost'], 'line', [lateral(['E1', 'Ghost'], .01, 'SD1')],
                   [lateral(['E1', 'Ghost'], .02, 'SD1')])]
@@ -511,8 +512,169 @@ def test_inventory_conflict_warns_and_counts_electrode_as_present(tmp_path):
     doc = result(world)
     conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
     assert {(w['role'], tuple(w['electrodes'])) for w in conflicts} == {('reference', ('Ghost',)), ('target', ('Ghost',))}
+    assert [w['electrodes_with_value'] for w in conflicts] == [['Ghost'], ['Ghost']]
     assert by_pair(doc)['P1']['change_kind'] == 'same_pair_change'
-    assert {r['electrode']: r['status'] for r in doc['electrodes']}['Ghost'] == 'common'
+    ghost = {r['electrode']: r for r in doc['electrodes']}['Ghost']
+    assert ghost['status'] == 'unverifiable' and ghost['present_a'] is False and ghost['present_b'] is False
+    assert ghost['layer_state_status'] == 'unverified' and ghost['moved'] is None
+    assert_all_passed(doc)                       # the Ghost values are kept (electrode, pair and total sums)
+
+
+def folder_world(tmp_path, a, b, pairs, **kw):
+    return make_world(tmp_path, pairs, dl1={'reference': a, 'target': b}, **kw)
+
+
+def one_pair_world(tmp_path, a_inv, b_inv, a_lam, b_lam, **kw):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')]),
+             pair('P2', ['E1', 'E3'], 'line', [lateral(['E1', 'E3'], a_lam, 'SD1')], [lateral(['E1', 'E3'], b_lam, 'SD1')])]
+    return folder_world(tmp_path, a_inv, b_inv, pairs, **kw)
+
+
+BASE_INV = {'E1': ['SD1'], 'E2': ['SD1']}
+
+
+def test_zero_area_condition_does_not_make_the_electrode_present(tmp_path):
+    # the real-data case: A has an area-0 condition for E3 but no E3 folder -> E3 is new, not common
+    world = one_pair_world(tmp_path, BASE_INV, dict(BASE_INV, E3=['SD1']), 0.0, .01)
+    assert go(world) == 0
+    doc = result(world)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['E3']['status'] == 'new' and elec['E3']['present_a'] is False and elec['E3']['present_b'] is True
+    assert by_pair(doc)['P2']['change_kind'] == 'electrode_added_removed'
+    conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert [(w['role'], w['electrodes'], w['electrodes_with_value']) for w in conflicts] == [('reference', ['E3'], [])]
+    assert_all_passed(doc)
+
+
+def test_zero_area_condition_symmetric_removed(tmp_path):
+    world = one_pair_world(tmp_path, dict(BASE_INV, E3=['SD1']), BASE_INV, .01, 0.0)
+    assert go(world) == 0
+    doc = result(world)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['E3']['status'] == 'removed' and elec['E3']['present_b'] is False
+    assert by_pair(doc)['P2']['change_kind'] == 'electrode_added_removed'
+    conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert [(w['role'], w['electrodes_with_value']) for w in conflicts] == [('target', [])]
+
+
+def test_conflict_with_value_is_judged_by_folder_and_listed(tmp_path):
+    # A has no E3 folder but a real value for E3: still `new` (folder rule); the warning lists E3 as "with value"
+    world = one_pair_world(tmp_path, BASE_INV, dict(BASE_INV, E3=['SD1']), .005, .01)
+    assert go(world) == 0
+    doc = result(world)
+    assert {r['electrode']: r['status'] for r in doc['electrodes']}['E3'] == 'new'
+    assert by_pair(doc)['P2']['change_kind'] == 'electrode_added_removed'
+    conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert [(w['role'], w['electrodes'], w['electrodes_with_value']) for w in conflicts] == [
+        ('reference', ['E3'], ['E3'])]
+    assert_all_passed(doc)
+
+
+def test_with_value_follows_lambda_not_slope_and_skips_zero_and_null(tmp_path):
+    pairs = [pair('P1', ['E1', 'Zero'], 'line', [lateral(['E1', 'Zero'], 0.0, 'SD1')], [lateral(['E1', 'Zero'], .01, 'SD1')]),
+             pair('P2', ['E1', 'Real'], 'line', [lateral(['E1', 'Real'], .01, 'SD1')], [lateral(['E1', 'Real'], .01, 'SD1')])]
+    inv = {'E1': ['SD1']}
+    world = folder_world(tmp_path, inv, inv, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    by_role = {w['role']: w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict'}
+    assert by_role['reference']['electrodes'] == ['Real', 'Zero'] and by_role['reference']['electrodes_with_value'] == ['Real']
+    assert by_role['target']['electrodes_with_value'] == ['Real', 'Zero']
+    # equal lambdas on both sides: the slope is a limit/zero-ish case, the λ rule still lists Real
+    assert 'Real' in by_role['target']['electrodes_with_value']
+
+
+def test_with_value_null_lambda_is_not_a_value(tmp_path):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')])]
+    inv = {'E1': ['SD1'], 'E2': ['SD1']}
+    world = folder_world(tmp_path, inv, inv, pairs, cno=[('Cx', 'SD1', .005, .006)], pixel_null=True)
+    assert go(world) == 0
+    doc = result(world)
+    conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert conflicts and all(w['electrodes'] == ['Cx'] and w['electrodes_with_value'] == [] for w in conflicts)
+
+
+def test_one_side_incomplete_keeps_the_observed_behaviour(tmp_path):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')]),
+             pair('P2', ['E1', 'E3'], 'line', None, [lateral(['E1', 'E3'], .01, 'SD1')])]
+    world = folder_world(tmp_path, {}, {'E1': ['SD1'], 'E2': ['SD1']}, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    assert {r['status'] for r in doc['electrodes']} == {'unverifiable'}
+    assert 'electrode_added_removed' not in {p['change_kind'] for p in doc['pairs']}
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['E3']['present_a'] is False and elec['E3']['present_b'] is True     # target: folders | observed
+    assert elec['E1']['present_a'] is True and elec['E2']['present_a'] is True        # reference: observed
+    assert all(r['layer_state_status'] == 'unverified' and r['moved'] is None for r in doc['electrodes'])
+
+
+def test_cno_only_electrode_follows_the_folder_rule(tmp_path):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')])]
+    world = folder_world(tmp_path, BASE_INV, dict(BASE_INV, C1=['SD1']), pairs,
+                         cno=[('C1', 'SD1', .005, .009), ('C2', 'SD1', .001, .002)])
+    assert go(world) == 0
+    doc = result(world)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['C1']['status'] == 'new' and elec['C2']['status'] == 'unverifiable'
+    by_role = {w['role']: w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict'}
+    assert by_role['reference']['electrodes'] == ['C1', 'C2'] and by_role['reference']['electrodes_with_value'] == ['C1', 'C2']
+    assert by_role['target']['electrodes'] == ['C2'] and by_role['target']['electrodes_with_value'] == ['C2']
+    assert_all_passed(doc)
+
+
+def test_renamed_electrode_is_removed_plus_new(tmp_path):
+    pairs = [pair('P1', ['E1', 'Old'], 'line', [lateral(['E1', 'Old'], .01, 'SD1')], None),
+             pair('P2', ['E1', 'New'], 'line', None, [lateral(['E1', 'New'], .01, 'SD1')])]
+    world = folder_world(tmp_path, {'E1': ['SD1'], 'Old': ['SD1']}, {'E1': ['SD1'], 'New': ['SD1']}, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    assert {r['electrode']: r['status'] for r in doc['electrodes']} == {'E1': 'common', 'Old': 'removed', 'New': 'new'}
+    assert {p['change_kind'] for p in doc['pairs']} == {'electrode_added_removed'}
+    assert not [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+
+
+def test_folder_without_png_still_exists(tmp_path):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')])]
+    inv = {'E1': ['SD1'], 'E2': []}                    # E2 has a folder but no PNG
+    world = folder_world(tmp_path, inv, inv, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    assert {r['electrode']: r['status'] for r in doc['electrodes']} == {'E1': 'common', 'E2': 'common'}
+    assert doc['inputs']['electrode_inventory']['reference']['electrodes'] == ['E1', 'E2']
+    assert doc['inputs']['electrode_inventory']['reference']['layers']['E2'] == []
+    assert doc['warnings'] == []
+
+
+def test_folders_without_any_png_are_a_complete_inventory(tmp_path):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')])]
+    inv = {'E1': [], 'E2': []}
+    world = folder_world(tmp_path, inv, inv, pairs)
+    assert go(world) == 0
+    doc = result(world)
+    inventory = doc['inputs']['electrode_inventory']
+    assert inventory['reference']['status'] == 'complete' and inventory['reference']['source'] == 'dl1'
+    assert {r['status'] for r in doc['electrodes']} == {'common'}
+
+
+def test_scan_electrode_folders(tmp_path):
+    from simcompare.adapters.electrode_png import scan_electrode_folders
+    root = tmp_path
+    (root / 'legacy' / 'E1').mkdir(parents=True)
+    (root / 'legacy' / 'E2').mkdir()
+    (root / 'legacy' / 'CNO').mkdir()
+    (root / 'legacy' / 'Layer').mkdir()
+    (root / 'legacy' / 'note.txt').write_text('x')
+    assert scan_electrode_folders(root, 'legacy') == ['E1', 'E2', 'Layer']
+    (root / 'v2' / 'Merged_Layer' / 'A1').mkdir(parents=True)
+    (root / 'v2' / 'Merged_Layer' / 'A2').mkdir()
+    (root / 'v2' / 'Merged_Layer' / 'stray.png').write_bytes(b'')
+    (root / 'v2' / 'Layer').mkdir()
+    (root / 'v2' / 'cno').mkdir()
+    assert scan_electrode_folders(root, 'v2') == ['A1', 'A2']
+    assert scan_electrode_folders(root, 'missing') == []
+    (root / 'files').mkdir()
+    (root / 'files' / 'a.png').write_bytes(b'')
+    assert scan_electrode_folders(root, 'files') == []
 
 
 def test_opposite_direction_items_split_over_electrode_layers(tmp_path):

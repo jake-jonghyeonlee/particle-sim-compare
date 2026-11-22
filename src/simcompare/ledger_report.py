@@ -1285,7 +1285,13 @@ def _section2(ctx):
                '<details id="corr-details"><summary class="lead" id="corr-summary">%s <span class="muted">(차이 없음 — 눌러서 표 펼치기)</span></summary>' % summary]
     else:
         out = ['<section id="s2">', _hd('2', '제품 대응', '두 제품의 전극·레이어는 어떻게 다른가?'), '<p class="lead" id="corr-summary">%s</p>' % summary]
-    if unverified:
+    # epres/T1: both lists complete (DL1 folders) -> the unverified rows are electrodes with no folder in either product
+    inventory = (doc.get('inputs') or {}).get('electrode_inventory') or {}
+    list_complete = bool(inventory) and all((inv or {}).get('status') == 'complete' for inv in inventory.values())
+    if unverified and list_complete:
+        out.append('<div class="band info" id="band-no-dl1"><b>확인 불가</b> — DL1 전극 폴더에 없는 전극 %d 개는 레이어 대응(공통·신규·제거·이동)을 '
+                   '확인하지 못했습니다. 두 제품 어느 쪽 폴더에도 없는 이름이며, 빈 칸은 없다는 뜻이 아니라 알 수 없다는 뜻입니다.</div>' % len(unverified))
+    elif unverified:
         out.append('<div class="band info" id="band-no-dl1"><b>확인 불가</b> — DL1 전극 목록이 없어 %d 개 전극의 레이어 대응(공통·신규·제거·이동)을 '
                    '확인하지 못했습니다. 빈 칸은 없다는 뜻이 아니라 알 수 없다는 뜻입니다.</div>' % len(unverified))
     out.append('<p class="legend" id="corr-legend"><span class="st-both">●</span> 양쪽 · <span class="st-a">◀</span> A 만 · '
@@ -1293,7 +1299,7 @@ def _section2(ctx):
                ' &nbsp;|&nbsp; 전극 이름 칸 색: <span class="hd-up3">증가</span> <span class="hd-dn3">감소</span> '
                '(line·pixel 중 A 대비 |Δ%%| 큰 쪽) · %s%s</p>' % (esc(SHADE_LEGEND), (
                    ' <span id="corr-observed" class="muted">· <b>관찰 기준</b>: DL1 이 없는 전극의 기호는 관찰된 레이어만 보인 것입니다(없다는 뜻이 아님)</span>')
-                   if unverified else ''))
+                   if unverified and not list_complete else ''))
     out.append('<p class="searchrow"><label>전극 검색 <input type="search" id="el-q" autocomplete="off" placeholder="이름 일부"></label> '
                '<span id="el-count" class="muted">%d / %d</span></p>' % (len(rows), len(rows)))
     head = ''.join('<th data-layer="%s" data-href="%s" title="이 레이어를 선택">%s</th>' % (esc(layer), esc(_href('layer:' + layer)), esc(layer))
@@ -1768,9 +1774,18 @@ def _ab_cell(ctx, kind, row):
         return muted('해당 없음')
     if v is None:
         return muted('—')
-    a = muted('없음') if not row.get('present_a') else esc(vi_txt(v.get('a')))
-    b = muted('없음') if not row.get('present_b') else esc(vi_txt(v.get('b')))
-    return '%s → %s' % (a, b)
+    return '%s → %s' % (_side_value(row, 'a', v), _side_value(row, 'b', v))
+
+
+def _side_value(row, side, v):
+    """One side of an A → B cell. 없음 when the electrode has no DL1 folder there and no value; a non-zero value is still
+    shown, marked (DL1 폴더 없음) (epres/T1)."""
+    value = v.get(side)
+    if row.get('present_' + side):
+        return esc(vi_txt(value))
+    if isinstance(value, (int, float)) and value != 0:
+        return esc(vi_txt(value)) + ' <span class="muted">(DL1 폴더 없음)</span>'
+    return muted('없음')
 
 
 def _delta_cell(ctx, kind, v, row=None):
@@ -1803,8 +1818,9 @@ def _electrode_ledger(ctx):
         name = row['electrode']
         mark = ' <span class="muted">(계산 제외 쌍만 있음)</span>' if name in only else ''
         if name in cno_names:
-            cno = '<td>%s%s</td>' % (('없음' if not row.get('present_a') else esc(vi_txt((row.get('cno') or {}).get('a')))) + ' → ' +
-                                     ('없음' if not row.get('present_b') else esc(vi_txt((row.get('cno') or {}).get('b')))),
+            cno_v = row.get('cno') or {}
+            cno = '<td>%s%s</td>' % (_side_value(row, 'a', cno_v).replace('<span class="muted">없음</span>', '없음') + ' → ' +
+                                     _side_value(row, 'b', cno_v).replace('<span class="muted">없음</span>', '없음'),
                                      sub('Δ ' + pp_txt((row.get('cno') or {}).get('delta'))))
         else:
             cno = '<td>%s</td>' % muted('해당 없음')

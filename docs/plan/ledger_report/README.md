@@ -114,7 +114,9 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 - 전극 목록 = `adapters/electrode_png.scan_electrode_shapes(report.dl1_root, products.<role>.dl1_model)` (`electrode_png.py:305-314`, cno 제외, 전극별 레이어 PNG). 출처 `dl1`, 상태 `complete`.
 - 목록이 없거나 비면 hotspot·CNO 에 나온 전극으로 대신한다. 출처 `observed`, 상태 `incomplete`, 경고 `electrode_inventory_from_hotspots`. 이때 목록에 없다는 것은 "없음"이 아니라 **"확인 불가"** 이다.
 - 전극 추가·제거 판정(우선순위 1)은 두 제품 목록이 모두 complete 일 때만 한다. 아니면 우선순위 1을 건너뛰고 2 이하로 판정한다. 3절 전극 상태는 "확인 불가"로 보인다. 1절에 문구 1줄을 둔다.
-- 충돌: complete 목록에 없는 전극이 그 제품의 조건 끝점에 나오면 경고 `electrode_inventory_conflict`(전극 이름 목록)를 남기고, 그 전극의 존재는 "있음"(관측 우선)으로 본다.
+- 존재 판정(2026-11-23 변경, epres/T1): 두 제품 목록이 모두 complete 이면 존재 = DL1 **전극 폴더 이름**(`scan_electrode_folders`, PNG 유무 무관) 유무뿐이다. compare2 에 나온 이름(관측)은 존재 판단에 쓰지 않는다. 한쪽이라도 incomplete 이면 예전대로(목록 ∪ 관측, 상태 확인 불가).
+- 전극 상태(complete): 두 폴더 모두 → `common`, B 만 → `new`, A 만 → `removed`, 둘 다 없음 → `unverifiable`(그 행 `layer_state_status='unverified'`, `moved=null`). 쌍 `electrode_added_removed` ⇔ 쌍 전극 중 하나라도 `new`/`removed`.
+- 충돌: complete 목록(폴더)에 없는 전극이 그 제품의 조건 끝점에 나오면 경고 `electrode_inventory_conflict`(role, electrodes, electrodes_with_value)를 남긴다. `electrodes_with_value` 는 그 중 그 제품 쪽 λ(line·pixel 값 또는 CNO λ)가 null 도 0 도 아닌 전극(정렬 목록)이다. 값이 있어도 존재는 폴더로만 정한다.
 - 3절 "전극 레이어 A → B" 도 이 목록의 레이어를 쓴다.
 
 입력 검사 (X1):
@@ -175,7 +177,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 | `cno` | (electrode_id, density_layer) 줄: `change_kind: cno`, `presence`, `lambda_a/b`, `a`·`b`·`delta`·% |
 | `layers.<line/pixel/cno>` | 레이어(analysis_layer, CNO 는 density_layer)별 `a`·`b`·`delta`, `by_size`(이물 크기별), `top_pairs`(Δ 절댓값 상위 2쌍) |
 | `checks` | `equations`(`eq1_line_a` … `eq6_pixel_delta`), `electrode_sum`(Σ 전극 = Σ 쌍 + CNO, 종류별 a/b/delta), `pair_delta_vs_compare2`(쌍 Δ 합 = `delta.conditions` + `delta.shared`; 조건 Δ 중 null 이 있으면 `not_evaluated`), `layer_size_sum`(종류 line/pixel/cno × a/b/delta: 레이어마다 이물 크기 열의 합 = 레이어 값. `status`, 검사한 레이어 수 `layers`, `max_abs_error`), `status` |
-| `warnings` | `electrode_inventory_from_hotspots`(role), `electrode_inventory_conflict`(role, electrodes) |
+| `warnings` | `electrode_inventory_from_hotspots`(role), `electrode_inventory_conflict`(role, electrodes, electrodes_with_value) |
 | `unavailable` | 계산 불가 항목(`scope` kind/pair/item/cno) |
 
 번호 L#, P# 는 `ledger.json` 에 저장한다(다음 Run 지도가 같은 번호를 쓴다).
@@ -841,3 +843,7 @@ null 규칙:
 - **[지도에서 보기 ▸]**: 3 의 카드 제목 옆 버튼이다. 누르면 4 탐색으로 가서 그 원인 후보의 모든 쌍·item hotspot 을 강조하고, 레이어 칩은 그 묶음의 레이어만 보이며, 쌍 목록을 그 후보의 쌍으로 거른다. 4 맨 위에 "원인 후보: …" 띠와 "3 으로 돌아가기" 가 나온다. 선택값은 해시 `#sel=unit:<id>` 이다. `<id>` 는 알려진 원인 후보 id(`bd-…`)만 받는다(화이트리스트). 모르는 id 는 무시한다. 근거 줄은 숫자만 쓴다.
 - **[제품 대응 ▸]**: 2 의 대응 표에서 그 칸을 보인다(`#unit=<id>&to=s2`).
 - 옛 ledger(`summary.bundles.version` 없음)는 옛 뜻(총 변동 기준)으로 표시하고 "02·08 을 새 번들로 다시 실행하세요." 를 안내한다.
+
+## 37. 변경 이력 — 전극 존재 판정 (epres/T1)
+
+- 2026-11-23: 존재 판정 의미 변경(관측 우선 → DL1 폴더 기준). 실데이터에서 한쪽 제품에만 있는 전극이 compare2 의 면적 0 조건 때문에 "양쪽 있음(common)"이 되어 "레이어 변경"으로 보였다. 이제 두 제품 목록이 complete 이면 존재 = DL1 전극 폴더 유무이고(X3), 경고에 `electrodes_with_value` 가 붙는다. `SCHEMA_VERSION` 은 그대로이고 보고서는 옛 `ledger.json`(`electrodes_with_value` 없음)도 읽는다. 재실행: 02 는 필요 없고 `STEPS = ['08']` 만 돈다(`compare2.json` 불변).

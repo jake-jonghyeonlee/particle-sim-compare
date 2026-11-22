@@ -287,6 +287,25 @@ def list_dl1_electrodes(root, model):
     return sorted(_scan_dl1_model(root, model)['electrodes'])
 
 
+def scan_electrode_folders(root, model):
+    """epres/T1: 전극 **폴더 이름**을 정렬해 돌려준다(PNG 유무와 무관). 모델 폴더가 없으면 ``[]``.
+
+    ``_scan_dl1_model`` 과 같은 구조 판별이다. ``Merged_Layer``(casefold)가 있으면 그 하위 폴더, 없으면(legacy)
+    ``cno``/``CNO`` 를 뺀 최상위 폴더 전부(``Layer`` 포함). 이름은 폴더 이름 그대로다(정규화 없음). PNG 는 열지 않는다."""
+    model_dir = Path(root) / model
+    if not model_dir.is_dir():
+        return []
+    entries = [e for e in os.scandir(model_dir) if e.is_dir()]
+    merged = [e for e in entries if e.name.casefold() == 'merged_layer']
+    names = set()
+    if merged:
+        for entry in merged:
+            names.update(sub.name for sub in os.scandir(entry.path) if sub.is_dir())
+    else:
+        names.update(e.name for e in entries if e.name.casefold() != 'cno')
+    return sorted(names)
+
+
 def scan_electrode_layers(root, model):
     """change-roi-v2/T3b: ``{layer: [fs_rel, ...]}`` — 모델 폴더의 전극 PNG 를 층별로 모은다(이름만, 읽지 않는다).
 
