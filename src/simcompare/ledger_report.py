@@ -55,10 +55,6 @@ CHECK_TEXT = {'passed': '✓ 통과', 'failed': '✗ 실패', 'not_evaluated': '
 PRODUCT_NAMES = (('reference', '기준 A'), ('target', '대상 B'))
 PAIR_REASON_TEXT = {'builtin:GH': '코드 규칙: GH 포함', 'builtin:N_NODE': '코드 규칙: N_NODE 포함',
                     'builtin:VBIAS-VINT1': '코드 규칙: VBIAS-VINT1', 'pairs_csv:excluded': 'pairs.csv: excluded'}
-BAND_TEXT = {
-    'link_no_candidates': '04(candidates-change) 결과 폴더를 주지 않아 변경 위치(형상 태그, 위치 연결)를 보이지 않습니다.',
-    'link_stale': '04 결과가 지금 입력과 다릅니다(지문이 맞지 않음). 변경 위치 연결을 껐습니다.',
-    'link_invalid': '04 결과의 구조를 읽을 수 없어 변경 위치 연결을 껐습니다.'}
 
 
 # ---- formatting -----------------------------------------------------------------------------------------------------
@@ -251,7 +247,6 @@ class Ctx(object):
         self.report07 = report07 or {'status': 'none', 'href': None}
         self.change_labels = {c['code']: c['label'] for c in doc['change_kinds']}
         self.vi_a = {kind: doc['kinds'][kind]['vi_a'] for kind in KINDS}
-        self.changes = (maps['doc'].get('changes') if maps is not None else None)
         self.pair_by_id = {p['pair_id']: p for p in doc['pairs']}
         # electrodes that belong to a failure kind: a calculated pair of that kind (pixel: or a CNO row). The others are 해당 없음.
         self.kind_electrodes = {kind: set() for kind in KINDS}
@@ -298,12 +293,6 @@ class Ctx(object):
     def crp_pp(self):
         """The CRP difference in %p; 대기 when the ledger has no value (never a made-up 0)."""
         return pp_txt(self.crp().get('delta'))
-
-    def link_status(self):
-        """'ok' / 'no_candidates' / 'stale' / 'invalid' of the 04 link, or 'no_maps' when there is no --maps-dir."""
-        if self.maps is None:
-            return 'no_maps'
-        return (self.changes or {}).get('link_status') or 'no_candidates'
 
 
 def _item_failed(ctx):
@@ -353,21 +342,16 @@ def _bands(ctx, size_warning):
         out.append('<div class="band partial" id="band-item-breakdown"><b>item 분해 검산 실패</b> — ledger 의 checks.item_breakdown 이 '
                    '맞지 않습니다. 4 결과의 분해 숫자를 그대로 믿지 마세요(부록에 검산이 있습니다).</div>')
     if ctx.maps is None:
-        out.append('<div class="band info" id="band-no-maps"><b>지도 없음</b> — <code>--maps-dir</code> 를 주지 않아 지도·카드·변경 위치 자리가 '
+        out.append('<div class="band info" id="band-no-maps"><b>지도 없음</b> — <code>--maps-dir</code> 를 주지 않아 지도 자리가 '
                    '비어 있습니다. ledger-maps 를 실행한 뒤 다시 만드세요.</div>')
     else:
         mdoc = ctx.maps['doc']
         if mdoc.get('status') == 'partial':
             out.append('<div class="band partial" id="maps-partial"><b>지도 부분 결과</b> — ledger-maps 가 partial 로 끝났습니다(%s). '
                        '지도·카드의 값을 그대로 믿지 마세요.</div>' % esc(', '.join(mdoc.get('reasons') or ['partial'])))
-        dropped = mdoc.get('cards_dropped_for_budget') or []
-        if dropped:
-            out.append('<div class="band partial" id="band-cards-budget"><b>카드 %d 장이 빠졌습니다</b> — 메모리 예산이 모자라 ledger-maps 가 '
-                       '카드를 건너뛰었습니다(cards_budget_reduced). 지도와 값은 그대로입니다.</div>' % len(dropped))
-        # R12:6: the missing 04 result is one muted line in the folded 04 reference (_locations_line), not a band
     if size_warning:
         out.append('<div class="band info" id="band-size"><b>큰 보고서</b> — HTML 이 8 MB 를 넘습니다. 열기가 느리면 '
-                   '--top-cards 를 줄여 ledger-maps 를 다시 실행하세요.</div>')
+                   'ledger-maps 의 지도 크기 옵션을 줄여 다시 실행하세요.</div>')
     return ''.join(out)
 
 
@@ -437,9 +421,8 @@ def _breakdown_cell(ctx, kind, cat):
         return '<td class="l muted">해당 없음</td>'
     brk = ctx.doc['kinds'][kind]['item_breakdown']
     value = brk.get(cat)
-    # the breakdown rows open the pair entry of section 3 and scroll there; CNO is no pair: it points to the electrode ledger (4)
-    href = ' data-go="s5" title="CNO 는 쌍이 아니라 5 분포의 전극 장부에서 봅니다"' if cat == 'cno' else (
-        ' data-href="#cat=%s:%s&amp;entry=pair" data-scroll="explore"' % (kind, cat))
+    # CNO is no pair: it points to the electrode ledger (5); the other rows are plain numbers
+    href = ' data-go="s5" title="CNO 는 쌍이 아니라 5 분포의 전극 장부에서 봅니다"' if cat == 'cno' else ''
     if value is None:
         return '<td class="l muted"%s>대기</td>' % href
     if cat == 'gone':
@@ -466,8 +449,8 @@ def _breakdown_table(ctx):
         note = ('<p class="muted" id="crp-note" style="margin:3px 0 0">CRP 차이 %s 는 부록 참고 — 두 제품의 CRP 가 달라 pixel 합에는 분해에 없는 CRP 줄이 더해집니다.</p>' %
                 esc(ctx.crp_pp()))
     return ('<table id="breakdown"><thead><tr><th class="l">범주</th><th class="l">%sline</th><th class="l">%spixel</th></tr></thead><tbody>%s</tbody></table>'
-            '%s<p class="muted" style="margin:3px 0 0">item = 불량 방식 × 양 끝 레이어. 쌍의 불량 구성이 달라도 이 분해에는 모두 들어갑니다. '
-            '줄을 누르면 아래 탐색의 쌍 목록이 그 범주로 걸러집니다.</p>' % (chip('line'), chip('pixel'), ''.join(rows), note))
+            '%s<p class="muted" style="margin:3px 0 0">item = 불량 방식 × 양 끝 레이어. 쌍의 불량 구성이 달라도 이 분해에는 모두 들어갑니다.</p>' % (
+                chip('line'), chip('pixel'), ''.join(rows), note))
 
 
 def _comp_text(pair):
@@ -518,45 +501,6 @@ def _lists(ctx):
                 chip(kind), kind, text, key, kind, ''.join(
                     _pair_li(ctx, p, pp_cell(p['delta'], p.get('pct_delta'))) for p in rows) or '<li class="muted">해당하는 쌍이 없습니다</li>'))
     return '<div class="g2">%s</div>' % ''.join(out)
-
-
-def _tag_names():
-    try:
-        from .compare2_report import KIND_TEXT
-        return dict(KIND_TEXT)
-    except Exception:  # the names are only labels; the codes still show
-        return {}
-
-
-def _tag_block(ctx):
-    status = ctx.link_status()
-    head = '<h3>두 번째 축 — 형상 변경 태그(04) <span class="muted" style="font-weight:400">관련 쌍 수</span></h3>'
-    if status != 'ok':
-        return head + '<p class="muted" id="tags-folded">04 변경 위치가 없어 접었습니다. %s</p>' % esc(
-            BAND_TEXT.get('link_' + status, '지도 폴더(--maps-dir)와 04 결과(ledger-maps --candidates)가 필요합니다.'))
-    counts = ((ctx.changes.get('summary') or {}).get('tag_pair_counts')) or {}
-    names = _tag_names()
-    rows = ''.join('<tr data-href="#cat=tag:%s&amp;entry=pair" data-scroll="explore"><td class="l">%s</td><td>%d</td><td>%d</td><td>%d</td></tr>' % (
-        esc(quote(tag, safe='')), esc(names.get(tag, tag)), c.get('line', 0), c.get('pixel', 0), c.get('line', 0) + c.get('pixel', 0))
-        for tag, c in sorted(counts.items()))
-    if not rows:
-        return head + '<p class="muted" id="tags-empty">연결된 형상 변경 태그가 없습니다.</p>'
-    return (head + '<table id="tags"><thead><tr><th class="l">태그</th><th>line</th><th>pixel</th><th>합</th></tr></thead><tbody>%s</tbody></table>'
-            '<p class="muted" style="margin:3px 0 0">쌍 수만 보입니다. 한 쌍에 태그가 여러 개 붙을 수 있어 Δ 를 더하면 중복됩니다. '
-            '쌍 수는 04 가 고른 상위 위치에 연결된 쌍만 셉니다.</p>' % rows)
-
-
-def _locations_line(ctx):
-    status = ctx.link_status()
-    if status != 'ok':
-        why = esc(BAND_TEXT.get('link_' + status, '04 변경 위치를 쓸 수 없습니다(%s).' % status))
-        if ctx.maps is None:       # no --maps-dir: the band "지도 없음" already says it
-            return '<div class="trust2" id="locations">변경 위치: 04 결과 없음 — %s</div>' % why
-        return '<div class="trust2" id="locations">변경 위치: 04 결과 없음 — <span id="band-changes">%s</span></div>' % why
-    s = ctx.changes.get('summary') or {}
-    return ('<div class="trust2" id="locations">변경 위치 <b>%d곳</b>(04) · 위치에 연결된 쌍 <b>%d</b> · 미연결 쌍 <b>%d</b> '
-            '<span class="muted">(보조 정보) (분모 %d 쌍 = 변화 없음을 뺀 쌍. 미연결은 "04 가 고른 상위 위치에 없음"이지 "변경 없음"이 아닙니다)</span></div>' % (
-                s.get('roi_count', 0), s.get('linked_pairs', 0), s.get('unlinked_pairs', 0), s.get('pair_denominator', 0)))
 
 
 def _trust(ctx):
@@ -1069,9 +1013,7 @@ def _link07(ctx):
         return '<p id="link07" class="muted">07 보고서는 있지만 다른 드라이브라 상대 링크를 만들 수 없습니다 — 07 폴더에서 직접 여세요.</p>'
     if link['status'] == 'missing' and link.get('reason') == 'scheme':
         return '<p id="link07" class="muted">07 보고서는 있지만 경로가 링크로 쓸 수 없는 형태라 링크를 만들지 않았습니다 — 07 폴더에서 직접 여세요.</p>'
-    if link['status'] == 'missing':
-        return '<p id="link07" class="muted">07 보고서 없음 — --report07-dir 폴더에 report.html 이 없습니다.</p>'
-    return '<p id="link07" class="muted">07 보고서 없음 — --report07-dir 를 주지 않았습니다. 가정 계산과 조건 Δ 는 07 에서 봅니다.</p>'
+    return ''      # no 07 report (not given, or no report.html in it): nothing is drawn; the link shows only when 07 exists
 
 
 def _inputs_block(ctx):
@@ -1207,7 +1149,7 @@ def _section_appendix(ctx):
            '<h3>숫자 표시 규칙</h3><table id="number-rules">%s</table></div><div>' % ''.join(
                '<tr><td class="l"><b>%s</b></td><td class="l wrap">%s</td></tr>' % (esc(k), esc(v)) for k, v in NUMBER_RULES),
            '<h3>조건 값 <span class="muted" style="font-weight:400">(이물 크기 · density 레이어 · 면적 · λ · 값)</span></h3>',
-           '<p class="muted" id="cond-link">선택한 쌍의 조건 값은 <a href="#explore" data-go="explore">4 결과의 쌍 상세</a> 맨 아래에 있습니다. 전체는 아래에서 봅니다.</p>',
+           '<p class="muted" id="cond-link">선택한 쌍의 조건 값은 <a href="#s3" data-go="s3">3 원인 후보의 상세 패널</a> 맨 아래에 있습니다. 전체는 아래에서 봅니다.</p>',
            '<details id="cond-all"><summary>전체 보기 (%d 쌍)</summary><div id="cond-all-body"></div></details>' % len(ctx.doc['pairs']),
            _inputs_block(ctx), '</div></div>', _nx([('s1', '1 전체 요약으로 돌아가기')]), '</section>']
     return ''.join(out)
@@ -1340,8 +1282,6 @@ def _section2(ctx):
 # from the same decoded arrays. Electrode shapes are thin outlines (no fill), so the defect fill of the selected pair stays readable.
 
 ROLE_KEYS = (('reference', 'A'), ('target', 'B'))
-OVERLAY_REASONS = {'coords_no_candidates': '04 결과가 없어 A 와 B 의 위치 차이(offset)를 알 수 없습니다',
-                   'coords_stale': '04 결과가 지금 입력과 달라 위치 차이를 쓸 수 없습니다'}
 
 
 def _map_entries(ctx, role):
@@ -1363,14 +1303,6 @@ def _shape_reason(ctx):
     if any(row.get('layer_state_status') != 'verified' and not row.get('cno_only') for row in ctx.doc['electrodes']):
         return '전극·레이어 형상을 그릴 수 없습니다: DL1 이 없어 전극 그림(el)이 만들어지지 않았습니다.'
     return '전극·레이어 형상을 그릴 수 없습니다: ledger-maps 에 전극 그림(el)이 없습니다.'
-
-
-def _overlay_info(ctx):
-    overlay = ctx.maps['doc'].get('overlay') or {}
-    if overlay.get('available'):
-        return True, ''
-    reason = overlay.get('reason')
-    return False, OVERLAY_REASONS.get(reason, '겹쳐 보기를 쓸 수 없습니다') + (' (%s)' % reason if reason else '')
 
 
 def _map_png_block(ctx):
@@ -1407,89 +1339,11 @@ def _missing_share(ctx):
     return '<p id="m3-missing" class="muted">지도에 없는 몫(A vi 대비): %s</p>' % esc(' · '.join(parts))
 
 
-def _m_legend():
-    def sw(css, text):
-        return '<div><i class="sw" style="%s"></i>%s</div>' % (css, esc(text))
-    return ('<div class="mleg" id="m3-legend"><b>범례</b>'
-            + sw('border:1px solid var(--common);background:none', '전극 윤곽 (얇은 회색, 채움 없음)')
-            + sw('border:3px solid var(--common);background:rgba(141,140,133,.18)', '선택 전극 (굵은 윤곽 + 옅은 채움)')
-            + sw('border:2px dashed var(--common);background:none', '선택 쌍의 다른 전극 (점선 윤곽)')
-            + sw('background:var(--line)', 'line 불량 영역 (선택 쌍)') + sw('background:var(--pixel)', 'pixel 불량 영역 (선택 쌍)')
-            + '<details><summary class="small">범례 전체 ▸</summary>'
-            + sw('border:2px dashed var(--pixel);background:none', '한쪽에만 있는 item (점선 윤곽)')
-            + sw('background:var(--common);opacity:.3', '다른 쌍 (옅게)')
-            + sw('border:3px dashed #ffd21f;background:#141414', 'unit 창 (노란 긴 점선 + 어두운 테두리, 왼쪽 위 "unit")')
-            + sw('border:2px dashed var(--text-primary);background:none', '변경 위치 (04, 번호) · 보조 정보')
-            + sw('border:2px dashed var(--text-primary);border-style:dotted double;background:none', '반복 위치로 옮겨 표시한 위치')
-            + '<div class="muted">⌐ 창 경계에서 잘림 · ≫ 창보다 큼</div></details></div>')
-
-
-# ---- section 3 panel (mrep/T8): two entries, pair list, card tabs, presence-split range tables -----------------------------------
-# The list rows, the ROI rows, the card chooser and the range tables of every card are plain HTML (values copied from ledger.json /
-# ledger_maps.json, nothing is added up here). The script only filters the list, shows one tab and draws the detail of the selection.
+# ---- 3 detail panel shell and 4 pair finder (rexp/T2) ------------------------------------------------------------------------
+# The detail panel of 3 is drawn by the script from the data bundle (pairs, items, cause candidates, map numbers). The pair finder of 4
+# is plain HTML (one row per pair); the script only filters the rows by name and shows the first PAIR_SHOW.
 
 PAIR_SHOW = 20
-CARD_TABS = (('same', '같은 불량 증감 상위'), ('comp', '구성 변경 상위'), ('all', '전체 |Δ|'))
-CARD_MATCH_TEXT = {'matched': '같은 좌표로 맞췄습니다', 'not_compared': '같은 좌표로 비교하지 못했습니다', 'a_only': 'A 에만 있는 쌍입니다',
-                   'b_only': 'B 에만 있는 쌍입니다'}
-BASIS_CHIP = '<span class="basis">범위 · 장부</span>'
-UNLINKED_TEXT = '변경 위치 미연결 — 04 가 고른 상위 위치에 없음'
-
-
-def _roi_numbers(ctx):
-    """{roi_key: number} (the order of the 04 list, from 1; the same numbers the maps draw)."""
-    if not isinstance(ctx.changes, dict):
-        return {}
-    return {roi.get('roi_key'): i + 1 for i, roi in enumerate(ctx.changes.get('rois') or [])}
-
-
-def _pair_link(ctx, pair_id):
-    """([roi keys], [tag codes]) of the 04 link of a pair (empty without a usable 04)."""
-    if ctx.link_status() != 'ok':
-        return [], []
-    entry = (ctx.changes.get('pairs') or {}).get(pair_id) or {}
-    return list(entry.get('roi_keys') or []), list(entry.get('tags') or [])
-
-
-def _roi_rows(ctx):
-    if ctx.maps is None:
-        return '<p class="muted" id="roi-none">지도 폴더(--maps-dir)가 없어 변경 위치 목록이 없습니다.</p>'
-    status = ctx.link_status()
-    if status != 'ok':
-        return '<p class="muted" id="roi-none">04 결과가 없어 변경 위치 목록이 없습니다. %s</p>' % esc(
-            BAND_TEXT.get('link_' + status, '지도 폴더(--maps-dir)와 04 결과(ledger-maps --candidates)가 필요합니다.'))
-    rois = ctx.changes.get('rois') or []
-    if not rois:
-        return '<p class="muted" id="roi-none">04 가 고른 변경 위치가 없습니다.</p>'
-    linked = {}
-    for entry in (ctx.changes.get('pairs') or {}).values():
-        for key in entry.get('roi_keys') or []:
-            linked[key] = linked.get(key, 0) + 1
-    body = []
-    for i, roi in enumerate(rois):
-        key = roi.get('roi_key')
-        tags = ' '.join('<span class="badge b-tag">%s</span>' % esc(t) for t in roi.get('change_kind_text') or []) or muted('판정 불가')
-        n = linked.get(key, 0)
-        parts = []
-        if (roi.get('map') or {}).get('status') == 'outside_map':
-            parts.append('지도 밖')
-        if roi.get('status') not in (None, 'ready'):
-            parts.append('상태 %s' % roi.get('status'))
-        if n == 0:
-            parts.append('연결된 쌍 없음(미연결)')
-        body.append('<tr data-roi="%s" data-href="%s&amp;entry=loc" tabindex="0"><td><b>#%d</b></td><td class="l">%s</td><td>%d</td><td class="l wrap">%s</td></tr>' % (
-            esc(key), esc(_href('roi:' + str(key))), i + 1, tags, n, esc(' · '.join(parts)) if parts else muted('연결됨')))
-    ambiguous = (ctx.changes.get('summary') or {}).get('ambiguous_cases') or 0
-    note = ('<p class="muted" id="roi-ambiguous">모호한 case %d 건은 어느 쌍인지 정할 수 없어 연결하지 않았습니다(미연결과 같이 취급).</p>' % ambiguous) if ambiguous else ''
-    return ('<div class="scrl"><table id="roi-table"><thead><tr><th>#</th><th class="l">형상 태그</th><th>연결된 쌍 수</th><th class="l">상태</th></tr></thead>'
-            '<tbody>%s</tbody></table></div>%s<p class="muted">위치별 합계는 만들지 않습니다. 한 쌍이 여러 위치에 붙을 수 있고, 관련은 연결 근거이지 원인 확정이 아닙니다.</p>' % (
-                ''.join(body), note))
-
-
-def _pair_cats(pair):
-    """Breakdown categories of a pair (the same rule as the pair counts of section 1: it has an item of that category)."""
-    brk = pair.get('breakdown') or {}
-    return [cat for cat, key in (('same', 'n_both'), ('new', 'n_new'), ('gone', 'n_gone')) if (brk.get(key) or 0) > 0]
 
 
 def _pair_sort_key(pair):
@@ -1499,263 +1353,59 @@ def _pair_sort_key(pair):
     return (1, -abs(delta), pair['pair_id']) if delta is not None else (2, 0, pair['pair_id'])
 
 
-def _b_ranks(doc):
-    """{pair_id: rank by B value} with the rule of the 'riskiest in B' list of section 1 (B vi as % of the A vi of the kind; pairs
-    present in B with a value only; ties by pair_id). Pairs without a B value get no rank."""
-    rows = sorted((p for p in doc['pairs'] if p['present_b'] and p.get('pct_b') is not None), key=lambda p: (-p['pct_b'], p['pair_id']))
-    return {p['pair_id']: i + 1 for i, p in enumerate(rows)}
+def _pair_units(ctx):
+    """{pair_id: [(|net| sum, bundle id)]}: the cause candidates the change of a pair went into, the largest first."""
+    out = {}
+    for b in (ctx.bundles or {}).get('list') or []:
+        per = {}
+        for r in b.get('rows') or []:
+            if r.get('pair_id'):
+                per[r['pair_id']] = per.get(r['pair_id'], 0.0) + (r.get('abs') or 0.0)
+        for pid, total in per.items():
+            out.setdefault(pid, []).append((total, b['id']))
+    for mine in out.values():
+        mine.sort(key=lambda x: (-x[0], x[1]))
+    return out
 
 
-def _pl_b_cell(pair):
-    if not pair['present_b']:
-        return muted('없음')
-    return esc(pct_txt(pair['pct_b'])) if pair.get('pct_b') is not None else muted('대기')
-
-
-def _pl_row(ctx, pair, index, tag_names, b_ranks):
+def _pf_row(ctx, pair, index, units):
     pid = pair['pair_id']
     name = '–'.join(pair['electrodes'])
-    roi_keys, tags = _pair_link(ctx, pid)           # the 04 link is data of the filters only: no column, no badge in the list (R8:6)
-    hidden = ' hide' if index >= PAIR_SHOW else ''
-    return ('<tr class="plrow%s" data-pair="%s" data-href="%s" tabindex="0" data-kind="%s" data-ck="%s" data-cat="%s" data-tags="%s" data-linked="%d" '
-            'data-name="%s" data-idx="%d" data-brank="%d"><td><b>%s</b></td><td class="l"><b>%s</b></td><td class="l">%s%s</td><td class="l wrap">%s%s</td>'
-            '<td class="l">%s</td><td>%s</td></tr>' % (
-                hidden, esc(pid), esc(_href('pair:' + pid)), esc(pair['kind']), esc(pair.get('change_kind')), ' '.join(_pair_cats(pair)),
-                esc(' '.join(tags)), 1 if roi_keys else 0, esc((name + ' ' + pid).lower()), index, b_ranks.get(pid, 0),
-                esc(pair.get('rank') or '—'), esc(name),
-                chip(pair['kind']), esc(pair['kind']), ctx.change_badge(pair['change_kind']), _comp_text(pair),
-                pp_cell(pair.get('delta'), pair.get('pct_delta')), _pl_b_cell(pair)))
+    mine = [bid for _t, bid in units.get(pid) or [] if bid in ctx.bundle_by_id]
+    if mine:
+        cand = esc(bundle_title(ctx.bundle_by_id[mine[0]])) + (' <span class="muted small">외 %d</span>' % (len(mine) - 1) if len(mine) > 1 else '')
+    else:
+        cand = muted('—')
+    return ('<tr class="plrow%s" data-pair="%s" data-href="%s" data-scroll="explore" tabindex="0" data-name="%s" data-idx="%d">'
+            '<td class="l"><b>%s</b> %s%s</td><td class="l">%s%s</td><td class="l wrap">%s</td><td>%s</td></tr>' % (
+                ' hide' if index >= PAIR_SHOW else '', esc(pid), esc(_href('pair:' + pid)), esc((name + ' ' + pid).lower()), index,
+                esc(name), ctx.change_badge(pair['change_kind']), _comp_text(pair), chip(pair['kind']), esc(pair['kind']), cand,
+                pp_cell(pair.get('delta'), pair.get('pct_delta'))))
 
 
-def _filter_buttons(key, label, options):
-    """options: [(value, text)]; the first (value '') is the 'all' button. The script marks the one of the hash."""
-    return '<span class="muted">%s</span> %s' % (esc(label), ''.join(
-        '<button type="button" class="fbtn" data-f="%s" data-v="%s">%s</button>' % (key, esc(v), esc(t)) for v, t in options))
-
-
-def _pair_list(ctx):
-    doc = ctx.doc
-    pairs = sorted(doc['pairs'], key=_pair_sort_key)
-    names = _tag_names()
-    counts = doc['kinds']['change_kind_counts']
-    pair_counts = {}                       # pairs per change kind, straight from ledger.json pairs[] (the buttons show these, not the shown rows)
-    for p in doc['pairs']:
-        pair_counts[p['change_kind']] = pair_counts.get(p['change_kind'], 0) + 1
-    ck_opts = [('', '전체')] + [(c['code'], '%s (%d)' % (c['label'], pair_counts.get(c['code'], 0))) for c in doc['change_kinds']
-                              if c['code'] not in ('cno',) and counts.get(c['code'], 0) > 0]
-    b_ranks = _b_ranks(doc)
-    tag_opts = [('', '전체')]
-    if ctx.link_status() == 'ok':
-        tag_opts += [(t, names.get(t, t)) for t in sorted(((ctx.changes.get('summary') or {}).get('tag_pair_counts')) or {})]
-    main_filters = [_filter_buttons('kind', '불량', [('', '전체'), ('line', 'line'), ('pixel', 'pixel')]),
-                    _filter_buttons('sort', '정렬', [('', '변화 큰 순'), ('b', 'B 위험 큰 순')])]
-    more_filters = [_filter_buttons('ck', '변화 종류', ck_opts),
-                    _filter_buttons('cat', 'item 분해 범주', [('', '전체'), ('same', '같은 불량의 증감'), ('new', '새로 생긴 불량 방식'), ('gone', '없어진 불량 방식')])]
-    if len(tag_opts) > 1:
-        more_filters.append(_filter_buttons('tag', '형상 태그(04, 보조)', tag_opts))
-    filters = main_filters
+def _pair_find(ctx):
+    pairs = sorted(ctx.doc['pairs'], key=_pair_sort_key)
+    units = _pair_units(ctx)
     total = len(pairs)
     shown = min(PAIR_SHOW, total)
-    rows = ''.join(_pl_row(ctx, p, i, names, b_ranks) for i, p in enumerate(pairs)) or (
-        '<tr><td colspan="6" class="l muted">계산한 쌍이 없습니다.</td></tr>')
-    return ('<div class="chips fbar" id="pl-filters">%s</div><details id="pl-more-filters"><summary class="small">필터 더 보기 ▸</summary>'
-            '<div class="chips fbar">%s</div></details>'
-            '<p class="searchrow"><label>쌍·전극 이름 검색 <input type="search" id="pl-q" autocomplete="off" placeholder="예: Scan3 또는 Anode–Vint"></label> '
-            '<span id="pl-count" class="muted">결과 %d 쌍 · 표시 %d</span></p>'
-            '<div class="scrl" id="pl-box"><table id="pl-table" data-total="%d" data-count="%d" data-shown="%d"><thead><tr><th>#</th><th class="l">쌍</th>'
-            '<th class="l">종류</th><th class="l">변화 종류</th><th class="l">Δ (쌍 전체)</th><th>B 값</th></tr></thead><tbody>%s</tbody></table></div>'
-            '<p id="pl-none" class="muted" hidden>조건에 맞는 쌍이 없습니다.</p>'
-            '<p style="margin:5px 0 0"><button type="button" id="pl-more" data-f="more" data-v="1"%s>더 보기 (+%d 쌍)</button></p>'
+    rows = ''.join(_pf_row(ctx, p, i, units) for i, p in enumerate(pairs)) or '<tr><td colspan="4" class="l muted">계산한 쌍이 없습니다.</td></tr>'
+    return ('<div id="pair-find"><h3>쌍 찾기 <span class="muted" style="font-weight:400">(원인 후보에 없는 쌍을 이름으로 찾을 때 · 누르면 3 의 상세 패널이 그 쌍으로 바뀝니다)</span></h3>'
+            '<p class="searchrow"><label>쌍·전극 이름 검색 <input type="search" id="pf-q" autocomplete="off" placeholder="예: Scan3 또는 Anode–Vint"></label> '
+            '<span id="pf-count" class="muted">결과 %d 쌍 · 표시 %d</span></p>'
+            '<div class="scrl" id="pf-box"><table id="pf-table" data-total="%d" data-count="%d" data-shown="%d"><thead><tr><th class="l">쌍</th>'
+            '<th class="l">종류</th><th class="l">원인 후보</th><th class="l">Δ (쌍 전체)</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<p id="pf-none" class="muted" hidden>조건에 맞는 쌍이 없습니다.</p>'
+            '<p style="margin:5px 0 0"><button type="button" id="pf-more" data-f="more" data-v="1"%s>더 보기 (+%d 쌍)</button></p>'
             '<p class="muted">줄 = 쌍 하나. Δ 는 쌍 전체의 장부 값(vi 의 %%p)이며 A 대비 %% 는 각 종류의 vi A 기준입니다. '
-            'B 값 = 그 쌍의 B vi 를 종류별 A vi 에 대한 %% 로 쓴 값입니다. '
-            '기본으로 정렬 순서의 상위 %d 쌍만 보입니다. 해상도 몫을 뺀 값은 <a href="#s6" data-go="s6">6 해상도 차이 비교</a>에 있습니다.</p>' % (
-                ''.join(['<div>%s</div>' % f for f in filters]), ''.join(['<div>%s</div>' % f for f in more_filters]),
-                total, shown, total, total, shown, rows,
-                '' if total > PAIR_SHOW else ' hidden', max(0, total - PAIR_SHOW), PAIR_SHOW))
+            '기본으로 A 대비 변화가 큰 순의 상위 %d 쌍만 보입니다. 해상도 몫을 뺀 값은 <a href="#s6" data-go="s6">6 해상도 차이 비교</a>에 있습니다.</p></div>' % (
+                total, shown, total, total, shown, rows, '' if total > PAIR_SHOW else ' hidden', max(0, total - PAIR_SHOW), PAIR_SHOW))
 
 
-def _card_summary(pair):
-    """The parts of the pair change that are not 0 (a zero component is left out)."""
-    brk = pair.get('breakdown') or {}
-    parts = []
-    if brk.get('status') not in (None, 'ok') or any(brk.get(k) is None for k in ('same_delta', 'new_value', 'gone_value')):
-        return '대기'
-    if brk['same_delta'] != 0:
-        parts.append('같은 불량 %s' % pp_txt(brk['same_delta']))
-    if brk['new_value'] != 0:
-        parts.append('새 방식 +%s' % raw_pct(brk['new_value']))
-    if brk['gone_value'] != 0:
-        parts.append('없어진 방식 −%s' % raw_pct(brk['gone_value']))
-    return ' · '.join(parts) or '구성 요소 모두 0'
-
-
-def _cards(ctx):
-    if ctx.maps is None:
-        return []
-    return [c for c in ctx.maps['doc'].get('cards') or [] if isinstance(c, dict) and c.get('pair_id') in ctx.pair_by_id]
-
-
-def _card_chooser(ctx):
-    if ctx.maps is None:
-        return '<p class="muted" id="cards-none">지도 폴더(--maps-dir)가 없어 위치 카드가 없습니다.</p>'
-    cards = _cards(ctx)
-    if not cards:
-        return '<p class="muted" id="cards-none">위치 카드가 없습니다.</p>'
-    buttons = ''.join('<button type="button" class="fbtn" data-f="tab" data-v="%s">%s</button>' % (tab, esc(label)) for tab, label in CARD_TABS)
-    out = ['<div class="chips" id="card-tabs"><span class="muted">카드 고르기</span> %s</div>' % buttons]
-    for tab, label in CARD_TABS:
-        inner = []
-        for kind in KINDS:
-            mine = sorted((c for c in cards if c.get('kind') == kind and tab in (c.get('tabs') or [])),
-                          key=lambda c: (((c.get('tab_ranks') or {}).get(tab) or 10 ** 9), c['pair_id']))
-            if not mine:
-                continue
-            lis = []
-            for c in mine:
-                pair = ctx.pair_by_id[c['pair_id']]
-                lis.append('<li data-card="%s" data-href="%s" tabindex="0"><span class="n">%s</span><span><b>%s</b> %s%s<span class="sub2">%s</span></span>'
-                           '<span class="v">%s</span></li>' % (
-                               esc(c['pair_id']), esc(_href('pair:' + c['pair_id'])), esc(pair.get('rank') or '—'), esc('–'.join(pair['electrodes'])),
-                               ctx.change_badge(pair['change_kind']), _comp_text(pair), esc(_card_summary(pair)),
-                               pp_cell(pair.get('delta'), pair.get('pct_delta'))))
-            inner.append('<div class="muted">%s%s</div><ul class="lst">%s</ul>' % (chip(kind), kind, ''.join(lis)))
-        out.append('<div class="cardtab" data-tab="%s"%s>%s</div>' % (
-            tab, '' if tab == 'same' else ' hidden', ''.join(inner) or '<p class="muted">이 기준에 해당하는 카드가 없습니다.</p>'))
-    dropped = ctx.maps['doc'].get('cards_dropped_for_budget') or []
-    if dropped:
-        out.append('<p class="muted" id="cards-dropped">메모리 예산이 모자라 카드 %d 장이 빠졌습니다(cards_budget_reduced). 그 쌍은 선택하면 사유를 보입니다.</p>' % len(dropped))
-    out.append('<p class="muted">카드 = 쌍의 위치 범위별 값. 요약은 0 인 구성 요소를 숨깁니다.</p>')
-    return ''.join(out)
-
-
-def _row_item_value(row, item_id):
-    for entry in row.get('items') or []:
-        if isinstance(entry, dict) and entry.get('item_id') == item_id:
-            return entry.get('value')
-    return None
-
-
-def _range_ab(a, b):
-    return '%s → %s' % (esc(vi_txt(a)), esc(vi_txt(b))) if (a is not None or b is not None) else muted('—')
-
-
-def _card_tables(ctx, card):
-    """The two range tables of a card, split by `items[].presence` (not by `row.match`): same-coordinate A → B of the items both
-    products have, and the failure types only one product has. Every number is a ledger_maps.json value."""
-    rows = [r for r in card.get('rows') or [] if isinstance(r, dict)]
-    by_id = {r.get('id'): r for r in rows}
-    pair = ctx.pair_by_id.get(card.get('pair_id')) or {}
-    labels = {item['item_id']: _item_label(item) for item in pair.get('items') or []}
-    match = card.get('match') or {}
-    both, only, unmatched, excluded = [], [], [], 0
-    for row in rows:
-        if row.get('items') is None:
-            excluded += 1
-            continue
-        side = row.get('side')
-        counterpart = by_id.get((row.get('match') or {}).get('counterpart')) if side == 'reference' else None
-        status = (row.get('match') or {}).get('status')
-        if side == 'reference' and status == 'matched' and counterpart is not None and counterpart.get('items') is not None:
-            rng = '%s ↔ %s' % (row.get('id'), counterpart.get('id'))
-            for entry in row['items']:
-                if entry.get('presence') == 'both':
-                    both.append('<tr data-range="%s"><td class="l">%s</td><td class="l">%s</td><td class="l"><span class="badge">같은 좌표 A→B</span></td>'
-                                '<td>%s</td><td>%s</td><td class="l">%s</td></tr>' % (
-                                    esc(card.get('pair_id')), esc(rng), esc(labels.get(entry.get('item_id'), entry.get('item_id'))),
-                                    _range_ab(entry.get('value'), _row_item_value(counterpart, entry.get('item_id'))),
-                                    _range_ab(row.get('range_total'), counterpart.get('range_total')), BASIS_CHIP))
-        elif side == 'reference' and status == 'matched' and counterpart is not None and any(e.get('presence') == 'both' for e in row['items']):
-            # the matched B range lies outside the map window (no items): say it, do not drop the A range silently
-            both.append('<tr data-range="%s" class="range-outside"><td class="l">%s ↔ %s</td><td class="l muted" colspan="5">B 범위가 지도 창 밖 — 값 없음</td></tr>' % (
-                esc(card.get('pair_id')), esc(row.get('id')), esc(counterpart.get('id'))))
-        elif status != 'matched' and any(e.get('presence') == 'both' for e in row['items']):
-            unmatched.append('%s(%s)' % (row.get('id'), (row.get('match') or {}).get('reason') or '짝 없음'))
-        for entry in row['items']:
-            presence = entry.get('presence')
-            if (side == 'reference' and presence == 'a_only') or (side == 'target' and presence == 'b_only'):
-                a_side = presence == 'a_only'
-                only.append('<tr data-range="%s"><td class="l">%s</td><td class="l">%s</td><td class="l"><span class="badge %s">%s</span></td>'
-                            '<td>%s %s</td><td>%s %s</td><td class="l">%s</td></tr>' % (
-                                esc(card.get('pair_id')), esc(row.get('id')), esc(labels.get(entry.get('item_id'), entry.get('item_id'))),
-                                'b-gone' if a_side else 'b-new', 'A 에만' if a_side else 'B 에만', 'A' if a_side else 'B', esc(vi_txt(entry.get('value'))),
-                                'A' if a_side else 'B', esc(vi_txt(row.get('range_total'))), BASIS_CHIP))
-    why = CARD_MATCH_TEXT.get(match.get('status'), match.get('status'))
-    reason = (' (%s)' % match['reason']) if match.get('reason') else ''
-    empty_both = ('<tr><td colspan="6" class="l muted">같은 좌표로 비교할 항목이 없습니다 — %s%s. 양쪽에 있는 item 이 없거나 짝이 맞은 범위가 없습니다.</td></tr>' % (
-        esc(why), esc(reason)))
-    notes = []
-    if unmatched:
-        notes.append('짝이 맞지 않은 범위: %s' % ', '.join(unmatched))
-    if excluded:
-        notes.append('창 밖이라 값을 쓰지 않은 범위 %d 개' % excluded)
-    return ('<h4>같은 좌표 비교 A → B <span class="muted" style="font-weight:400">(양쪽에 있는 item)</span></h4>'
-            '<table class="rt rt-both"><thead><tr><th class="l">범위</th><th class="l">item</th><th class="l">구분</th>'
-            '<th>범위 안 이 item 값%s</th><th>범위 합계 (모든 쌍)%s</th><th class="l">기준</th></tr></thead><tbody>%s</tbody></table>'
-            '<h4>이 제품에만 있는 불량 방식 <span class="muted" style="font-weight:400">(A→B 비교 없음 · 있는 쪽의 범위 값)</span></h4>'
-            '<table class="rt rt-only"><thead><tr><th class="l">범위</th><th class="l">item</th><th class="l">구분 (있는 쪽)</th>'
-            '<th>범위 안 이 item 값%s</th><th>범위 합계 (모든 쌍)%s</th><th class="l">기준</th></tr></thead><tbody>%s</tbody></table>%s'
-            '<p class="muted">범위 안 이 item 값 = 그 item 의 범위 안 장부 값. 범위 합계 = 같은 범위에 걸친 모든 쌍의 합. 근사 값(07 · 반복 n)은 이 보고서에 넣지 않습니다.</p>' % (
-                sub('A → B'), sub('A → B'), ''.join(both) or empty_both, sub('있는 쪽'), sub('있는 쪽'),
-                ''.join(only) or '<tr><td colspan="6" class="l muted">없음 — 이 쌍의 item 은 모두 양쪽에 있습니다.</td></tr>',
-                ('<p class="muted">%s</p>' % esc(' · '.join(notes))) if notes else ''))
-
-
-def _card_store(ctx):
-    if ctx.maps is None:
-        return ''
-    out = ['<div id="card-store" hidden>']
-    for card in _cards(ctx):
-        out.append('<div data-range="%s">%s</div>' % (esc(card['pair_id']), _card_tables(ctx, card)))
-    out.append('</div>')
-    return ''.join(out)
-
-
-def _s3_panel(ctx):
-    # R8:6 the 04 change locations (entry, tags, list) are one folded reference; the pair list and the cards come first
-    roi = ('<details id="roi-ref"><summary>변경 위치(04, 보조) ▸</summary><div id="pn-loc">%s</div></details>' % (
-        '<p class="muted" id="loc-note">변경 위치(04)는 A·B 설계가 비슷할 때 비교 의미가 큽니다. unit 크기·배치가 다르면 같은 위치에 같은 전극이 없을 수 있습니다. '
-        '판단은 쌍·전극 장부를 기준으로 하세요.</p>' + _locations_line(ctx) + _tag_block(ctx) + _roi_rows(ctx)))
-    cards = ('<details id="card-ref"><summary>위치 카드로 찾기 ▸</summary>%s</details>' % _card_chooser(ctx))
-    return ('<div id="s3-panel" class="s3panel"><div id="pn-pair">%s</div>'
-            '<div id="pn-detail"><p class="muted">선택한 것이 없습니다. 목록·카드·지도에서 하나를 누르세요.</p></div>%s%s%s</div>' % (
-                _pair_list(ctx), cards, roi, _card_store(ctx)))
-
-
-def _explore(ctx):
-    """The exploration of 4 (maps + pair list + pair detail); the 04 locations are in a folded reference."""
-    head = '<h3 id="explore-h" style="margin-top:14px">탐색 — 쌍을 고르면 그 레이어의 지도가 나옵니다</h3>'
-    if ctx.maps is None:
-        return head + ('<div class="s3grid"><div class="s3maps" id="s3-maps"><div class="slot" data-slot="s3">지도 없음 — --maps-dir 를 주면 지도가 이 자리에 나옵니다.'
-                       '</div></div>%s</div>' % _s3_panel(ctx))
-    layers = _map_layers(ctx)
-    reason = _shape_reason(ctx)
-    ov_ok, ov_reason = _overlay_info(ctx)
-    chips = ''.join('<button type="button" class="mchip" data-mlayer="%s">%s</button>' % (esc(layer), esc(layer)) for layer in layers)
-    chips += '<button type="button" class="mchip" data-mlayer="all">전체</button>'
-    toggles = ''.join('<button type="button" class="mtog" data-t="%s"%s>%s</button>' % (
-        key, (' disabled title="%s"' % esc(reason)) if key == 'shape' and reason else '', text)
-        for key, text in (('shape', '전극·레이어 형상'), ('defect', '불량 영역(선택 쌍)'), ('others', '다른 쌍도 옅게'), ('roi', '변경 위치')))
-    toggles += '<button type="button" class="mtog" id="ov-btn" data-t="ov"%s>겹쳐 보기</button>' % (
-        '' if ov_ok else ' disabled title="%s"' % esc(ov_reason))
-    out = [head, '<div class="s3grid"><div class="s3maps" id="s3-maps"><div class="mbar"><span class="muted">레이어</span> %s'
-           '<details id="view-opts"><summary class="small">보기 옵션 ▸</summary><span class="muted">보기</span> %s '
-           '<label class="muted">불량 영역 투명도 <input type="range" id="m-alpha" min="10" max="100" value="80"></label></details></div>' % (
-               chips, toggles)]
-    if reason:
-        out.append('<p class="muted" id="shape-reason">%s</p>' % esc(reason))
-    if not ov_ok:
-        out.append('<p class="muted" id="ov-reason">겹쳐 보기 꺼짐: %s</p>' % esc(ov_reason))
-    out.append('<div class="mrow"><div class="mview"><div id="m3-view">%s</div><div id="m3-ov" hidden>%s</div><div id="m3-all" hidden></div></div>%s</div>' % (
-        _pair_of_maps('s3'), _mapcv('ov', 'A', 'A 위에 B (A 회색 실선 · B 점선)'), _m_legend()))
-    out.append(_missing_share(ctx))
-    outside = (ctx.changes or {}).get('outside_map') or [] if isinstance(ctx.changes, dict) else []
-    if outside:
-        index = {roi.get('roi_key'): i + 1 for i, roi in enumerate(ctx.changes.get('rois') or [])}
-        out.append('<details id="m3-outside"><summary class="small">지도 밖 변경 위치(04, 보조) ▸</summary><p class="muted">창 밖이라 그리지 않고 목록으로만 보입니다.</p><ul id="outside-map">%s</ul></details>' % ''.join(
-            '<li data-roi="%s" data-href="%s" tabindex="0">변경 위치 %s <span class="muted">%s</span></li>' % (
-                esc(key), esc(_href('roi:' + key)), esc(index.get(key, '?')), esc(key)) for key in outside))
-    out.append('</div>%s</div>' % _s3_panel(ctx))
-    return ''.join(out)
+def _detail_shell(ctx):
+    """The right column of 3: the script fills #s3-detail (head, pairs, failure types, places of the selection)."""
+    return ('<div class="s3side"><div class="dpanel"><div id="s3-detail"><p class="muted" id="dp-empty">원인 후보 카드의 [상세 보기]나 '
+            '4 결과의 쌍을 누르면 이 자리에 그 후보의 쌍, 불량 방식, 자리가 나옵니다.</p></div>%s</div></div>' % (
+                _missing_share(ctx) if ctx.maps is not None else ''))
 
 
 # ---- section 4: electrode ledger and layer x size ----------------------------------------------------------------------------
@@ -1934,8 +1584,8 @@ def _row_html(ctx, b, row):
         if best is None:
             name = esc(label)
         else:
-            name = '<a class="lk" href="%s&amp;layer=%s&amp;it=%s&amp;to=explore">%s</a>' % (
-                esc(_href('pair:' + row['pair_id'])), quote(row['layer'], safe=''), quote(best[1], safe=''), esc(label))
+            name = '<a class="lk" href="%s&amp;cand=%s&amp;it=%s">%s</a>' % (
+                esc(_href('pair:' + row['pair_id'])), esc(b['id']), quote(best[1], safe=''), esc(label))
         method = ' · '.join(sorted({_item_label(ctx.item_by_id[i]) for i in ids if i in ctx.item_by_id})) or '—'
     pres = row.get('presence') or []
     if row.get('cno'):
@@ -2021,7 +1671,7 @@ def _bundle_card(ctx, b):
     kinds = '<br>'.join('%s%s %s <span class="muted">%s</span>' % (chip(k), k, pp_cell(b['kinds'][k]['net'], None), esc(_role_text(ctx, b, k)))
                         for k in KINDS)
     uid = esc(b['id'])
-    buttons = ('<span class="cbtns"><a class="lkbtn" href="%s&amp;to=explore" title="4 결과의 탐색에서 이 원인 후보의 쌍·item 을 강조">지도에서 보기 ▸</a>'
+    buttons = ('<span class="cbtns"><a class="lkbtn" href="%s" title="오른쪽 상세 패널에서 이 원인 후보의 쌍·불량 방식·자리를 봅니다">상세 보기 ▸</a>'
                '<a class="lkbtn" href="#unit=%s&amp;to=s2" title="2 제품 대응 표의 이 칸 보기">제품 대응 ▸</a></span>' % (esc(_href('unit:' + b['id'])), uid))
     cancel = '<span class="badge b-mv">내부 상쇄(순 변화 ≈ 0)</span>' if any((b['kinds'][k].get('cancelling')) for k in KINDS) else ''
     parts = ['<div class="bcard" id="%s"><div class="bh"><b class="bt">%s</b> %s%s%s%s<div class="bv">%s</div></div>' % (
@@ -2186,8 +1836,8 @@ def _kind_cards(ctx, kind, rk, line_rk=None):
 
 def _section3(ctx):
     if ctx.bundles is None:
-        return ('<section id="s3">%s%s%s</section>' % (_hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?'),
-                                                         _rerun_line('원인 후보'), _nx([('s4', '4 결과'), ('s2', '2 제품 대응')])))
+        return ('<section id="s3">%s%s%s%s</section>' % (_hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?'),
+                                                           _rerun_line('원인 후보'), _detail_shell(ctx), _nx([('s4', '4 결과'), ('s2', '2 제품 대응')])))
     if ctx.v2:
         sums = _s3_sums(ctx)
     else:
@@ -2202,7 +1852,7 @@ def _section3(ctx):
            '총 변동은 %s 입니다. 카드 안에서 증가와 감소가 서로 지우면 "내부 상쇄" 로 표시합니다.</p>' % TOTAL_TEXT,
            '<p style="margin:3px 0"><a href="#s4" data-go="s4">4 결과</a>의 \'가장 많이 달라진 쌍\' 은 쌍마다 모든 레이어의 변화를 합친 값이고, 여기 카드는 같은 변화를 \'무엇이 바뀌었나\' 기준으로 다시 묶은 값입니다. '
            '쌍 하나가 두 카드 이상으로 나뉠 수 있어 1 의 쌍 기준과 다를 수 있습니다.</p>',
-           '<p style="margin:3px 0">[지도에서 보기] 는 4 결과의 탐색에서 그 원인 후보의 쌍·item 만 강조합니다. [제품 대응] 은 2 제품 대응의 그 칸을 강조합니다.</p>']
+           '<p style="margin:3px 0">[상세 보기] 나 카드를 누르면 오른쪽 상세 패널이 그 원인 후보의 쌍·불량 방식·자리로 바뀝니다. [제품 대응] 은 2 제품 대응의 그 칸을 강조합니다.</p>']
     if not same_res:
         how.append('<p style="margin:3px 0">원인 후보 값은 실제 vi 차이이며 해상도 차이 몫도 들어 있습니다. 해상도 몫을 뺀 값은 <a href="#s6" data-go="s6">6 해상도 차이 비교</a>에 있습니다.</p>')
     hub = ctx.bundles.get('hub_min') or 3
@@ -2230,6 +1880,7 @@ def _section3(ctx):
                '<tr><td class="muted">다중 쌍 변화</td><td>Scan3 · SD1 — 다중 쌍 변화(8 쌍: 증가 4 · 감소 4)</td></tr>'
                '<tr><td class="muted">몫</td><td>그 종류·그 방향 합계에서 카드의 순 변화가 차지하는 비율</td></tr></table></div>')
     ranking = ctx.bundles['ranking']
+    out.append('<div class="s3two"><div class="s3cards" id="s3-cards">')       # left: the cards; right: the detail panel (sticky)
     for kind in KINDS:
         rk = ranking[kind]
         if rk.get('status') != 'ok':
@@ -2247,6 +1898,7 @@ def _section3(ctx):
                     kind, kind, len(rk['rest']), _rest_rows(ctx, kind, [(i, '') for i in rk['rest']])))
             continue
         out.append(_kind_cards(ctx, kind, rk, ranking['line'] if kind == 'pixel' else None))
+    out.append('</div>%s</div>' % _detail_shell(ctx))
     out.append(_nx([('s4', '4 결과 — 불량은 어떻게 변했나'), ('s2', '2 제품 대응'), ('s6', '6 해상도 차이 비교')]))
     out.append('</section>')
     return ''.join(out)
@@ -2304,13 +1956,12 @@ def _section4(ctx):
     layers = (((ctx.conc or {}).get('line') or {}).get('actual') or {}).get('layer') or {}
     top = [g for g in layers.get('groups') or [] if not str(g['key']).startswith('CNO@') and g['key'] != 'CRP' and g.get('share') is not None]
     if layers.get('status') == 'ok' and top:
-        sums.append('레이어로는 <a class="lk" href="#layer=%s&amp;to=explore">%s</a> 에 line 변화가 가장 많이 몰려 있습니다(%s).' % (
+        sums.append('레이어로는 <a class="lk" href="#sel=layer:%s&amp;to=s2">%s</a> 에 line 변화가 가장 많이 몰려 있습니다(%s).' % (
             quote(top[0]['key'], safe=''), esc(top[0]['key']), share_txt(top[0]['share'])))
     out = ['<section id="s4">', _hd('4', '결과', '불량은 어떻게 변했나(어느 조합, 어떤 방식)?', sums),
-           '<div class="band info" id="unit-band" hidden></div>',      # the script fills it for #sel=unit:<id> (M3)
            '<div class="g2"><div><h3>변화의 구성 — item 단위 분해 <span class="muted" style="font-weight:400">(위 = 증가, 아래 = 감소 · 합이 종류 전체 Δ)</span></h3>%s</div>' % _breakdown_table(ctx),
            '<div><h3>가장 많이 달라진 쌍 <span class="muted" style="font-weight:400">(실제 vi Δ, 종류별로 나눔 · 위 5)</span></h3>%s</div></div>' % _lists(ctx),
-           '<div id="explore">%s</div>' % _explore(ctx),
+           _pair_find(ctx),
            '<details id="conc-pairs"><summary>쌍 기준으로 보기 ▸ (집중도 그래프)</summary>%s</details>' % _conc_html(ctx),
            _nx([('s5', '5 분포 — 전극·레이어·이물 크기별'), ('s6', '6 해상도 차이 비교'), ('s3', '3 원인 후보로 돌아가기')]), '</section>']
     return ''.join(out)
@@ -2559,7 +2210,7 @@ def _section6(ctx):
                        '%p 순위가 바뀌고, 실제로는 악화지만 증가한 폭이 unit 개수 증가율보다 작으면 설계로는 개선으로 보일 수 있습니다. A 대비 % 의 순서는 바뀌지 않습니다.</div>')
         lists = ''.join(_design_list(ctx, k, avail[k], inc, area) for k in ok for inc in (True, False))
         out.append('<h3 id="design-top">%s 상위 쌍 <span class="muted" style="font-weight:400">(%s 기준 · 실제 Δ 순위와 달라진 쌍에 "실제 순위" 표시)</span></h3>'
-                   '<p class="muted small">"A 대비 %%" = %s ÷ A 값입니다. 쌍을 누르면 4 결과의 탐색에서 그 쌍이 선택됩니다.</p><div class="g2">%s</div>' % (
+                   '<p class="muted small">"A 대비 %%" = %s ÷ A 값입니다. 쌍을 누르면 3 의 상세 패널이 그 쌍으로 바뀝니다.</p><div class="g2">%s</div>' % (
                        '면적당 설계 차이' if area else '설계 차이', '면적당 설계 차이 몫' if area else '설계 차이 몫',
                        '면적당 설계 몫' if area else '설계 차이 몫', lists))
     if area:
@@ -2623,35 +2274,29 @@ def _item_label(item):
     return '%s %s' % (MODE_LABELS.get(item.get('failure_type'), item.get('failure_type')), layer)
 
 
+def _item_occurrence(ctx, item_id):
+    """[connected regions in A, in B] of an item from ledger_maps `occurrence` (the observed values), or None (no maps, no value,
+    suppressed, or an older ledger-maps without the occurrence block)."""
+    row = ctx.occ_by_item.get(item_id)
+    if row is None or ((row.get('compare') or {}).get('kind') == 'suppressed'):
+        return None
+    na, nb = (row.get('reference') or {}).get('n'), (row.get('target') or {}).get('n')
+    return None if na is None or nb is None else [na, nb]
+
+
 def _pair_bundle(ctx, pair):
     items = []
     for item in pair['items']:
         items.append({'id': item['item_id'], 'ft': item.get('failure_type'), 'ul': item.get('upper_layer'), 'll': item.get('lower_layer'),
                       'al': item.get('analysis_layer'), 'label': _item_label(item), 'pres': item.get('presence'),
                       'a': item.get('a'), 'b': item.get('b'), 'd': item.get('delta'), 'sizes': item.get('by_size') or [],
-                      'af': bool(item.get('a_filtered')), 'bf': bool(item.get('b_filtered'))})
+                      'af': bool(item.get('a_filtered')), 'bf': bool(item.get('b_filtered')),
+                      'oc': _item_occurrence(ctx, item['item_id'])})
     return {'id': pair['pair_id'], 'no': pair.get('rank'), 'e': list(pair['electrodes']), 'kind': pair['kind'], 'ck': pair['change_kind'],
             'a': pair['a'], 'b': pair['b'], 'd': pair['delta'], 'pa': bool(pair['present_a']), 'pb': bool(pair['present_b']),
             'pct_a': pair.get('pct_a'), 'pct_b': pair.get('pct_b'), 'pct_d': pair.get('pct_delta'),
             'la': list(pair.get('layers_a') or []), 'lb': list(pair.get('layers_b') or []),
             'brk': pair.get('breakdown'), 'comp': pair.get('composition'), 'items': items}
-
-
-def _changes_bundle(ctx):
-    ch = ctx.changes
-    if ctx.maps is None:
-        return None
-    if not isinstance(ch, dict):
-        return {'link_status': 'no_candidates'}
-    rois = []
-    for roi in ch.get('rois') or []:
-        rois.append({'roi_key': roi.get('roi_key'), 'layers': roi.get('layers'), 'status': roi.get('status'),
-                     'tags': roi.get('change_kinds'), 'tag_text': roi.get('change_kind_text'),
-                     'center_xy_um': roi.get('center_xy_um'), 'window_um': roi.get('window_um'),
-                     'map_status': (roi.get('map') or {}).get('status'), 'map': roi.get('map')})
-    return {'link_status': ch.get('link_status'), 'coords_status': ch.get('coords_status'), 'apply_align': ch.get('apply_align'),
-            'summary': ch.get('summary'), 'pairs': ch.get('pairs') or {}, 'rois': rois, 'outside_map': ch.get('outside_map') or [],
-            'overlay': ctx.maps['doc'].get('overlay')}
 
 
 def _num_pair(value):
@@ -2702,19 +2347,8 @@ def _maps_bundle(ctx):
         return None
     mdoc = ctx.maps['doc']
     return {'status': mdoc.get('status'), 'reasons': list(mdoc.get('reasons') or []), 'bands': mdoc.get('bands') or [],
-            'cards_dropped': len(mdoc.get('cards_dropped_for_budget') or []), 'options': mdoc.get('options') or {},
-            'dropped_cards': [{'pair_id': d.get('pair_id'), 'kind': d.get('kind'), 'stage': d.get('stage'), 'reason': d.get('reason')}
-                              for d in mdoc.get('cards_dropped_for_budget') or [] if isinstance(d, dict)],
-            'sha256': ctx.maps['sha'], 'report': mdoc.get('report') or {}, 'sides': _map_sides(ctx), 'layers': _map_layers(ctx),
-            'shape_reason': _shape_reason(ctx), 'overlay': mdoc.get('overlay')}
-
-
-def _cards_bundle(ctx):
-    if ctx.maps is None:
-        return []
-    return [{'pair_id': c.get('pair_id'), 'kind': c.get('kind'), 'rank': c.get('rank'), 'tabs': c.get('tabs'), 'tab_ranks': c.get('tab_ranks'),
-             'match': (c.get('match') or {}).get('status')}
-            for c in ctx.maps['doc'].get('cards') or [] if isinstance(c, dict)]
+            'options': mdoc.get('options') or {}, 'sha256': ctx.maps['sha'], 'report': mdoc.get('report') or {},
+            'sides': _map_sides(ctx), 'layers': _map_layers(ctx), 'shape_reason': _shape_reason(ctx)}
 
 
 def _bundle(ctx, ledger_sha):
@@ -2741,7 +2375,7 @@ def _bundle(ctx, ledger_sha):
                         'lss': e.get('layer_state_status'), 'mv': e.get('moved')} for e in doc['electrodes']],
         'cno': [{'e': r['electrode_id'], 'l': r['density_layer'], 'a': r['a'], 'b': r['b'], 'd': r['delta'], 'pres': r['presence']} for r in doc['cno']],
         'checks': doc.get('checks'), 'top': {'changed': changed, 'risk': risk}, 'demo_pair': demo,
-        'maps': _maps_bundle(ctx), 'changes': _changes_bundle(ctx), 'cards': _cards_bundle(ctx), 'report07': ctx.report07,
+        'maps': _maps_bundle(ctx), 'report07': ctx.report07,
         'layer_order': ctx.layer_order, 'bundles': _bundles_data(ctx)}
 
 
@@ -2777,7 +2411,8 @@ def _bundles_data(ctx):
                     if pos is not None and pos[0] == r['pair_id']:
                         p[3].add(pos[1])
         pairs = {k: [v[0], v[1], v[2], sorted(v[3])] for k, v in pairs.items()}
-        out.append({'id': b['id'], 'title': bundle_title(b), 'ic': b['id'] in in_cards, 'cells': cells, 'pairs': pairs,
+        out.append({'id': b['id'], 'title': bundle_title(b), 'ty': TYPE_NAME.get(t, t), 'nk': {k: (b.get('kinds') or {}).get(k, {}).get('net') for k in KINDS},
+                    'ic': b['id'] in in_cards, 'cells': cells, 'pairs': pairs,
                     'cno': len(cno), 'layers': ctx.sort_layers({c[1] for c in cells}), 'els': sorted({c[0] for c in cells})})
     return out
 

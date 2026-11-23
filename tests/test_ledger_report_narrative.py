@@ -230,7 +230,7 @@ def test_seven_sections_in_order_with_a_head_and_a_pointer_each(real):
     for sid in ids:
         s = new_section(page, sid)
         assert s.startswith('<section id="%s"><p class="q">' % sid) and '<h2>' in s and 'class="nextl"' in s
-    assert 'id="purpose"' in page and 'id="explore"' in new_section(page, 's4')
+    assert 'id="purpose"' in page and 'id="pair-find"' in new_section(page, 's4') and 'id="s3-detail"' in new_section(page, 's3')       # rexp/T2
     text = all_text(page)
     for old in '①②③④⑤⑥⑦':
         assert old not in text, old
@@ -259,14 +259,15 @@ def test_design_and_resolution_numbers_are_only_in_section_6(real):
     assert needle not in new_section(page, 's2')
 
 
-def test_the_default_screen_has_no_04_roi(tmp_path):
+def test_the_screen_has_no_04_roi_and_no_location_cards(tmp_path):
     doc, maps, out = map_report(tmp_path, changes=ok_changes())
     page = html_of(out)
     text = visible(page)
-    for word in ('형상 태그', '변경 위치 #', '#1 ', 'roi-table'):
+    for word in ('형상 태그', '변경 위치', '#1 ', 'roi-table', '위치 카드', '겹쳐 보기'):
         assert word not in text, word
-    assert '<details id="roi-ref">' in page and 'id="roi-table"' in page            # it is there, folded
-    assert 'data-f="entry"' not in page
+    for gone in ('id="roi-ref"', 'id="roi-table"', 'id="card-ref"', 'id="card-store"', 'data-f="entry"', 'data-f="tab"', 'data-f="kind"', 'data-f="cat"',
+                 'id="pl-table"', 'id="pl-filters"', 'id="s3-panel"'):
+        assert gone not in page, gone
 
 
 def test_old_inputs_render_and_say_how_to_rerun(tmp_path):
@@ -564,7 +565,7 @@ def test_r11_6_maps_are_found_by_their_layer_field(tmp_path):
     for role, key in (('reference', 'A'), ('target', 'B')):
         want = sorted((e['file'], e['layer']) for e in mdoc['sides'][role]['maps'])
         assert sorted((m['f'], m['l']) for m in data['maps']['sides'][key]['maps']) == want
-    assert '변경 위치(04, 보조)' in page
+    assert '변경 위치(04, 보조)' not in page
 
 
 # ---- the script: the hash whitelist and the links (headless Chrome) ---------------------------------------------------------------
@@ -639,14 +640,12 @@ def test_r12_5_a_missing_rule_ratio_is_a_dash_not_an_error(real):
     assert row and '판정 불가' in row.group(1) and '—' in row.group(1)
 
 
-def test_r12_6_the_missing_04_result_is_no_band_but_one_line_in_the_folded_reference(tmp_path):
+def test_r12_6_the_missing_04_result_is_not_told_at_all(tmp_path):
     from test_ledger_report_maps import setup as maps_setup
     from test_ledger_report_v2 import ledger_report_run
     doc, folder, maps = maps_setup(tmp_path)
     page = html_of(ledger_report_run(tmp_path, folder, maps, 'rn_b6'))
-    assert '<div class="band info" id="band-changes"' not in page
-    pn = page[page.index('id="roi-ref"'):]
-    assert 'id="band-changes"' in pn[:pn.index('</details>')]
+    assert 'id="band-changes"' not in page and '04 결과 없음' not in page and 'id="roi-ref"' not in page and 'id="locations"' not in page
 
 
 def test_r12_9_the_nearly_no_design_difference_branch_names_the_outside_conditions(real):
@@ -736,9 +735,9 @@ def test_chrome_r12_2_a_later_hash_change_does_not_pull_the_page_back_to_the_car
 def test_chrome_r12_4_the_it_hash_marks_the_item_row(real_page, real):
     pair = next(p for p in real['pairs'] if p.get('items'))
     item = pair['items'][0]['item_id']
-    dom, text = dump_dom(real_page, '#sel=pair:%s&layer=L1&it=%s&to=explore' % (pair['pair_id'], item))
-    assert 'data-err' not in dom.root
-    assert [a for t, a in dom.elements if t == 'tr' and a.get('id') == 'pd-it-sel']
+    dom, text = dump_dom(real_page, '#sel=pair:%s&it=%s&to=explore' % (pair['pair_id'], item))
+    assert 'data-err' not in dom.root and dom.root['data-dp-pair'] == pair['pair_id']
+    assert [a for t, a in dom.elements if t == 'tr' and 'itsel' in (a.get('class') or '').split()]       # the item row of the detail panel (③)
 
 
 # ---- rnarr/T12: the direction reading (K4 / M1 / M2), the area reading of 6, the hub sensitivity, the old inputs -----------------
@@ -811,8 +810,8 @@ def test_m3_every_card_has_the_map_and_the_correspondence_buttons_with_a_whiteli
     s3 = new_section(render(doc), 's3')
     for b in doc['summary']['bundles']['list']:
         if b['id'] in cards_of(doc, 'line'):
-            assert 'href="#sel=unit:%s&amp;to=explore"' % b['id'] in s3 and 'href="#unit=%s&amp;to=s2"' % b['id'] in s3
-    assert '지도에서 보기 ▸' in s3 and '제품 대응 ▸' in s3
+            assert 'href="#sel=unit:%s"' % b['id'] in s3 and 'href="#unit=%s&amp;to=s2"' % b['id'] in s3
+    assert '상세 보기 ▸' in s3 and '지도에서 보기' not in s3 and '제품 대응 ▸' in s3
     assert all(re.fullmatch(r'bd-[0-9a-f]{16,24}', i) for i in re.findall(r'#sel=unit:([^&"]+)', s3))
 
 
@@ -959,29 +958,31 @@ def _unit_page(tmp_path):
     return doc, one, p0, layer, out / 'ledger_report.html'
 
 
-def test_chrome_sel_unit_shows_only_that_candidates_pairs_layers_and_a_band(tmp_path):
+def test_chrome_sel_unit_opens_the_detail_panel_of_that_candidate_only(tmp_path):
     doc, one, p0, layer, page = _unit_page(tmp_path)
     assert len(doc['pairs']) > 2
     dom, text = dump_dom(page, '#sel=unit:%s&to=explore' % one['id'])
     assert 'data-err' not in dom.root and dom.root['data-sel'] == 'unit:' + one['id']
-    shown = {a['data-pair'] for t, a in dom.elements if t == 'tr' and 'plrow' in (a.get('class') or '').split() and 'hide' not in (a.get('class') or '').split()}
-    assert shown == {p0['pair_id']}                                              # the pair list is filtered to the candidate
-    chips = {a['data-mlayer'] for t, a in dom.elements if t == 'button' and 'data-mlayer' in a and 'hidden' not in a}
-    assert chips == {layer}                                                      # only the layers of the candidate
-    band = [a for t, a in dom.elements if a.get('id') == 'unit-band']
-    assert band and 'hidden' not in band[0] and '3 으로 돌아가기' in text and one['id'] in text
-    assert dom.root.get('data-map-layer') == layer
+    assert dom.root['data-dp-unit'] == one['id'] and dom.root['data-dp-pair'] == p0['pair_id']        # ② the candidate's pair is picked, ③④ follow it
+    shown = [a['data-dp'] for t, a in dom.elements if a.get('data-dp')]
+    assert shown == [p0['pair_id']]                                              # ② lists the pairs of the candidate only
+    layers = [a for t, a in dom.elements if t == 'option']
+    assert [a['value'] for a in layers] == [layer] and dom.root['data-dp-layer'] == layer         # ④ the layer select holds the layers of the pair
+    assert dom.root['data-dp-drawn'] == '2' and dom.root.get('data-map-check') == 'passed'
+    assert 'id="unit-band"' not in text and one['id'] in text
 
 
 def test_chrome_an_unknown_or_malformed_unit_selection_is_ignored(tmp_path):
     doc, one, p0, layer, page = _unit_page(tmp_path)
-    for fragment in ('#sel=unit:bd-0123456789abcdef', '#sel=unit:%3Cscript%3E', '#sel=unit:' + one['id'][:-1] + 'Z', '#sel=unit:'):
+    for fragment in ('#sel=unit:bd-0123456789abcdef', '#sel=unit:%3Cscript%3E', '#sel=unit:' + one['id'][:-1] + 'Z', '#sel=unit:', '#sel=pair:P1&cand=bd-zzzz'):
         dom, text = dump_dom(page, fragment)
-        assert 'data-err' not in dom.root and dom.root.get('data-sel', '') == '', fragment
-        band = [a for t, a in dom.elements if a.get('id') == 'unit-band']
-        assert band and 'hidden' in band[0], fragment
-    dom, text = dump_dom(page, '#sel=pair:%s' % p0['pair_id'])             # the old selections still work
+        assert 'data-err' not in dom.root and dom.root.get('data-sel', '') in ('', 'pair:P1'), fragment
+        assert dom.root.get('data-dp-unit', '') == '' or fragment.startswith('#sel=pair'), fragment
+    dom, text = dump_dom(page, '#sel=unit:bd-0123456789abcdef')
+    assert 'id="dp-empty"' in text                                               # the empty prompt stays
+    dom, text = dump_dom(page, '#sel=pair:%s' % p0['pair_id'])             # a pair selection opens the panel on that pair (its candidate too)
     assert 'data-err' not in dom.root and dom.root['data-sel'] == 'pair:' + p0['pair_id']
+    assert dom.root['data-dp-pair'] == p0['pair_id'] and dom.root['data-dp-unit'] == one['id']
 
 
 def test_chrome_the_rich_page_runs_without_a_script_error(tmp_path, real):
@@ -1083,14 +1084,13 @@ def test_chrome_r18_3_a_two_layer_candidate_has_both_layers_both_pairs_and_count
     dom, text = dump_dom(page, '#sel=unit:%s&to=explore' % b['id'])
     assert 'data-err' not in dom.root and dom.root['data-sel'] == 'unit:' + b['id']
     assert dom.root['data-sel-items'] == '2'                                          # the two item ids of the two pairs, not the CNO id
-    shown = {a['data-pair'] for t, a in dom.elements if t == 'tr' and 'plrow' in (a.get('class') or '').split() and 'hide' not in (a.get('class') or '').split()}
-    assert shown == {p0['pair_id'], p1['pair_id']}
-    chips = {a['data-mlayer'] for t, a in dom.elements if t == 'button' and 'data-mlayer' in a and 'hidden' not in a}
-    assert chips == {l0, l1}
-    band = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', text[text.index('id="unit-band"'):]))[:240]
-    assert '쌍 2 개 · item 2 건 · CNO 1 건(지도에 없음)' in band
-    dom2, _text2 = dump_dom(page, '#sel=unit:%s&layer=%s&to=explore' % (b['id'], l1))     # the second layer: the candidate stays selected
-    assert 'data-err' not in dom2.root and dom2.root.get('data-map-layer') == l1 and dom2.root['data-sel-items'] == '2'
+    shown = {a['data-dp'] for t, a in dom.elements if a.get('data-dp')}
+    assert shown == {p0['pair_id'], p1['pair_id']}                                    # ② both pairs of the candidate
+    cno = [a for t, a in dom.elements if a.get('id') == 'dp-cno']
+    assert cno and 'CNO 1 건 — 지도에 없음' in re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', text[text.index('id="dp-cno"'):]))[:80]
+    dom2, text2 = dump_dom(page, '#sel=pair:%s&cand=%s' % (p1['pair_id'], b['id']))      # the second pair: the candidate stays
+    assert 'data-err' not in dom2.root and dom2.root['data-dp-unit'] == b['id'] and dom2.root['data-dp-pair'] == p1['pair_id']
+    assert dom2.root['data-dp-layer'] == l1 and {a['data-dp'] for t, a in dom2.elements if a.get('data-dp')} == {p0['pair_id'], p1['pair_id']}
 
 
 def test_r18_6_the_bundle_data_carries_item_positions_not_item_ids(tmp_path):

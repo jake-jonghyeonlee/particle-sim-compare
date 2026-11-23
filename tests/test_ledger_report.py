@@ -230,7 +230,7 @@ def section(page, number):
     3 = 4 results (the exploration is in it), 4 = 5 distribution, 5 = appendix."""
     if number == 1:
         s4 = new_section(page, 's4')
-        return new_section(page, 's1') + s4[:s4.index('<div id="explore">')]
+        return new_section(page, 's1') + s4[:s4.index('<div id="pair-find">')]       # rexp/T2: the exploration is now the pair finder
     return ''.join(new_section(page, sid) for sid in SECTION_IDS[number])
 
 
@@ -269,7 +269,7 @@ def test_five_sections_in_order_slots_for_2_3_4_and_one_data_bundle(tmp_path):
     positions = [page.index('<h2>%s</h2>' % t) for t in titles]
     assert positions == sorted(positions)
     assert '다음 단계에서 추가됩니다' not in page                  # every section is built (T6 = 2 and 4, T7-T8 = 3)
-    assert 'id="s3-panel"' in section(page, 3) and '<table id="pl-table"' in section(page, 3)
+    assert 'id="s3-detail"' in new_section(page, 's3') and '<table id="pf-table"' in section(page, 3)       # rexp/T2: the detail panel of 3, the pair finder of 4
     assert '<table id="corr-table">' in section(page, 2) and '<table id="ledger-table">' in section(page, 4)
     assert page.count('id="report-data"') == 1 and page.count('<script type="application/json"') == 1
     for old in ('<section id="s7">', 'id="pairs-line"', 'id="el-line"'):

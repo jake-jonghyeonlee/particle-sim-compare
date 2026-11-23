@@ -152,44 +152,30 @@ def test_without_maps_dir_the_page_has_the_no_maps_band_and_empty_bundle_parts(t
     code, out = report(tmp_path, folder, None)
     page = html_of(out)
     data = bundle_of(page)
-    assert code == 0 and 'id="band-no-maps"' in page and data['maps'] is None and data['changes'] is None and data['cards'] == []
-    assert 'id="tags-folded"' in section(page, 3) and 'id="tags-folded"' not in section(page, 1) and 'id="locations"' in section(page, 3)   # rnarr/T7: the locations line is in the folded 04 reference of 4; rtrim/T2: tags moved to section 3
+    assert code == 0 and 'id="band-no-maps"' in page and data['maps'] is None and 'changes' not in data and 'cards' not in data   # rexp/T2: no 04 / card parts in the bundle
+    assert '04 결과 없음' not in page and 'id="tags-folded"' not in page and 'id="locations"' not in page and 'id="roi-ref"' not in page
     assert 'ledger_maps_json_sha256' not in json.loads((out / 'report.json').read_text(encoding='utf-8'))
 
 
-def test_maps_without_04_get_the_changes_band_and_fold_the_tag_axis(tmp_path):
+def test_maps_without_04_draw_no_04_text_and_the_report_json_says_the_maps_status(tmp_path):
     doc, folder, maps = setup(tmp_path)               # no `changes` key at all (an older ledger-maps run)
     code, out = report(tmp_path, folder, maps)
     page = html_of(out)
-    assert code == 0 and 'id="band-no-maps"' not in page and 'id="band-changes"' in page and 'id="tags-folded"' in page
+    assert code == 0 and 'id="band-no-maps"' not in page and 'id="band-changes"' not in page and '04 결과 없음' not in page
     data = bundle_of(page)
-    assert data['changes'] == {'link_status': 'no_candidates'} and data['maps']['status'] == 'ok'
+    assert 'changes' not in data and data['maps']['status'] == 'ok'
     report_json = json.loads((out / 'report.json').read_text(encoding='utf-8'))
     assert report_json['ledger_maps_status'] == 'ok' and len(report_json['ledger_maps_json_sha256']) == 64
 
 
-@pytest.mark.parametrize('status', ['stale', 'invalid', 'no_candidates'])
-def test_each_04_status_has_its_band(tmp_path, status):
-    changes = dict(ok_changes(), link_status=status, rois=[], pairs={})
+@pytest.mark.parametrize('status', ['stale', 'invalid', 'no_candidates', 'ok'])
+def test_the_04_block_of_ledger_maps_is_ignored_by_the_report(tmp_path, status):
+    changes = dict(ok_changes(), link_status=status)
     doc, folder, maps = setup(tmp_path, changes=changes)
     page = html_of(report(tmp_path, folder, maps)[1])
-    assert 'id="band-changes"' in page and 'id="tags-folded"' in page and '변경 위치: 04 결과 없음' in page
-
-
-def test_04_changes_feed_the_tag_axis_and_the_count_line_from_the_json_values(tmp_path):
-    doc, folder, maps = setup(tmp_path, changes=ok_changes())
-    page = html_of(report(tmp_path, folder, maps)[1])
-    s1, s3 = section(page, 1), section(page, 3)
-    assert 'id="band-changes"' not in page and 'id="tags"' in s3 and 'id="tags"' not in s1       # rtrim/T2: the tag table heads the section 3 location entry
-    pn_loc = s3[s3.index('id="pn-loc"'):s3.index('</details>', s3.index('id="pn-loc"'))]
-    assert pn_loc.index('id="tags"') < pn_loc.index('id="roi-table"')
-    rows = re.findall(r'<tr data-href="#cat=tag:([^"&]+)&amp;entry=pair" data-scroll="explore"><td class="l">([^<]*)</td><td>(\d+)</td><td>(\d+)</td><td>(\d+)</td></tr>', s3)
-    assert rows == [('reshaped', '형상 변경', '1', '1', '2'), ('shifted', '위치 이동', '1', '0', '1')]
-    assert 'Δ 를 더하면 중복' in s3
-    assert re.search(r'변경 위치 <b>1곳</b>\(04\) · 위치에 연결된 쌍 <b>2</b> · 미연결 쌍 <b>2</b>', s3) and '분모 4 쌍' in s3
-    data = bundle_of(page)
-    assert data['changes']['summary']['roi_count'] == 1 and data['changes']['pairs']['P1']['roi_keys'] == ['roi:R1']
-    assert data['changes']['rois'][0]['roi_key'] == 'roi:R1' and 'cases' not in data['changes']['rois'][0]
+    for gone in ('id="band-changes"', 'id="tags-folded"', 'id="tags"', 'id="roi-table"', 'id="locations"', '변경 위치', '04 결과 없음', 'data-roi='):
+        assert gone not in page, gone
+    assert 'changes' not in bundle_of(page)
 
 
 def test_partial_maps_get_a_band_and_the_status_is_in_report_json(tmp_path):
@@ -203,21 +189,16 @@ def test_partial_maps_get_a_band_and_the_status_is_in_report_json(tmp_path):
     assert 'maps-partial' not in html_of(report(tmp_path, folder2, maps2, name='ok_out')[1])
 
 
-def test_cards_budget_reduced_is_a_band_and_a_trust_note(tmp_path):
+def test_location_cards_are_not_used_by_the_report(tmp_path):
+    """rexp/T2: the cards of ledger-maps (and the budget band for dropped cards) are not drawn; the bundle holds no card part."""
     dropped = [{'kind': 'line', 'pair_id': 'P1', 'rank': 'L1', 'tabs': ['all'], 'stage': 'target', 'reason': 'card_reserve_failed'}]
-    doc, folder, maps = setup(tmp_path, status='partial', dropped=dropped)
-    page = html_of(report(tmp_path, folder, maps)[1])
-    assert 'id="band-cards-budget"' in page and '카드 1 장이 빠졌습니다' in page and '카드 일부 없음' in section(page, 1)
-    assert bundle_of(page)['maps']['cards_dropped'] == 1
-
-
-def test_cards_in_the_bundle_keep_only_the_header(tmp_path):
     cards = [{'kind': 'line', 'pair_id': 'P1', 'rank': 'L1', 'tabs': ['same', 'all'], 'tab_ranks': {'same': 1, 'all': 1},
               'match': {'status': 'matched'}, 'rows': [{'id': 'A1'}] * 50}]
-    doc, folder, maps = setup(tmp_path, cards=cards)
-    data = bundle_of(html_of(report(tmp_path, folder, maps)[1]))
-    assert data['cards'] == [{'pair_id': 'P1', 'kind': 'line', 'rank': 'L1', 'tabs': ['same', 'all'], 'tab_ranks': {'same': 1, 'all': 1},
-                              'match': 'matched'}]
+    doc, folder, maps = setup(tmp_path, status='partial', dropped=dropped, cards=cards)
+    page = html_of(report(tmp_path, folder, maps)[1])
+    assert 'id="band-cards-budget"' not in page and 'id="card-store"' not in page and 'id="card-ref"' not in page and '위치 카드' not in page
+    data = bundle_of(page)
+    assert 'cards' not in data and 'cards_dropped' not in data['maps'] and 'dropped_cards' not in data['maps'] and 'overlay' not in data['maps']
 
 
 # ---- errors -----------------------------------------------------------------------------------------------------------------
@@ -277,7 +258,7 @@ def test_cli_option_runs_the_report_with_maps_and_reports_stale_as_exit_2(tmp_pa
     doc, folder, maps = setup(tmp_path, changes=ok_changes())
     out = tmp_path / 'cli'
     assert main(['ledger-report', '--ledger-dir', str(folder), '--out', str(out), '--maps-dir', str(maps)]) == 0
-    assert bundle_of(html_of(out))['changes']['link_status'] == 'ok'
+    assert bundle_of(html_of(out))['maps']['status'] == 'ok'
     stale = write_maps(tmp_path, doc, 'e' * 64, name='stale')
     assert main(['ledger-report', '--ledger-dir', str(folder), '--out', str(tmp_path / 'cli2'), '--maps-dir', str(stale)]) == 2
     assert 'ledger_maps_stale' in (tmp_path / 'cli2' / 'error.json').read_text(encoding='utf-8')
@@ -302,9 +283,9 @@ def test_report07_link_is_relative_to_the_output_folder_and_missing_is_told(tmp_
     (seven / 'report.html').unlink()
     assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, report07_dir=str(seven)) == 0
     page2 = html_of(out)
-    assert 'id="link07-a"' not in page2 and '07 보고서 없음' in section(page2, 5) and bundle_of(page2)['report07']['status'] == 'missing'
+    assert 'id="link07-a"' not in page2 and '07 보고서 없음' not in page2 and bundle_of(page2)['report07']['status'] == 'missing'   # rexp/T2: the missing 07 is not told
     assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None) == 0
-    assert '07 보고서 없음' in section(html_of(out), 5)
+    assert '07 보고서 없음' not in html_of(out) and 'id="link07"' not in html_of(out)
 
 
 # ---- the real chain ---------------------------------------------------------------------------------------------------------
@@ -318,8 +299,7 @@ def test_real_chain_ledger_maps_feeds_the_report(tmp_path):
     page = html_of(out)
     data = bundle_of(page)
     saved = json.loads((tmp_path / 'maps' / 'ledger_maps.json').read_text(encoding='utf-8'))
-    assert data['maps']['status'] == saved['status'] and data['changes']['link_status'] == saved['changes']['link_status']
-    assert [c['pair_id'] for c in data['cards']] == [c['pair_id'] for c in saved['cards']]
+    assert data['maps']['status'] == saved['status'] and 'changes' not in data and 'cards' not in data
     assert json.loads((out / 'report.json').read_text(encoding='utf-8'))['ledger_maps_json_sha256'] == hashlib.sha256(
         (tmp_path / 'maps' / 'ledger_maps.json').read_bytes()).hexdigest()
     # a ledger rerun changes ledger.json's bytes only if its content changes; here the maps still match, so edit the ledger
