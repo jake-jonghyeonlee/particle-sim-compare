@@ -2281,7 +2281,10 @@ def _item_occurrence(ctx, item_id):
     if row is None or ((row.get('compare') or {}).get('kind') == 'suppressed'):
         return None
     na, nb = (row.get('reference') or {}).get('n'), (row.get('target') or {}).get('n')
-    return None if na is None or nb is None else [na, nb]
+    for n in (na, nb):
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            return None
+    return [na, nb]
 
 
 def _pair_bundle(ctx, pair):

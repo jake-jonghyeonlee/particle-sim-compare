@@ -325,7 +325,8 @@ function unitPairs(u){var b=BU[u],ids=Object.keys(b.pairs).filter(function(id){r
  ids.sort(function(x,y){return Math.abs(b.pairs[y][0])-Math.abs(b.pairs[x][0])||(x<y?-1:(x>y?1:0));});return ids;}
 function primaryUnit(id){var best=null,tot=-1;(D.bundles||[]).forEach(function(b){var q=b.pairs&&b.pairs[id];if(q&&(q[1]>tot||(q[1]===tot&&b.id<best.id))){best=b;tot=q[1];}});return best?best.id:null;}
 function detailOf(st,sel){var u=null,p=null;
- if(!sel&&!st.kv.unit&&D.default_unit&&BU[D.default_unit]){sel={t:'unit',id:D.default_unit};}   /* no selection: the first candidate of the first kind is open (the hash stays clean) */
+ if(!sel&&st.kv.unit&&BU[st.kv.unit]){sel={t:'unit',id:st.kv.unit};}   /* #unit=<id> only: that candidate opens */
+ else if(!sel&&!st.kv.unit&&D.default_unit&&BU[D.default_unit]){sel={t:'unit',id:D.default_unit};}   /* no selection: the first candidate of the first kind is open (the hash stays clean) */
  if(sel&&sel.t==='unit'&&BU[sel.id]){u=sel.id;p=unitPairs(u)[0]||null;}
  else if(sel&&sel.t==='pair'&&PB[sel.id]){p=sel.id;u=st.kv.cand&&BU[st.kv.cand]&&BU[st.kv.cand].pairs[p]?st.kv.cand:primaryUnit(p);}
  return {u:u,p:p};}
@@ -353,7 +354,7 @@ function itemsHtml(d){var b=d.u?BU[d.u]:null,p=d.p?PB[d.p]:null,curIt=parseHash(
  if(!br||br.status==='not_evaluated'||br.same_delta==null||br.new_value==null||br.gone_value==null)eq='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
  else eq='쌍 Δ = 같은 불량 증감 <b>'+ppx(br.same_delta)+'</b> + 새 방식 <b>'+f4(br.new_value)+'</b> − 없어진 방식 <b>'+f4(br.gone_value)+'</b>';
  var its=p.items.slice().sort(function(x,y){return Math.abs(y.d||0)-Math.abs(x.d||0)||(x.label<y.label?-1:(x.label>y.label?1:0));});
- var rows=its.map(function(it){var oc=it.oc?it.oc[0]+' → '+it.oc[1]:'<span class="muted">—</span>',pc=it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':'');
+ var rows=its.map(function(it){var oc=(it.oc&&isFinite(it.oc[0])&&isFinite(it.oc[1]))?esc(String(Number(it.oc[0])))+' → '+esc(String(Number(it.oc[1]))):'<span class="muted">—</span>',pc=it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':'');
   return '<tr'+(inc[it.id]?' class="itc'+(it.id===curIt?' itsel':'')+'"':(it.id===curIt?' class="itsel"':''))+'><td class="l">'+esc(it.label)+'</td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+
    '</td><td>'+sgx(it.d)+'</td><td class="l"><span class="badge '+pc+'">'+esc(PRES[it.pres]||it.pres)+'</span></td><td>'+oc+'</td></tr>';}).join('');
  return '<h4>불량 방식 — <b>'+esc(p.e.join('–'))+'</b> '+ckBadge(p)+' 쌍 전체 Δ '+sgx(p.d)+'</h4><p class="headline" id="dp-eq" style="margin:4px 0">'+eq+'</p>'+
@@ -386,18 +387,20 @@ function drawCrop(cv,e,r,p,x0,y0,x1,y1){var cw=x1-x0,ch=y1-y0,g=cv.getContext('2
   if(e.el){v=e.el[si];if(v&&isBorder(e.el,w,h,x+x0,y+y0,v,1))blend(d,o,CC.common,0.5);}   /* the electrode outlines stay faint */
   if(e.it){v=e.it[si];if(v){z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===p.id);}if(z)blend(d,o,col,0.85);}}}}
  g.putImageData(img,0,0);}
-function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},bx={},uni=null,drawn=0,cnt={A:0,B:0},box=[];
- ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.ok||!e.w)return;var b=bbox(e,r,p.id);bx[r]=b;cnt[r]=b.n;
-  if(b.n){if(!uni)uni={x0:b.x0,y0:b.y0,x1:b.x1,y1:b.y1};else{uni.x0=Math.min(uni.x0,b.x0);uni.y0=Math.min(uni.y0,b.y0);uni.x1=Math.max(uni.x1,b.x1);uni.y1=Math.max(uni.y1,b.y1);}}});
+function cropOf(e,b){if(!b||!b.n)return null;   /* the box of THIS product's pixels + 20 % (>= 10 px), cut by THIS product's map; null = show the whole map */
+ var mg=Math.max(10,Math.round(0.2*Math.max(b.x1-b.x0+1,b.y1-b.y0+1))),x0=Math.max(0,b.x0-mg),y0=Math.max(0,b.y0-mg),x1=Math.min(e.w,b.x1+1+mg),y1=Math.min(e.h,b.y1+1+mg);
+ return (x1-x0>=1&&y1-y0>=1)?[x0,y0,x1,y1]:null;}
+function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},drawn=0,cnt={A:0,B:0},boxes={A:[],B:[]};
  ['A','B'].forEach(function(r){var e=es[r],cv=$('dcv-'+r);if(!cv)return;var note=noteOf(cv);note.innerHTML='';
   if(!e||!e.w){cv.hidden=true;note.textContent='이 제품에는 이 레이어 지도가 없습니다';return;}
   if(!e.ok){cv.hidden=true;note.innerHTML=failList(r,L);return;}
-  var x0=0,y0=0,x1=e.w,y1=e.h;
-  if(DS.zoom&&uni){var mg=Math.max(10,Math.round(0.2*Math.max(uni.x1-uni.x0+1,uni.y1-uni.y0+1)));   /* the union of the boxes of A and B + a margin */
-   x0=Math.max(0,uni.x0-mg);y0=Math.max(0,uni.y0-mg);x1=Math.min(e.w,uni.x1+1+mg);y1=Math.min(e.h,uni.y1+1+mg);}
-  drawCrop(cv,e,r,p,x0,y0,x1,y1);drawn++;if(r==='A')box=[x0,y0,x1,y1];
+  var b=bbox(e,r,p.id),c=DS.zoom?cropOf(e,b):null,x0=0,y0=0,x1=e.w,y1=e.h;cnt[r]=b.n||0;
+  if(c){x0=c[0];y0=c[1];x1=c[2];y1=c[3];}
+  if(x1-x0<1||y1-y0<1){x0=0;y0=0;x1=Math.max(1,e.w);y1=Math.max(1,e.h);c=null;}   /* never a zero or negative canvas */
+  drawCrop(cv,e,r,p,x0,y0,x1,y1);drawn++;boxes[r]=[x0,y0,x1,y1];
   var sc=MP.sides[r].sc,mm=e.m.it||e.m.el,bk=(mm&&mm.b)||1;
-  note.textContent=(cnt[r]?'':'이 레이어에 영역 없음 · ')+(DS.zoom&&uni?'확대 ':'전체 ')+(x1-x0)+' × '+(y1-y0)+' px'+(sc?' · 폭 '+fnum((x1-x0)*bk*sc.p)+' µm':'');});
+  note.textContent=(b.n?'':'이 제품에는 이 쌍의 영역이 없습니다 · ')+(c?'확대 ':'전체 ')+(x1-x0)+' × '+(y1-y0)+' px'+(sc?' (≈ '+fnum((x1-x0)*bk*sc.p)+' × '+fnum((y1-y0)*bk*sc.p)+' µm)':'');});
+ var box=boxes.A;root.setAttribute('data-dp-boxb',boxes.B.join(','));
  root.setAttribute('data-dp-drawn',String(drawn));root.setAttribute('data-dp-pixels',cnt.A+','+cnt.B);root.setAttribute('data-dp-box',box.join(','));
  root.setAttribute('data-dp-layer',L);root.setAttribute('data-dp-zoom',DS.zoom?'1':'0');mapCheck();}
 function drawDetailMaps(){var p=DS.p?PB[DS.p]:null,root=document.documentElement;

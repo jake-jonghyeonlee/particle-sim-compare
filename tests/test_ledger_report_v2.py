@@ -938,6 +938,65 @@ def test_chrome_zoom_follows_the_pixels_of_the_pair_and_the_button_shows_the_who
     assert dom2.root['data-dp-zoom'] == '0' and dom2.root['data-dp-box'] == '0,0,40,40' and 'data-err' not in dom2.root       # [전체 보기]
 
 
+def widened_b_report(tmp_path, name='wide'):
+    """The maps of B are 40 x 100 px (A stays 40 x 40) and the B-only pair P5 sits at x 60-98 of B (rexp/T2b, R1:1)."""
+    import numpy as np
+    from PIL import Image
+    from test_ledger_report_maps import counts_of, png_of
+    doc = comp_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, changes=map_changes())
+    mj = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+    side = mj['sides']['target']
+    p5 = {row['number'] for row in side['items'] if row['pair_id'] == 'P5'}
+    assert p5
+    for m in side['maps']:
+        old = np.array(Image.open(maps / m['file']))
+        num = old[..., 0].astype(np.uint16) | (old[..., 1].astype(np.uint16) << 8)
+        new = np.zeros((40, 100), dtype=np.uint16)
+        if m['kind'] == 'it':
+            hit = np.isin(num, list(p5))
+            new[:, :40] = np.where(hit, 0, num)
+            new[:, 60:100] = np.where(hit, num, 0)
+        else:
+            new[:, :40] = num
+        (maps / m['file']).write_bytes(png_of(new))
+        m['shape_yx'] = [40, 100]
+        m['numbers'] = counts_of(new)
+    side['frame']['shape_yx'] = [40, 100]
+    (maps / 'ledger_maps.json').write_text(json.dumps(mj, sort_keys=True), encoding='utf-8')
+    out = tmp_path / ('out_' + name)
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) in (0, 3)
+    return out / 'ledger_report.html'
+
+
+def test_chrome_maps_of_different_sizes_crop_each_product_to_its_own_box(tmp_path):
+    page = widened_b_report(tmp_path)
+    dom, text = dump_dom(page, '#sel=pair:P1')                                       # (a) a pair that both products have
+    assert 'data-err' not in dom.root and dom.root['data-dp-drawn'] == '2'
+    ax0, ay0, ax1, ay1 = [int(v) for v in dom.root['data-dp-box'].split(',')]
+    bx0, by0, bx1, by1 = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    assert 0 <= ax0 < ax1 <= 40 and 0 <= bx0 < bx1 <= 100 and ax1 - ax0 >= 1 and bx1 - bx0 >= 1 and ay1 > ay0 and by1 > by0
+    dom, text = dump_dom(page, '#sel=pair:P5')                                       # (b) only B has it, far right of what A can show
+    assert 'data-err' not in dom.root and dom.root['data-dp-pixels'] == '0,%s' % dom.root['data-dp-pixels'].split(',')[1]
+    assert int(dom.root['data-dp-pixels'].split(',')[1]) > 0
+    assert dom.root['data-dp-box'] == '0,0,40,40'                                     # A: its whole map
+    bx0, by0, bx1, by1 = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    assert bx0 >= 40 and bx1 <= 100 and bx1 - bx0 >= 1                                # B: its own box, inside its own map
+    assert '이 제품에는 이 쌍의 영역이 없습니다' in text
+    script = ("setTimeout(function(){document.getElementById('dp-zoom').click();setTimeout(function(){},200);},400);")
+    dom2, text2 = run_in_page(page, '#sel=pair:P5', script, tag='rexp_wide')         # (c) [전체 보기]: both whole
+    assert dom2.root['data-dp-box'] == '0,0,40,40' and dom2.root['data-dp-boxb'] == '0,0,100,40' and 'data-err' not in dom2.root
+
+
+def test_item_occurrence_accepts_only_non_negative_ints():
+    class Ctx:
+        occ_by_item = {}
+    for na, nb, want in ((1, 2, [1, 2]), (0, 0, [0, 0]), ('3', 2, None), (True, 2, None), (1, False, None), (-1, 2, None), (1.5, 2, None), (None, 2, None)):
+        Ctx.occ_by_item = {'i': {'reference': {'n': na}, 'target': {'n': nb}}}
+        assert ledger_report._item_occurrence(Ctx, 'i') == want
+
+
 def test_chrome_a_pair_without_pixels_on_the_layer_says_so(tmp_path):
     doc, page = chrome_t8(tmp_path, name='nopx', doc=corr_doc(complete=False), el=False)
     dom, text = dump_dom(page, '#sel=pair:P5')

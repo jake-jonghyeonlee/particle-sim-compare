@@ -972,6 +972,16 @@ def test_chrome_sel_unit_opens_the_detail_panel_of_that_candidate_only(tmp_path)
     assert 'id="unit-band"' not in text and one['id'] in text
 
 
+def test_chrome_unit_only_hash_opens_that_candidate_not_the_default(tmp_path):         # rexp/T2b, R1:4
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    data = json.loads(re.search(r'id="report-data">(.*?)</script>', html_of(page.parent), re.S).group(1))
+    other = [b['id'] for b in data['bundles'] if b['id'] != one['id'] and b.get('pairs')]
+    assert data['default_unit'] == one['id'] and other
+    dom, text = dump_dom(page, '#unit=%s' % other[0])
+    assert 'data-err' not in dom.root and dom.root['data-dp-unit'] == other[0] and dom.root['data-sel'] == ''
+    assert not [a for t, a in dom.elements if a.get('id') == 'dp-empty']
+
+
 def test_chrome_an_unknown_or_malformed_unit_selection_is_ignored(tmp_path):
     doc, one, p0, layer, page = _unit_page(tmp_path)
     for fragment in ('#sel=unit:bd-0123456789abcdef', '#sel=unit:%3Cscript%3E', '#sel=unit:' + one['id'][:-1] + 'Z', '#sel=unit:', '#sel=pair:P1&cand=bd-zzzz'):
