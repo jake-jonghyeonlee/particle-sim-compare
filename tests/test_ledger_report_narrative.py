@@ -977,12 +977,27 @@ def test_chrome_an_unknown_or_malformed_unit_selection_is_ignored(tmp_path):
     for fragment in ('#sel=unit:bd-0123456789abcdef', '#sel=unit:%3Cscript%3E', '#sel=unit:' + one['id'][:-1] + 'Z', '#sel=unit:', '#sel=pair:P1&cand=bd-zzzz'):
         dom, text = dump_dom(page, fragment)
         assert 'data-err' not in dom.root and dom.root.get('data-sel', '') in ('', 'pair:P1'), fragment
-        assert dom.root.get('data-dp-unit', '') == '' or fragment.startswith('#sel=pair'), fragment
+        assert dom.root.get('data-dp-unit', '') in ('', one['id']), fragment        # never the unknown id; at most the default candidate
     dom, text = dump_dom(page, '#sel=unit:bd-0123456789abcdef')
-    assert 'id="dp-empty"' in text                                               # the empty prompt stays
+    assert dom.root['data-dp-unit'] == dom.root['data-sel'].replace('unit:', '') or dom.root['data-dp-unit'] == one['id']
     dom, text = dump_dom(page, '#sel=pair:%s' % p0['pair_id'])             # a pair selection opens the panel on that pair (its candidate too)
     assert 'data-err' not in dom.root and dom.root['data-sel'] == 'pair:' + p0['pair_id']
     assert dom.root['data-dp-pair'] == p0['pair_id'] and dom.root['data-dp-unit'] == one['id']
+
+
+def test_chrome_without_a_selection_the_first_candidate_is_open_and_the_hash_stays_clean(tmp_path):
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    data = json.loads(re.search(r'id="report-data">(.*?)</script>', html_of(page.parent), re.S).group(1))
+    assert data['default_unit'] == one['id']                                     # the first candidate of the first kind (vi change direction first)
+    script = "setTimeout(function(){document.documentElement.setAttribute('data-hash',location.hash);},300);"
+    from test_ledger_report_v2 import run_in_page
+    dom, text = run_in_page(page, '#', script, tag='rexp_default')
+    assert 'data-err' not in dom.root and dom.root['data-dp-unit'] == one['id'] and dom.root['data-dp-pair'] == p0['pair_id']
+    assert dom.root['data-sel'] == '' and dom.root['data-hash'] in ('', '#') and not [a for t, a in dom.elements if a.get('id') == 'dp-empty']
+    from test_ledger_report import run_report
+    out = run_report(tmp_path, sample_doc(), name='nocand')[1] / 'ledger_report.html'
+    dom, text = dump_dom(out, '#')
+    assert 'data-err' not in dom.root and [a for t, a in dom.elements if a.get('id') == 'dp-empty'] and dom.root['data-dp-unit'] == ''     # no candidate: the prompt
 
 
 def test_chrome_the_rich_page_runs_without_a_script_error(tmp_path, real):

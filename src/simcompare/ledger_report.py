@@ -2375,6 +2375,7 @@ def _bundle(ctx, ledger_sha):
                         'lss': e.get('layer_state_status'), 'mv': e.get('moved')} for e in doc['electrodes']],
         'cno': [{'e': r['electrode_id'], 'l': r['density_layer'], 'a': r['a'], 'b': r['b'], 'd': r['delta'], 'pres': r['presence']} for r in doc['cno']],
         'checks': doc.get('checks'), 'top': {'changed': changed, 'risk': risk}, 'demo_pair': demo,
+        'default_unit': next((ids[0] for ids in (_ranked_ids(ctx, k) for k in KINDS if ctx.bundles and ctx.bundles['ranking'][k].get('status') == 'ok') if ids), None),
         'maps': _maps_bundle(ctx), 'report07': ctx.report07,
         'layer_order': ctx.layer_order, 'bundles': _bundles_data(ctx)}
 

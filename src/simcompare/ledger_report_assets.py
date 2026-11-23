@@ -325,6 +325,7 @@ function unitPairs(u){var b=BU[u],ids=Object.keys(b.pairs).filter(function(id){r
  ids.sort(function(x,y){return Math.abs(b.pairs[y][0])-Math.abs(b.pairs[x][0])||(x<y?-1:(x>y?1:0));});return ids;}
 function primaryUnit(id){var best=null,tot=-1;(D.bundles||[]).forEach(function(b){var q=b.pairs&&b.pairs[id];if(q&&(q[1]>tot||(q[1]===tot&&b.id<best.id))){best=b;tot=q[1];}});return best?best.id:null;}
 function detailOf(st,sel){var u=null,p=null;
+ if(!sel&&!st.kv.unit&&D.default_unit&&BU[D.default_unit]){sel={t:'unit',id:D.default_unit};}   /* no selection: the first candidate of the first kind is open (the hash stays clean) */
  if(sel&&sel.t==='unit'&&BU[sel.id]){u=sel.id;p=unitPairs(u)[0]||null;}
  else if(sel&&sel.t==='pair'&&PB[sel.id]){p=sel.id;u=st.kv.cand&&BU[st.kv.cand]&&BU[st.kv.cand].pairs[p]?st.kv.cand:primaryUnit(p);}
  return {u:u,p:p};}
