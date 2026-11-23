@@ -590,8 +590,9 @@ def test_with_value_null_lambda_is_not_a_value(tmp_path):
     world = folder_world(tmp_path, inv, inv, pairs, cno=[('Cx', 'SD1', .005, .006)], pixel_null=True)
     assert go(world) == 0
     doc = result(world)
-    conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
-    assert conflicts and all(w['electrodes'] == ['Cx'] and w['electrodes_with_value'] == [] for w in conflicts)
+    # rexp/T1: Cx is CNO-only (no pair, no folder) -> not an inventory conflict any more
+    assert not [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert {r['electrode']: r['cno_only'] for r in doc['electrodes']}['Cx'] is True
 
 
 def test_one_side_incomplete_keeps_the_observed_behaviour(tmp_path):
@@ -615,10 +616,12 @@ def test_cno_only_electrode_follows_the_folder_rule(tmp_path):
     assert go(world) == 0
     doc = result(world)
     elec = {r['electrode']: r for r in doc['electrodes']}
-    assert elec['C1']['status'] == 'new' and elec['C2']['status'] == 'unverifiable'
+    # C1 has a DL1 folder in B -> the folder rule; C2 is CNO-only (rexp/T1) -> judged by its CNO cases, no warning
+    assert elec['C1']['status'] == 'new' and elec['C2']['status'] == 'common'
+    assert elec['C1']['cno_only'] is False and elec['C2']['cno_only'] is True
     by_role = {w['role']: w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict'}
-    assert by_role['reference']['electrodes'] == ['C1', 'C2'] and by_role['reference']['electrodes_with_value'] == ['C1', 'C2']
-    assert by_role['target']['electrodes'] == ['C2'] and by_role['target']['electrodes_with_value'] == ['C2']
+    assert by_role['reference']['electrodes'] == ['C1'] and by_role['reference']['electrodes_with_value'] == ['C1']
+    assert 'target' not in by_role
     assert_all_passed(doc)
 
 
@@ -1183,3 +1186,107 @@ def test_observed_inventory_gives_a_cno_only_electrode_its_cno_density_layer(tmp
     elec = {r['electrode']: r for r in result(world)['electrodes']}
     assert elec['C']['layers_a'] == ['PXL'] and elec['C']['layers_b'] == ['PXL']     # seen only in CNO
     assert elec['A']['layers_a'] == ['SD1'] and elec['B']['layers_a'] == ['SD1']     # item layers win
+
+
+# rexp/T1: CNO-only names (PLAN-v1 1, PLAN-v1.1 G1-G4) ----------------------------------------------------------------
+
+def _cno_only_pairs():
+    return [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')])]
+
+
+def test_rexp_cno_only_name_on_both_sides_is_common_without_a_warning(tmp_path):
+    world = folder_world(tmp_path, BASE_INV, BASE_INV, _cno_only_pairs(), cno=[('Cx', 'PXL', .005, .009)])
+    assert go(world) == 0
+    doc = result(world)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    cx = elec['Cx']
+    assert cx['cno_only'] is True and cx['status'] == 'common' and cx['present_a'] and cx['present_b']
+    assert cx['layer_state_status'] == 'unverified' and cx['moved'] is None
+    assert cx['layers_a'] == ['PXL'] and cx['layers_b'] == ['PXL']
+    assert elec['E1']['cno_only'] is False and elec['E2']['cno_only'] is False
+    assert not [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert_all_passed(doc)
+
+
+@pytest.mark.parametrize('cno,status,present', [
+    ([('Cx', 'PXL', .005, None)], 'removed', (True, False)),
+    ([('Cx', 'PXL', None, .005)], 'new', (False, True)),
+    ([('Cx', 'PXL', 0.0, None)], 'removed', (True, False)),          # a case with value 0 still exists
+    ([('Cx', 'PXL', None, 0.0)], 'new', (False, True))])
+def test_rexp_cno_only_one_sided_is_new_or_removed(tmp_path, cno, status, present):
+    world = folder_world(tmp_path, BASE_INV, BASE_INV, _cno_only_pairs(), cno=cno)
+    assert go(world) == 0
+    doc = result(world)
+    cx = {r['electrode']: r for r in doc['electrodes']}['Cx']
+    assert cx['cno_only'] is True and cx['status'] == status and (cx['present_a'], cx['present_b']) == present
+    assert not [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+
+
+def test_rexp_cno_observed_on_other_layers_is_no_layer_move(tmp_path):
+    # G1: complete lists, CNO seen on L1 in A and on L2 in B -> observed layers only, never a "moved" electrode
+    world = folder_world(tmp_path, BASE_INV, BASE_INV, _cno_only_pairs(), cno=[('Cx', 'L1', .005, None), ('Cx', 'L2', None, .005)])
+    assert go(world) == 0
+    cx = {r['electrode']: r for r in result(world)['electrodes']}['Cx']
+    assert cx['layers_a'] == ['L1'] and cx['layers_b'] == ['L2'] and cx['status'] == 'common'
+    assert cx['moved'] is None and cx['layer_state_status'] == 'unverified'
+
+
+def test_rexp_pair_end_on_one_side_and_cno_on_the_other_is_not_cno_only(tmp_path):
+    pairs = [pair('P1', ['E1', 'E2'], 'line', [lateral(['E1', 'E2'], .01, 'SD1')], [lateral(['E1', 'E2'], .02, 'SD1')]),
+             pair('P2', ['E1', 'X'], 'line', [lateral(['E1', 'X'], .01, 'SD1')], None)]
+    world = folder_world(tmp_path, BASE_INV, BASE_INV, pairs, cno=[('X', 'PXL', None, .005)])
+    assert go(world) == 0
+    doc = result(world)
+    x = {r['electrode']: r for r in doc['electrodes']}['X']
+    assert x['cno_only'] is False and x['status'] == 'unverifiable'            # epres rule: in no DL1 folder
+    assert {w['role'] for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict'} == {'reference', 'target'}
+
+
+def test_rexp_pair_and_cno_on_the_same_side_is_not_cno_only(tmp_path):
+    pairs = [pair('P1', ['E1', 'X'], 'line', [lateral(['E1', 'X'], .01, 'SD1')], [lateral(['E1', 'X'], .02, 'SD1')])]
+    world = folder_world(tmp_path, {'E1': ['SD1']}, {'E1': ['SD1']}, pairs, cno=[('X', 'PXL', .005, .006)])
+    assert go(world) == 0
+    x = {r['electrode']: r for r in result(world)['electrodes']}['X']
+    assert x['cno_only'] is False and x['status'] == 'unverifiable'
+
+
+def test_rexp_names_are_compared_as_exact_strings(tmp_path):
+    world = folder_world(tmp_path, BASE_INV, BASE_INV, _cno_only_pairs(), cno=[('e1', 'PXL', .005, .006)])
+    assert go(world) == 0
+    elec = {r['electrode']: r for r in result(world)['electrodes']}
+    assert elec['e1']['cno_only'] is True and elec['E1']['cno_only'] is False
+
+
+def test_rexp_cno_name_equal_to_a_folder_follows_the_folder_rule(tmp_path):
+    world = folder_world(tmp_path, dict(BASE_INV, C1=['SD1']), dict(BASE_INV, C1=['SD1']), _cno_only_pairs(),
+                         cno=[('C1', 'PXL', .005, .006)])
+    assert go(world) == 0
+    doc = result(world)
+    c1 = {r['electrode']: r for r in doc['electrodes']}['C1']
+    assert c1['cno_only'] is False and c1['status'] == 'common' and c1['layer_state_status'] == 'verified'
+    assert not [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+
+
+@pytest.mark.parametrize('inv_a,inv_b', [(BASE_INV, BASE_INV), (BASE_INV, {}), ({}, BASE_INV), ({}, {})])
+def test_rexp_cno_only_follows_the_observed_names_in_every_list_combination(tmp_path, inv_a, inv_b):
+    world = folder_world(tmp_path, inv_a, inv_b, _cno_only_pairs(), cno=[('Cx', 'PXL', .005, .006)])
+    assert go(world) == 0
+    doc = result(world)
+    elec = {r['electrode']: r for r in doc['electrodes']}
+    assert elec['Cx']['cno_only'] is True and elec['Cx']['status'] == 'common'
+    assert elec['E1']['cno_only'] is False
+    complete = bool(inv_a) and bool(inv_b)
+    assert elec['E1']['status'] == ('common' if complete else 'unverifiable')       # ordinary rows: the old behaviour
+    assert not [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict' and 'Cx' in w['electrodes']]
+
+
+def test_rexp_a_real_inventory_conflict_stays_next_to_a_cno_only_name(tmp_path):
+    pairs = [pair('P1', ['E1', 'Ghost'], 'line', [lateral(['E1', 'Ghost'], .01, 'SD1')], [lateral(['E1', 'Ghost'], .02, 'SD1')])]
+    world = folder_world(tmp_path, {'E1': ['SD1']}, {'E1': ['SD1']}, pairs, cno=[('Cx', 'PXL', .005, .006)])
+    assert go(world) == 0
+    doc = result(world)
+    conflicts = [w for w in doc['warnings'] if w['code'] == 'electrode_inventory_conflict']
+    assert [(w['role'], w['electrodes'], w['electrodes_with_value']) for w in conflicts] == [
+        ('reference', ['Ghost'], ['Ghost']), ('target', ['Ghost'], ['Ghost'])]
+    assert {r['electrode']: r['cno_only'] for r in doc['electrodes']} == {'E1': False, 'Ghost': False, 'Cx': True}
+    assert_all_passed(doc)

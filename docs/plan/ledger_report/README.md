@@ -118,6 +118,7 @@ Run 20261115-ledger-report, 계획 v1.1. 이 문서는 T2–T6 의 계약이다.
 - 전극 상태(complete): 두 폴더 모두 → `common`, B 만 → `new`, A 만 → `removed`, 둘 다 없음 → `unverifiable`(그 행 `layer_state_status='unverified'`, `moved=null`). 쌍 `electrode_added_removed` ⇔ 쌍 전극 중 하나라도 `new`/`removed`.
 - 충돌: complete 목록(폴더)에 없는 전극이 그 제품의 조건 끝점에 나오면 경고 `electrode_inventory_conflict`(role, electrodes, electrodes_with_value)를 남긴다. `electrodes_with_value` 는 그 중 그 제품 쪽 λ(line·pixel 값 또는 CNO λ)가 null 도 0 도 아닌 전극(정렬 목록)이다. 값이 있어도 존재는 폴더로만 정한다.
 - 3절 "전극 레이어 A → B" 도 이 목록의 레이어를 쓴다.
+- CNO 전용 이름(rexp/T1, 위 규칙보다 먼저 적용): 어느 제품의 CNO 행(`cno` 키)에는 있고, 어느 제품의 쌍 전극(조건 `electrodes`·item `electrodes`·item 끝점)에도 없고, 두 목록 중 출처 `dl1` 인 제품의 전극 폴더에도 없는 이름(정확한 문자열 비교). 존재 = 그 제품에 CNO 케이스가 있는지(값 0·null 이어도 케이스가 있으면 있음), 상태는 둘 다 → `common`, B 만 → `new`, A 만 → `removed`. 행에 `cno_only: true`(그 밖 행은 `false`), `layer_state_status='unverified'`, `moved=null`, `layers_a/b` = 관측된 CNO density layer. 경고 `electrode_inventory_conflict`(electrodes·electrodes_with_value)에서 제외한다. 원인 후보 묶음은 전극 신규·삭제·레이어 변경으로 가지 않고 항상 CNO 단독 `('cno', 이름, 레이어)` 이다. 이름이 DL1 전극 폴더에 있으면 이 규칙이 아니라 위 폴더 규칙을 쓴다.
 
 입력 검사 (X1):
 
@@ -847,3 +848,4 @@ null 규칙:
 ## 37. 변경 이력 — 전극 존재 판정 (epres/T1)
 
 - 2026-11-23: 존재 판정 의미 변경(관측 우선 → DL1 폴더 기준). 실데이터에서 한쪽 제품에만 있는 전극이 compare2 의 면적 0 조건 때문에 "양쪽 있음(common)"이 되어 "레이어 변경"으로 보였다. 이제 두 제품 목록이 complete 이면 존재 = DL1 전극 폴더 유무이고(X3), 경고에 `electrodes_with_value` 가 붙는다. `SCHEMA_VERSION` 은 그대로이고 보고서는 옛 `ledger.json`(`electrodes_with_value` 없음)도 읽는다. 재실행: 02 는 필요 없고 `STEPS = ['08']` 만 돈다(`compare2.json` 불변).
+- 2026-11-23 (rexp/T1): CNO 전용 이름 규칙 추가(X3). CNO 케이스에만 있는 전극이 DL1 폴더 이름과 달라 "(DL1 폴더 없음)"으로 보이던 문제를 고쳤다. 존재 = CNO 케이스, 행 `cno_only`, 묶음은 CNO 단독, 보고서 2 절은 "CNO 전용 N 개" 안내와 `CNO` 표지. 재실행은 `STEPS = ['08']` 만.

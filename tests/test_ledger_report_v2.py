@@ -467,6 +467,28 @@ def test_epres_complete_list_with_an_unverifiable_electrode_and_a_value_without_
     assert page.count('(DL1 폴더 없음)') >= 1
 
 
+def test_rexp_cno_only_row_has_no_folder_mark_no_band_count_and_no_move(tmp_path):
+    """rexp/T1 G1: a CNO-only electrode shows its observed layers, a CNO badge and the one-line note; it is not counted in the
+    "DL1 전극 폴더에 없는" band and not as a layer move."""
+    doc = corr_doc()
+    _el(doc, 'Shift').update(cno_only=True, status='common', present_a=True, present_b=True, layer_state={'L1': 'a_only', 'PXL': 'b_only'},
+                             layer_state_status='unverified', moved=None)
+    _el(doc, 'Vint').update(status='unverifiable', present_a=False, present_b=False, layer_state={}, layer_state_status='unverified',
+                            moved=None)
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+    assert 'CNO 전용 1 개 — 레이어 칸은 CNO 가 관측된 층이며, 비어 있어도 없다는 뜻은 아닙니다.' in s2
+    assert s2.count('id="band-no-dl1"') == 1 and 'DL1 전극 폴더에 없는 전극 1 개는' in s2     # Vint only
+    assert '레이어 이동 <b>0</b>' in s2 and '⇄' not in s2_row(page, 'Shift')
+    assert '(DL1 폴더 없음)' not in s2_row(page, 'Shift') and 'CNO</span>' in s2_row(page, 'Shift')
+    assert 'CNO 관측 층' in s2_cell(page, 'Shift', 'L1')[1] or 'CNO 관측 층' in s2_row(page, 'Shift')
+
+
+def test_rexp_without_cno_only_rows_the_note_is_absent(tmp_path):
+    page = html_of(run_report(tmp_path, corr_doc())[1])
+    assert 'id="note-cno-only"' not in section(page, 2)
+
+
 def test_electrode_name_colour_is_red_for_up_blue_for_down_with_four_steps(tmp_path):
     doc = corr_doc()
     for name, line, pixel in (('Data', 0.5, None), ('Scan1', -7.0, None), ('Scan2', 30.0, 0.0), ('EM', 0.0, 0.0), ('Anode', None, None),

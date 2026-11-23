@@ -177,6 +177,35 @@ def test_b_hub_takes_its_partners_and_the_larger_hub_wins(tmp_path):
     all_passed(doc)
 
 
+def test_rexp_cno_only_atoms_make_one_cno_bundle_each_and_never_touch_the_hubs(tmp_path):
+    """rexp/T1 G4: CNO-only electrodes (new, removed or both sides, several density layers) go to ('cno', name, layer)
+    before every electrode-state branch; the hub assignment of ordinary pairs is the same as without them."""
+    partners = ['P0', 'P1', 'P2', 'P3', 'P4']
+    names = ['Scan3'] + partners + ['Q1', 'Q2']
+    pairs = hub_pairs('Scan3', partners, 'H') + hub_pairs('P0', ['Q1', 'Q2'], 'K')
+    (tmp_path / 'plain').mkdir()
+    base_doc, _ = run(tmp_path / 'plain', pairs, dl1=dl1_all(names))
+    cno =[('CnoNew', 'PXL', None, .004), ('CnoNew', 'SD1', None, .002), ('CnoGone', 'PXL', .003, None),
+           ('CnoBoth', 'PXL', .002, .005), ('CnoBoth', 'SD2', .001, .004)]
+    (tmp_path / 'with').mkdir()
+    doc, _ = run(tmp_path / 'with', pairs, dl1=dl1_all(names), cno=cno)
+    got = bundles(doc)
+    for key in (('cno', 'CnoNew', 'PXL'), ('cno', 'CnoNew', 'SD1'), ('cno', 'CnoGone', 'PXL'),
+                ('cno', 'CnoBoth', 'PXL'), ('cno', 'CnoBoth', 'SD2')):
+        assert key in got and got[key]['atoms']['count'] == 1, key
+    assert not [key for key in got if key[0] in ('ele', 'lyr') and key[1].startswith('Cno')]
+    states = {r['electrode']: (r['status'], r['cno_only']) for r in doc['electrodes'] if r['electrode'].startswith('Cno')}
+    assert states == {'CnoNew': ('new', True), 'CnoGone': ('removed', True), 'CnoBoth': ('common', True)}
+    assert doc['summary']['bundles']['types']['pixel']['cno']['count'] == 5
+    def hubs(d):
+        return {key: v['id'] for key, v in bundles(d).items() if key[0] in ('hub', 'p', 'self')}
+    assert hubs(doc) == hubs(base_doc) and ('hub', 'Scan3', 'SD1') in hubs(doc)
+    all_passed(doc)
+    all_passed(base_doc)
+    atoms = doc['checks']['bundles']
+    assert atoms['assigned'] == atoms['atoms'] == base_doc['checks']['bundles']['atoms'] + len(cno)
+
+
 def test_b2_both_ends_hubs_with_the_same_number_of_changed_partners_give_the_pair(tmp_path):
     names = ['S', 'T'] + [f'S{i}' for i in range(3)] + [f'T{i}' for i in range(3)]
     pairs = (hub_pairs('S', ['T'] + names[2:5], 'H') + hub_pairs('T', names[5:], 'K'))     # S: T,S0,S1,S2   T: S,T0..T2

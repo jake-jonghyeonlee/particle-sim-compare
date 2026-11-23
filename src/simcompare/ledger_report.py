@@ -1242,14 +1242,17 @@ def _el_attrs(name):
 
 def _layer_cell(row, layer, verified):
     state = (row.get('layer_state') or {}).get(layer)
+    cno_only = bool(row.get('cno_only'))
     def attrs(cls):
         return 'class="c %s" data-cell="1" data-layer="%s" data-href="%s"' % (cls, esc(layer), esc(_href('electrode:' + row['electrode']) + '&layer=' + quote(layer, safe='')))
     if state is None:
         if verified:
             return '<td %s></td>' % attrs('st-none')
+        if cno_only:
+            return '<td %s title="CNO 가 관측되지 않은 층입니다. 없다는 뜻은 아닙니다">%s</td>' % (attrs('st-unk'), muted('확인 불가'))
         return '<td %s title="DL1 이 없어 이 레이어를 확인할 수 없습니다">%s</td>' % (attrs('st-unk'), muted('확인 불가'))
     symbol, text, cls = LAYER_SYMBOLS[state]
-    basis = '' if verified else ' · 관찰 기준(DL1 없음)'
+    basis = '' if verified else (' · CNO 관측 층' if cno_only else ' · 관찰 기준(DL1 없음)')
     if row.get('moved') and state in MOVE_TEXT:
         return '<td %s title="%s">⇄<sub>%s</sub></td>' % (attrs(cls + ' st-mv'), esc(MOVE_TEXT[state] + basis), 'A' if state == 'a_only' else 'B')
     return '<td %s title="%s">%s</td>' % (attrs(cls), esc(text + basis), symbol)
@@ -1270,7 +1273,9 @@ def _section2(ctx):
     doc = ctx.doc
     rows = doc['electrodes']
     layers = ctx.sort_layers({layer for row in rows for layer in (row.get('layer_state') or {})})
-    unverified = [row for row in rows if row.get('layer_state_status') != 'verified']
+    # rexp/T1 (G1): CNO-only electrodes are not "no DL1 folder" rows; they are counted and explained apart
+    cno_only_rows = [row for row in rows if row.get('cno_only')]
+    unverified = [row for row in rows if row.get('layer_state_status') != 'verified' and not row.get('cno_only')]
     counts = {code: sum(1 for row in rows if row.get('status') == code) for code in ('common', 'new', 'removed')}
     moved = sum(1 for row in rows if row.get('moved'))
     summary = ('공통 <b>%d</b> · 신규 <b>%d</b> · 제거 <b>%d</b> · 레이어 이동 <b>%d</b>%s'
@@ -1294,6 +1299,9 @@ def _section2(ctx):
     elif unverified:
         out.append('<div class="band info" id="band-no-dl1"><b>확인 불가</b> — DL1 전극 목록이 없어 %d 개 전극의 레이어 대응(공통·신규·제거·이동)을 '
                    '확인하지 못했습니다. 빈 칸은 없다는 뜻이 아니라 알 수 없다는 뜻입니다.</div>' % len(unverified))
+    if cno_only_rows:
+        out.append('<p class="small" id="note-cno-only">CNO 전용 %d 개 — 레이어 칸은 CNO 가 관측된 층이며, 비어 있어도 없다는 뜻은 아닙니다.</p>'
+                   % len(cno_only_rows))
     out.append('<p class="legend" id="corr-legend"><span class="st-both">●</span> 양쪽 · <span class="st-a">◀</span> A 만 · '
                '<span class="st-b">▶</span> B 만 · <span class="st-mv">⇄</span> 레이어 이동(A 전용 칸 ⇄<sub>A</sub> → B 전용 칸 ⇄<sub>B</sub>)'
                ' &nbsp;|&nbsp; 전극 이름 칸 색: <span class="hd-up3">증가</span> <span class="hd-dn3">감소</span> '
@@ -1311,7 +1319,8 @@ def _section2(ctx):
         verified = row.get('layer_state_status') == 'verified'
         badge = esc(next((c['label'] for c in doc.get('electrode_status') or [] if c['code'] == row.get('status')), row.get('status')))
         body.append('<tr %s data-row="corr"><td class="l nm%s"><b>%s</b></td><td class="l"><span class="badge">%s</span></td>%s</tr>' % (
-            _el_attrs(row['electrode']), shade, esc(row['electrode']), badge,
+            _el_attrs(row['electrode']), shade,
+            esc(row['electrode']) + (' <span class="badge" title="CNO 케이스에만 있는 전극">CNO</span>' if row.get('cno_only') else ''), badge,
             ''.join(_layer_cell(row, layer, verified) for layer in layers)))
     out.append('<div class="s2row"><div class="s2tab"><div class="scrl"><table id="corr-table"><thead><tr><th class="l">전극</th><th class="l">상태</th>%s</tr></thead><tbody>%s</tbody></table></div></div>%s</div>' % (
         head, ''.join(body), _layout_maps(ctx)))
@@ -1351,7 +1360,7 @@ def _shape_reason(ctx):
     """'' when the electrode outlines can be drawn, else the reason (DL1 electrode pictures are missing)."""
     if _has_el_maps(ctx):
         return ''
-    if any(row.get('layer_state_status') != 'verified' for row in ctx.doc['electrodes']):
+    if any(row.get('layer_state_status') != 'verified' and not row.get('cno_only') for row in ctx.doc['electrodes']):
         return '전극·레이어 형상을 그릴 수 없습니다: DL1 이 없어 전극 그림(el)이 만들어지지 않았습니다.'
     return '전극·레이어 형상을 그릴 수 없습니다: ledger-maps 에 전극 그림(el)이 없습니다.'
 

@@ -311,6 +311,23 @@ def build_ledger(doc, doc_sha256, cfg2):
     inventory = {role: _inventory(cfg2, role, sides[role]) for role in ROLES}
     warnings, present = [], {}
     complete = all(inventory[role]['status'] == 'complete' for role in ROLES)
+    # rexp/T1 (G2): CNO-only names = a CNO row on some side, no pair end point on any side, no DL1 electrode folder
+    # (folders count only from a product whose inventory is the DL1 list; exact string comparison)
+    pair_names, folder_names, cno_names = set(), set(), set()
+    for role in ROLES:
+        for rec in sides[role].pairs.values():
+            pair_names.update(rec['electrodes'])
+            for item in rec['items'].values():
+                pair_names.update(item.get('electrodes') or ())
+                pair_names.update(e['electrode_id'] for e in item.get('endpoints') or ())
+        cno_names.update(electrode_name for electrode_name, _layer in sides[role].cno)
+        if inventory[role]['source'] == 'dl1':
+            folder_names.update(inventory[role]['electrodes'])
+    cno_only = cno_names - pair_names - folder_names
+    cno_layers = {role: {} for role in ROLES}       # role -> electrode -> {observed CNO density layers}
+    for role in ROLES:
+        for electrode_name, layer in sides[role].cno:
+            cno_layers[role].setdefault(electrode_name, set()).add(layer)
     conflicts = {}                                  # role -> warning dict; electrodes_with_value is filled later (D4)
     for role in ROLES:
         inv, side = inventory[role], sides[role]
@@ -318,7 +335,7 @@ def build_ledger(doc, doc_sha256, cfg2):
             warnings.append({'code': 'electrode_inventory_from_hotspots', 'role': role})
             present[role] = set(side.observed)
         else:
-            outside = sorted(side.observed - set(inv['electrodes']))
+            outside = sorted(side.observed - set(inv['electrodes']) - cno_only)
             if outside:
                 conflicts[role] = {'code': 'electrode_inventory_conflict', 'role': role, 'electrodes': outside,
                                    'electrodes_with_value': []}
@@ -327,7 +344,11 @@ def build_ledger(doc, doc_sha256, cfg2):
             present[role] = set(inv['electrodes']) if complete else set(inv['electrodes']) | side.observed
 
     def electrode_state(name):
-        """epres/T1 (D2): common / new / removed / unverifiable (one function for the pair kind and the electrode row)."""
+        """epres/T1 (D2): common / new / removed / unverifiable (one function for the pair kind and the electrode row).
+        rexp/T1 (G2): a CNO-only name is judged first, by whether its product has a CNO case (any value)."""
+        if name in cno_only:
+            in_a, in_b = name in cno_layers['reference'], name in cno_layers['target']
+            return 'common' if in_a and in_b else ('new' if in_b else 'removed')
         if not complete:
             return 'unverifiable'
         in_a, in_b = name in present['reference'], name in present['target']
@@ -602,12 +623,18 @@ def build_ledger(doc, doc_sha256, cfg2):
     electrode_rows = []
     for name in electrode_names:
         acc = electrode(name)
-        in_a, in_b = name in present['reference'], name in present['target']
+        is_cno_only = name in cno_only
+        if is_cno_only:
+            in_a, in_b = name in cno_layers['reference'], name in cno_layers['target']
+        else:
+            in_a, in_b = name in present['reference'], name in present['target']
         status = electrode_state(name)
         layers_ab = {}
         for role in ROLES:
             inv = inventory[role]
-            if inv['status'] == 'complete':
+            if is_cno_only:
+                layers_ab[role] = sorted(cno_layers[role].get(name, ()), key=lk)
+            elif inv['status'] == 'complete':
                 layers_ab[role] = sorted(inv['layers'].get(name, []), key=lk)
             else:
                 layers_ab[role] = sorted(elec_layers[role].get(name, ()), key=lk)
@@ -619,7 +646,8 @@ def build_ledger(doc, doc_sha256, cfg2):
         row['layer_state'] = {layer: ('both' if layer in row['layers_a'] and layer in row['layers_b']
                                       else ('a_only' if layer in row['layers_a'] else 'b_only'))
                               for layer in sorted(set(row['layers_a']) | set(row['layers_b']), key=lk)}
-        verified = complete and status != 'unverifiable'
+        verified = complete and status != 'unverifiable' and not is_cno_only
+        row['cno_only'] = is_cno_only
         row['layer_state_status'] = 'verified' if verified else 'unverified'
         row['moved'] = (bool(in_a and in_b and only_a and only_b)) if verified else None
         for kind in KINDS:
@@ -1215,6 +1243,8 @@ def _bundle_summary(atoms, kstat, erows, pair_rows, crp, totals, lk, vi_a=None):
         """(bundle key, why) of one atom."""
         if a['cno']:      # stage B: the electrode attributes decide, never the bundles that exist
             name, layer = a['ends'][0]
+            if (erows.get(name) or {}).get('cno_only'):      # rexp/T1 (G4): CNO-only electrode, CNO bundle alone
+                return ('cno', name, layer), None
             if status_of(name) in ('new', 'removed'):
                 return ('ele', name), None
             if changed_layers(name):
