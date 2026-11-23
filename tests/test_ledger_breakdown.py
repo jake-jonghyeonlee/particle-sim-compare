@@ -48,7 +48,7 @@ def _strip_new_keys(doc):
     doc['checks'].pop('item_breakdown')
     doc['inputs'].pop('diameter_filter')            # rtrim/T3: the only key added to inputs; the baseline module has none
     for row in doc['electrodes']:
-        for key in ('layer_state', 'layer_state_status', 'moved'):
+        for key in ('layer_state', 'layer_state_status', 'moved', 'cno_only'):      # rexp/T1 added cno_only
             row.pop(key)
     # rnarr/T5: summary, checks.{rebase,bundles,concentration}, item/CNO rebase fields, size-row lambda, layer_order
     doc.pop('summary')

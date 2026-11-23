@@ -1001,7 +1001,9 @@ def test_chrome_a_pair_without_pixels_on_the_layer_says_so(tmp_path):
     doc, page = chrome_t8(tmp_path, name='nopx', doc=corr_doc(complete=False), el=False)
     dom, text = dump_dom(page, '#sel=pair:P5')
     assert 'data-err' not in dom.root and dom.root['data-dp-pair'] == 'P5'
-    assert '이 레이어에 영역 없음' in text or int(dom.root['data-dp-pixels'].split(',')[1]) > 0     # P5 exists in B only: A has no region on the layer
+    # P5 exists in B only: A has no region on the layer (full view + note), B has pixels (R1b:1)
+    assert '이 제품에는 이 쌍의 영역이 없습니다' in text
+    assert int(dom.root['data-dp-pixels'].split(',')[0]) == 0 and int(dom.root['data-dp-pixels'].split(',')[1]) > 0
 
 
 def test_without_maps_the_places_say_no_map_and_the_table_shows_dashes(tmp_path):
