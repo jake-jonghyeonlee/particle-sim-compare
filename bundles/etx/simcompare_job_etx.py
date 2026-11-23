@@ -1,56 +1,42 @@
 #!/usr/bin/env python3
 """simcompare 단일 파일 실행기 (자동 생성: scripts/build_single_file.py). 소스 해시 52a188198eea611de76a8426e219ad3e0d824945f601747a342225d276f548e0.
 서버 wrapper가 명령줄 인자를 넘기지 못할 때 쓴다. 아래 EDIT 블록만 고치고 이 파일을 그대로 실행한다."""
-# ETX 기본 흐름 통합 실행기. 01(hotspot import) → 03(전극 PNG import) → 02(compare2) → diag(검사·비교) → 04(변경점 ROI) → 05(DL2 확정, 선택) → 06(창별 국부 ΔCA) → 07(보고서) → 08(장부·지도 자료·장부 보고서)를 한 파일로 돌린다.
-# 모델 이름·hotspot 입력 root·DL1 root·지름·창은 설정 파일(real.yaml, compare2.yaml)에서 읽는다. 이 파일의 EDIT 블록에는 그 밖의 값만 둔다.
-# 순서·준비물·재실행 방법은 docs/usage.md "ETX(Linux GPU 서버) 실행 순서"에 있다.
+# ETX 통합 실행기. EDIT 블록만 고친다. 단계 설명·재실행 방법: docs/usage.md "ETX 실행 순서".
 # ============================== EDIT BELOW: 이 블록만 고치세요 ==============================
-# 돌릴 단계. 순서는 여기 적은 순서가 아니라 항상 01, 03, 02, diag, 04, 05, 06, 07, 08 이다. 모르는 이름은 실행 전에 오류로 멈춘다.
-#   01 hotspot import   03 전극 PNG import   02 compare2(vi)   diag 검사·비교   04 변경점 ROI   05 DL2 확정(기본에서 뺌)   06 창별 ΔCA   07 보고서   08 장부+장부 보고서
-# 이전 결과 보관: 고른 단계의 출력 폴더가 이미 있으면 실행 전에 data/_runs/<RUN_TAG>/ 로 옮긴다(삭제하지 않는다). 대상이 이미 있으면 아무것도 옮기지 않고 멈춘다.
-# 단계를 고르는 법: 전체 다시 = 아래 기본값. 02 부터 = ["02", "diag", "04", "06", "07", "08"] (01·03 결과를 그대로 쓴다). 07 만 = ["07"].
-# 기존 결과가 있고 장부만 새로 보려면 ["02", "08"] (02 를 이 번들로 다시 돌려야 장부 입력이 만들어진다). 08 만 다시 = ["08"].
-STEPS = ["01", "03", "02", "diag", "04", "06", "07", "08"]
-RUN_TAG = None                                # None 이면 UTC 시각 YYYYMMDD-HHMMSS. 문자열이면 그 이름(/ 와 \ 금지)
-DRY_RUN = False                               # True 이면 만든 JOBS 와 옮길 폴더만 로그에 찍고 아무것도 실행·이동하지 않는다. 처음에는 True 로 확인한다
+BASE_DIR = None                     # 작업 폴더(절대 경로). None = 이 파일이 있는 폴더
+STEPS = ["01", "03", "02", "diag", "04", "06", "07", "08"]   # 08 보고서만 필요 = ["01", "02", "08"], 보고서만 다시 = ["08"]
+RUN_TAG = None                      # 옛 출력 보관 폴더 data/_runs/<RUN_TAG>. None = 시각
+DRY_RUN = False                     # True = 할 일만 로그에 찍고 실행하지 않음
 
-REAL_CONFIG = "real.yaml"                     # BASE_DIR 안의 real.yaml (모델 이름·data_dir·asset 폴더·output_dir 을 여기서 읽는다)
-COMPARE2_CONFIG = "compare2.yaml"             # BASE_DIR 안의 compare2.yaml (hotspot_root·dl1_root·diameter_um·map_window_um·output_dir 을 여기서 읽는다)
+REAL_CONFIG = "real.yaml"
+COMPARE2_CONFIG = "compare2.yaml"
+INCLUDE_CNO = True                  # 01: CNO case 도 읽기
 
-INCLUDE_CNO = True                            # 01: CNO(lateral_open) case 도 import. 쓰지 않으면 False (켠/끈 실행은 01 부터 다시 한다)
-MAX_ASSET_MEMORY_MB = 16384                   # 03: asset 디코딩 메모리 상한(MB, 기본값 없는 필수 인자). 16384 는 예시
-# 04: candidates-change 인수. 아래 값은 모두 예시이니 제품에 맞게 바꾼다. --config, --cnt-from-dl1-root, --electrode-png-root, --window-um, --diameter-um, --out 은
-# 설정 파일에서 오므로 여기 적으면 오류다. 인수의 뜻은 docs/usage_reference.md "ROI 선정"과 docs/usage.md 에 있다.
-ALIGN_ARGS = [
+LEDGER_DIR = "data/ledger"          # 08 출력
+LEDGER_MAPS_DIR = "data/ledger_maps"
+LEDGER_REPORT_DIR = "data/ledger_report"
+LEDGER_MAPS = True                  # False = 지도 없이 ledger·보고서만(빠름)
+LEDGER_MAPS_ARGS = []               # 예: ["--range-um", "10"]
+
+LOG_FILE = "runs/simcompare_job_etx.log"
+WORK_DIR = None
+
+# ---- 선택 단계(03·04·05·06·07)를 STEPS 에 넣을 때만 고친다 ----
+MAX_ASSET_MEMORY_MB = 16384         # 03: 메모리 상한(MB)
+ALIGN_ARGS = [                      # 04: candidates-change 인수(예시 값)
     "--align-search-um", "30", "--align-min-dice", "0.3", "--align-layer-tolerance-um", "1",
     "--change-tolerance-um", "0.5", "--merge-overlap", "0.5", "--top-k", "20",
     "--mask-derivation-rule", "between_stack_order_v1", "--merge-scope", "all", "--suppress-overlap", "0.3",
     "--unit-align-um", "3", "--apply-align", "local", "--local-align-um", "1", "--unit-fold",
 ]
-EXTRA_WINDOWS_UM = []                         # 06: --window-sizes 는 compare2.yaml report.map_window_um 하나. 더 보려면 [20, 30] 처럼 추가
-JITTER_UM = 0.5                               # 06: --jitter-um (권장 운용값, 코드 기본값 아님)
-# 05(DL2 확정)를 STEPS 에 넣을 때만 쓴다. 05 를 고르면 06 은 data/confirmed 의 대응을, 07 은 --confirm data/confirmed 를 쓴다.
-DL2_MATCH_ARGS = ["--match", "reference_to_target=data/dl2/ncc_r2t.json", "--match", "target_to_reference=data/dl2/ncc_t2r.json"]
-DL2_DECISION_ARGS = ["--decisions", "data/dl2/decisions.csv", "--labelled-by", "CHANGE_ME", "--mutual-tolerance-um", "5"]
-# 04–07 의 출력 폴더(기본값 그대로 쓰면 된다). 01·03·02·diag 의 출력 폴더는 설정 파일에서 온다.
-CHANGES_DIR = "data/changes"
-CONFIRMED_DIR = "data/confirmed"
-LOCAL_DIR = "data/local"
-REPORT_DIR = "data/compare2_report"
-# 08: 장부(ledger) → 지도 자료(ledger-maps) → 장부 보고서(ledger-report --maps-dir). 02 가 만든 data/compare2/compare2.json 을 읽으므로 02 를 이 번들로 다시 돌린 뒤 08 을 돌린다.
-# 02 없이 08 만 고르면 02 출력 폴더의 compare2.json 이 있어야 한다(없으면 실행 전에 종료 2). 08 은 폴더 셋(ledger, ledger_maps, ledger_report)을 만든다.
-# ledger-maps 는 hotspot 을 다시 읽어 지도 자료를 만들므로 02 와 비슷한 시간이 걸린다. 무거우면 LEDGER_MAPS = False (예전처럼 ledger, ledger-report 두 작업만 돈다).
-# 새 번들로 처음 한 번은 STEPS = ["02", "08"] (02 가 rebase·layer_order 를 새로 낸다). 그 뒤 보고서만 바뀌면 STEPS = ["08"] (compare2.json 이 바뀌지 않으므로 02 는 필요 없다). 04 결과(CHANGES_DIR)가 있으면 지도의 좌표 대응에 쓴다.
-# ledger-maps 종료 3(부분 결과)이면 실행기는 계속하고 ledger-report 가 띠를 보인다. 종료 2 이면 실행기가 멈추고 ledger-report 는 실행하지 않는다.
-LEDGER_DIR = "data/ledger"
-LEDGER_REPORT_DIR = "data/ledger_report"
-LEDGER_MAPS = True
-LEDGER_MAPS_DIR = "data/ledger_maps"
-LEDGER_MAPS_ARGS = []                         # ledger-maps 추가 인수(문자열 목록). 예: ["--range-um", "10"]
-
-LOG_FILE = "runs/simcompare_job_etx.log"      # stdout/stderr를 이 파일에도 남긴다. 필요 없으면 None
-WORK_DIR = None                               # 패키지를 풀 폴더. None이면 이 파일 옆, 쓸 수 없으면 임시 폴더
-BASE_DIR = None                               # 설정 파일·상대 경로·LOG_FILE·WORK_DIR 의 기준 폴더(절대 경로). None이면 이 .py가 있는 폴더
+DL2_MATCH_ARGS = ["--match", "reference_to_target=data/dl2/ncc_r2t.json", "--match", "target_to_reference=data/dl2/ncc_t2r.json"]   # 05
+DL2_DECISION_ARGS = ["--decisions", "data/dl2/decisions.csv", "--labelled-by", "CHANGE_ME", "--mutual-tolerance-um", "5"]          # 05
+EXTRA_WINDOWS_UM = []               # 06: 창 크기 추가, 예: [20, 30]
+JITTER_UM = 0.5                     # 06
+CHANGES_DIR = "data/changes"        # 04 출력
+CONFIRMED_DIR = "data/confirmed"    # 05 출력
+LOCAL_DIR = "data/local"            # 06 출력
+REPORT_DIR = "data/compare2_report" # 07 출력(있으면 08 보고서가 링크)
 # ============================== EDIT ABOVE ==============================================
 
 import base64
