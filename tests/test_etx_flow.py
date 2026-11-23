@@ -496,7 +496,16 @@ def test_prepare_dry_run_logs_the_plan_and_moves_nothing(tmp_path):
     text = '\n'.join(lines)
     assert text.count('  job ') == len(expected_default_jobs(edit_settings()['align_args']))
     assert text.count('  move ') == len(OUTPUT_FOLDERS) and 'DRY_RUN = True' in text
-    assert 'job candidates-change --config real.yaml' in text
+    assert 'job [04] candidates-change --config real.yaml' in text and 'job [08] ledger-report ' in text
+
+
+def test_jobs_carry_their_step_and_still_compare_as_two_tuples(tmp_path):
+    base = template_base(tmp_path)
+    jobs = etx_flow.plan_jobs(base, edit_settings(steps=['01', '02', '08']))
+    assert [job.step for job in jobs] == ['01', '01', '02', '08', '08', '08']
+    assert jobs[0].label == 'hotspot import' and jobs[-1].label == '장부·지도·보고서' and jobs[2] == ('compare2', jobs[2][1])
+    off = etx_flow.plan_jobs(base, edit_settings(steps=['02', '08'], ledger_maps=False))
+    assert [(job.step, job[0]) for job in off] == [('02', 'compare2'), ('08', 'ledger'), ('08', 'ledger-report')]
 
 
 def test_prepare_moves_then_returns_the_jobs(tmp_path):
@@ -533,7 +542,7 @@ def test_runner_file_dry_run_prints_the_jobs_and_moves_nothing(tmp_path):
     assert re.search(r'payload_sha256=[0-9a-f]{64}', log)
     for command in ('import-hotspots', 'import-electrode-assets', 'compare2 ', 'validate-data', 'compare ', 'candidates-change',
                     'compare-windows', 'compare2-report'):
-        assert f'  job {command}' in log, command
+        assert re.search(r'  job \[\w+\] ' + re.escape(command), log), command
     assert 'move' in log and 'data/_runs/DRYRUN' in log
     print('\n--- DRY_RUN log of the template configs ---')
     print('\n'.join(line for line in log.splitlines() if 'flow:' in line or '  job ' in line or '  move ' in line))

@@ -33,7 +33,22 @@ def test_single_file_runs_jobs_continues_on_partial_and_stops_on_error(tmp_path)
     assert 'validate-data exit 3' in log and 'validate-data exit 2' in log
     assert 'start compare' not in log
     assert '.simcompare_pkg_' in log
+    assert '=====' not in log and '요약' not in log        # rexp/T4: 2-tuple jobs have no steps, so no step lines
 
+
+def test_rexp_t4_three_tuple_jobs_get_step_lines_and_a_summary(tmp_path):
+    demo = tmp_path / 'demo'
+    jobs = [('A', 'demo-data', ['--out', str(demo)]),
+            ('A', 'validate-data', ['--config', str(demo / 'config.yaml')]),
+            ('B', 'validate-data', ['--config', str(tmp_path / 'missing.yaml')]),
+            ('C', 'compare', ['--config', str(demo / 'config.yaml')])]
+    script = _build(tmp_path, jobs)
+    result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+    log = (tmp_path / 'job.log').read_text(encoding='utf-8')
+    assert result.returncode == 2
+    assert '===== [A] A 시작 ' in log and '(job 2 개) =====' in log and ' · exit demo-data 0, validate-data' in log
+    assert '===== [B] 실패 · validate-data exit 2 · 이후 단계는 실행하지 않음 =====' in log
+    assert '[simcompare_job]   [B] 2  ' in log and '[simcompare_job]   [C] -  (실행 안 함)' in log and '전체 ' in log
 
 def test_relative_paths_resolve_from_runner_folder_not_launch_cwd(tmp_path):
     work = tmp_path / 'runner'

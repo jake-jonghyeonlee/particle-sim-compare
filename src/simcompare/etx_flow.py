@@ -12,6 +12,20 @@ from pathlib import Path
 
 STEP_ORDER = ('01', '03', '02', 'diag', '04', '05', '06', '07', '08')     # 실행 순서(STEPS 의 순서가 아니다)
 DEFAULT_STEPS = ('01', '03', '02', 'diag', '04', '06', '07', '08')       # 05(DL2 확정)는 단계로 남기되 기본에서 뺀다
+STEP_LABELS = {'01': 'hotspot import', '03': '전극 PNG import', '02': 'compare2', 'diag': 'diag 검사·비교', '04': '변경 위치(ROI)',
+               '05': 'DL2 확정', '06': '창별 ΔCA', '07': 'compare2 보고서', '08': '장부·지도·보고서'}      # 로그의 단계 이름표
+
+
+class Job(tuple):
+    """(명령, 인자 목록) 2-tuple 과 똑같이 비교·풀어쓰기 되고, 어느 단계의 job 인지(step, label)만 더 가진다."""
+
+    def __new__(cls, name, args, step=None):
+        job = tuple.__new__(cls, (name, args))
+        job.step = step
+        job.label = STEP_LABELS.get(step, step)
+        return job
+
+
 RUNS_DIR = 'data/_runs'
 SOURCE_VERSION = 'LAYOUT_V1'
 ASSET_MANIFEST_NAME = 'review_assets.json'
@@ -200,6 +214,7 @@ def plan_jobs(base_dir, settings):
     diameter, window = _number(c2.report.diameter_um), _number(c2.report.map_window_um)
     jobs = []
     for step in steps:
+        first = len(jobs)
         if step == '01':
             for side, other in _roles():
                 args = ['--root', rel(products[side].hotspot_root), '--expected-cases-from-roots', rel(products[other].hotspot_root)]
@@ -271,6 +286,7 @@ def plan_jobs(base_dir, settings):
                                                '--out', rel(ledger_report)]))
             else:
                 jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--report07-dir', rel(report), '--out', rel(ledger_report)]))
+        jobs[first:] = [Job(name, args, step) for name, args in jobs[first:]]       # 단계 표시(비교는 2-tuple 과 같다)
     return jobs
 
 
@@ -379,8 +395,9 @@ def prepare(base_dir, settings, dry_run=False, echo=_echo):
             echo('flow: warning: %s product_id %r differs from the hotspot folder name %r' % (
                 side, ctx.real[side]['product_id'], hotspot.name))
     echo('flow: %d job(s):' % len(jobs))
-    for name, args in jobs:
-        echo('  job %s %s' % (name, ' '.join(args)))
+    for job in jobs:
+        name, args = job
+        echo('  job [%s] %s %s' % (job.step, name, ' '.join(args)))
     if moves:
         echo('flow: previous outputs to move to %s/%s (nothing is deleted):' % (RUNS_DIR, tag))
         for src, dst in moves:

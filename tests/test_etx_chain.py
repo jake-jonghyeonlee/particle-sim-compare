@@ -537,6 +537,37 @@ def test_step_08_recovers_after_ledger_report_failed(chain):
     assert not (base / 'data/blocker/report').exists() and (base / 'data/ledger_report/ledger_report.html').is_file()
 
 
+def _step_lines(text):
+    return re.findall(r'^\[simcompare_job\] ===== \[(\S+)\] (.*) =====$', text, re.M)
+
+
+def test_rexp_t4_the_log_marks_every_step_start_end_and_a_summary(chain):
+    text = chain.logs['main']
+    lines = _step_lines(text)
+    starts = [step for step, rest in lines if ' 시작 ' in rest]
+    ends = [(step, rest) for step, rest in lines if rest.startswith('끝 ')]
+    assert starts == ['01', '03', '02', 'diag', '04', '06', '07', '08'] and [s for s, _ in ends] == starts
+    assert [s for s, _ in lines] == [s for step in starts for s in (step, step)]       # start, end of one step, then the next
+    assert 'job 3 개' in [rest for s, rest in lines if s == '08'][0]
+    codes = [(name, int(code)) for name, code in _exit_codes(text)]
+    assert dict(ends)['08'].endswith(' · exit ' + ', '.join(f'{name} {code}' for name, code in codes[-3:]))      # the end line lists the job exits
+    assert text.index('[08] 장부·지도·보고서 시작') < text.index(' start ledger ') < text.index('[08] 끝')
+    summary = text[text.index('[simcompare_job] 요약'):]
+    assert [step for step, _ in re.findall(r'^\[simcompare_job\]   \[(\S+)\] (\d)  \S+$', summary, re.M)] == starts
+    assert re.search(r'^\[simcompare_job\]   전체 \S+$', summary, re.M)
+
+
+def test_rexp_t4_a_failing_step_prints_the_failure_line_and_the_summary(chain):
+    text = chain.logs['ledger_fail']
+    lines = _step_lines(text)
+    assert [s for s, _ in lines] == ['08', '08'] and ' 시작 ' in lines[0][1]
+    assert re.fullmatch(r'실패 · ledger-report exit \d+ · 이후 단계는 실행하지 않음', lines[1][1])
+    assert re.search(r'^\[simcompare_job\]   \[08\] [2-9]\d*  \S+$', text[text.index('[simcompare_job] 요약'):], re.M)
+    wrong = chain.logs['wrong_root']
+    assert _step_lines(wrong)[-1][0] == '04' and _step_lines(wrong)[-1][1].startswith('실패 · candidates-change exit 2')
+    assert re.search(r'^\[simcompare_job\]   \[06\] -  \(실행 안 함\)$', wrong, re.M)        # 06 was never started
+
+
 @pytest.mark.parametrize('python', _python_params())
 def test_step_08_continues_with_ledger_report_after_a_partial_ledger(tmp_path, python):
     """The synthetic chain world has no computable values, so the partial ledger comes from the test_ledger mockup (a compare2.json whose

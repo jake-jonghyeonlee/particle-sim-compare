@@ -157,8 +157,64 @@ def run_jobs(jobs):
     print(f"[simcompare_job] WORK_DIR requested={WORK_DIR!r}; package extracted to {root}", file=sys.stderr, flush=True)
     if callable(jobs):      # 통합 실행기: 패키지를 푼 뒤 설정 파일에서 JOBS 를 만든다
         jobs = jobs()
-    for name, args in jobs:
+    # job 은 (명령, 인자) 2-tuple, 또는 단계가 붙은 것: (단계, 명령, 인자) 3-tuple / .step·.label 이 있는 통합 실행기 job.
+    plan = []       # (단계 또는 None, 단계 이름표, 명령, 인자)
+    for job in jobs:
+        if len(job) == 3:
+            plan.append((job[0], job[0], job[1], job[2]))
+        else:
+            step = getattr(job, "step", None)
+            plan.append((step, getattr(job, "label", step), job[0], job[1]))
+    step_ids = []
+    for step, _, _, _ in plan:
+        if step is not None and step not in step_ids:
+            step_ids.append(step)
+    labels = {step: label for step, label, _, _ in plan if step is not None}
+    counts = {step: sum(1 for item in plan if item[0] == step) for step in step_ids}
+    results = {}        # 단계 -> [시작 시각, [(명령, exit)...], 끝 시각 또는 None]
+
+    def fmt(seconds):
+        seconds = int(round(seconds))
+        return f"{seconds // 60}m{seconds % 60:02d}s" if seconds >= 60 else f"{seconds}s"
+
+    def worst(codes):       # 멈추는 코드 > 3 > 0
+        stops = [c for c in codes if c not in CONTINUE_CODES]
+        return max(stops) if stops else (3 if 3 in codes else 0)
+
+    def say(text):
+        print(f"[simcompare_job] {text}", file=sys.stderr, flush=True)
+
+    def close_step(step, failed=False):
+        started_at, done, _ = results[step]
+        elapsed = time.time() - started_at
+        results[step][2] = elapsed
+        if failed:
+            say(f"===== [{step}] 실패 · {done[-1][0]} exit {done[-1][1]} · 이후 단계는 실행하지 않음 =====")
+        else:
+            say(f"===== [{step}] 끝 {stamp()} · {fmt(elapsed)} · exit " + ", ".join(f"{n} {c}" for n, c in done) + " =====")
+
+    def summary():
+        if not step_ids:
+            return
+        say("요약")
+        for step in step_ids:
+            if step not in results:
+                say(f"  [{step}] -  (실행 안 함)")
+            else:
+                started_at, done, elapsed = results[step]
+                say(f"  [{step}] {worst([c for _, c in done])}  {fmt(time.time() - started_at if elapsed is None else elapsed)}")
+        say(f"  전체 {fmt(time.time() - run_started)}")
+
+    run_started = time.time()
+    current = None
+    for index, (step, label, name, args) in enumerate(plan):
         argv = [str(name), *(str(a) for a in args)]
+        if step is not None and step != current:
+            if current is not None:
+                close_step(current)
+            current = step
+            results[step] = [time.time(), [], None]
+            say(f"===== [{step}] {label} 시작 {stamp()} (job {counts[step]} 개) =====")
         print(f"[simcompare_job] {stamp()} start {' '.join(argv)}", file=sys.stderr, flush=True)
         for line in _resolved_args(args, name):
             print(f"[simcompare_job]   {line}", file=sys.stderr, flush=True)
@@ -170,8 +226,17 @@ def run_jobs(jobs):
             code = exc.code if isinstance(exc.code, int) else 2
         code = 0 if code is None else code
         print(f"[simcompare_job] {stamp()} {name} exit {code} in {time.time() - started:.0f}s", file=sys.stderr, flush=True)
+        if step is not None:
+            results[step][1].append((str(name), code))
         if code not in CONTINUE_CODES:
+            if step is not None:
+                close_step(step, failed=True)
+                summary()
             raise SystemExit(code)
+        if step is not None and (index + 1 == len(plan) or plan[index + 1][0] != step):
+            close_step(step)
+            current = None
+    summary()
 
 
 def _base_dir():
