@@ -426,7 +426,7 @@ function itemsHtml(d){var b=d.u?BU[d.u]:null,p=d.p?PB[d.p]:null,curIt=parseHash(
  var its=p.items.slice().sort(function(x,y){return Math.abs(y.d||0)-Math.abs(x.d||0)||(x.label<y.label?-1:(x.label>y.label?1:0));}),
   mine=its.filter(function(it){return !!inc[it.id];}),other=its.filter(function(it){return !inc[it.id];}),all=dsum(its),X=dsum(mine),Z=dsum(other),totAbs=0,i,hasOc=hasOcOf(p);
  its.forEach(function(it){totAbs+=Math.abs(it.d||0);});
- var chk=(p.d==null||all.nul)?'na':(Math.abs(all.s-p.d)<1e-12?'passed':'failed'),nm=esc(p.e.join('–'));
+ var chk=(p.d==null||all.nul)?'na':(Math.abs(all.s-p.d)<=1e-12+1e-9*Math.max(Math.abs(p.d),totAbs)?'passed':'failed'),nm=esc(p.e.join('–'));
  var a=0,nw=0,gn=0;mine.forEach(function(it){var v=it.d||0;if(it.pres==='new')nw+=v;else if(it.pres==='gone')gn-=v;else a+=v;});
  var eq='<div id="dp-eq" data-dp-sumcheck="'+chk+'">'+(b?'<div class="eq" id="dp-eq-mine"><b>이 후보 몫</b> '+sgx(X.s)+' = 같은 불량 증감 <b>'+ppx(a)+'</b> + 새 방식 <b>'+f4(nw)+'</b> − 없어진 방식 <b>'+f4(gn)+'</b></div>':'')+
   '<div class="eq whole" id="dp-eq-all">쌍 <b>'+nm+'</b> <b>전체</b> '+sgx(p.d)+(b?' = 이 후보 '+ppx(X.s)+' + 다른 후보 '+ppx(Z.s):'')+
@@ -565,6 +565,7 @@ function drawDetail(st,sel){var box=$('s3-detail'),root=document.documentElement
  var d=detailOf(st,sel),key=(d.u||'')+'|'+(d.p||'')+'|'+(st.kv.it||'')+'|'+(sel&&!d.u&&!d.p?sel.t+':'+sel.id:'')+(st.flags.print?'|print':'');
  root.setAttribute('data-dp-unit',d.u||'');root.setAttribute('data-dp-pair',d.p||'');
  if(key===DS.key&&box.getAttribute('data-drawn')==='1')return;   /* the same state: keep the panel (chosen layer, zoom, tab, scroll) */
+ root.setAttribute('data-dp-sumcheck','na');root.setAttribute('data-dp-condsum','na');   /* R4:2: a state with no pair must not keep the check of the former one */
  DS.key=key;if(DS.u!==d.u||DS.p!==d.p){DS.layer=null;DS.zoom=false;DS.pan=0;DS.tab=d.p?'items':'pairs';}   /* a new candidate or pair: the failure types of the pair (no pair: the pair list) */
  DS.u=d.u;DS.p=d.p;box.setAttribute('data-drawn','1');
  if(!d.u&&!d.p){DGEN++;root.setAttribute('data-dp-drawn','0');
@@ -583,14 +584,18 @@ function applyTab(){var root=document.documentElement,pr=!!parseHash().flags.pri
  for(i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-dtab')===DS.tab;ts[i].classList.toggle('on',on);ts[i].setAttribute('aria-selected',on?'true':'false');}
  root.setAttribute('data-dp-tab',DS.tab);}
 function markUnit(st,d){var i,els=document.querySelectorAll('.selcard,.unitcell');for(i=0;i<els.length;i++)els[i].classList.remove('selcard','unitcell');
- [st.kv.unit,d.u].forEach(function(u){if(!u)return;var c=$(u);if(c)c.classList.add('selcard');});
+ [st.kv.unit,d.u].forEach(function(u){if(!u)return;var cs=document.querySelectorAll('.crow[data-unit="'+u+'"]'),ci;for(ci=0;ci<cs.length;ci++)cs[ci].classList.add('selcard');});
  var u=st.kv.unit;if(!u)return;
  var uc=unitCellOf(u);if(uc){var rows=document.querySelectorAll('tr[data-row="corr"]');for(i=0;i<rows.length;i++){if(rows[i].getAttribute('data-el')!==uc.e)continue;
   var cs=rows[i].querySelectorAll('td[data-layer]');for(var j=0;j<cs.length;j++){if(cs[j].getAttribute('data-layer')===uc.l)cs[j].classList.add('unitcell');}}}}
 /* the list of 3 shows one kind (the band cell, #k=, or the kind of the open candidate); #print shows both */
+/* rexp/T11: a candidate of both kinds has a card in each list (the second one has id '<id>--pixel'); data-unit holds the candidate id. cardEl = the card of u in the list k (else the first one) */
+function cardEl(u,k){var l=u?document.querySelectorAll('.crow[data-unit="'+u+'"]'):[],i,f=null;for(i=0;i<l.length;i++){if(!f)f=l[i];if(k&&l[i].getAttribute('data-k')===k)return l[i];}return f;}
 function drawKinds(st,sel){var lists=document.querySelectorAll('.klist'),i,k=st.kv.k,u,c,pr=!!st.flags.print;if(!lists.length)return;
- if(!k){u=st.kv.unit||(sel&&sel.t==='unit'?sel.id:'')||(st.kv.cand||'');
-  c=u?($(u)||$('rest-line-'+u)||$('rest-pixel-'+u)):null;c=c&&c.closest?c.closest('.klist'):null;k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
+ if(!k){u=st.kv.unit||detailOf(st,sel).u||st.kv.cand||'';   /* R4:1: no k in the hash: the kind of the open candidate (the default one, or the selected one) */
+  c=u?(cardEl(u)||$('rest-line-'+u)||$('rest-pixel-'+u)):null;c=c&&c.closest?c.closest('.klist'):null;
+  if(!c){for(i=0;i<lists.length;i++){if(lists[i].querySelector('.crow')){c=lists[i];break;}}}   /* else the first kind that has cards (not a skipped one) */
+  k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
  for(i=0;i<lists.length;i++)lists[i].hidden=!pr&&lists[i].getAttribute('data-k')!==k;
  var ds=document.querySelectorAll('.dir');for(i=0;i<ds.length;i++)ds[i].classList.toggle('on',ds[i].getAttribute('data-k')===k);
  document.documentElement.setAttribute('data-kind',k||'');}
@@ -616,12 +621,12 @@ function openUp(el){for(var n=el;n&&n!==document.body;n=n.parentNode){if(n.tagNa
    "explore" (the old name of the pair view) is the detail panel of 3 */
 function target(id){return $(id==='explore'?'s3-detail':id);}
 /* rexp/T7: on a wide screen the detail panel sticks beside the list, so a card or pair click must not scroll the page; it scrolls only when the panel is out of view (coming from another section) */
-function stayPut(t){if(!t||t.id!=='s3-detail'||(window.innerWidth||document.documentElement.clientWidth)<1100)return false;
- var r=t.getBoundingClientRect(),vh=window.innerHeight||document.documentElement.clientHeight;return r.bottom>0&&r.top<vh;}
-function routeScroll(first){var st=parseHash(),to=st.kv.to,u=st.kv.unit,t=null;
- if(to==='s3'&&u)t=$(u)||$('rest-line-'+u)||$('rest-pixel-'+u);
+function stayPut(t){if(!t||t.id!=='s3-detail'||(window.innerWidth||document.documentElement.clientWidth)<=1100)return false;   /* the same width rule as the CSS (<= 1100 = one column) */
+ var r=t.getBoundingClientRect(),vh=window.innerHeight||document.documentElement.clientHeight,vis=Math.min(r.bottom,vh)-Math.max(r.top,0);return r.height>0&&vis>=r.height/2;}   /* R4:5: only when at least half of the panel is in view */
+function routeScroll(first){var st=parseHash(),to=st.kv.to,u=st.kv.unit,t=null,kd=document.documentElement.getAttribute('data-kind');
+ if(to==='s3'&&u)t=cardEl(u,kd)||$('rest-line-'+u)||$('rest-pixel-'+u);
  if(!t&&to)t=target(to);if(stayPut(t))t=null;
- if(!t&&!to&&first&&u&&!selOf(st))t=$(u);   /* R12:2: a later hash change never pulls the page back to the card */
+ if(!t&&!to&&first&&u&&!selOf(st))t=cardEl(u,kd);   /* R12:2: a later hash change never pulls the page back to the card */
  if(t){openUp(t);t.scrollIntoView({block:'start'});}
  if(to){delete st.kv.to;var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);}}
 function go(id){var el=target(id);if(el&&el.scrollIntoView&&!stayPut(el))el.scrollIntoView({block:'start'});}
@@ -649,7 +654,7 @@ document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest
  var tw=t.closest('.crow .tw');if(tw){tw.closest('.crow').classList.toggle('open');return;}   /* ▸ unfolds the card in place */
  var dirc=t.closest('.dir');if(dirc){var ks=parseHash();ks.kv.k=dirc.getAttribute('data-k');setHash(ks);return;}   /* the band switches the list */
  var card=t.closest('.s3cards .crow');   /* a click on a card row (not on its links, buttons, folds or unfolded part) opens its detail */
- if(card&&!t.closest('a,button,summary,details,input,select,.cexp')&&UNIT.test(card.id)&&BU[card.id]){var cs2=parseHash();cs2.kv.sel='unit:'+card.id;delete cs2.kv.cand;delete cs2.kv.it;cs2.flags.demo=false;setHash(cs2);}});
+ if(card&&!t.closest('a,button,summary,details,input,select,.cexp')&&UNIT.test(card.getAttribute('data-unit')||'')&&BU[card.getAttribute('data-unit')]){var cs2=parseHash();cs2.kv.sel='unit:'+card.getAttribute('data-unit');delete cs2.kv.cand;delete cs2.kv.it;cs2.flags.demo=false;setHash(cs2);}});
 document.addEventListener('keydown',function(ev){var t=ev.target;if((ev.key==='Enter'||ev.key===' ')&&t&&t.getAttribute&&(t.getAttribute('data-href')||t.classList.contains('dir')||t.classList.contains('tw'))){ev.preventDefault();t.click();}});
 var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.eq=qi.value;else delete st.kv.eq;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});

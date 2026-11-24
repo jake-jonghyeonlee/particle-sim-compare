@@ -1625,10 +1625,13 @@ def _card_fraction(ctx, b, kind):
     return 0.0 if not isinstance(x, (int, float)) else max(0.0, min(1.0, float(x)))
 
 
-def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None):
+def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None, dup=False):
     """One folded card (a row of the list of `kind`): rank circle, title, type, net change, share, bar, one-line 'what changed'.
-    The ▸ unfolds the layer table, the amount and the notes; the row click opens the detail panel (the script)."""
+    The ▸ unfolds the layer table, the amount and the notes; the row click opens the detail panel (the script).
+    rexp/T11: a candidate that is in the list of the other kind too has a second card here; its element id is '<id>--<kind>' (`dup`),
+    data-unit always holds the candidate id."""
     uid = esc(b['id'])
+    eid = uid + '--' + kind if dup else uid
     s = b['kinds'][kind]
     net = s.get('net')
     word = direction or ('increase' if (net or 0) > 0 else 'decrease')
@@ -1645,7 +1648,7 @@ def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None):
         notes.append('<span class="badge b-mv">상충</span>')
     if any((b['kinds'][k].get('cancelling')) for k in KINDS):
         notes.append('<span class="badge b-mv">내부 상쇄(순 변화 ≈ 0)</span>')
-    parts = ['<div class="crow" id="%s" data-k="%s"%s>%s<div class="cexp">' % (uid, kind, ' data-opp="1"' if opposite else '', head)]
+    parts = ['<div class="crow" id="%s" data-unit="%s" data-k="%s"%s>%s<div class="cexp">' % (eid, uid, kind, ' data-opp="1"' if opposite else '', head)]
     if notes:
         parts.append('<p class="bp">%s</p>' % ' '.join(notes))
     parts += [_layer_rows_html(b), _hub_partner_line(b)]
@@ -1668,11 +1671,6 @@ def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None):
         parts.append('<p class="bp">%s</p>' % ' '.join(tp))
     parts.append('<p class="bp"><a class="lkbtn" href="#unit=%s&amp;to=s2" title="2 제품 대응 표의 이 칸 보기">제품 대응 ▸</a></p></div></div>' % uid)
     return ''.join(parts)
-
-
-def _card_ref(b, other_kind, kind):
-    return '<div class="cref muted small">(%s 목록의 %s 카드 — %s 순 변화 %s)</div>' % (
-        other_kind, lk_bundle(b), kind, esc(pp_txt(b['kinds'][kind]['net'])))
 
 
 def _rest_rows(ctx, kind, entries):
@@ -1791,7 +1789,7 @@ def _kind_cards(ctx, kind, rk, line_rk=None):
         k80 = '' if d.get('k80') is None else ' · 80%% 까지 %d 개' % d['k80']
         return '<h4>%s <span class="muted" style="font-weight:400">(합 %s%s%s)</span></h4><div class="bgrid" id="%s">%s</div>' % (
             esc(title), esc(pp_txt(d.get('total'))), cover, k80, ident,
-            ''.join(_card_ref(b, 'line', kind) if b['id'] in shown_line else _bundle_card(ctx, b, kind, n, opposite, name) for n, b in enumerate(cards, 1)))
+            ''.join(_bundle_card(ctx, b, kind, n, opposite, name, dup=b['id'] in shown_line) for n, b in enumerate(cards, 1)))
     direction = rk.get('direction')
     parts = []
     if direction == 'balanced':

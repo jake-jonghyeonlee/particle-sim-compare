@@ -981,6 +981,51 @@ def test_chrome_cards_are_folded_rows_the_arrow_unfolds_one_and_the_band_switche
     assert not [a for t, a in dom3.elements if 'klist' in (a.get('class') or '').split() and 'hidden' in a]           # #print shows both kinds
 
 
+def _both_kinds_page(tmp_path):
+    doc = sample_doc()
+    both = mk(doc, 0, 'pair', {'line': 0.01, 'pixel': 0.004}, layer=doc['pairs'][0]['items'][0]['analysis_layer'])
+    px = mk(doc, 3, 'pair', {'pixel': -0.003}, layer=doc['pairs'][3]['items'][0]['analysis_layer'])
+    finish(doc, [both, px])
+    doc, maps, out = map_report(tmp_path, doc=doc, changes=ok_changes())
+    return doc, both, px, out / 'ledger_report.html'
+
+
+def test_chrome_rexp_t11_a_candidate_in_both_lists_has_a_ranked_card_in_each_with_unique_ids(tmp_path):      # (f)
+    doc, both, px, page = _both_kinds_page(tmp_path)
+    text = page.read_text(encoding='utf-8')
+    s3 = text[text.index('id="s3"'):text.index('id="s4"')]
+    assert '목록의 ' not in s3 or 'cref' not in s3
+    cards = re.findall(r'<div class="crow" id="([^"]+)" data-unit="([^"]+)" data-k="(line|pixel)"', s3)
+    ids = [c[0] for c in cards]
+    assert len(ids) == len(set(ids)) and (both['id'], both['id'], 'line') in cards and (both['id'] + '--pixel', both['id'], 'pixel') in cards
+    pixel_list = s3[s3.index('id="klist-pixel"'):]
+    mine = pixel_list[pixel_list.index('id="%s--pixel"' % both['id']):]
+    assert '<span class="rk' in mine[:600]                                              # the rank circle of the ranked card
+    dom, text2 = dump_dom(page, '#unit=%s&k=pixel' % both['id'])
+    assert 'data-err' not in dom.root and dom.root['data-kind'] == 'pixel'
+    sel = [a['id'] for t, a in dom.elements if t == 'div' and 'selcard' in (a.get('class') or '').split()]
+    assert sorted(sel) == sorted([both['id'], both['id'] + '--pixel'])
+
+
+def test_chrome_rexp_t11_the_list_kind_without_k_follows_the_open_candidate_and_the_check_attributes_reset(tmp_path):      # (g) R4:1 R4:2
+    doc, both, px, page = _both_kinds_page(tmp_path)
+    dom, text = dump_dom(page, '#sel=unit:%s' % px['id'])                              # a pixel-only candidate opens: the pixel list shows
+    assert 'data-err' not in dom.root and dom.root['data-kind'] == 'pixel'
+    dom, text = dump_dom(page, '#')                                                    # no selection: the default candidate's kind is shown
+    assert dom.root['data-dp-unit'] and cardkind(text, dom.root['data-dp-unit']) == dom.root['data-kind']
+    from test_ledger_report_v2 import run_in_page
+    script = ("setTimeout(function(){var d=document.documentElement;d.setAttribute('data-before',d.getAttribute('data-dp-sumcheck')+'/'+d.getAttribute('data-dp-condsum'));"
+              "location.hash='#sel=electrode:Nope';setTimeout(function(){d.setAttribute('data-after',d.getAttribute('data-dp-sumcheck')+'/'+d.getAttribute('data-dp-condsum'));},200);},300);")
+    dom2, text2 = run_in_page(page, '#sel=unit:%s' % both['id'], script, tag='rexp_reset')
+    assert 'data-err' not in dom2.root and dom2.root['data-before'] != 'na/na' and dom2.root['data-after'] == 'na/na'
+
+
+def cardkind(text, unit):
+    """The list kind (klist) that holds the first card of `unit`."""
+    pos = text.index('data-unit="%s"' % unit)
+    return 'line' if text.rfind('id="klist-line"', 0, pos) > text.rfind('id="klist-pixel"', 0, pos) else 'pixel'
+
+
 def _split_pair_doc():
     """comp_doc whose pair P2 has three items (both +0.18 / gone −0.20 / new +0.30 %p) that sit in TWO cause candidates:
     b1 holds the both and the new item (+0.48 %p), b2 holds the gone item (−0.20 %p); every item has per-size values (one size is all zero)."""
@@ -1025,6 +1070,10 @@ def test_chrome_the_pair_detail_names_two_scopes_splits_the_items_and_checks_the
     dom2, text2 = dump_dom(page, '#sel=unit:%s' % b2)
     assert [a['data-it'] for t, a in dom2.elements if t == 'tr' and a.get('data-it') and 'itc' in (a.get('class') or '').split()] == ['P2-gone']
     assert not [a for t, a in dom2.elements if a.get('id') == 'dp-sumbad']
+    panel2 = text2[text2.index('id="s3-detail"'):]                                  # R4:3: the gone side's two lines (this candidate's share, the whole pair)
+    eq2 = panel2[panel2.index('id="dp-eq"'):panel2.index('id="dp-items"')]
+    assert '이 후보 몫</b>' in eq2 and '−0.2000%p' in eq2 and '없어진 방식 <b>0.2000%</b>' in eq2
+    assert '<b>전체</b>' in eq2 and '+0.2800%p' in eq2 and '이 후보 −0.2000%p + 다른 후보 +0.4800%p' in eq2
 
 
 def test_chrome_a_sum_that_does_not_match_the_pair_total_shows_the_red_badge(tmp_path):
