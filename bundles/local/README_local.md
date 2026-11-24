@@ -21,13 +21,13 @@ BASE_DIR/
   data/input/dl1/...   # DL1 폴더
 ```
 
-YAML 안 경로는 BASE_DIR 기준 상대 경로를 권장한다. 절대 경로를 쓰면 `C:/...` 처럼 슬래시로 적는다.
+real.yaml 의 경로는 BASE_DIR 안의 상대 경로만 쓴다(절대 경로·`..`·백슬래시는 거부된다). 절대 경로(`C:/...`, 슬래시)는 compare2.yaml 의 `hotspot_root`·`dl1_root` 같은 root 경로에만 쓴다.
 
 ## 실행
 
 1. `simcompare_job_local.py` 의 EDIT 블록에서 필요하면 `BASE_DIR` 만 고친다. 나머지 기본값은 그대로 쓴다.
 2. `run_local.cmd` 를 더블클릭한다. 또는 `python simcompare_job_local.py`.
-   - Python 은 `SIMCOMPARE_PYTHON` → PATH 의 `python` → Anaconda·Miniconda 기본 폴더 순서로 찾는다.
+   - Python 은 `SIMCOMPARE_PYTHON` → PATH 의 모든 `python.exe`(Microsoft Store 별칭 `\WindowsApps\` 는 건너뜀) → Anaconda·Miniconda 기본 폴더 순서로 시험하고, `import numpy, PIL` 이 처음 성공하는 것을 쓴다.
 3. 처음에는 `STEPS = ["01", "02", "08"]`. 보고서만 다시 만들 때는 `STEPS = ["08"]`.
 
 ## 결과·로그

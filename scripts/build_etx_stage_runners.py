@@ -290,7 +290,7 @@ def main(argv=None):
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args(argv)
     local_dir = a.local_dir
-    if local_dir is None and Path(a.out_dir) == ROOT / "bundles/etx":
+    if local_dir is None and Path(a.out_dir).resolve() == (ROOT / "bundles/etx").resolve():
         local_dir = str(ROOT / "bundles/local")
     print(json.dumps(_build_all(a.out_dir, a.overwrite, local_dir), indent=2))
 

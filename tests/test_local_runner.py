@@ -61,16 +61,54 @@ def test_run_local_cmd_content():
     raw = path.read_bytes()
     raw.decode('ascii')                                   # ASCII only: no code page issue on any Windows
     text = raw.decode('ascii')
-    order = ['SIMCOMPARE_PYTHON', 'where python', r'%USERPROFILE%\anaconda3\python.exe', r'%USERPROFILE%\miniconda3\python.exe',
-             r'%ProgramData%\anaconda3\python.exe', r'%LOCALAPPDATA%\anaconda3\python.exe']
+    assert raw.count(b'\r\n') == raw.count(b'\n'), 'run_local.cmd must use CRLF line ends'
+    order = ['call :try "%SIMCOMPARE_PYTHON%"', "where python.exe", r'call :try "%USERPROFILE%\anaconda3\python.exe"',
+             r'call :try "%USERPROFILE%\miniconda3\python.exe"', r'call :try "%ProgramData%\anaconda3\python.exe"',
+             r'call :try "%LOCALAPPDATA%\anaconda3\python.exe"', r'call :try "%ProgramData%\miniconda3\python.exe"']
     positions = [text.index(item) for item in order]
     assert positions == sorted(positions)
-    assert 'import numpy, PIL' in text and 'exit /b 2' in text
+    assert 'where python\n' not in text.replace('\r\n', '\n') and "where python " not in text
+    assert r'\WindowsApps\\' not in text and r'\WindowsApps\=' in text           # Store alias is skipped
+    assert '"%~1" -c "import numpy, PIL"' in text                                # every candidate is tested
+    assert 'SIMCOMPARE_PYTHON does not exist' in text                            # warning for a missing file
     assert '-X utf8 "%~dp0simcompare_job_local.py"' in text
+    assert 'echo [simcompare] Python: "%PY%"' in text
     assert 'exit /b %RC%' in text and text.count('pause') >= 3
     assert r'runs\simcompare_job_local.log' in text
     for forbidden in ('setx', 'reg add', 'reg.exe', 'runas', 'pip install'):
         assert forbidden not in text.lower()
+
+
+def test_run_local_cmd_flow_is_static_consistent():
+    lines = (LOCAL / 'run_local.cmd').read_text(encoding='ascii').splitlines()
+    labels = [line[1:].strip() for line in lines if line.startswith(':') and not line.startswith('::')]
+    assert labels == ['nopython', 'run', 'try']
+    for target in re.findall(r'goto :(\w+)', '\n'.join(lines)):
+        assert target in labels
+    for target in re.findall(r'call :(\w+)', '\n'.join(lines)):
+        assert target in labels
+    body = '\n'.join(lines)
+    assert 'exit /b 1' in body and 'exit /b 2' in body
+    try_block = body[body.index(':try\n'):]
+    assert try_block.rstrip().endswith('exit /b 0')                              # the subroutine always returns
+    assert 'set "PY=%~1"' in try_block and 'goto :eof' not in body              # PY is set only after the import test
+    assert not re.search(r'^\s*for .*python(?!\.exe)', body, re.M)              # only python.exe, never .bat/.cmd shims
+    assert try_block.index('import numpy, PIL') < try_block.index('set "PY=%~1"')
+
+
+def test_gitattributes_forces_crlf_for_cmd_files():
+    assert '*.cmd text eol=crlf' in (ROOT / '.gitattributes').read_text(encoding='utf-8').splitlines()
+
+
+def test_builder_treats_a_relative_out_dir_like_the_default(tmp_path, monkeypatch):
+    module = _builder()
+    seen = []
+    monkeypatch.setattr(module, '_build_all', lambda out_dir, overwrite, local_dir: seen.append(local_dir) or [])
+    monkeypatch.chdir(ROOT)
+    module.main(['--out-dir', 'bundles/etx'])                 # relative path = the default folder
+    module.main(['--out-dir', str(ROOT / 'bundles/etx')])
+    module.main(['--out-dir', str(tmp_path)])                 # anything else keeps <out-dir>/local
+    assert seen == [str(ROOT / 'bundles/local')] * 2 + [None]
 
 
 def test_readme_local_covers_the_agreed_points():
@@ -78,3 +116,5 @@ def test_readme_local_covers_the_agreed_points():
     for needle in ('numpy', 'Pillow', 'real.yaml', 'compare2.yaml', 'BASE_DIR', 'run_local.cmd', 'python simcompare_job_local.py',
                    'data/ledger_report/ledger_report.html', '260', '32 GB', '.simcompare_pkg_', 'C:/'):
         assert needle in text, needle
+    assert 'real.yaml 의 경로는 BASE_DIR 안의 상대 경로만 쓴다(절대 경로·`..`·백슬래시는 거부된다)' in text
+    assert '`hotspot_root`·`dl1_root`' in text and '`python.exe`' in text and r'\WindowsApps\ ' not in text
