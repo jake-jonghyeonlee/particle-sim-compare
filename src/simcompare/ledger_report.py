@@ -1403,7 +1403,7 @@ def _pair_find(ctx):
 
 def _detail_shell(ctx):
     """The right column of 3: the script fills #s3-detail (head, pairs, failure types, places of the selection)."""
-    return ('<div class="s3side"><div class="dpanel"><div id="s3-detail"><p class="muted" id="dp-empty">원인 후보 카드의 [상세 보기]나 '
+    return ('<div class="s3side"><div class="dpanel"><div id="s3-detail"><p class="muted" id="dp-empty">원인 후보 카드나 '
             '4 결과의 쌍을 누르면 이 자리에 그 후보의 쌍, 불량 방식, 자리가 나옵니다.</p></div>%s</div></div>' % (
                 _missing_share(ctx) if ctx.maps is not None else ''))
 

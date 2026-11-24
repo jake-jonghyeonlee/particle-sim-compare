@@ -851,6 +851,9 @@ def test_the_item_region_counts_come_from_the_occurrence_of_ledger_maps(tmp_path
     assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) == 0
     items = {i['id']: i for p in bundle_of(html_of(out))['pairs'] for i in p['items']}
     assert items[first]['oc'] == [4, 7] and items[suppressed]['oc'] is None and items[doc['pairs'][2]['items'][0]['item_id']]['oc'] is None
+    dom, text = dump_dom(out / 'ledger_report.html', '#sel=pair:%s' % doc['pairs'][0]['pair_id'])        # rexp/T7: the column shows when a pair has a value
+    panel = text[text.index('id="dp-items"'):text.index('id="cond-detail"')]
+    assert 'data-err' not in dom.root and '연결 영역 A → B' in panel and '4 → 7' in panel
 
 
 def test_section_2_says_observed_basis_when_dl1_is_missing_and_section_4_hides_empty_size_columns(tmp_path):
@@ -917,11 +920,11 @@ def test_chrome_pair_detail_has_the_equation_the_item_table_and_the_places(tmp_p
     assert 'data-err' not in dom.root and dom.root['data-dp-pair'] == 'P2'
     panel = text[text.index('id="s3-detail"'):]
     assert '쌍 Δ = 같은 불량 증감 <b>+0.1800%p</b> + 새 방식 <b>0.3000%</b> − 없어진 방식 <b>0.2000%</b>' in panel
-    rows = re.findall(r'<tr(?: class="[^"]*")?><td class="l">([^<]*)</td>.*?</tr>', panel[panel.index('id="dp-items"'):panel.index('</table>', panel.index('id="dp-items"'))], re.S)
-    assert len(rows) == 3                                                           # ③ the three items of P2
-    items = panel[panel.index('id="dp-items"'):panel.index('</table>', panel.index('id="dp-items"'))]
-    assert items.count('없어짐') == 1 and items.count('새로 생김') == 1 and items.count('증감') == 1
-    assert '연결 영역 A → B' in items and 'id="cond-detail"' in panel and 'id="dp-layer"' in panel and 'id="dp-zoom"' in panel
+    items = panel[panel.index('id="dp-items"'):panel.index('id="cond-detail"')]
+    assert len(re.findall(r'<tr data-it=', items)) == 3                              # ③ the three items of P2 (two groups: this candidate / the others)
+    assert items.count('class="badge b-gone">없어짐') == 1 and items.count('class="badge b-new">새로 생김') == 1 and items.count('class="badge ">증감') == 1
+    assert '연결 영역 A → B' not in items and 'id="cond-detail"' in panel                    # no occurrence data in this fixture: the column is left out and 'id="dp-layer"' in panel and 'id="dp-zoom"' in panel
+    assert 'id="dp-eq-all"' in panel and '쌍 <b>' in panel and '<b>전체</b>' in panel and 'data-dp-sumcheck=' in panel     # rexp/T7: two scopes + the item sum check (this fixture's pair delta is not the sum of its items: see the narrative tests)
     assert 'id="dcv-A"' in panel and 'id="dcv-B"' in panel                         # ④ A | B side by side
     assert dom.root['data-dp-drawn'] == '2' and dom.root['data-dp-zoom'] == '1' and dom.root['data-map-check'] == 'passed'
     assert 'id="ov-btn"' not in text and '겹쳐 보기' not in text
@@ -1490,13 +1493,13 @@ def test_chrome_rtrim_condition_table_is_the_last_block_of_the_detail_panel(tmp_
     assert detail.index('id="dp-items"') < detail.index('id="cond-detail"') < detail.index('id="cond-table"')
     assert '이물 크기' in detail[detail.index('id="cond-detail"'):] and 'density 레이어' in detail[detail.index('id="cond-detail"'):]
     cond = [a for t, a in dom.elements if a.get('id') == 'cond-detail']
-    assert cond and 'open' not in cond[0]                                                  # folded by default
+    assert cond and 'hidden' in cond[0]                                                    # the third tab: hidden until its tab is chosen
     s5_start = text.index('<section id="s5"')
     assert 'id="cond-table"' not in text[s5_start:text.index('</section>', s5_start)] and 'id="cond-link"' in text[s5_start:]
     dom, text = dump_dom(page, '#')
     assert not [a for t, a in dom.elements if a.get('id') in ('cond-detail', 'cond-table')]
     dom, text = dump_dom(page, '#sel=pair:P2&print')
-    assert 'open' in [a for t, a in dom.elements if a.get('id') == 'cond-detail'][0]
+    assert 'hidden' not in [a for t, a in dom.elements if a.get('id') == 'cond-detail'][0]          # #print shows the three tabs in turn
 
 
 def test_chrome_rtrim_map_click_selects_the_same_thing_on_the_narrowed_b_map(tmp_path):

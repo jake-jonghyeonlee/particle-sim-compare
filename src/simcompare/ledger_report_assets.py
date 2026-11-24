@@ -68,7 +68,7 @@ canvas.mapcv{cursor:pointer}
 .mnote{font-size:12px;color:var(--text-muted)}.mwarn{border-left:4px solid var(--pixel);background:var(--trade);padding:4px 8px;margin:4px 0;font-size:12px}
 .s2row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}.s2map{position:sticky;top:44px}
 .s3two{display:grid;grid-template-columns:minmax(340px,470px) minmax(0,1fr);gap:14px;align-items:start}.s3two .bgrid{grid-template-columns:1fr;gap:0}
-.s3side{position:sticky;top:44px;align-self:start}
+.s3side{position:sticky;top:44px;align-self:start;height:calc(100vh - 54px);min-height:380px}
 .dirs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0 10px}.dirnote{margin:4px 0;color:var(--text-secondary)}
 .dir{border:1px solid var(--border);border-left:5px solid var(--line);border-radius:8px;background:var(--surface-0);padding:8px 12px;cursor:pointer}
 .dir.pixel{border-left-color:var(--pixel)}.dir.on{box-shadow:0 0 0 2px var(--text-primary) inset}
@@ -87,14 +87,25 @@ canvas.mapcv{cursor:pointer}
 .crow.open .cexp,body.print .crow .cexp{display:block}
 .crow .cexp h4{margin:6px 0 2px}.crow .cexp .bp{margin:2px 0}
 .cref{margin:4px 0;padding:2px 8px}a.ctl{color:inherit;text-decoration:none}
-.dpanel{border:1px solid var(--border);border-radius:8px;padding:8px 12px;background:var(--surface-0);max-height:calc(100vh - 60px);overflow:auto}
-.dp-h{margin:2px 0 4px}.dp-h .dpk{margin-right:10px;white-space:nowrap}
-.dpr{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(36px,1fr) 88px;gap:8px;align-items:center;padding:3px 5px;border-radius:4px;cursor:pointer}
-.dpr:hover{background:var(--sel)}.dpr.on{background:var(--sel);outline:1px solid #e0b04a}.dpr .dpv{text-align:right}.dpr.cnorow{cursor:default}.dpr.cnorow:hover{background:none}
+.dpanel{border:1px solid var(--border);border-radius:8px;background:var(--surface-0);height:100%;display:flex;flex-direction:column;overflow:hidden}
+#s3-detail{flex:1;min-height:0;display:flex;flex-direction:column}#s3-detail>p{margin:8px 12px}
+.dph{flex:none;padding:7px 12px;border-bottom:1px solid var(--border);display:flex;gap:4px 12px;align-items:baseline;flex-wrap:wrap}.dph .dpt{font-size:15px;font-weight:800}.dph .dpk{white-space:nowrap}
+.dmaps{flex:none;padding:5px 12px 4px;border-bottom:1px solid var(--border)}.dmaps h4{margin:0 0 2px}
+.dmaps canvas.dcv{max-height:24vh;object-fit:contain}
+.dtabs{flex:none;display:flex;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--border)}
+.dtab{border:1px solid var(--border);border-bottom:0;border-radius:7px 7px 0 0;background:var(--surface-1);color:var(--text-secondary);padding:3px 12px;font-size:12.5px}
+.dtab.on{background:var(--surface-0);color:var(--text-primary);font-weight:700;position:relative;top:1px}
+.dtb{flex:1;min-height:0;overflow:auto;padding:8px 12px}.dtp[hidden]{display:none}.dtp>.pt{display:none}body.print .dtp>.pt{display:block}
+.dsplit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.dcol h4{display:flex;justify-content:space-between;margin:0 0 4px}
+.dpr{display:grid;grid-template-columns:22px minmax(0,1fr) 92px;gap:6px;align-items:center;padding:3px 4px;border-radius:5px;cursor:pointer}
+.dpr:hover{background:var(--sel)}.dpr.on{background:var(--sel);outline:1px solid #e0b04a}.dpr .dpv{text-align:right}.dpr .n{font-weight:700;color:var(--text-muted);text-align:right}.dpr .dbar{height:5px;margin-top:2px}.dpr.cnorow{cursor:default;grid-template-columns:minmax(0,1fr)}.dpr.cnorow:hover{background:none}
+.eq{border-left:3px solid var(--text-secondary);background:var(--surface-1);padding:4px 10px;margin:0 0 4px;font-size:13px}.eq.whole{border-left-color:var(--common);color:var(--text-secondary)}
+.grp{margin:8px 0 2px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between}
+#dp-sumbad{background:#fde2e2;color:#a12a2a;border-radius:8px;padding:0 7px;font-size:11px;font-weight:700}
 .dbar{display:block;height:9px;border-radius:2px;background:var(--common)}.dbar.up{background:var(--up)}.dbar.down{background:var(--down)}
 .dpctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
 .dpctl select{font:inherit;border:1px solid var(--border);border-radius:6px;background:var(--surface-1);color:var(--text-primary)}
-#dp-items tr.itc td:first-child{font-weight:700}#dp-items tr.itsel td{background:var(--trade);outline:1px solid #e0b04a}
+#dp-items tr.itc td{font-weight:700}#dp-items tr.itsel td{background:var(--trade);outline:1px solid #e0b04a}
 .rt th,.rt td{white-space:normal}
 .purpose{margin:6px 0 4px;padding:7px 12px;border-left:3px solid var(--text-primary);background:var(--surface-1);font-size:15px;line-height:1.7}
 .nextl{margin:12px 0 0;padding-top:6px;border-top:1px dashed var(--border);color:var(--text-muted)}
@@ -109,7 +120,8 @@ a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto
 .cbtns{margin-left:8px}a.lkbtn{display:inline-block;border:1px solid var(--border);border-radius:14px;padding:0 9px;margin-right:4px;font-size:11px;color:var(--text-primary);text-decoration:none;background:var(--surface-1)}a.lkbtn:hover{background:var(--sel)}
 @media (max-width:1180px){.bgrid{grid-template-columns:1fr}}
 @media (max-width:1180px){.s2row{grid-template-columns:1fr}.s2map{position:static}}
-@media (max-width:1100px){.s3two{grid-template-columns:1fr}.s3side{position:static}.dpanel{max-height:none}}
+@media (max-width:1100px){.s3two{grid-template-columns:1fr}.s3side{position:static;height:auto}.dpanel{height:auto;overflow:visible}#s3-detail{display:block}.dtb{overflow:visible}.dmaps canvas.dcv{max-height:none}}
+body.print .s3side{position:static;height:auto}body.print .dpanel{height:auto;overflow:visible}body.print #s3-detail{display:block}body.print .dtb{overflow:visible}body.print .dmaps canvas.dcv{max-height:none}
 @media (max-width:1180px){.g3,.g2,.kpis{grid-template-columns:1fr}}
 @media (max-width:900px){.dirs{grid-template-columns:1fr}}
 @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}.klist[hidden]{display:block!important}.crow .cexp{display:block}}
@@ -174,12 +186,21 @@ function condRows(pairs){var rows=[],zero=[];pairs.forEach(function(p){p.items.f
  if(!sizes.length)rows.push('<tr data-pair="'+esc(p.id)+'"><td class="l">'+esc(p.e.join('–'))+'</td><td class="l">'+esc(it.label)+'</td><td class="l muted" colspan="8">크기별 값 없음</td></tr>');
  sizes.forEach(function(s){(s.value_a===0&&s.value_b===0?zero:rows).push('<tr data-pair="'+esc(p.id)+'"><td class="l">'+esc(p.e.join('–'))+'</td><td class="l">'+esc(it.label)+'</td><td>'+esc(s.diameter_um)+'</td><td class="l">'+esc(s.density_layer==null?'':s.density_layer)+
   '</td><td>'+n4(s.area_a)+' / '+n4(s.area_b)+'</td><td>'+n4(s.lambda_a)+' / '+n4(s.lambda_b)+'</td><td>'+f4(s.value_a)+'</td><td>'+f4(s.value_b)+'</td></tr>');});});});rows.zero=zero;return rows;}
-function condTable(id,pairs,open){var rows=condRows(pairs),n=rows.zero.length,h='<div class="ovx"><table id="'+id+'">'+CH+'<tbody>'+rows.join('')+'</tbody>';
- if(n)h+='<tbody class="zrows"'+(open?'':' hidden')+'>'+rows.zero.join('')+'</tbody><tfoot><tr><td colspan="8" class="l"><button type="button" class="zf" data-n="'+n+'">값 0 인 크기 '+n+(open?'개 접기':'개 펼치기')+'</button></td></tr></tfoot>';
+function condTotal(pairs){var sa=0,sb=0,dd=0,nul=false;pairs.forEach(function(p){dd+=p.d||0;p.items.forEach(function(it){(it.sizes||[]).forEach(function(s){
+ if(s.value_a==null||s.value_b==null)nul=true;sa+=s.value_a||0;sb+=s.value_b||0;});});});return {a:sa,b:sb,d:dd,nul:nul};}
+function condTable(id,pairs,open,total){var rows=condRows(pairs),n=rows.zero.length,h='<div class="ovx"><table id="'+id+'">'+CH+'<tbody>'+rows.join('')+'</tbody>',foot='',t;
+ if(n)h+='<tbody class="zrows"'+(open?'':' hidden')+'>'+rows.zero.join('')+'</tbody>';
+ if(total&&(rows.length||n)){t=condTotal(pairs);   /* the sum line: value A sum, value B sum, B − A (= the whole-pair delta when the sizes add up) */
+  foot+='<tr class="sum" id="cond-sum"><td colspan="6" class="l">합 — 값 B − 값 A 합 = 쌍 전체 Δ</td><td>'+f4(t.nul?null:t.a)+'</td><td>'+f4(t.nul?null:t.b)+'</td></tr>'+
+   '<tr class="sum"><td colspan="6" class="l">Δ = 값 B − 값 A</td><td colspan="2" id="cond-sum-d">'+(t.nul?'<span class="muted">대기</span>':sgx(t.b-t.a))+
+   (t.nul||pairs.length!==1||pairs[0].d==null?'':(Math.abs((t.b-t.a)-pairs[0].d)<1e-9?' <span class="muted small">(쌍 전체 Δ 와 같음)</span>':' <span class="muted small">(쌍 전체 Δ '+esc(ppx(pairs[0].d))+' 와 다름)</span>'))+'</td></tr>';
+  document.documentElement.setAttribute('data-dp-condsum',t.nul||pairs.length!==1||pairs[0].d==null?'na':(Math.abs((t.b-t.a)-pairs[0].d)<1e-9?'passed':'failed'));}
+ if(n)foot+='<tr><td colspan="8" class="l"><button type="button" class="zf" data-n="'+n+'">값 0 인 크기 '+n+(open?'개 접기':'개 펼치기')+'</button></td></tr>';
+ if(foot)h+='<tfoot>'+foot+'</tfoot>';
  return h+'</table></div>';}
 var CH='<thead><tr><th class="l">전극 쌍</th><th class="l">item</th><th>이물 크기 µm</th><th class="l">density 레이어</th><th>면적 A / B</th><th>λ A / B</th><th>값 A</th><th>값 B</th></tr></thead>';
-function condBlock(list){var pr=!!parseHash().flags.print;   /* the condition table of the selected pair: the last block of the section 3 detail panel */
- return '<details id="cond-detail"'+(pr?' open':'')+'><summary>조건 값 (이물 크기 · density 레이어 · 면적 · λ · 값)</summary>'+condTable('cond-table',list,pr)+'</details>';}
+function condBlock(list){   /* the condition table of the selected pair: the third tab of the section 3 detail panel (values 0 folded; a sum line at the end) */
+ return list.length?'<p class="muted small" style="margin:0 0 4px">조건 값 — 이물 크기 · density 레이어 · 면적 · λ · 값. 값 0 인 크기는 접혀 있습니다.</p>'+condTable('cond-table',list,!!parseHash().flags.print,true):'<p class="muted">쌍이 없습니다.</p>';}
 function drawCond(sel,pr,state){var all=$('cond-all');if(!all)return;
  if(all&&(state.flags.print||all.open)&&!all.getAttribute('data-drawn')){all.setAttribute('data-drawn','1');
   $('cond-all-body').innerHTML=condTable('cond-all-table',D.pairs,true);}}
@@ -337,8 +358,9 @@ function onMapClick(cv,ev){var r=cv.getAttribute('data-role'),q=pickAt(cv,ev),x=
  var e=DEC[r+'|'+cv._lay];if(!e||!e.ok||x<0||y<0||x>=e.w||y>=e.h)return;
  var en=e.el?e.el[y*e.w+x]:0;if(en&&SD[r].els[en]){var st=parseHash();st.kv.sel='electrode:'+SD[r].els[en];st.flags.demo=false;delete st.kv.cand;delete st.kv.it;setHash(st);}}
 /* ---- detail panel of section 3 (rexp/T2): cause candidate -> its pairs -> failure types of a pair -> the places of the pair on the maps ---- */
-var PRES={both:'증감',gone:'없어짐',new:'새로 생김'},DS={u:null,p:null,layer:null,zoom:true,key:''},DGEN=0,SHOWPAIRS=30;
-var EMPTY='<p class="muted" id="dp-empty">원인 후보 카드의 [상세 보기]나 4 결과의 쌍을 누르면 이 자리에 그 후보의 쌍, 불량 방식, 자리가 나옵니다.</p>';
+var PRES={both:'증감',gone:'없어짐',new:'새로 생김'},DS={u:null,p:null,layer:null,zoom:true,key:'',tab:'items'},DGEN=0,SHOWPAIRS=30;
+var TINY_FRACTION=0.01;   /* rexp/T7: a pair (or item) is "미미" when its value is 0 or smaller than this fraction of the total variation it belongs to */
+var EMPTY='<p class="muted" id="dp-empty">원인 후보 카드나 4 결과의 쌍을 누르면 이 자리에 그 후보의 쌍, 불량 방식, 자리가 나옵니다.</p>';
 function kchip(k){return '<span class="chip" style="background:var(--'+(k==='pixel'?'pixel':'line')+')"></span>';}
 function unitPairs(u){var b=BU[u],ids=Object.keys(b.pairs).filter(function(id){return !!PB[id];});   /* the pairs of a candidate, the largest |net| first */
  ids.sort(function(x,y){return Math.abs(b.pairs[y][0])-Math.abs(b.pairs[x][0])||(x<y?-1:(x>y?1:0));});return ids;}
@@ -350,35 +372,63 @@ function detailOf(st,sel){var u=null,p=null;
  else if(sel&&sel.t==='pair'&&PB[sel.id]){p=sel.id;u=st.kv.cand&&BU[st.kv.cand]&&BU[st.kv.cand].pairs[p]?st.kv.cand:primaryUnit(p);}
  return {u:u,p:p};}
 function headHtml(d){var b=d.u?BU[d.u]:null,p=d.p?PB[d.p]:null,h;
- if(b){h='<div class="dp-h"><span class="muted">원인 후보</span> <b>'+esc(b.title)+'</b> <span class="badge">'+esc(b.ty||'')+'</span>'+(b.ic?'':' <span class="muted small">(카드에 없는 후보)</span>')+'<div>'+
-  KINDS.map(function(k){return '<span class="dpk">'+kchip(k)+k+' 순 변화 '+sgx(b.nk?b.nk[k]:null)+'</span>';}).join('')+'</div></div>';}
- else h='<div class="dp-h"><span class="muted">원인 후보 없음</span> — 이 쌍의 변화는 어느 원인 후보에도 들어 있지 않습니다. 쌍 <b>'+esc(p?p.e.join('–'):'')+'</b></div>';
+ if(b){h='<div class="dph dp-h"><span class="muted">원인 후보</span><span class="dpt">'+esc(b.title)+'</span><span class="badge">'+esc(b.ty||'')+'</span>'+(b.ic?'':'<span class="muted small">(카드에 없는 후보)</span>')+
+  KINDS.map(function(k,i){return '<span class="dpk">'+kchip(k)+k+(i?' ':' 이 후보 몫 ')+sgx(b.nk?b.nk[k]:null)+'</span>';}).join('')+'</div>';}
+ else h='<div class="dph dp-h"><span class="muted">원인 후보 없음</span> — 이 쌍의 변화는 어느 원인 후보에도 들어 있지 않습니다. 쌍 <b>'+esc(p?p.e.join('–'):'')+'</b></div>';
  return h;}
-function pairsHtml(d){var b=d.u?BU[d.u]:null;if(!b)return '';
- var ids=unitPairs(d.u),mx=0,i,rows=[];ids.forEach(function(id){mx=Math.max(mx,Math.abs(b.pairs[id][0]));});
- function row(id){var p=PB[id],v=b.pairs[id][0],w=mx?Math.max(3,Math.round(Math.abs(v)/mx*100)):3;
-  return '<div class="dpr'+(id===d.p?' on':'')+'" data-dp="'+esc(id)+'" data-href="#sel=pair:'+encodeURIComponent(id)+'&cand='+encodeURIComponent(d.u)+'" tabindex="0"><span>'+kchip(p.kind)+esc(p.e.join('–'))+
-   '<span class="sub2">쌍 전체 Δ '+ppx(p.d)+' · '+esc(p.kind)+'</span></span><span><span class="dbar '+(v>0?'up':'down')+'" style="width:'+w+'%"></span></span><span class="dpv">'+sgx(v)+'</span></div>';}
- for(i=0;i<ids.length;i++)rows.push(row(ids[i]));
- var head=rows.slice(0,SHOWPAIRS).join(''),tail=rows.slice(SHOWPAIRS).join(''),sel=ids.indexOf(d.p)>=SHOWPAIRS;
- var h='<h4>이 후보의 쌍 — 이 후보 안의 순 변화, 큰 순 <span class="muted" style="font-weight:400">('+ids.length+' 쌍 · 누르면 아래가 그 쌍으로 바뀝니다)</span></h4><div id="dp-pairs">'+head+
-  (tail?'<details'+(sel?' open':'')+'><summary class="small">나머지 '+(ids.length-SHOWPAIRS)+' 쌍 ▸</summary>'+tail+'</details>':'')+'</div>';
+function tinyOf(v,tot){return v===0||Math.abs(v)<TINY_FRACTION*tot;}
+function tinyText(){return '0 또는 후보 총 변동의 '+(TINY_FRACTION*100)+'% 미만';}
+/* the pairs of a candidate in two columns (increase | decrease, by the candidate's own share); tiny shares fold under them */
+function pairsHtml(d){var b=d.u?BU[d.u]:null;if(!b)return '<p class="muted">이 쌍은 어느 원인 후보에도 들어 있지 않아 후보의 쌍 목록이 없습니다.</p>';
+ var ids=unitPairs(d.u),tot={},mx=0,up=[],dn=[],ti=[],h;
+ ids.forEach(function(id){var k=PB[id].kind;tot[k]=(tot[k]||0)+Math.abs(b.pairs[id][0]);});
+ ids.forEach(function(id){var v=b.pairs[id][0];if(tinyOf(v,tot[PB[id].kind]||0))ti.push(id);else{mx=Math.max(mx,Math.abs(v));(v>0?up:dn).push(id);}});
+ function row(id,n){var p=PB[id],v=b.pairs[id][0],w=mx?Math.max(3,Math.round(Math.abs(v)/mx*100)):3;
+  return '<div class="dpr'+(id===d.p?' on':'')+'" data-dp="'+esc(id)+'" data-href="#sel=pair:'+encodeURIComponent(id)+'&cand='+encodeURIComponent(d.u)+'" tabindex="0"><span class="n">'+(n||'')+'</span><span>'+kchip(p.kind)+esc(p.e.join('–'))+
+   '<span class="sub2">쌍 전체 '+ppx(p.d)+' · '+esc(p.kind)+'</span><span class="dbar '+(v>0?'up':(v<0?'down':''))+'" style="width:'+w+'%"></span></span><span class="dpv">'+sgx(v)+'</span></div>';}
+ function col(label,cls,list){var sum=0,head=list.slice(0,SHOWPAIRS),tail=list.slice(SHOWPAIRS),sel=list.indexOf(d.p)>=SHOWPAIRS;list.forEach(function(id){sum+=b.pairs[id][0];});
+  return '<div class="dcol" data-col="'+cls+'"><h4><span class="s-'+cls+'">'+label+'</span><span class="muted" style="font-weight:400">'+list.length+' 쌍 · 합 '+ppx(sum)+'</span></h4>'+
+   (list.length?head.map(function(id,i){return row(id,i+1);}).join('')+(tail.length?'<details'+(sel?' open':'')+'><summary class="small">나머지 '+tail.length+' 쌍 ▸</summary>'+tail.map(function(id,i){return row(id,SHOWPAIRS+i+1);}).join('')+'</details>':''):'<p class="muted small">없음</p>')+'</div>';}
+ h='<p class="muted small" style="margin:0 0 4px">큰 숫자 = <b>이 후보 몫</b>(이 후보에 들어간 item 의 합), 작은 글씨 = 쌍 전체. 누르면 지도와 불량 방식이 그 쌍으로 바뀝니다.</p>'+
+  '<div class="dsplit" id="dp-pairs">'+col('증가','up',up)+col('감소','down',dn)+'</div>';
+ if(ti.length)h+='<details id="dp-tiny-pairs"'+(ti.indexOf(d.p)>=0?' open':'')+'><summary class="small">미미한 쌍 '+ti.length+' 개 ('+tinyText()+') ▸</summary>'+ti.map(function(id){return row(id,'');}).join('')+'</details>';
  if(b.cno)h+='<div class="dpr cnorow muted" id="dp-cno">CNO '+b.cno+' 건 — 지도에 없음 <span class="small">(전극 단독 CNO 는 쌍이 아닙니다)</span></div>';
  if(!ids.length)h+='<p class="muted">이 후보에는 쌍이 없습니다.</p>';
  return h;}
-function itemsHtml(d){var b=d.u?BU[d.u]:null,p=d.p?PB[d.p]:null,curIt=parseHash().kv.it,eq,br;
+var ITU=null;
+function itemUnits(){if(ITU)return ITU;ITU=Object.create(null);   /* item id -> the cause candidate that holds it (built once from the positions in D.bundles[].pairs[pair][3]) */
+ (D.bundles||[]).forEach(function(b){Object.keys(b.pairs).forEach(function(pid){var pp=PB[pid];if(!pp)return;b.pairs[pid][3].forEach(function(n){var it=pp.items[n];if(it&&!ITU[it.id])ITU[it.id]=b.id;});});});return ITU;}
+function dsum(list){var s=0,nul=false;list.forEach(function(it){if(it.d==null)nul=true;else s+=it.d;});return {s:s,nul:nul};}
+function hasOcOf(p){return p.items.some(function(it){return it.oc&&isFinite(it.oc[0])&&isFinite(it.oc[1]);});}
+function itRow(it,mine,curIt,hasOc){var oc=(it.oc&&isFinite(it.oc[0])&&isFinite(it.oc[1]))?esc(String(Number(it.oc[0])))+' → '+esc(String(Number(it.oc[1]))):'<span class="muted">—</span>',pc=it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':''),
+  uid=itemUnits()[it.id],ub=uid?BU[uid]:null,who=mine?'<span class="muted">이 후보</span>':(ub?'<a class="lk" href="#sel=unit:'+encodeURIComponent(ub.id)+'" data-dp-unit-link="'+esc(ub.id)+'">'+esc(ub.title)+' ▸</a>':'<span class="muted">후보 없음</span>');
+ return '<tr data-it="'+esc(it.id)+'" class="'+(mine?'itc':'')+(it.id===curIt?' itsel':'')+'"><td class="l">'+esc(it.label)+'</td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+
+  '</td><td>'+sgx(it.d)+'</td><td class="l"><span class="badge '+pc+'">'+esc(PRES[it.pres]||it.pres)+'</span></td>'+(hasOc?'<td>'+oc+'</td>':'')+'<td class="l">'+who+'</td></tr>';}
+function itTable(list,mine,curIt,hasOc){if(!list.length)return '';
+ return '<table><thead><tr><th class="l">방식 · 레이어</th><th>A</th><th>B</th><th>Δ</th><th class="l">구분</th>'+(hasOc?'<th>연결 영역 A → B</th>':'')+'<th class="l">들어간 원인 후보</th></tr></thead><tbody>'+
+  list.map(function(it){return itRow(it,mine,curIt,hasOc);}).join('')+'</tbody></table>';}
+/* the failure types of the chosen pair: two scopes — this candidate's share, and the whole pair — with the items split in the same two groups */
+function itemsHtml(d){var b=d.u?BU[d.u]:null,p=d.p?PB[d.p]:null,curIt=parseHash().kv.it,br,whole;
  if(!p)return b&&b.cno?'<h4>불량 방식</h4><p class="muted" id="dp-cno-only">CNO — 지도에 없음. 이 후보는 쌍이 아니라 전극 단독 CNO '+b.cno+' 건입니다.</p>':'';
  var inc={};if(b&&b.pairs[p.id])b.pairs[p.id][3].forEach(function(n){if(p.items[n])inc[p.items[n].id]=1;});
  br=p.brk;
- if(!br||br.status==='not_evaluated'||br.same_delta==null||br.new_value==null||br.gone_value==null)eq='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
- else eq='쌍 Δ = 같은 불량 증감 <b>'+ppx(br.same_delta)+'</b> + 새 방식 <b>'+f4(br.new_value)+'</b> − 없어진 방식 <b>'+f4(br.gone_value)+'</b>';
- var its=p.items.slice().sort(function(x,y){return Math.abs(y.d||0)-Math.abs(x.d||0)||(x.label<y.label?-1:(x.label>y.label?1:0));});
- var rows=its.map(function(it){var oc=(it.oc&&isFinite(it.oc[0])&&isFinite(it.oc[1]))?esc(String(Number(it.oc[0])))+' → '+esc(String(Number(it.oc[1]))):'<span class="muted">—</span>',pc=it.pres==='gone'?'b-gone':(it.pres==='new'?'b-new':'');
-  return '<tr'+(inc[it.id]?' class="itc'+(it.id===curIt?' itsel':'')+'"':(it.id===curIt?' class="itsel"':''))+'><td class="l">'+esc(it.label)+'</td><td>'+(it.pres==='new'?'없음':(it.af?'거리 필터로 0':f4(it.a)))+'</td><td>'+(it.pres==='gone'?'없음':(it.bf?'거리 필터로 0':f4(it.b)))+
-   '</td><td>'+sgx(it.d)+'</td><td class="l"><span class="badge '+pc+'">'+esc(PRES[it.pres]||it.pres)+'</span></td><td>'+oc+'</td></tr>';}).join('');
- return '<h4>불량 방식 — <b>'+esc(p.e.join('–'))+'</b> '+ckBadge(p)+' 쌍 전체 Δ '+sgx(p.d)+'</h4><p class="headline" id="dp-eq" style="margin:4px 0">'+eq+'</p>'+
-  '<div class="scrl" style="max-height:260px"><table id="dp-items"><thead><tr><th class="l">방식 · 레이어</th><th>A</th><th>B</th><th>Δ</th><th class="l">구분</th><th>연결 영역 A → B</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-  '<p class="muted small" style="margin:2px 0">값 = 그 item 의 vi 몫(%p). 굵게 = 이 후보에 들어간 item. 연결 영역 = ledger-maps 가 센 hotspot 덩어리 수(관측값, 값이 없으면 —).</p>'+
+ if(!br||br.status==='not_evaluated'||br.same_delta==null||br.new_value==null||br.gone_value==null)whole='<span class="muted">대기</span> — item 분해를 계산하지 못했습니다.';
+ else whole='쌍 Δ = 같은 불량 증감 <b>'+ppx(br.same_delta)+'</b> + 새 방식 <b>'+f4(br.new_value)+'</b> − 없어진 방식 <b>'+f4(br.gone_value)+'</b>';
+ var its=p.items.slice().sort(function(x,y){return Math.abs(y.d||0)-Math.abs(x.d||0)||(x.label<y.label?-1:(x.label>y.label?1:0));}),
+  mine=its.filter(function(it){return !!inc[it.id];}),other=its.filter(function(it){return !inc[it.id];}),all=dsum(its),X=dsum(mine),Z=dsum(other),totAbs=0,i,hasOc=hasOcOf(p);
+ its.forEach(function(it){totAbs+=Math.abs(it.d||0);});
+ var chk=(p.d==null||all.nul)?'na':(Math.abs(all.s-p.d)<1e-12?'passed':'failed'),nm=esc(p.e.join('–'));
+ var a=0,nw=0,gn=0;mine.forEach(function(it){var v=it.d||0;if(it.pres==='new')nw+=v;else if(it.pres==='gone')gn-=v;else a+=v;});
+ var eq='<div id="dp-eq" data-dp-sumcheck="'+chk+'">'+(b?'<div class="eq" id="dp-eq-mine"><b>이 후보 몫</b> '+sgx(X.s)+' = 같은 불량 증감 <b>'+ppx(a)+'</b> + 새 방식 <b>'+f4(nw)+'</b> − 없어진 방식 <b>'+f4(gn)+'</b></div>':'')+
+  '<div class="eq whole" id="dp-eq-all">쌍 <b>'+nm+'</b> <b>전체</b> '+sgx(p.d)+(b?' = 이 후보 '+ppx(X.s)+' + 다른 후보 '+ppx(Z.s):'')+
+  (chk==='failed'?' <span class="bad" id="dp-sumbad" title="보이는 item 줄의 합 '+esc(ppx(all.s))+' 이 쌍 전체 '+esc(ppx(p.d))+' 와 다릅니다">합 불일치</span>':'')+'</div><div class="muted small" id="dp-eq-parts">'+whole+'</div></div>';
+ document.documentElement.setAttribute('data-dp-sumcheck',chk);
+ function group(title,list,isMine,sum){if(!list.length)return '';var big=[],tiny=[];
+  list.forEach(function(it){(it.d!=null&&tinyOf(it.d,totAbs)?tiny:big).push(it);});
+  return '<div class="grp"><span>'+title+' ('+list.length+' 줄)</span><span>소계 '+sgx(sum)+'</span></div>'+itTable(big,isMine,curIt,hasOc)+
+   (tiny.length?'<details'+(tiny.some(function(it){return it.id===curIt;})?' open':'')+'><summary class="small">미미한 item '+tiny.length+' 개 ('+tinyText()+') ▸</summary>'+itTable(tiny,isMine,curIt,hasOc)+'</details>':'');}
+ return '<h4>불량 방식 — <b>'+nm+'</b> '+ckBadge(p)+'</h4>'+eq+'<div id="dp-items">'+(b?group('이 후보 item',mine,true,X.s):'')+group(b?'다른 후보 item':'item',other,false,Z.s)+'</div>'+
+  '<p class="muted small" style="margin:4px 0">값 = 그 item 의 vi 몫(%p). Δ = B − A. 굵게 = 이 후보에 들어간 item. 연결 영역 = ledger-maps 가 센 hotspot 덩어리 수(관측값, 값이 없으면 열이 없습니다).</p>'+
   (b&&b.cno?'<p class="muted small" id="dp-cno-line">CNO — 지도에 없음 (이 후보의 CNO '+b.cno+' 건은 전극 단독 값입니다)</p>':'');}
 function pairLayers(p){var o={};['A','B'].forEach(function(r){var its=SD[r].items;Object.keys(its).forEach(function(n){var it=its[n];if(it.p===p.id&&it.l&&MP.layers.indexOf(it.l)>=0)o[it.l]=1;});});return Object.keys(o).sort(byLayer);}
 function defaultLayer(p,ls,itId){var i,l,its;if(itId&&ITL[itId]&&ls.indexOf(ITL[itId])>=0)return ITL[itId];
@@ -427,15 +477,26 @@ function drawDetailMaps(){var p=DS.p?PB[DS.p]:null,root=document.documentElement
  var gen=++DGEN,L=DS.layer,left=2;colors();
  ['A','B'].forEach(function(r){load(r,L,function(){left--;if(left===0&&gen===DGEN)paintDetail(p,L);});});}
 function drawDetail(st,sel){var box=$('s3-detail'),root=document.documentElement;if(!box)return;
- var d=detailOf(st,sel),key=(d.u||'')+'|'+(d.p||'')+'|'+(st.kv.it||'')+'|'+(sel&&!d.u&&!d.p?sel.t+':'+sel.id:'');
+ var d=detailOf(st,sel),key=(d.u||'')+'|'+(d.p||'')+'|'+(st.kv.it||'')+'|'+(sel&&!d.u&&!d.p?sel.t+':'+sel.id:'')+(st.flags.print?'|print':'');
  root.setAttribute('data-dp-unit',d.u||'');root.setAttribute('data-dp-pair',d.p||'');
- if(key===DS.key&&box.getAttribute('data-drawn')==='1')return;   /* the same state: keep the panel (chosen layer, zoom, scroll) */
- DS.key=key;if(DS.u!==d.u||DS.p!==d.p){DS.layer=null;DS.zoom=true;}DS.u=d.u;DS.p=d.p;box.setAttribute('data-drawn','1');
+ if(key===DS.key&&box.getAttribute('data-drawn')==='1')return;   /* the same state: keep the panel (chosen layer, zoom, tab, scroll) */
+ DS.key=key;if(DS.u!==d.u||DS.p!==d.p){DS.layer=null;DS.zoom=true;DS.tab=d.p?'items':'pairs';}   /* a new candidate or pair: the failure types of the pair (no pair: the pair list) */
+ DS.u=d.u;DS.p=d.p;box.setAttribute('data-drawn','1');
  if(!d.u&&!d.p){DGEN++;root.setAttribute('data-dp-drawn','0');
   box.innerHTML=sel&&sel.t==='pair'?'<p class="muted" id="dp-none">없는 쌍입니다.</p>':EMPTY;return;}
- var p=d.p?PB[d.p]:null;
- box.innerHTML=headHtml(d)+pairsHtml(d)+itemsHtml(d)+placesHtml(d)+(p?condBlock([p]):'');
- drawDetailMaps();}
+ var p=d.p?PB[d.p]:null,b=d.u?BU[d.u]:null,np=b?unitPairs(d.u).length:0;
+ box.innerHTML=headHtml(d)+'<div class="dmaps">'+placesHtml(d)+'</div><div class="dtabs" role="tablist">'+
+  '<button type="button" class="dtab" role="tab" data-dtab="pairs">이 후보의 쌍 ('+np+')</button>'+
+  '<button type="button" class="dtab" role="tab" data-dtab="items">불량 방식'+(p?' — '+esc(p.e.join('–')):'')+'</button>'+
+  '<button type="button" class="dtab" role="tab" data-dtab="cond">조건 값</button></div>'+
+  '<div class="dtb"><div class="dtp" data-tab="pairs"><h4 class="pt">이 후보의 쌍</h4>'+pairsHtml(d)+'</div>'+
+  '<div class="dtp" data-tab="items"><h4 class="pt">불량 방식</h4>'+itemsHtml(d)+'</div>'+
+  '<div class="dtp" id="cond-detail" data-tab="cond"><h4 class="pt">조건 값</h4>'+(p?condBlock([p]):'<p class="muted">쌍이 없습니다.</p>')+'</div></div>';
+ applyTab();drawDetailMaps();}
+function applyTab(){var root=document.documentElement,pr=!!parseHash().flags.print,ps=document.querySelectorAll('#s3-detail .dtp'),ts=document.querySelectorAll('#s3-detail .dtab'),i;   /* one tab shows; #print shows all three in turn */
+ for(i=0;i<ps.length;i++)ps[i].hidden=!pr&&ps[i].getAttribute('data-tab')!==DS.tab;
+ for(i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-dtab')===DS.tab;ts[i].classList.toggle('on',on);ts[i].setAttribute('aria-selected',on?'true':'false');}
+ root.setAttribute('data-dp-tab',DS.tab);}
 function markUnit(st,d){var i,els=document.querySelectorAll('.selcard,.unitcell');for(i=0;i<els.length;i++)els[i].classList.remove('selcard','unitcell');
  [st.kv.unit,d.u].forEach(function(u){if(!u)return;var c=$(u);if(c)c.classList.add('selcard');});
  var u=st.kv.unit;if(!u)return;
@@ -465,13 +526,16 @@ function openUp(el){for(var n=el;n&&n!==document.body;n=n.parentNode){if(n.tagNa
 /* a link with to= (and unit=) scrolls once; the to= is then dropped from the address so a later action does not scroll again.
    "explore" (the old name of the pair view) is the detail panel of 3 */
 function target(id){return $(id==='explore'?'s3-detail':id);}
+/* rexp/T7: on a wide screen the detail panel sticks beside the list, so a card or pair click must not scroll the page; it scrolls only when the panel is out of view (coming from another section) */
+function stayPut(t){if(!t||t.id!=='s3-detail'||(window.innerWidth||document.documentElement.clientWidth)<1100)return false;
+ var r=t.getBoundingClientRect(),vh=window.innerHeight||document.documentElement.clientHeight;return r.bottom>0&&r.top<vh;}
 function routeScroll(first){var st=parseHash(),to=st.kv.to,u=st.kv.unit,t=null;
  if(to==='s3'&&u)t=$(u)||$('rest-line-'+u)||$('rest-pixel-'+u);
- if(!t&&to)t=target(to);
+ if(!t&&to)t=target(to);if(stayPut(t))t=null;
  if(!t&&!to&&first&&u&&!selOf(st))t=$(u);   /* R12:2: a later hash change never pulls the page back to the card */
  if(t){openUp(t);t.scrollIntoView({block:'start'});}
  if(to){delete st.kv.to;var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);}}
-function go(id){var el=target(id);if(el&&el.scrollIntoView)el.scrollIntoView({block:'start'});}
+function go(id){var el=target(id);if(el&&el.scrollIntoView&&!stayPut(el))el.scrollIntoView({block:'start'});}
 document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.closest('[data-go],[data-href],[data-clear]'):null;if(!t)return;
  if(t.hasAttribute('data-clear')){var st=parseHash();['sel','unit','it','layer','cand'].forEach(function(k){delete st.kv[k];});st.flags.demo=false;setHash(st);return;}
  if(t.hasAttribute('data-go')){ev.preventDefault();go(t.getAttribute('data-go'));return;}
@@ -487,6 +551,8 @@ document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest
  var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
  if(t.closest('#dp-zoom')){DS.zoom=!DS.zoom;var zbtn=$('dp-zoom');if(zbtn)zbtn.textContent=DS.zoom?'전체 보기':'확대 보기';drawDetailMaps();return;}
+ var dt=t.closest('.dtab');if(dt){DS.tab=dt.getAttribute('data-dtab');applyTab();return;}   /* the three tabs of the detail panel */
+ if(t.closest('.dpr[data-dp]')){DS.tab='items';applyTab();}   /* a pair row (even the open one) shows its failure types */
  var tw=t.closest('.crow .tw');if(tw){tw.closest('.crow').classList.toggle('open');return;}   /* ▸ unfolds the card in place */
  var dirc=t.closest('.dir');if(dirc){var ks=parseHash();ks.kv.k=dirc.getAttribute('data-k');setHash(ks);return;}   /* the band switches the list */
  var card=t.closest('.s3cards .crow');   /* a click on a card row (not on its links, buttons, folds or unfolded part) opens its detail */

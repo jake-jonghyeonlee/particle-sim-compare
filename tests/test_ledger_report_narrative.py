@@ -981,6 +981,106 @@ def test_chrome_cards_are_folded_rows_the_arrow_unfolds_one_and_the_band_switche
     assert not [a for t, a in dom3.elements if 'klist' in (a.get('class') or '').split() and 'hidden' in a]           # #print shows both kinds
 
 
+def _split_pair_doc():
+    """comp_doc whose pair P2 has three items (both +0.18 / gone −0.20 / new +0.30 %p) that sit in TWO cause candidates:
+    b1 holds the both and the new item (+0.48 %p), b2 holds the gone item (−0.20 %p); every item has per-size values (one size is all zero)."""
+    from test_ledger_report_v2 import comp_doc
+    doc = comp_doc()
+    p2 = next(p for p in doc['pairs'] if p['pair_id'] == 'P2')
+    p2['delta'] = 0.0018 - 0.0020 + 0.0030
+    for it in p2['items']:
+        a, b = it.get('a') or 0.0, it.get('b') or 0.0
+        it['by_size'] = [{'diameter_um': 3.0, 'density_layer': 'L1', 'area_a': 10.0, 'area_b': 11.0, 'lambda_a': 0.1, 'lambda_b': 0.2, 'value_a': a, 'value_b': b},
+                         {'diameter_um': 5.0, 'density_layer': 'L1', 'area_a': 0.0, 'area_b': 0.0, 'lambda_a': 0.0, 'lambda_b': 0.0, 'value_a': 0.0, 'value_b': 0.0}]
+    ids = [it['item_id'] for it in p2['items']]
+    idx = doc['pairs'].index(p2)
+    b1 = mk(doc, idx, 'pair', {'line': 0.0048})
+    b1['rows'][0].update(item_ids=[ids[0], ids[2]], net=0.0048, pair_delta=p2['delta'])
+    b2 = mk(doc, idx, 'pair', {'line': -0.0020}, salt=1)
+    b2['rows'][0].update(item_ids=[ids[1]], net=-0.0020, pair_delta=p2['delta'])
+    return finish(doc, [b1, b2]), b1['id'], b2['id']
+
+
+def test_chrome_the_pair_detail_names_two_scopes_splits_the_items_and_checks_their_sum(tmp_path):     # rexp/T7 (a)(e)
+    from test_ledger_report_v2 import chrome_t8
+    doc, b1, b2 = _split_pair_doc()
+    doc, page = chrome_t8(tmp_path, name='split', doc=doc)
+    dom, text = dump_dom(page, '#sel=unit:%s' % b1)
+    assert 'data-err' not in dom.root and dom.root['data-dp-unit'] == b1 and dom.root['data-dp-pair'] == 'P2' and dom.root['data-dp-tab'] == 'items'
+    panel = text[text.index('id="s3-detail"'):]
+    eq = panel[panel.index('id="dp-eq"'):panel.index('id="dp-items"')]
+    assert '<b>이 후보 몫</b>' in eq and '+0.4800%p' in eq and '같은 불량 증감 <b>+0.1800%p</b> + 새 방식 <b>0.3000%</b> − 없어진 방식 <b>0%</b>' in eq
+    assert '<b>전체</b>' in eq and '+0.2800%p' in eq and '이 후보 +0.4800%p + 다른 후보 −0.2000%p' in eq
+    assert 'data-dp-sumcheck="passed"' in eq and dom.root['data-dp-sumcheck'] == 'passed' and 'dp-sumbad' not in eq
+    rows = [a for t, a in dom.elements if t == 'tr' and a.get('data-it')]
+    assert len(rows) == 3 and len([a for a in rows if 'itc' in (a.get('class') or '').split()]) == 2          # two bold rows (this candidate), one other
+    items = panel[panel.index('id="dp-items"'):]
+    assert '이 후보 item (2 줄)' in items and '다른 후보 item (1 줄)' in items and '소계 <span class="sg s-up">+0.4800%p</span>' in items
+    links = [a for t, a in dom.elements if a.get('data-dp-unit-link')]
+    assert [a['data-dp-unit-link'] for a in links] == [b2] and links[0]['href'] == '#sel=unit:' + b2          # the other candidate's item links to its candidate
+    cond = panel[panel.index('id="cond-detail"'):]
+    assert 'id="cond-sum"' in cond and '합 — 값 B − 값 A 합 = 쌍 전체 Δ' in cond and dom.root['data-dp-condsum'] == 'passed'      # (e) the sum line
+    assert 'id="cond-sum-d"' in cond and '+0.2800%p' in cond[cond.index('id="cond-sum-d"'):]                  # Δ = value B sum − value A sum = the pair total
+    assert '값 0 인 크기 3개 펼치기' in cond                                                                     # the zero-size rows stay folded
+    dom2, text2 = dump_dom(page, '#sel=unit:%s' % b2)
+    assert [a['data-it'] for t, a in dom2.elements if t == 'tr' and a.get('data-it') and 'itc' in (a.get('class') or '').split()] == ['P2-gone']
+    assert not [a for t, a in dom2.elements if a.get('id') == 'dp-sumbad']
+
+
+def test_chrome_a_sum_that_does_not_match_the_pair_total_shows_the_red_badge(tmp_path):
+    from test_ledger_report_v2 import chrome_t8
+    doc, b1, b2 = _split_pair_doc()
+    next(p for p in doc['pairs'] if p['pair_id'] == 'P2')['delta'] = 0.01
+    doc, page = chrome_t8(tmp_path, name='splitbad', doc=doc)
+    dom, text = dump_dom(page, '#sel=unit:%s' % b1)
+    assert dom.root['data-dp-sumcheck'] == 'failed' and [a for t, a in dom.elements if a.get('id') == 'dp-sumbad'] and '>합 불일치</span>' in text
+    assert [a for t, a in dom.elements if a.get('id') == 'dp-eq'][0]['data-dp-sumcheck'] == 'failed'
+
+
+def _many_pairs_doc():
+    """One candidate with pairs of line value +1.0 / +0.5 / −0.4 / 0 / +0.001 (of a 1.901 total variation: the last two are tiny)."""
+    from test_ledger_report_v2 import comp_doc
+    doc = comp_doc(extra_pairs=6)
+    line = [p for p in doc['pairs'] if p['kind'] == 'line'][:5]
+    vals = [0.01, 0.005, -0.004, 0.0, 0.00001]
+    b = mk(doc, doc['pairs'].index(line[0]), 'pair', {'line': sum(vals)}, abs={'line': sum(abs(v) for v in vals)})
+    b['rows'] = [{'kind': 'line', 'pair_id': p['pair_id'], 'cno': False, 'layer': 'L1', 'partner': None, 'electrodes': list(p['electrodes']), 'net': v, 'abs': abs(v),
+                  'presence': ['both'], 'item_ids': [p['items'][0]['item_id']], 'pair_delta': p.get('delta')} for p, v in zip(line, vals)]
+    return finish(doc, [b]), b['id'], [p['pair_id'] for p in line]
+
+
+def test_chrome_the_pairs_of_a_candidate_split_into_increase_and_decrease_and_fold_the_tiny_ones(tmp_path):      # rexp/T7 (b)
+    from test_ledger_report_v2 import chrome_t8
+    doc, uid, pids = _many_pairs_doc()
+    doc, page = chrome_t8(tmp_path, name='cols', doc=doc)
+    dom, text = dump_dom(page, '#sel=unit:%s' % uid)
+    assert 'data-err' not in dom.root
+    pane = text[text.index('id="dp-pairs"'):text.index('id="dp-items"')]
+    up, rest = pane.split('data-col="down"')
+    dn, tiny = rest.split('id="dp-tiny-pairs"')
+    assert [re.search(r'data-dp="([^"]*)"', r).group(1) for r in re.findall(r'<div class="dpr[^>]*>', up)] == pids[:2]       # increase, the largest first
+    assert re.findall(r'data-dp="([^"]*)"', dn) == [pids[2]]                                                                  # decrease
+    assert set(re.findall(r'data-dp="([^"]*)"', tiny)) == {pids[3], pids[4]}                                                  # 0 and < 1 % of the total variation
+    assert '미미한 쌍 2 개 (0 또는 후보 총 변동의 1% 미만)' in tiny or '미미한 쌍 2 개 (0 또는 후보 총 변동의 1% 미만)' in pane
+    assert '>1</span>' in up and '증가' in up and '2 쌍' in up and '1 쌍' in dn                                               # rank numbers, count in the head
+    assert 'data-dp-tab' in dom.root and dom.root['data-dp-tab'] in ('items', 'pairs')
+
+
+def test_chrome_tabs_switch_and_a_pair_click_shows_the_failure_types(tmp_path):
+    from test_ledger_report_v2 import chrome_t8, run_in_page
+    doc, uid, pids = _many_pairs_doc()
+    doc, page = chrome_t8(tmp_path, name='tabs', doc=doc)
+    script = ("setTimeout(function(){var d=document.documentElement,tab=function(n){document.querySelector('.dtab[data-dtab='+n+']').click();return d.getAttribute('data-dp-tab');};"
+              "d.setAttribute('data-t1',tab('pairs'));d.setAttribute('data-t2',tab('cond'));d.setAttribute('data-t3',tab('pairs'));"
+              "d.setAttribute('data-pairs-hidden',String(document.querySelector('.dtp[data-tab=pairs]').hidden));"
+              "document.querySelector('.dpr[data-dp]:not(.on)').click();setTimeout(function(){d.setAttribute('data-t4',d.getAttribute('data-dp-tab'));},200);},300);")
+    dom, text = run_in_page(page, '#sel=unit:%s' % uid, script, tag='rexp_tabs')
+    assert 'data-err' not in dom.root and dom.root['data-t1'] == 'pairs' and dom.root['data-t2'] == 'cond' and dom.root['data-t3'] == 'pairs'
+    assert dom.root['data-pairs-hidden'] == 'false' and dom.root['data-t4'] == 'items'          # a pair row goes to the failure types
+    dom, text = dump_dom(page, '#sel=unit:%s&print' % uid)
+    assert not [a for t, a in dom.elements if 'dtp' in (a.get('class') or '').split() and 'hidden' in a]       # #print: the three tab contents in turn
+
+
 def test_chrome_an_unknown_list_kind_in_the_hash_is_ignored(tmp_path):
     doc, one, p0, layer, page = _unit_page(tmp_path)
     for fragment in ('#k=%3Cb%3E', '#k=constructor', '#k='):
