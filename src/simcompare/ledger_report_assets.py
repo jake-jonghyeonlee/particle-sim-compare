@@ -79,7 +79,9 @@ canvas.mapcv{cursor:pointer}
 .crow:hover{border-color:var(--common)}.crow.selcard{background:var(--sel);border-color:#e0b04a;box-shadow:0 0 0 1px #e0b04a inset}
 .crow .rk{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;font-weight:800;font-size:13px;color:#fff;background:var(--up)}
 .crow .rk.dn{background:var(--down)}.crow .rk.op{background:var(--surface-1);border:2px solid var(--up);color:var(--up)}.crow .rk.dn.op{border-color:var(--down);color:var(--down)}
-.crow .ct{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crow .cw{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .cmain{min-width:0}.crow .ct{font-weight:700;display:flex;gap:6px;align-items:center;min-width:0}
+.crow .ct .nm{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crow .ct .badge{flex:none;margin-right:0}.crow .cexp .cwhat{margin:0 0 4px;color:var(--text-secondary)}
+.crow .cw{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .crow .shb{height:6px;background:var(--grid);border-radius:3px;margin-top:3px;overflow:hidden}.crow .shb i{display:block;height:100%;background:var(--up)}.crow .shb i.dn{background:var(--down)}
 .crow .cv{text-align:right}.crow .cv .sh{font-size:11px;color:var(--text-muted)}
 .crow .tw{color:var(--text-muted);font-size:13px;text-align:center;user-select:none;cursor:pointer}.crow.open .tw{transform:rotate(90deg)}

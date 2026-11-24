@@ -670,6 +670,43 @@ def _unit_badge(b):
     return '<span class="badge%s">%s</span>' % (cls, esc(TYPE_NAME.get(t, t)))
 
 
+CARD_BADGE = {'electrode_new': '신규', 'electrode_removed': '삭제', 'layer_change': '레이어 변경', 'pair': '쌍', 'hub': '허브', 'self': '동일 전극',
+              'cno': 'CNO'}
+
+
+def _card_name(b):
+    """rexp/T12: the short name of a card row: the pair 'A–B'; a hub or same-electrode 'electrode · layer'; the others the electrode."""
+    t, e = btype(b), b.get('electrode')
+    if t == 'pair':
+        return '–'.join(b.get('electrodes') or []) or '—'
+    if t in ('hub', 'self'):
+        return '%s · %s' % (e, b.get('layer'))
+    return str(e) if e else '–'.join(b.get('electrodes') or []) or '—'
+
+
+def _card_badge(b):
+    t = btype(b)
+    cls = {'electrode_new': ' b-new', 'electrode_removed': ' b-gone', 'layer_change': ' b-mv'}.get(t, '')
+    return '<span class="badge%s">%s</span>' % (cls, esc(CARD_BADGE.get(t, TYPE_NAME.get(t, t))))
+
+
+def _card_fact(b):
+    """rexp/T12: the one-line fact under the name of a card row ('ACT·GAT1 외 3 층 · 상대 12'); the whole sentence is the tooltip and the first
+    line of the unfolded part."""
+    t, n = btype(b), b.get('partner_count') or 0
+    layers = list(b.get('layers') or ([b['layer']] if b.get('layer') else []))
+    partners = ' · 상대 %d' % n if n else ''
+    if t in ('electrode_new', 'electrode_removed'):
+        text = '·'.join(layers[:2]) if layers else '—'
+        return text + (' 외 %d 층' % (len(layers) - 2) if len(layers) > 2 else '') + partners
+    if t == 'layer_change':
+        return _layer_change_text(b) + partners
+    if t == 'hub':
+        number, inc, dec = _hub_numbers(b)
+        return '상대 %d (증가 %d · 감소 %d)' % (number, inc, dec)
+    return '·'.join(layers) if layers else str(b.get('layer') or '—')
+
+
 def _crp_outside(ctx, kind):
     """The CRP change of the pixel kind when it is larger than the negligible limit (summary.rules.negligible), else None.
     The CRP line belongs to no cause candidate (R12:1)."""
@@ -1638,17 +1675,18 @@ def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None, dup=False):
     rk_cls = 'rk %s%s' % ('dn' if word == 'decrease' else 'up', ' op' if opposite else '')
     what = unit_what(ctx, b)
     bar_cls = 'dn' if word == 'decrease' else ''
-    head = ('<span class="%s" title="%s">%d</span><div class="cmain"><div class="ct" title="%s"><a class="ctl" href="%s">%s</a>%s</div><div class="cw" title="%s">%s</div>'
+    head = ('<span class="%s" title="%s">%d</span><div class="cmain"><div class="ct"><a class="ctl nm" href="%s">%s</a>%s</div><div class="cw">%s</div>'
             '<div class="shb"><i class="%s" style="width:%d%%"></i></div></div><div class="cv">%s<div class="sh">%s</div></div>'
             '<span class="tw" data-x="1" role="button" tabindex="0" title="펼치기: 레이어별 내역 · 얼마나" aria-label="펼치기">▸</span>' % (
-                rk_cls, '반대 방향 요인 순위' if opposite else '순위', rank, esc(bundle_title(b)), esc(_href('unit:' + b['id'])), esc(bundle_title(b)), _unit_badge(b), esc(what), esc(what),
+                rk_cls, '반대 방향 요인 순위' if opposite else '순위', rank, esc(_href('unit:' + b['id'])), esc(_card_name(b)), _card_badge(b), esc(_card_fact(b)),
                 bar_cls, round(_card_fraction(ctx, b, kind) * 100), pp_cell(net, None), esc(_card_share(ctx, b, kind))))
     notes = []
     if b.get('conflict'):
         notes.append('<span class="badge b-mv">상충</span>')
     if any((b['kinds'][k].get('cancelling')) for k in KINDS):
         notes.append('<span class="badge b-mv">내부 상쇄(순 변화 ≈ 0)</span>')
-    parts = ['<div class="crow" id="%s" data-unit="%s" data-k="%s"%s>%s<div class="cexp">' % (eid, uid, kind, ' data-opp="1"' if opposite else '', head)]
+    parts = ['<div class="crow" id="%s" data-unit="%s" data-k="%s"%s title="%s">%s<div class="cexp"><p class="bp cwhat">%s</p>' % (
+        eid, uid, kind, ' data-opp="1"' if opposite else '', esc(bundle_title(b) + '\n' + what), head, esc(what))]
     if notes:
         parts.append('<p class="bp">%s</p>' % ' '.join(notes))
     parts += [_layer_rows_html(b), _hub_partner_line(b)]

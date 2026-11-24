@@ -659,8 +659,8 @@ def test_r12_3a_a_layer_change_card_has_its_title_type_layer_table_and_row_layer
     page = render(doc)
     card = page[page.index('<div class="crow" id="%s"' % uid):]
     card = card[:card.index('<h4>얼마나</h4>')]
-    assert '>Data — 레이어 변경(GAT2 추가 · SD1 제거)</a>' in card and 'badge b-mv">레이어 변경' in card
-    assert 'Data 전극의 레이어 구성이 바뀌었습니다(GAT2 추가 · SD1 제거).' in card
+    assert '>Data</a><span class="badge b-mv">레이어 변경' in card and '<div class="cw">GAT2 추가 · SD1 제거' in card       # rexp/T12: short name + badge, one fact line
+    assert 'Data 전극의 레이어 구성이 바뀌었습니다(GAT2 추가 · SD1 제거).' in card and 'title="Data — 레이어 변경(GAT2 추가 · SD1 제거)\n' in card
     # the per-layer table shows every layer of the bundle (not the first one only)
     table = card[card.index('<h4>레이어별 내역</h4>'):]
     assert '추가(B 에만)' in table and '제거(A 에만)' in table and '<b>GAT2</b>' in table and '<b>SD1</b>' in table
@@ -979,6 +979,36 @@ def test_chrome_cards_are_folded_rows_the_arrow_unfolds_one_and_the_band_switche
     assert dom2.root['data-kind3'] == 'line'
     dom3, text3 = dump_dom(page, '#print')
     assert not [a for t, a in dom3.elements if 'klist' in (a.get('class') or '').split() and 'hidden' in a]           # #print shows both kinds
+
+
+def test_rexp_t12_card_rows_carry_a_short_name_a_badge_one_fact_line_and_the_full_sentence_as_tooltip_and_first_unfolded_line():
+    doc = sample_doc()
+    new5 = mk(doc, 0, 'electrode_new', {'line': 0.01}, layer=None, electrode='ELVDD', layers=['ACT', 'GAT1', 'SD1', 'SD2', 'PXL'], partner_count=12, salt=1)
+    new2 = mk(doc, 1, 'electrode_removed', {'line': -0.01}, layer=None, electrode='GAT9', layers=['ACT', 'GAT1'], partner_count=0, salt=2)
+    hub = mk(doc, 2, 'hub', {'line': 0.02}, layer='SD1', electrode='Scan3', partner_count=8, hub={'changed_count': 8, 'partner_total': 9, 'increase': 5, 'decrease': 3}, salt=3)
+    pair = mk(doc, 3, 'pair', {'line': 0.005}, layer='M3', salt=4)
+    self_ = mk(doc, 4, 'self', {'line': 0.004}, layer='M2', electrode='Vdd', salt=5)
+    finish(doc, [new5, new2, hub, pair, self_])
+    page = ledger_report.render_html(doc, 'a' * 64, 30, 30)[0]
+
+    def card(b):
+        s = page[page.index('<div class="crow" id="%s"' % b['id']):]
+        return s[:s.index('<h4>얼마나</h4>')]
+    c = card(new5)
+    assert '>ELVDD</a><span class="badge b-new">신규</span>' in c and '<div class="cw">ACT·GAT1 외 3 층 · 상대 12</div>' in c
+    assert 'title="ELVDD — B 에 신규(ACT·GAT1·SD1·SD2·PXL)\nELVDD 전극이 B 에 신규로 놓였습니다' in c      # the tooltip: the full title + the full sentence
+    assert '<div class="cexp"><p class="bp cwhat">ELVDD 전극이 B 에 신규로 놓였습니다(ACT·GAT1·SD1·SD2·PXL).' in c   # the first unfolded line
+    c = card(new2)
+    assert '<span class="badge b-gone">삭제</span>' in c and '<div class="cw">ACT·GAT1</div>' in c and ' 외 ' not in c[:c.index('<div class="shb">')]
+    c = card(hub)
+    assert '>Scan3 · SD1</a><span class="badge">허브</span>' in c and '<div class="cw">상대 8 (증가 5 · 감소 3)</div>' in c
+    c = card(pair)
+    assert '<span class="badge">쌍</span>' in c and re.search(r'<div class="cw">M3</div>', c)
+    assert '>Vdd · M2</a><span class="badge">동일 전극</span>' in card(self_)
+    from simcompare import ledger_report_assets
+    css = ledger_report_assets.CSS
+    assert '.crow .ct .badge{flex:none' in css and 'text-overflow:ellipsis' in css and '.crow .ct .nm{flex:1 1 auto;min-width:0' in css      # a long name is cut, the badge stays
+    assert ledger_report.bundle_title(new5) == 'ELVDD — B 에 신규(ACT·GAT1·SD1·SD2·PXL)'                                                 # the title elsewhere is unchanged
 
 
 def _both_kinds_page(tmp_path):
