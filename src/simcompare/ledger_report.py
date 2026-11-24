@@ -1725,16 +1725,16 @@ def _dir_cell(ctx, kind):
     delta = ctx.doc['totals'][kind]['delta']
     skip = _skip_lines(ctx, kind)
     if skip is not None:
-        return '<span class="k">%s%s vi</span><div class="how">%s</div>' % (chip(kind), kind, ' '.join(skip))
+        return '<span class="k">%s%s vi</span><div class="dhow">%s</div>' % (chip(kind), kind, ' '.join(skip))
     if not ctx.v2:
-        return '<span class="k">%s%s vi</span><span class="v">%s</span><div class="how">%s</div>' % (
+        return '<span class="k">%s%s vi</span><span class="v">%s</span><div class="dhow">%s</div>' % (
             chip(kind), kind, esc(pp_txt(delta)), ' '.join(_kind_lines_legacy(ctx, kind)))
     rk = ctx.bundles['ranking'][kind]
     inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
     if rk.get('direction') == 'balanced':
         how = '증가 요인 %s 와 감소 요인 %s 가 비슷해 순 변화는 %s 입니다.' % (
             esc(pp_txt(inc.get('total'))), esc(pp_txt(dec.get('total'))), esc(pp_txt(rk.get('net_total'))))
-        return '<span class="k">%s%s vi</span><span class="v">증가·감소 비슷 %s</span><div class="how">%s</div>' % (chip(kind), kind, esc(pp_txt(delta)), how)
+        return '<span class="k">%s%s vi</span><span class="v">증가·감소 비슷 %s</span><div class="dhow">%s</div>' % (chip(kind), kind, esc(pp_txt(delta)), how)
     main = rk.get('main')
     other = 'decrease' if main == 'increase' else 'increase'
     m = rk.get(main) or {}
@@ -1747,7 +1747,7 @@ def _dir_cell(ctx, kind):
         how += ' · 반대 방향 요인 %d 개는 아래' % n_other
     if m.get('k80') is not None:
         how += ' <span class="muted small">(%s 요인 %s 의 80%% 까지 원인 후보 %s 개)</span>' % (word, esc(pp_txt(m.get('total'))), m['k80'])
-    return '<span class="k">%s%s %s</span><span class="v %s">%s %s</span><div class="how">%s</div>' % (
+    return '<span class="k">%s%s %s</span><span class="v %s">%s %s</span><div class="dhow">%s</div>' % (
         chip(kind), kind, '원인 후보 순 변화' if crp else 'vi', 'up' if main == 'increase' else 'down', word, esc(pp_txt(value)), how)
 
 

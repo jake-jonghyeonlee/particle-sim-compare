@@ -943,8 +943,8 @@ def test_chrome_sel_unit_opens_the_detail_panel_of_that_candidate_only(tmp_path)
     assert dom.root['data-dp-unit'] == one['id'] and dom.root['data-dp-pair'] == p0['pair_id']        # ② the candidate's pair is picked, ③④ follow it
     shown = [a['data-dp'] for t, a in dom.elements if a.get('data-dp')]
     assert shown == [p0['pair_id']]                                              # ② lists the pairs of the candidate only
-    layers = [a for t, a in dom.elements if t == 'option']
-    assert [a['value'] for a in layers] == [layer] and dom.root['data-dp-layer'] == layer         # ④ the layer select holds the layers of the pair
+    layers = [a for t, a in dom.elements if t == 'button' and 'lch' in (a.get('class') or '').split()]
+    assert [a['data-l'] for a in layers] == [layer] and dom.root['data-dp-layer'] == layer         # ④ the layer chips hold the layers of the pair
     assert dom.root['data-dp-drawn'] == '2' and dom.root.get('data-map-check') == 'passed'
     assert 'id="unit-band"' not in text and one['id'] in text
 
@@ -1079,6 +1079,26 @@ def test_chrome_tabs_switch_and_a_pair_click_shows_the_failure_types(tmp_path):
     assert dom.root['data-pairs-hidden'] == 'false' and dom.root['data-t4'] == 'items'          # a pair row goes to the failure types
     dom, text = dump_dom(page, '#sel=unit:%s&print' % uid)
     assert not [a for t, a in dom.elements if 'dtp' in (a.get('class') or '').split() and 'hidden' in a]       # #print: the three tab contents in turn
+
+
+def test_chrome_the_place_maps_paint_the_pair_electrodes_in_their_own_colours_and_show_a_legend(tmp_path):     # rexp/T8 (f)
+    from test_ledger_report_v2 import run_in_page
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    script = ("setTimeout(function(){var d=document.documentElement,css=function(v){var h=getComputedStyle(d).getPropertyValue(v).trim(),m=parseInt(h.slice(1),16);return [(m>>16)&255,(m>>8)&255,m&255];},"
+              "n=function(id,v){var c=document.getElementById(id),x=c.getContext('2d').getImageData(0,0,c.width,c.height).data,k=0,i,q=css(v);"
+              "for(i=0;i<x.length;i+=4){if(x[i]===q[0]&&x[i+1]===q[1]&&x[i+2]===q[2])k++;}return k;};"      # --e1 / --e2 of the theme (light or dark)
+              "d.setAttribute('data-ol0',d.getAttribute('data-dp-outline'));"
+              "d.setAttribute('data-e1px',String(n('dcv-A','--e1')));d.setAttribute('data-e2px',String(n('dcv-A','--e2')));"
+              "d.setAttribute('data-cw',String(document.getElementById('dcv-A').width));"
+              "document.getElementById('dp-zoom').click();setTimeout(function(){d.setAttribute('data-zoomtext',document.getElementById('dp-zoom').textContent);},100);},400);")
+    dom, text = run_in_page(page, '#sel=pair:%s' % p0['pair_id'], script, tag='rexp_paint')
+    assert 'data-err' not in dom.root and dom.root['data-dp-drawn'] == '2' and dom.root['data-map-check'] == 'passed'
+    assert int(dom.root['data-e1px']) > 0 and int(dom.root['data-e2px']) > 0                           # outline pixels of the two electrodes of the pair are on the canvas
+    a_e1, a_e2 = [int(v) for v in dom.root['data-ol0'].split(',')[0].split('/')]               # the counts the script drew (before the zoom click)
+    assert a_e1 > 0 and a_e2 > 0 and 0 < int(dom.root['data-e1px']) <= a_e1 and 0 < int(dom.root['data-e2px']) <= a_e2     # (the failure areas are drawn over a part of the outlines)
+    legend = [a for t, a in dom.elements if a.get('id') == 'dp-legend']
+    assert legend and all(name in text[text.index('id="dp-legend"'):text.index('id="dp-legend"') + 900] for name in p0['electrodes'])
+    assert dom.root['data-zoomtext'] == '확대로 돌아가기' and int(dom.root['data-cw']) >= 1          # the small link switches to the whole map and says how to come back
 
 
 def test_chrome_an_unknown_list_kind_in_the_hash_is_ignored(tmp_path):

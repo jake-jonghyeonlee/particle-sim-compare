@@ -923,7 +923,7 @@ def test_chrome_pair_detail_has_the_equation_the_item_table_and_the_places(tmp_p
     items = panel[panel.index('id="dp-items"'):panel.index('id="cond-detail"')]
     assert len(re.findall(r'<tr data-it=', items)) == 3                              # ③ the three items of P2 (two groups: this candidate / the others)
     assert items.count('class="badge b-gone">없어짐') == 1 and items.count('class="badge b-new">새로 생김') == 1 and items.count('class="badge ">증감') == 1
-    assert '연결 영역 A → B' not in items and 'id="cond-detail"' in panel                    # no occurrence data in this fixture: the column is left out and 'id="dp-layer"' in panel and 'id="dp-zoom"' in panel
+    assert '연결 영역 A → B' not in items and 'id="cond-detail"' in panel and 'id="dp-layer"' in panel and 'id="dp-zoom"' in panel     # no occurrence data in this fixture: that column is left out
     assert 'id="dp-eq-all"' in panel and '쌍 <b>' in panel and '<b>전체</b>' in panel and 'data-dp-sumcheck=' in panel     # rexp/T7: two scopes + the item sum check (this fixture's pair delta is not the sum of its items: see the narrative tests)
     assert 'id="dcv-A"' in panel and 'id="dcv-B"' in panel                         # ④ A | B side by side
     assert dom.root['data-dp-drawn'] == '2' and dom.root['data-dp-zoom'] == '1' and dom.root['data-map-check'] == 'passed'

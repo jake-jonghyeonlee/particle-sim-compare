@@ -5,11 +5,11 @@ CSS = """
 :root{color-scheme:light;--surface-0:#f4f3f0;--surface-1:#fcfcfb;--border:#e2e0da;--grid:#ebe9e4;
 --text-primary:#0b0b0b;--text-secondary:#52514e;--text-muted:#7a7972;
 --line:#7a4fd6;--pixel:#eb6834;--up:#d03b3b;--down:#2a78d6;--mid:#e4e2dc;--common:#8d8c85;--sel:#fff3d6;
---badge-new:#fde7e7;--badge-gone:#e3eefc;--badge-both:#ecebe6;--trade:#f3ead0;--ok:#2b8a4e}
+--badge-new:#fde7e7;--badge-gone:#e3eefc;--badge-both:#ecebe6;--trade:#f3ead0;--ok:#2b8a4e;--e1:#0f8b8d;--e2:#c98a00}
 @media screen and (prefers-color-scheme:dark){:root{color-scheme:dark;--surface-0:#121211;--surface-1:#1a1a19;--border:#33332f;
 --grid:#2a2a27;--text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#94938a;--line:#9a78ea;--pixel:#d95926;
 --up:#e66767;--down:#3987e5;--mid:#3a3a36;--common:#77766f;--sel:#3a3018;--badge-new:#4a2323;--badge-gone:#1d2f4a;
---badge-both:#2c2c29;--trade:#2e2a1c;--ok:#5ac17f}}
+--badge-both:#2c2c29;--trade:#2e2a1c;--ok:#5ac17f;--e1:#3cc3c5;--e2:#e5b23c}}
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:50px}
 body{margin:0;background:var(--surface-0);color:var(--text-primary);font:13px/1.5 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
 main{max-width:1400px;margin:0 auto;padding:10px 16px 60px}
@@ -73,7 +73,7 @@ canvas.mapcv{cursor:pointer}
 .dir{border:1px solid var(--border);border-left:5px solid var(--line);border-radius:8px;background:var(--surface-0);padding:8px 12px;cursor:pointer}
 .dir.pixel{border-left-color:var(--pixel)}.dir.on{box-shadow:0 0 0 2px var(--text-primary) inset}
 .dir .k{font-size:15px;font-weight:700}.dir .v{font-size:22px;font-weight:800;margin:0 8px}.dir .v.up{color:var(--up)}.dir .v.down{color:var(--down)}
-.dir .how{font-size:13.5px;color:var(--text-secondary);margin-top:2px}.dir .how b{color:var(--text-primary)}
+.dir .dhow{font-size:13.5px;color:var(--text-secondary);margin-top:2px}.dir .dhow b{color:var(--text-primary)}
 .klist[hidden]{display:none}
 .crow{display:grid;grid-template-columns:34px minmax(0,1fr) 104px 18px;gap:6px;align-items:center;background:var(--surface-0);border:1px solid var(--border);border-radius:7px;padding:6px 8px;margin:4px 0;cursor:pointer}
 .crow:hover{border-color:var(--common)}.crow.selcard{background:var(--sel);border-color:#e0b04a;box-shadow:0 0 0 1px #e0b04a inset}
@@ -103,8 +103,12 @@ canvas.mapcv{cursor:pointer}
 .grp{margin:8px 0 2px;font-weight:700;font-size:12.5px;display:flex;justify-content:space-between}
 #dp-sumbad{background:#fde2e2;color:#a12a2a;border-radius:8px;padding:0 7px;font-size:11px;font-weight:700}
 .dbar{display:block;height:9px;border-radius:2px;background:var(--common)}.dbar.up{background:var(--up)}.dbar.down{background:var(--down)}
-.dpctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
-.dpctl select{font:inherit;border:1px solid var(--border);border-radius:6px;background:var(--surface-1);color:var(--text-primary)}
+.mctl{display:flex;gap:6px;align-items:center;font-size:12px;margin-bottom:4px;flex-wrap:wrap}.mctl .sp{flex:1}
+.lchs{display:inline-flex;gap:4px}.lch{border:1px solid var(--border);border-radius:10px;padding:0 8px;cursor:pointer;background:var(--surface-1);color:var(--text-primary);font-size:12px}
+.lch.on{background:var(--text-primary);color:var(--surface-1);border-color:var(--text-primary)}
+button.linkbtn{border:0;border-radius:0;background:none;color:var(--down);padding:0;font-size:11.5px;text-decoration:underline;cursor:pointer}
+.leg{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--text-secondary);margin-top:3px}
+.leg i{position:relative;display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px;border:var(--b)}.leg i::before{content:"";position:absolute;inset:0;background:var(--c);opacity:var(--a)}
 #dp-items tr.itc td{font-weight:700}#dp-items tr.itsel td{background:var(--trade);outline:1px solid #e0b04a}
 .rt th,.rt td{white-space:normal}
 .purpose{margin:6px 0 4px;padding:7px 12px;border-left:3px solid var(--text-primary);background:var(--surface-1);font-size:15px;line-height:1.7}
@@ -242,7 +246,7 @@ if(MP){try{var pe=$('map-png');PNG=pe?JSON.parse(pe.textContent):null;}catch(e1)
 function rgb(name,fb){var v=getComputedStyle(document.documentElement).getPropertyValue(name).trim();
  var m=/^#([0-9a-f]{6})$/i.exec(v)||/^#([0-9a-f]{6})$/i.exec(fb);var n=parseInt(m[1],16);return [(n>>16)&255,(n>>8)&255,n&255];}
 function colors(){CC={bg:rgb('--surface-0','#f4f3f0'),mid:rgb('--mid','#e4e2dc'),common:rgb('--common','#8d8c85'),sec:rgb('--text-secondary','#52514e'),line:rgb('--line','#7a4fd6'),
- pixel:rgb('--pixel','#eb6834'),down:rgb('--down','#2a78d6'),text:rgb('--text-primary','#0b0b0b')};}
+ pixel:rgb('--pixel','#eb6834'),down:rgb('--down','#2a78d6'),text:rgb('--text-primary','#0b0b0b'),e1:rgb('--e1','#0f8b8d'),e2:rgb('--e2','#c98a00')};}
 function topPairs(){var seen={},out=[];['line','pixel'].forEach(function(k){(D.top.changed[k]||[]).forEach(function(id){if(!seen[id]&&PB[id]){seen[id]=1;out.push(PB[id]);}});});
  out.sort(function(a,b){return Math.abs(b.pct_d||0)-Math.abs(a.pct_d||0)||(a.id<b.id?-1:1);});return out.slice(0,3);}
 function byLayer(a,b){var ra=LORD.indexOf(a),rb=LORD.indexOf(b);ra=ra<0?LORD.length:ra;rb=rb<0?LORD.length:rb;return ra-rb||(a<b?-1:(a>b?1:0));}
@@ -434,44 +438,71 @@ function pairLayers(p){var o={};['A','B'].forEach(function(r){var its=SD[r].item
 function defaultLayer(p,ls,itId){var i,l,its;if(itId&&ITL[itId]&&ls.indexOf(ITL[itId])>=0)return ITL[itId];
  its=p.items.slice().sort(function(x,y){return Math.abs(y.d||0)-Math.abs(x.d||0);});   /* the layer of the item with the largest |delta| that has a map */
  for(i=0;i<its.length;i++){l=ITL[its[i].id];if(l&&ls.indexOf(l)>=0)return l;}return ls[0];}
+function zoomText(){return DS.zoom?'전체 보기':'확대로 돌아가기';}
+function legendHtml(p){var k=p.kind==='pixel'?'pixel':'line',   /* swatches: a tinted face (--c at --a) with the outline --b */
+ sw=function(c,a,b){return '<i style="--c:var(--'+c+');--a:'+a+';--b:'+b+'"></i>';};
+ return '<div class="leg" id="dp-legend"><span>'+sw('e1','.25','2px solid var(--e1)')+esc(p.e[0]||'')+'</span>'+
+  (p.e.length>1?'<span>'+sw('e2','.25','2px solid var(--e2)')+esc(p.e[1])+'</span>':'')+
+  '<span>'+sw('mid','.35','1px solid var(--common)')+'다른 전극</span>'+
+  '<span>'+sw(k,'.85','1px solid var(--text-secondary)')+'이 쌍의 불량 영역('+k+')</span></div>';}
+/* the places of the chosen pair: A | B in one row (layer chips, a small link for the whole map), the legend under them */
 function placesHtml(d){var p=d.p?PB[d.p]:null;if(!p)return '';
- var h='<h4>자리 보기 — <b>'+esc(p.e.join('–'))+'</b> 의 영역만</h4>';
- if(!MP)return h+'<p class="muted" id="dp-nomap">지도 없음 — --maps-dir 를 주면 이 자리에 A | B 지도가 나옵니다.</p>';
+ var h='<div class="mctl"><b>자리 보기</b> — 쌍 <b>'+esc(p.e.join('–'))+'</b>';
+ if(!MP)return h+'</div><p class="muted" id="dp-nomap">지도 없음 — --maps-dir 를 주면 이 자리에 A | B 지도가 나옵니다.</p>';
  var ls=pairLayers(p);
- if(!ls.length){DS.layer=null;return h+'<p class="muted" id="dp-nolayer">이 쌍의 영역이 지도에 없습니다(지도 자료에 이 쌍의 item 번호가 없음).</p>';}
+ if(!ls.length){DS.layer=null;return h+'</div><p class="muted" id="dp-nolayer">이 쌍의 영역이 지도에 없습니다(지도 자료에 이 쌍의 item 번호가 없음).</p>';}
  if(!DS.layer||ls.indexOf(DS.layer)<0)DS.layer=defaultLayer(p,ls,parseHash().kv.it);
- return h+'<div class="dpctl"><label class="muted">레이어 <select id="dp-layer">'+ls.map(function(l){return '<option value="'+esc(l)+'"'+(l===DS.layer?' selected':'')+'>'+esc(l)+'</option>';}).join('')+'</select></label>'+
-  '<button type="button" id="dp-zoom">'+(DS.zoom?'전체 보기':'확대 보기')+'</button><span class="muted small">A 와 B 는 각자 자기 좌표 · 전극 윤곽은 옅게 · 이 쌍의 item 영역만 칠함</span></div>'+
-  '<div class="mpair">'+['A','B'].map(function(r){return '<figure class="mfig"><figcaption><b>'+(r==='A'?'기준 A':'대상 B')+'</b> · <span class="dplay">'+esc(DS.layer)+'</span></figcaption><canvas class="dcv" id="dcv-'+r+'" data-role="'+r+'" width="1" height="1" role="img" aria-label="'+(r==='A'?'기준 A':'대상 B')+' 지도" hidden></canvas><div class="mnote"></div></figure>';}).join('')+'</div>';}
+ return h+' · 레이어 <span id="dp-layer" class="lchs">'+ls.map(function(l){return '<button type="button" class="lch'+(l===DS.layer?' on':'')+'" data-l="'+esc(l)+'">'+esc(l)+'</button>';}).join('')+'</span>'+
+  '<span class="sp"></span><button type="button" class="linkbtn" id="dp-zoom">'+zoomText()+'</button></div>'+
+  '<div class="mpair">'+['A','B'].map(function(r){return '<figure class="mfig"><figcaption><b>'+(r==='A'?'기준 A':'대상 B')+'</b> · <span class="dplay">'+esc(DS.layer)+'</span></figcaption><canvas class="dcv" id="dcv-'+r+'" data-role="'+r+'" width="1" height="1" role="img" aria-label="'+(r==='A'?'기준 A':'대상 B')+' 지도" hidden></canvas><div class="mnote"></div></figure>';}).join('')+'</div>'+legendHtml(p);}
 function bbox(e,r,pid){var memo={},n=0,x0=1e9,y0=1e9,x1=-1,y1=-1,w=e.w,i,v,z,x,y,it;if(!e.it)return {n:0};
  for(i=0;i<e.it.length;i++){v=e.it[i];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===pid);}if(!z)continue;
   x=i%w;y=(i/w)|0;n++;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
  return {n:n,x0:x0,y0:y0,x1:x1,y1:y1};}
 function blend(d,o,col,a){d[o]=d[o]*(1-a)+col[0]*a;d[o+1]=d[o+1]*(1-a)+col[1]*a;d[o+2]=d[o+2]*(1-a)+col[2]*a;}
-function drawCrop(cv,e,r,p,x0,y0,x1,y1){var cw=x1-x0,ch=y1-y0,g=cv.getContext('2d'),w=e.w,h=e.h,col=p.kind==='pixel'?CC.pixel:CC.line,memo={},x,y,v,z,it,si,o,i;
- cv.width=cw;cv.height=ch;cv.hidden=false;
- var img=g.createImageData(cw,ch),d=img.data;
- for(i=0;i<cw*ch;i++){d[i*4]=CC.bg[0];d[i*4+1]=CC.bg[1];d[i*4+2]=CC.bg[2];d[i*4+3]=255;}
- for(y=0;y<ch;y++){for(x=0;x<cw;x++){si=(y+y0)*w+x+x0;o=(y*cw+x)*4;
-  if(e.el){v=e.el[si];if(v&&isBorder(e.el,w,h,x+x0,y+y0,v,1))blend(d,o,CC.common,0.5);}   /* the electrode outlines stay faint */
-  if(e.it){v=e.it[si];if(v){z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===p.id);}if(z)blend(d,o,col,0.85);}}}}
- g.putImageData(img,0,0);}
+/* rexp/T8: the crop is drawn at screen size (long side DRAWPX), not at the map's pixels, so a 1 px / 2 px outline stays 1 px / 2 px on the screen:
+   a light face and a 1 px outline for every electrode, the two electrodes of the pair in their own colours (--e1, --e2: 25 % face, 2 px outline),
+   the failure areas of the pair in the kind colour (85 %) with a 1 px dark border. A map pixel of the pair is never lost when the crop is shrunk. */
+var DRAWPX=600;
+function drawCrop(cv,e,r,p,x0,y0,x1,y1){var cw=x1-x0,ch=y1-y0,g=cv.getContext('2d'),w=e.w,h=e.h,col=p.kind==='pixel'?CC.pixel:CC.line,memo={},x,y,v,z,it,si,o,i,q,
+  s=DRAWPX/Math.max(cw,ch),ow=Math.max(1,Math.round(cw*s)),oh=Math.max(1,Math.round(ch*s)),n1=0,n2=0,
+  dark=[col[0]*0.55,col[1]*0.55,col[2]*0.55],role={},rl=function(num){var k=role[num];if(k===undefined){var nm=SD[r].els[num];k=role[num]=(nm!==undefined&&nm===p.e[0])?1:((nm!==undefined&&p.e.length>1&&nm===p.e[1])?2:0);}return k;};
+ cv.width=ow;cv.height=oh;cv.hidden=false;
+ var elD=new Uint16Array(ow*oh),itD=new Uint8Array(ow*oh);
+ if(e.el){for(y=0;y<oh;y++){for(x=0;x<ow;x++){elD[y*ow+x]=e.el[(y0+Math.min(ch-1,Math.floor(y/s)))*w+x0+Math.min(cw-1,Math.floor(x/s))];}}}
+ if(e.it){for(y=0;y<ch;y++){for(x=0;x<cw;x++){v=e.it[(y+y0)*w+x+x0];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===p.id);}
+   if(z)itD[Math.min(oh-1,Math.floor(y*s))*ow+Math.min(ow-1,Math.floor(x*s))]=1;}}}   /* a source pixel of the pair marks its screen pixel (never lost by shrinking) */
+ if(s>1){for(y=0;y<oh;y++){for(x=0;x<ow;x++){   /* enlarged: every screen pixel of a block of a pair pixel is the pair's */
+   if(e.it){v=e.it[(y0+Math.min(ch-1,Math.floor(y/s)))*w+x0+Math.min(cw-1,Math.floor(x/s))];if(v&&memo[v])itD[y*ow+x]=1;}}}}
+ var img=g.createImageData(ow,oh),d=img.data;
+ for(i=0;i<ow*oh;i++){d[i*4]=CC.bg[0];d[i*4+1]=CC.bg[1];d[i*4+2]=CC.bg[2];d[i*4+3]=255;}
+ for(y=0;y<oh;y++){for(x=0;x<ow;x++){q=y*ow+x;o=q*4;
+  v=elD[q];
+  if(v){var k=rl(v);
+   if(k===1)blend(d,o,CC.e1,0.25);else if(k===2)blend(d,o,CC.e2,0.25);else blend(d,o,CC.mid,0.35);
+   if(k&&isBorder(elD,ow,oh,x,y,v,2)){blend(d,o,k===1?CC.e1:CC.e2,1);if(k===1)n1++;else n2++;}
+   else if(!k&&isBorder(elD,ow,oh,x,y,v,1))blend(d,o,CC.common,0.7);}
+  if(itD[q]){blend(d,o,col,0.85);
+   if(x<1||y<1||x+1>=ow||y+1>=oh||!itD[q-1]||!itD[q+1]||!itD[q-ow]||!itD[q+ow])blend(d,o,dark,1);}}}
+ g.putImageData(img,0,0);cv.setAttribute('data-e1',String(n1));cv.setAttribute('data-e2',String(n2));}
 function cropOf(e,b){if(!b||!b.n)return null;   /* the box of THIS product's pixels + 20 % (>= 10 px), cut by THIS product's map; null = show the whole map */
  var mg=Math.max(10,Math.round(0.2*Math.max(b.x1-b.x0+1,b.y1-b.y0+1))),x0=Math.max(0,b.x0-mg),y0=Math.max(0,b.y0-mg),x1=Math.min(e.w,b.x1+1+mg),y1=Math.min(e.h,b.y1+1+mg);
  return (x1-x0>=1&&y1-y0>=1)?[x0,y0,x1,y1]:null;}
-function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},drawn=0,cnt={A:0,B:0},boxes={A:[],B:[]};
+function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},drawn=0,cnt={A:0,B:0},boxes={A:[],B:[]},ol={A:[0,0],B:[0,0]};
  ['A','B'].forEach(function(r){var e=es[r],cv=$('dcv-'+r);if(!cv)return;var note=noteOf(cv);note.innerHTML='';
   if(!e||!e.w){cv.hidden=true;note.textContent='이 제품에는 이 레이어 지도가 없습니다';return;}
   if(!e.ok){cv.hidden=true;note.innerHTML=failList(r,L);return;}
   var b=bbox(e,r,p.id),c=DS.zoom?cropOf(e,b):null,x0=0,y0=0,x1=e.w,y1=e.h;cnt[r]=b.n||0;
   if(c){x0=c[0];y0=c[1];x1=c[2];y1=c[3];}
   if(x1-x0<1||y1-y0<1){x0=0;y0=0;x1=Math.max(1,e.w);y1=Math.max(1,e.h);c=null;}   /* never a zero or negative canvas */
-  drawCrop(cv,e,r,p,x0,y0,x1,y1);drawn++;boxes[r]=[x0,y0,x1,y1];
+  drawCrop(cv,e,r,p,x0,y0,x1,y1);drawn++;boxes[r]=[x0,y0,x1,y1];ol[r]=[cv.getAttribute('data-e1'),cv.getAttribute('data-e2')];
   var sc=MP.sides[r].sc,mm=e.m.it||e.m.el,bk=(mm&&mm.b)||1;
   note.textContent=(b.n?'':'이 제품에는 이 쌍의 영역이 없습니다 · ')+(c?'확대 ':'전체 ')+(x1-x0)+' × '+(y1-y0)+' px'+(sc?' (≈ '+fnum((x1-x0)*bk*sc.p)+' × '+fnum((y1-y0)*bk*sc.p)+' µm)':'');});
  var box=boxes.A;root.setAttribute('data-dp-boxb',boxes.B.join(','));
  root.setAttribute('data-dp-drawn',String(drawn));root.setAttribute('data-dp-pixels',cnt.A+','+cnt.B);root.setAttribute('data-dp-box',box.join(','));
- root.setAttribute('data-dp-layer',L);root.setAttribute('data-dp-zoom',DS.zoom?'1':'0');mapCheck();}
+ root.setAttribute('data-dp-layer',L);root.setAttribute('data-dp-zoom',DS.zoom?'1':'0');
+ root.setAttribute('data-dp-outline',ol.A.join('/')+','+ol.B.join('/'));   /* pair-electrode outline pixels drawn: A e1/e2, B e1/e2 */
+ mapCheck();}
 function drawDetailMaps(){var p=DS.p?PB[DS.p]:null,root=document.documentElement;
  if(!MP||!p||!DS.layer){root.setAttribute('data-dp-drawn','0');return;}
  var gen=++DGEN,L=DS.layer,left=2;colors();
@@ -550,15 +581,16 @@ document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest
  var fb=t.closest('[data-f="more"]');if(fb){var fs=parseHash();fs.kv.more='1';setHash(fs);return;}
  var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
- if(t.closest('#dp-zoom')){DS.zoom=!DS.zoom;var zbtn=$('dp-zoom');if(zbtn)zbtn.textContent=DS.zoom?'전체 보기':'확대 보기';drawDetailMaps();return;}
+ if(t.closest('#dp-zoom')){DS.zoom=!DS.zoom;var zbtn=$('dp-zoom');if(zbtn)zbtn.textContent=zoomText();drawDetailMaps();return;}
+ var lc=t.closest('#dp-layer .lch');if(lc){DS.layer=lc.getAttribute('data-l');   /* a layer chip of the places row */
+  var chips=document.querySelectorAll('#dp-layer .lch'),ci;for(ci=0;ci<chips.length;ci++)chips[ci].classList.toggle('on',chips[ci]===lc);
+  var pls=document.querySelectorAll('.dplay');for(ci=0;ci<pls.length;ci++)pls[ci].textContent=DS.layer;drawDetailMaps();return;}
  var dt=t.closest('.dtab');if(dt){DS.tab=dt.getAttribute('data-dtab');applyTab();return;}   /* the three tabs of the detail panel */
  if(t.closest('.dpr[data-dp]')){DS.tab='items';applyTab();}   /* a pair row (even the open one) shows its failure types */
  var tw=t.closest('.crow .tw');if(tw){tw.closest('.crow').classList.toggle('open');return;}   /* ▸ unfolds the card in place */
  var dirc=t.closest('.dir');if(dirc){var ks=parseHash();ks.kv.k=dirc.getAttribute('data-k');setHash(ks);return;}   /* the band switches the list */
  var card=t.closest('.s3cards .crow');   /* a click on a card row (not on its links, buttons, folds or unfolded part) opens its detail */
  if(card&&!t.closest('a,button,summary,details,input,select,.cexp')&&UNIT.test(card.id)&&BU[card.id]){var cs2=parseHash();cs2.kv.sel='unit:'+card.id;delete cs2.kv.cand;delete cs2.kv.it;cs2.flags.demo=false;setHash(cs2);}});
-document.addEventListener('change',function(ev){var t=ev.target;if(t&&t.id==='dp-layer'){DS.layer=t.value;
- var ls=document.querySelectorAll('.dplay'),i;for(i=0;i<ls.length;i++)ls[i].textContent=DS.layer;drawDetailMaps();}});
 document.addEventListener('keydown',function(ev){var t=ev.target;if((ev.key==='Enter'||ev.key===' ')&&t&&t.getAttribute&&(t.getAttribute('data-href')||t.classList.contains('dir')||t.classList.contains('tw'))){ev.preventDefault();t.click();}});
 var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.eq=qi.value;else delete st.kv.eq;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
