@@ -412,35 +412,14 @@ def test_r10b2_cards_come_from_the_ranking_only_and_an_empty_list_says_so(real):
     assert '원인 후보마다 아주 작아' in s3b
 
 
-def test_the_card_has_the_four_parts_and_the_evidence_line(real):
+def test_the_card_is_one_folded_row_with_a_fold_for_the_amount_and_no_evidence_part(real):
     s3 = new_section(render(real), 's3')
-    card = s3[s3.index('<div class="bcard"'):]
-    for head in ('무엇이 바뀌었나', '어떤 불량이 어떻게', '얼마나', '근거'):
-        assert '<h4>%s</h4>' % head in card, head
-    assert '쌍 전체 변화' in card and '이 카드 순 변화' in card
-    assert '지도 폴더가 없어 연결 영역 지표가 없습니다' in card
-
-
-def test_the_evidence_sums_observed_regions_and_gives_a_reason_otherwise(tmp_path, real):
-    b = real['summary']['bundles']['list'][0]
-    ids = [i for r in b['rows'] for i in r['item_ids']]
-
-    def occ(states):
-        items = []
-        for item_id, (sa, sb) in zip(ids, states):
-            ref = {'state': sa, 'n': 4 if sa == 'observed' else None}
-            tgt = {'state': sb, 'n': 9 if sb == 'observed' else None}
-            cmp = {'kind': 'both_observed'} if sa == sb == 'observed' else {'kind': 'suppressed', 'reason': 'pending' if 'pending' in (sa, sb) else 'not_observed'}
-            items.append({'item_id': item_id, 'reference': ref, 'target': tgt, 'compare': cmp})
-        return {'diameter_um': 3.0, 'items': items, 'counts': {'reference': {}, 'target': {}}}
-    ctx = ledger_report.Ctx(real, 30, 30, maps={'doc': {'occurrence': occ([('observed', 'observed')] * len(ids))}, 'pngs': {}})
-    assert ledger_report._occ_evidence(ctx, b) == '관측 연결 영역 합(3 µm): A %d → B %d' % (4 * len(ids), 9 * len(ids))
-    ctx = ledger_report.Ctx(real, 30, 30, maps={'doc': {'occurrence': occ([('pending', 'observed')] * len(ids))}, 'pngs': {}})
-    assert ledger_report._occ_evidence(ctx, b).startswith('— (대기') and '메모리 예산 부족' in ledger_report._occ_evidence(ctx, b)
-    ctx = ledger_report.Ctx(real, 30, 30, maps={'doc': {'occurrence': occ([('not_observed', 'observed')] * len(ids))}, 'pngs': {}})
-    assert '지도 지름 자료 없음' in ledger_report._occ_evidence(ctx, b)
-    ctx = ledger_report.Ctx(real, 30, 30, maps={'doc': {}, 'pngs': {}})
-    assert '02·08 을 새 번들로 다시 실행하세요' in ledger_report._occ_evidence(ctx, b)
+    card = s3[s3.index('<div class="crow"'):]
+    one_line = card[:card.index('<div class="cexp">')]
+    assert 'class="tw"' in one_line and 'class="shb"' in one_line and 'class="rk ' in one_line and 'class="cw"' in one_line   # rank circle, bar, what changed, fold mark
+    assert '<h4>얼마나</h4>' in card[card.index('<div class="cexp">'):] and '제품 대응 ▸' in card
+    assert '<h4>근거</h4>' not in s3 and '연결 영역 지표' not in s3 and 'class="bcard"' not in s3
+    assert '<h4>어떤 불량이 어떻게</h4>' not in s3                                    # the failure-type table moved to the detail panel
 
 
 # ---- 6 the states of the mockup ---------------------------------------------------------------------------------------------------
@@ -523,7 +502,7 @@ def test_no_verdict_partial_and_no_occurrence_states(real):
     assert '판정을 생략했습니다(값 없는 항목이 있음)' in s4
     partial = variant(real, lambda d: d.update(status='partial', reasons=['ledger_totals_check_failed']))
     assert 'id="partial"' in render(partial)
-    assert '지도 폴더가 없어 연결 영역 지표가 없습니다' in new_section(render(real), 's3')
+    assert '연결 영역 지표' not in new_section(render(real), 's3')               # the card has no evidence line any more
 
 
 def test_reason_label_for_a_failed_summary_check():
@@ -678,14 +657,13 @@ def test_r12_3a_a_layer_change_card_has_its_title_type_layer_table_and_row_layer
     doc = rich(real)
     uid = next(b['id'] for b in doc['summary']['bundles']['list'] if b['type'] == 'layer_change')
     page = render(doc)
-    card = page[page.index('<div class="bcard" id="%s"' % uid):]
-    card = card[:card.index('<h4>근거</h4>')]
-    assert '<b class="bt">Data — 레이어 변경(GAT2 추가 · SD1 제거)</b>' in card and 'badge b-mv">레이어 변경' in card
+    card = page[page.index('<div class="crow" id="%s"' % uid):]
+    card = card[:card.index('<h4>얼마나</h4>')]
+    assert '>Data — 레이어 변경(GAT2 추가 · SD1 제거)</a>' in card and 'badge b-mv">레이어 변경' in card
     assert 'Data 전극의 레이어 구성이 바뀌었습니다(GAT2 추가 · SD1 제거).' in card
     # the per-layer table shows every layer of the bundle (not the first one only)
-    table = card[card.index('<h4>레이어별 내역</h4>'):card.index('<h4>어떤 불량이 어떻게</h4>')]
+    table = card[card.index('<h4>레이어별 내역</h4>'):]
     assert '추가(B 에만)' in table and '제거(A 에만)' in table and '<b>GAT2</b>' in table and '<b>SD1</b>' in table
-    assert re.search(r'<span class="muted small">GAT2</span></td>', card)
 
 
 ODD = 'E|"q"한글'
@@ -797,12 +775,11 @@ def test_an_electrode_card_lists_every_layer_and_a_removed_electrode_says_so(rea
     doc = rich(real)
     uid = next(b['id'] for b in doc['summary']['bundles']['list'] if b['type'] == 'electrode_removed')
     page = render(doc)
-    card = page[page.index('<div class="bcard" id="%s"' % uid):]
-    card = card[:card.index('<h4>근거</h4>')]
-    table = card[card.index('<h4>레이어별 내역</h4>'):card.index('<h4>어떤 불량이 어떻게</h4>')]
+    card = page[page.index('<div class="crow" id="%s"' % uid):]
+    card = card[:card.index('<h4>얼마나</h4>')]
+    table = card[card.index('<h4>레이어별 내역</h4>'):]
     assert 'Test2 전극이 B 에서 삭제되었습니다(SD1·PXL).' in card and table.count('<td class="l">삭제</td>') == 2
     assert '<b>SD1</b>' in table and '<b>PXL</b>' in table
-    assert '이 카드 순 변화' in card and '쌍 전체 변화' in card
 
 
 def test_m3_every_card_has_the_map_and_the_correspondence_buttons_with_a_whitelisted_id(real):
@@ -811,7 +788,7 @@ def test_m3_every_card_has_the_map_and_the_correspondence_buttons_with_a_whiteli
     for b in doc['summary']['bundles']['list']:
         if b['id'] in cards_of(doc, 'line'):
             assert 'href="#sel=unit:%s"' % b['id'] in s3 and 'href="#unit=%s&amp;to=s2"' % b['id'] in s3
-    assert '상세 보기 ▸' in s3 and '지도에서 보기' not in s3 and '제품 대응 ▸' in s3
+    assert '상세 보기 ▸' not in s3 and '지도에서 보기' not in s3 and '제품 대응 ▸' in s3
     assert all(re.fullmatch(r'bd-[0-9a-f]{16,24}', i) for i in re.findall(r'#sel=unit:([^&"]+)', s3))
 
 
@@ -982,6 +959,37 @@ def test_chrome_unit_only_hash_opens_that_candidate_not_the_default(tmp_path):  
     assert not [a for t, a in dom.elements if a.get('id') == 'dp-empty']
 
 
+def test_chrome_cards_are_folded_rows_the_arrow_unfolds_one_and_the_band_switches_the_list(tmp_path):     # rexp/T6 (c)(d)
+    from test_ledger_report_v2 import run_in_page
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    dom, text = dump_dom(page, '#')
+    assert 'data-err' not in dom.root and dom.root['data-kind'] == 'line'
+    rows = [a for t, a in dom.elements if t == 'div' and 'crow' in (a.get('class') or '').split()]
+    assert len(rows) >= 2 and all('open' not in a['class'].split() for a in rows)             # (c) every card is one folded row
+    assert [a['data-k'] for t, a in dom.elements if 'klist' in (a.get('class') or '').split() and 'hidden' in a] == ['pixel']
+    assert '근거' not in text[text.index('id="s3"'):text.index('id="s4"')].replace('근거 · 검산', '')
+    script = ("setTimeout(function(){document.querySelector('#%s .tw').click();var r=document.getElementById('%s');"
+              "document.documentElement.setAttribute('data-open',r.className);"
+              "document.querySelector('.dir.pixel').click();setTimeout(function(){var d=document.documentElement;"
+              "d.setAttribute('data-kind2',d.getAttribute('data-kind'));d.setAttribute('data-line-hidden',String(document.getElementById('klist-line').hidden));"
+              "d.setAttribute('data-hash2',location.hash);document.querySelector('.dir.line').click();setTimeout(function(){d.setAttribute('data-kind3',d.getAttribute('data-kind'));},200);},200);},300);" % (one['id'], one['id']))
+    dom2, text2 = run_in_page(page, '#', script, tag='rexp_band')
+    assert 'data-err' not in dom2.root and 'open' in dom2.root['data-open'].split()           # ▸ unfolds the card in place
+    assert dom2.root['data-kind2'] == 'pixel' and dom2.root['data-line-hidden'] == 'true' and 'k=pixel' in dom2.root['data-hash2']   # (d) the band cell switches the list
+    assert dom2.root['data-kind3'] == 'line'
+    dom3, text3 = dump_dom(page, '#print')
+    assert not [a for t, a in dom3.elements if 'klist' in (a.get('class') or '').split() and 'hidden' in a]           # #print shows both kinds
+
+
+def test_chrome_an_unknown_list_kind_in_the_hash_is_ignored(tmp_path):
+    doc, one, p0, layer, page = _unit_page(tmp_path)
+    for fragment in ('#k=%3Cb%3E', '#k=constructor', '#k='):
+        dom, text = dump_dom(page, fragment)
+        assert 'data-err' not in dom.root and dom.root['data-kind'] == 'line', fragment
+    dom, text = dump_dom(page, '#k=pixel')
+    assert dom.root['data-kind'] == 'pixel'
+
+
 def test_chrome_an_unknown_or_malformed_unit_selection_is_ignored(tmp_path):
     doc, one, p0, layer, page = _unit_page(tmp_path)
     for fragment in ('#sel=unit:bd-0123456789abcdef', '#sel=unit:%3Cscript%3E', '#sel=unit:' + one['id'][:-1] + 'Z', '#sel=unit:', '#sel=pair:P1&cand=bd-zzzz'):
@@ -1041,11 +1049,9 @@ def test_r18_1_a_crp_dominated_kind_says_the_cause_candidate_direction_not_the_v
     assert '−0.4000%p 감소했습니다' in pixel and '감소 요인은 없고, 증가 요인은 +0.2000%p' in pixel
     assert '보정값(CRP) 차이 −0.6000%p 를 빼면 원인 후보의 순 변화는 증가입니다.' in pixel
     assert pixel.index('증가 요인은') < pixel.index('를 빼면') and s1.count('보정값(CRP)') == 1       # said once, not twice
-    head = [l for l in s3.split('pixel: ') if l.startswith('원인 후보 순 변화 방향은')]
-    assert head, s3
-    print('R18 3 head:', 'pixel: ' + head[0][:120])
-    assert 'pixel: vi 변화 방향' not in s3 and 'line: vi 변화 방향은 감소 입니다' in s3
-    assert '원인 후보 순 변화 방향 — 증가 요인 상위' in s3 and '원인 후보 순 변화 방향(증가 요인)의 100%' in s3
+    assert 'pixel 원인 후보 순 변화 증가 +0.2000%p' in s3, s3          # the band cell of the CRP-dominated kind names the cause candidate net change
+    assert 'pixel vi 증가' not in s3 and 'line vi 감소' in s3
+    assert '원인 후보 순 변화 방향 — 증가 요인 상위' in s3 and '증가분의 100%' in s3
     assert 'vi 변화 방향 — 감소 요인 상위' in s3                                    # line is not CRP-dominated
     assert '원인 후보 순 변화(보정값 차이 제외)의 부호' in s3 and 'pixel vi 는 A' in s1
     for text in (s1, s3):                                                          # no sentence says the pixel vi direction is "increase"
@@ -1056,7 +1062,7 @@ def test_r18_1_a_kind_that_goes_the_same_way_keeps_the_vi_direction_wording(real
     doc = copy.deepcopy(real)
     finish(doc, [mk(doc, 0, 'pair', {'line': -0.01, 'pixel': -0.003})], crp=-0.001)
     s3 = all_text(new_section(render(doc), 's3'))
-    assert 'pixel: vi 변화 방향은 감소 입니다' in s3 and '원인 후보 순 변화 방향' not in s3.replace('\'원인 후보 순 변화 방향\' 이라고', '')
+    assert 'pixel vi 감소' in s3 and '원인 후보 순 변화 방향' not in s3.replace('\'원인 후보 순 변화 방향\' 이라고', '')
 
 
 def test_r18_2_the_fixture_identity_holds_for_every_finished_fixture(real):

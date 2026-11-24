@@ -67,8 +67,26 @@ canvas.mapcv,canvas.dcv{display:block;width:100%;height:auto;background:var(--su
 canvas.mapcv{cursor:pointer}
 .mnote{font-size:12px;color:var(--text-muted)}.mwarn{border-left:4px solid var(--pixel);background:var(--trade);padding:4px 8px;margin:4px 0;font-size:12px}
 .s2row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}.s2map{position:sticky;top:44px}
-.s3two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}.s3two .bgrid{grid-template-columns:1fr}
-.s3cards .bcard{cursor:pointer}.s3side{position:sticky;top:44px;align-self:start}
+.s3two{display:grid;grid-template-columns:minmax(340px,470px) minmax(0,1fr);gap:14px;align-items:start}.s3two .bgrid{grid-template-columns:1fr;gap:0}
+.s3side{position:sticky;top:44px;align-self:start}
+.dirs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0 10px}.dirnote{margin:4px 0;color:var(--text-secondary)}
+.dir{border:1px solid var(--border);border-left:5px solid var(--line);border-radius:8px;background:var(--surface-0);padding:8px 12px;cursor:pointer}
+.dir.pixel{border-left-color:var(--pixel)}.dir.on{box-shadow:0 0 0 2px var(--text-primary) inset}
+.dir .k{font-size:15px;font-weight:700}.dir .v{font-size:22px;font-weight:800;margin:0 8px}.dir .v.up{color:var(--up)}.dir .v.down{color:var(--down)}
+.dir .how{font-size:13.5px;color:var(--text-secondary);margin-top:2px}.dir .how b{color:var(--text-primary)}
+.klist[hidden]{display:none}
+.crow{display:grid;grid-template-columns:34px minmax(0,1fr) 104px 18px;gap:6px;align-items:center;background:var(--surface-0);border:1px solid var(--border);border-radius:7px;padding:6px 8px;margin:4px 0;cursor:pointer}
+.crow:hover{border-color:var(--common)}.crow.selcard{background:var(--sel);border-color:#e0b04a;box-shadow:0 0 0 1px #e0b04a inset}
+.crow .rk{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;font-weight:800;font-size:13px;color:#fff;background:var(--up)}
+.crow .rk.dn{background:var(--down)}.crow .rk.op{background:var(--surface-1);border:2px solid var(--up);color:var(--up)}.crow .rk.dn.op{border-color:var(--down);color:var(--down)}
+.crow .ct{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crow .cw{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .shb{height:6px;background:var(--grid);border-radius:3px;margin-top:3px;overflow:hidden}.crow .shb i{display:block;height:100%;background:var(--up)}.crow .shb i.dn{background:var(--down)}
+.crow .cv{text-align:right}.crow .cv .sh{font-size:11px;color:var(--text-muted)}
+.crow .tw{color:var(--text-muted);font-size:13px;text-align:center;user-select:none;cursor:pointer}.crow.open .tw{transform:rotate(90deg)}
+.crow .cexp{grid-column:1/-1;border-top:1px dashed var(--border);margin-top:4px;padding-top:5px;font-size:12px;display:none;cursor:default}
+.crow.open .cexp,body.print .crow .cexp{display:block}
+.crow .cexp h4{margin:6px 0 2px}.crow .cexp .bp{margin:2px 0}
+.cref{margin:4px 0;padding:2px 8px}a.ctl{color:inherit;text-decoration:none}
 .dpanel{border:1px solid var(--border);border-radius:8px;padding:8px 12px;background:var(--surface-0);max-height:calc(100vh - 60px);overflow:auto}
 .dp-h{margin:2px 0 4px}.dp-h .dpk{margin-right:10px;white-space:nowrap}
 .dpr{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(36px,1fr) 88px;gap:8px;align-items:center;padding:3px 5px;border-radius:4px;cursor:pointer}
@@ -84,8 +102,7 @@ canvas.mapcv{cursor:pointer}
 .report p{margin:0 0 5px}.summary{border-left:3px solid var(--text-secondary);padding:6px 12px;margin:6px 0 10px;background:var(--surface-0)}.summary p{margin:0 0 3px}
 .how,.ex,.note{background:var(--surface-0);border:1px solid var(--border);border-radius:6px;padding:6px 12px;margin:8px 0}.ex{border-style:dashed}.ex td{border:0;padding:1px 14px 1px 0;text-align:left}.ex table{width:auto}
 .bgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
-.bcard{background:var(--surface-0);border:1px solid var(--border);border-radius:8px;padding:8px 12px}.bcard .bt{font-size:15px}.bcard h4{margin:8px 0 2px}.bcard .bp{margin:2px 0}
-.bt2 th,.bt2 td{padding:2px 5px;font-size:12px}.bcard.selcard{border:2px solid #e0b04a;background:var(--trade)}.unitcell{outline:2px solid #e0b04a}
+.bt2 th,.bt2 td{padding:2px 5px;font-size:12px}.unitcell{outline:2px solid #e0b04a}
 a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto;height:auto;border:1px solid var(--border);border-radius:14px;padding:0 10px;margin:0 2px;color:var(--text-primary);text-decoration:none}
 .warn{color:#b07d00}.bar{display:inline-block;height:9px;background:var(--common);border-radius:2px;vertical-align:middle}.bar.line{background:var(--line)}.bar.pixel{background:var(--pixel)}
 .small{font-size:11px}
@@ -94,7 +111,8 @@ a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto
 @media (max-width:1180px){.s2row{grid-template-columns:1fr}.s2map{position:static}}
 @media (max-width:1100px){.s3two{grid-template-columns:1fr}.s3side{position:static}.dpanel{max-height:none}}
 @media (max-width:1180px){.g3,.g2,.kpis{grid-template-columns:1fr}}
-@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}}
+@media (max-width:900px){.dirs{grid-template-columns:1fr}}
+@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}.klist[hidden]{display:block!important}.crow .cexp{display:block}}
 """
 
 # The page works without the script (sections 1 and 5 are plain HTML). The script reads the location hash, marks the selected rows
@@ -118,9 +136,10 @@ function parseHash(){var o={kv:{},flags:{}},h=location.hash.replace(/^#/,'');if(
   var k=p.slice(0,i),v=p.slice(i+1);try{v=decodeURIComponent(v);}catch(e){}
   if((k==='unit'||k==='cand')&&!(UNIT.test(v)&&BU[v]))return;   /* the hash is untrusted: a unit must be a known cause candidate id */
   if(k==='to'&&!TOS.test(v))return;
+  if(k==='k'&&v!=='line'&&v!=='pixel')return;   /* the list kind of 3 */
   if(k==='it'&&!IT[v])return;
   o.kv[k]=v;});return o;}
-function buildHash(o){var parts=[];['sel','cand','q','eq','more','layer','unit','it','to'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
+function buildHash(o){var parts=[];['sel','cand','q','eq','more','layer','unit','it','k','to'].forEach(function(k){if(o.kv[k]!=null&&o.kv[k]!=='')parts.push(k+'='+encodeURIComponent(o.kv[k]));});
  ['print','demo'].forEach(function(k){if(o.flags[k])parts.push(k);});return parts.length?'#'+parts.join('&'):'#';}
 function setHash(o){var h=buildHash(o);if(h==='#'){if(location.hash){history.replaceState(null,'',location.pathname+location.search);}apply();}else{location.hash=h;}}
 function selOf(o){var s=o.kv.sel;if(!s&&o.flags.demo&&D.demo_pair)s='pair:'+D.demo_pair;if(!s)return null;
@@ -422,6 +441,13 @@ function markUnit(st,d){var i,els=document.querySelectorAll('.selcard,.unitcell'
  var u=st.kv.unit;if(!u)return;
  var uc=unitCellOf(u);if(uc){var rows=document.querySelectorAll('tr[data-row="corr"]');for(i=0;i<rows.length;i++){if(rows[i].getAttribute('data-el')!==uc.e)continue;
   var cs=rows[i].querySelectorAll('td[data-layer]');for(var j=0;j<cs.length;j++){if(cs[j].getAttribute('data-layer')===uc.l)cs[j].classList.add('unitcell');}}}}
+/* the list of 3 shows one kind (the band cell, #k=, or the kind of the open candidate); #print shows both */
+function drawKinds(st,sel){var lists=document.querySelectorAll('.klist'),i,k=st.kv.k,u,c,pr=!!st.flags.print;if(!lists.length)return;
+ if(!k){u=st.kv.unit||(sel&&sel.t==='unit'?sel.id:'')||(st.kv.cand||'');
+  c=u?($(u)||$('rest-line-'+u)||$('rest-pixel-'+u)):null;c=c&&c.closest?c.closest('.klist'):null;k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
+ for(i=0;i<lists.length;i++)lists[i].hidden=!pr&&lists[i].getAttribute('data-k')!==k;
+ var ds=document.querySelectorAll('.dir');for(i=0;i<ds.length;i++)ds[i].classList.toggle('on',ds[i].getAttribute('data-k')===k);
+ document.documentElement.setAttribute('data-kind',k||'');}
 function msel(st,sel){var uc=unitCellOf(st.kv.unit);return sel||(uc?{t:'electrode',id:uc.e,implied:true}:null);}
 function cellCards(st){var p=$('cell-cards');if(!p||p.getAttribute('data-has')!=='1')return;var e,l,sel=selOf(st),uc=unitCellOf(st.kv.unit);
  if(sel&&sel.t==='electrode'&&st.kv.layer){e=sel.id;l=st.kv.layer;}else if(uc){e=uc.e;l=uc.l;}else{p.innerHTML='';return;}
@@ -429,7 +455,7 @@ function cellCards(st){var p=$('cell-cards');if(!p||p.getAttribute('data-has')!=
  p.innerHTML='<b>이 칸('+esc(e)+' · '+esc(l)+')의 원인 후보</b> → '+(cc.length?cc.map(function(b){return '<a class="lk" href="#unit='+encodeURIComponent(b.id)+'&to=s3">'+esc(b.title)+'</a>';}).join(' · ')+(oth?' <span class="muted">(카드에 없는 '+oth+' 개는 3 의 "기타" 표)</span>':''):
   cs.length?'<span class="muted">카드에 없는 원인 후보 '+cs.length+' 개 (3 의 "기타" 표)</span>':'<span class="muted">이 칸에 배정된 원인 후보 없음</span>');}
 function mapKey(st,sel){return [sel?sel.t+':'+sel.id:'',st.kv.layer||'',st.kv.unit||''].join('|');}
-function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel),ms=msel(st,sel),mpr=related(ms);filterRows(st);drawFind(st);drawPartners(ms);drawDetail(st,sel);
+function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel),ms=msel(st,sel),mpr=related(ms);filterRows(st);drawFind(st);drawPartners(ms);drawDetail(st,sel);drawKinds(st,sel);
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
  var lab=$('sel-label');if(lab)lab.innerHTML=label(sel,st.kv.unit);var clr=$('sel-clear');if(clr)clr.disabled=!(sel||st.kv.unit);
  mark(ms,mpr);markUnit(st,detailOf(st,sel));cellCards(st);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');
@@ -461,11 +487,13 @@ document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest
  var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
  if(t.closest('#dp-zoom')){DS.zoom=!DS.zoom;var zbtn=$('dp-zoom');if(zbtn)zbtn.textContent=DS.zoom?'전체 보기':'확대 보기';drawDetailMaps();return;}
- var card=t.closest('.s3cards .bcard');   /* a click on a card (not on its links, buttons or folds) opens its detail */
- if(card&&!t.closest('a,button,summary,details,input,select')&&UNIT.test(card.id)&&BU[card.id]){var cs2=parseHash();cs2.kv.sel='unit:'+card.id;delete cs2.kv.cand;delete cs2.kv.it;cs2.flags.demo=false;setHash(cs2);}});
+ var tw=t.closest('.crow .tw');if(tw){tw.closest('.crow').classList.toggle('open');return;}   /* ▸ unfolds the card in place */
+ var dirc=t.closest('.dir');if(dirc){var ks=parseHash();ks.kv.k=dirc.getAttribute('data-k');setHash(ks);return;}   /* the band switches the list */
+ var card=t.closest('.s3cards .crow');   /* a click on a card row (not on its links, buttons, folds or unfolded part) opens its detail */
+ if(card&&!t.closest('a,button,summary,details,input,select,.cexp')&&UNIT.test(card.id)&&BU[card.id]){var cs2=parseHash();cs2.kv.sel='unit:'+card.id;delete cs2.kv.cand;delete cs2.kv.it;cs2.flags.demo=false;setHash(cs2);}});
 document.addEventListener('change',function(ev){var t=ev.target;if(t&&t.id==='dp-layer'){DS.layer=t.value;
  var ls=document.querySelectorAll('.dplay'),i;for(i=0;i<ls.length;i++)ls[i].textContent=DS.layer;drawDetailMaps();}});
-document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target&&ev.target.getAttribute&&ev.target.getAttribute('data-href'))ev.target.click();});
+document.addEventListener('keydown',function(ev){var t=ev.target;if((ev.key==='Enter'||ev.key===' ')&&t&&t.getAttribute&&(t.getAttribute('data-href')||t.classList.contains('dir')||t.classList.contains('tw'))){ev.preventDefault();t.click();}});
 var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.eq=qi.value;else delete st.kv.eq;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
 var pqi=$('pf-q');if(pqi)pqi.addEventListener('input',function(){var st=parseHash();if(pqi.value)st.kv.q=pqi.value;else delete st.kv.q;delete st.kv.more;
