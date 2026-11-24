@@ -1,0 +1,80 @@
+"""rexp/T5: the local PC runner (bundles/local/simcompare_job_local.py + run_local.cmd + README_local.md)."""
+import re
+import sys
+from pathlib import Path
+
+from test_etx_flow import _builder, run_runner, template_base
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCAL = ROOT / 'bundles/local'
+
+
+def _edit_text(path):
+    text = path.read_text(encoding='utf-8')
+    return text[text.index('# ============================== EDIT BELOW'):text.index('# ============================== EDIT ABOVE')]
+
+
+def test_local_runner_is_current_parses_and_has_the_local_edit_block(tmp_path):
+    module = _builder()
+    module.main(['--out-dir', str(tmp_path)])
+    built = tmp_path / 'local/simcompare_job_local.py'
+    committed = LOCAL / 'simcompare_job_local.py'
+    assert committed.read_bytes() == built.read_bytes(), f'{committed} is stale; rebuild with --overwrite'
+    text = built.read_text(encoding='utf-8')
+    compile(text, str(built), 'exec')
+    edit = _edit_text(built)
+    assert re.search(r'^STEPS = \["01", "02", "08"\]', edit, re.M)
+    assert re.search(r'^LOG_FILE = "runs/simcompare_job_local.log"', edit, re.M)
+    assert 'simcompare_job_etx' not in edit
+    assert '로컬 PC 통합 실행기(Windows·macOS). numpy·Pillow 가 있는 Python 으로 실행. 설치 불필요. 사용법: bundles/local/README_local.md' in text
+    assert 'run_jobs(_flow_jobs)' in text and text.count('PAYLOAD_SHA256 = ') == 1
+
+
+def test_local_edit_block_differs_from_the_etx_edit_block_only_in_steps_and_log_file():
+    module = _builder()
+    etx, local = module.FLOW_EDIT.splitlines(), module.LOCAL_EDIT.splitlines()
+    assert len(etx) == len(local)
+    changed = [(a.split(' =')[0], b.split(' =')[0]) for a, b in zip(etx, local) if a != b]
+    assert changed == [('STEPS', 'STEPS'), ('LOG_FILE', 'LOG_FILE')]
+
+
+def test_local_runner_dry_run_lists_the_01_02_08_jobs(tmp_path):
+    module = _builder()
+    base = template_base(tmp_path)
+    out = tmp_path / 'runner/job.py'
+    module.build(out, header=module.LOCAL_HEADER, flow=(module.LOCAL_EDIT, module.FLOW_FUNC))
+    text = out.read_text(encoding='utf-8').replace('BASE_DIR = None', f'BASE_DIR = {str(base)!r}', 1)
+    marker = '# ============================== EDIT ABOVE'
+    out.write_text(text.replace(marker, 'DRY_RUN = True\n' + marker, 1), encoding='utf-8')
+    result = run_runner(sys.executable, out, tmp_path)
+    log = (base / 'runs/simcompare_job_local.log').read_text(encoding='utf-8')
+    assert result.returncode == 0, result.stderr
+    assert 'flow: DRY_RUN = True' in log and 'start ' not in log
+    for command in ('import-hotspots', 'compare2 ', 'ledger ', 'ledger-report'):
+        assert re.search(r'  job \[\w+\] ' + re.escape(command), log), command
+    for command in ('import-electrode-assets', 'candidates-change', 'compare-windows', 'compare2-report'):
+        assert not re.search(r'  job \[\w+\] ' + re.escape(command), log), command
+
+
+def test_run_local_cmd_content():
+    path = LOCAL / 'run_local.cmd'
+    raw = path.read_bytes()
+    raw.decode('ascii')                                   # ASCII only: no code page issue on any Windows
+    text = raw.decode('ascii')
+    order = ['SIMCOMPARE_PYTHON', 'where python', r'%USERPROFILE%\anaconda3\python.exe', r'%USERPROFILE%\miniconda3\python.exe',
+             r'%ProgramData%\anaconda3\python.exe', r'%LOCALAPPDATA%\anaconda3\python.exe']
+    positions = [text.index(item) for item in order]
+    assert positions == sorted(positions)
+    assert 'import numpy, PIL' in text and 'exit /b 2' in text
+    assert '-X utf8 "%~dp0simcompare_job_local.py"' in text
+    assert 'exit /b %RC%' in text and text.count('pause') >= 3
+    assert r'runs\simcompare_job_local.log' in text
+    for forbidden in ('setx', 'reg add', 'reg.exe', 'runas', 'pip install'):
+        assert forbidden not in text.lower()
+
+
+def test_readme_local_covers_the_agreed_points():
+    text = (LOCAL / 'README_local.md').read_text(encoding='utf-8')
+    for needle in ('numpy', 'Pillow', 'real.yaml', 'compare2.yaml', 'BASE_DIR', 'run_local.cmd', 'python simcompare_job_local.py',
+                   'data/ledger_report/ledger_report.html', '260', '32 GB', '.simcompare_pkg_', 'C:/'):
+        assert needle in text, needle

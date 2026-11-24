@@ -3,6 +3,7 @@
 두 제품(reference, target)의 hotspot 결과를 가져와 line/pixel 면적을 비교하고, 설계자가 짝지은 위치의 국부 ΔCA를 계산한다. 환경에 따라 아래 둘 중 한 절만 따른다.
 
 - **ETX (Linux 서버)**: 큰 자료. 통합 실행기 `.py` 파일 하나를 올려 설정 파일 두 개(`real.yaml`, `compare2.yaml`)로 돌린다.
+- **로컬 PC (Windows·macOS)**: `bundles/local/` — 설치 없이 실행기 하나(`simcompare_job_local.py`, 단계 01·02·08).
 - **Windows 폐쇄망 (CMD)**: 설치 ZIP으로 오프라인 설치한 뒤 명령을 직접 친다.
 
 모든 명령의 옵션, 오류 코드, 출력 스키마, 내부 동작은 [상세 레퍼런스](usage_reference.md)에 있다.
@@ -259,6 +260,10 @@ vertical short(층 사이 단락)는 두 끝점 층 사이 거리 d보다 지름
 | `map_coverage_incomplete` | 지도 coverage가 불완전해 ROI가 막혔다. 기대 case 목록 없이 import했다면 1회차부터 다시 한다 |
 | `electrode_role_required_for_matching` | role이 없는 전극이 있다. `electrode_role_policy: electrode_id`를 쓰고 03 단계부터 다시 돈다 |
 | `comparison_recovery_unreadable`, `local_delta_recovery_unreadable` | 강제 종료 뒤 복구 기록을 읽을 수 없다. 아무것도 지우지 않고 멈춘 것이므로 원인(권한·I/O)을 고쳐 다시 실행한다. 복구 방법은 레퍼런스의 공개 절 참조 |
+
+## 로컬 PC (Windows·macOS, 설치 없음)
+
+numpy·Pillow 가 있는 Python(Anaconda base 등)만 있으면 된다. `bundles/local/simcompare_job_local.py` 는 ETX 통합 실행기와 같은 흐름이고 `STEPS = ["01", "02", "08"]` 만 기본이다. Windows 에서는 `run_local.cmd` 를 더블클릭한다. 준비물·폴더 구조·주의는 [`bundles/local/README_local.md`](../bundles/local/README_local.md).
 
 ## Windows 폐쇄망 (CMD)
 

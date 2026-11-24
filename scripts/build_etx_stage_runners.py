@@ -4,6 +4,7 @@
   JOBS 를 직접 적지 않는다. EDIT 블록의 STEPS 와 설정 파일 두 개(real.yaml, compare2.yaml)에서 simcompare.etx_flow 가 JOBS 를 만든다.
 - bundles/etx/simcompare_job_models_01~05_*.py: 다제품(모델별 리포트) 회차별 실행기.
 - bundles/etx/dv/simcompare_job_NN_*.py: ΔV·위험도 흐름 회차별 실행기.
+- bundles/local/simcompare_job_local.py: 로컬 PC(Windows·macOS) 통합 실행기. 통합 실행기와 같은 흐름이고 EDIT 블록의 STEPS(01·02·08)·LOG_FILE 만 다르다.
 모든 파일은 같은 simcompare 묶음을 담는다. 경로는 실행기 BASE_DIR(작업 폴더) 기준 상대 경로다.
 사용 순서와 사용자가 미리 둘 파일은 docs/usage.md "ETX(Linux GPU 서버) 실행 순서"를 따른다."""
 from __future__ import annotations
@@ -60,6 +61,17 @@ CONFIRMED_DIR = "data/confirmed"    # 05 출력
 LOCAL_DIR = "data/local"            # 06 출력
 REPORT_DIR = "data/compare2_report" # 07 출력(있으면 08 보고서가 링크)
 '''
+
+LOCAL_NAME = "local"   # 로컬 PC 실행기: bundles/local/simcompare_job_local.py
+LOCAL_HEADER = [
+    "로컬 PC 통합 실행기(Windows·macOS). numpy·Pillow 가 있는 Python 으로 실행. 설치 불필요. 사용법: bundles/local/README_local.md",
+]
+_STEPS_LINE = '''STEPS = ["01", "03", "02", "diag", "04", "06", "07", "08"]   # 08 보고서만 필요 = ["01", "02", "08"], 보고서만 다시 = ["08"]\n'''
+_LOG_LINE = 'LOG_FILE = "runs/simcompare_job_etx.log"\n'
+LOCAL_STEPS_LINE = 'STEPS = ["01", "02", "08"]               # 처음 = 01 02 08, 보고서만 다시 = ["08"]\n'
+LOCAL_LOG_LINE = 'LOG_FILE = "runs/simcompare_job_local.log"\n'
+assert _STEPS_LINE in FLOW_EDIT and _LOG_LINE in FLOW_EDIT
+LOCAL_EDIT = FLOW_EDIT.replace(_STEPS_LINE, LOCAL_STEPS_LINE, 1).replace(_LOG_LINE, LOCAL_LOG_LINE, 1)
 
 FLOW_FUNC = '''def _flow_jobs():
     """EDIT 블록 값과 설정 파일에서 JOBS 를 만들고(simcompare.etx_flow), 고른 단계의 이전 출력 폴더를 data/_runs/<RUN_TAG>/ 로 옮긴다."""
@@ -254,8 +266,12 @@ DV_STAGES = {
 }
 
 
-def _build_all(out_dir, overwrite):
+def _build_all(out_dir, overwrite, local_dir=None):
     results = []
+    if local_dir is None:
+        local_dir = Path(out_dir) / "local"
+    results.append(build(Path(local_dir) / f"simcompare_job_{LOCAL_NAME}.py", overwrite=overwrite, header=LOCAL_HEADER,
+                         flow=(LOCAL_EDIT, FLOW_FUNC)))
     results.append(build(Path(out_dir) / f"simcompare_job_{FLOW_NAME}.py", overwrite=overwrite, header=FLOW_HEADER,
                          flow=(FLOW_EDIT, FLOW_FUNC)))
     for sub, stages in (("", STAGES), ("dv", DV_STAGES)):
@@ -269,9 +285,14 @@ def _build_all(out_dir, overwrite):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out-dir", default=str(ROOT / "bundles/etx"))
+    ap.add_argument("--local-dir", default=None,
+                    help="로컬 PC 실행기 폴더. 기본: --out-dir 이 기본값이면 bundles/local, 아니면 <out-dir>/local")
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args(argv)
-    print(json.dumps(_build_all(a.out_dir, a.overwrite), indent=2))
+    local_dir = a.local_dir
+    if local_dir is None and Path(a.out_dir) == ROOT / "bundles/etx":
+        local_dir = str(ROOT / "bundles/local")
+    print(json.dumps(_build_all(a.out_dir, a.overwrite, local_dir), indent=2))
 
 
 if __name__ == "__main__":

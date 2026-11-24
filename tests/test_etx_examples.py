@@ -172,7 +172,7 @@ def test_compare2_example_config_loads_and_the_integrated_runner_is_registered()
 
 def test_stage_runners_are_current_and_parse(tmp_path):
     _module().main(['--out-dir', str(tmp_path)])
-    built = sorted(tmp_path.rglob('*.py'))
+    built = sorted(p for p in tmp_path.rglob('*.py') if p.relative_to(tmp_path).parts[0] != 'local')   # the local PC runner: tests/test_local_runner.py
     assert len(built) == 1 + len(_stages()) + len(_module().DV_STAGES)
     for path in built:
         committed = ROOT / 'bundles/etx' / path.relative_to(tmp_path)
