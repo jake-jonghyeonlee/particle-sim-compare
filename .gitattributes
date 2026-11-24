@@ -1,1 +1,2 @@
-*.cmd text eol=crlf
+# .cmd files are stored with CRLF as-is (no conversion), so a raw download from GitHub also has CRLF (cmd labels/call need it)
+*.cmd -text

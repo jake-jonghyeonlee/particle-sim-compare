@@ -96,8 +96,12 @@ def test_run_local_cmd_flow_is_static_consistent():
     assert try_block.index('import numpy, PIL') < try_block.index('set "PY=%~1"')
 
 
-def test_gitattributes_forces_crlf_for_cmd_files():
-    assert '*.cmd text eol=crlf' in (ROOT / '.gitattributes').read_text(encoding='utf-8').splitlines()
+def test_gitattributes_keeps_cmd_files_as_stored_crlf():
+    # `-text`: no EOL conversion, so the stored blob keeps CRLF and a raw GitHub download has CRLF too
+    assert '*.cmd -text' in (ROOT / '.gitattributes').read_text(encoding='utf-8').splitlines()
+    for path in (ROOT / 'bundles/local/run_local.cmd', ROOT / 'scripts/install_offline.cmd'):
+        raw = path.read_bytes()
+        assert raw.count(b'\r\n') == raw.count(b'\n') > 0, path
 
 
 def test_builder_treats_a_relative_out_dir_like_the_default(tmp_path, monkeypatch):
