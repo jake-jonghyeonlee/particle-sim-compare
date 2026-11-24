@@ -1211,20 +1211,39 @@ def _layout_maps(ctx):
             '<p class="muted" style="margin:3px 0">표의 칸을 누르면 그 레이어로 바뀌고 그 전극이 굵게 보입니다.</p></div>' % _pair_of_maps('s2'))
 
 
+def _cno_only_fold(doc, cno_rows):
+    """rexp/T9: the CNO-only names (no DL1 electrode folder, only CNO cases) apart from the main table: electrode, in A, in B, the layers
+    where CNO was seen. A row keeps data-el / data-href so it selects and highlights like a row of the main table (data-row="corr": the
+    search filters it too)."""
+    body = []
+    for row in cno_rows:
+        layers = sorted(row.get('layer_state') or {})
+        body.append('<tr %s data-row="corr"><td class="l nm"><b>%s</b></td><td>%s</td><td>%s</td><td class="l">%s</td></tr>' % (
+            _el_attrs(row['electrode']), esc(row['electrode']), '●' if row.get('present_a') else '—', '●' if row.get('present_b') else '—',
+            esc(', '.join(layers)) if layers else muted('—')))
+    return ('<details id="cno-only"><summary>CNO 전용 전극 %d 개 — DL1 전극 폴더가 없고 CNO 케이스에만 있는 이름 ▸</summary>'
+            '<p class="small" id="note-cno-only">CNO 전용 %d 개 — 레이어 칸은 CNO 가 관측된 층이며, 비어 있어도 없다는 뜻은 아닙니다.</p>'
+            '<div class="scrl"><table id="cno-table"><thead><tr><th class="l">전극</th><th>A</th><th>B</th><th class="l">관측 층</th></tr></thead>'
+            '<tbody>%s</tbody></table></div></details>' % (len(cno_rows), len(cno_rows), ''.join(body)))
+
+
 def _section2(ctx):
     doc = ctx.doc
-    rows = doc['electrodes']
+    all_rows = doc['electrodes']
+    # rexp/T1 (G1) + rexp/T9: CNO-only electrodes (no DL1 folder, only CNO cases) are not rows of the main table; they are listed in a
+    # fold under it. The columns (layers) and the counts of the main table come from the other rows only.
+    cno_only_rows = [row for row in all_rows if row.get('cno_only')]
+    rows = [row for row in all_rows if not row.get('cno_only')]
     layers = ctx.sort_layers({layer for row in rows for layer in (row.get('layer_state') or {})})
-    # rexp/T1 (G1): CNO-only electrodes are not "no DL1 folder" rows; they are counted and explained apart
-    cno_only_rows = [row for row in rows if row.get('cno_only')]
-    unverified = [row for row in rows if row.get('layer_state_status') != 'verified' and not row.get('cno_only')]
+    unverified = [row for row in rows if row.get('layer_state_status') != 'verified']
     counts = {code: sum(1 for row in rows if row.get('status') == code) for code in ('common', 'new', 'removed')}
     moved = sum(1 for row in rows if row.get('moved'))
-    summary = ('공통 <b>%d</b> · 신규 <b>%d</b> · 제거 <b>%d</b> · 레이어 이동 <b>%d</b>%s'
+    summary = ('공통 <b>%d</b> · 신규 <b>%d</b> · 제거 <b>%d</b> · 레이어 이동 <b>%d</b>%s%s'
                '<span class="muted"> — 대응은 전극 이름 기준입니다. 이름이 바뀐 전극은 \'제거 + 신규\' 로 보입니다.</span>' % (
                    counts['common'], counts['new'], counts['removed'], moved,
                    (' · 확인 불가 <b>%d</b>' % sum(1 for row in rows if row.get('status') == 'unverifiable')) if any(
-                       row.get('status') == 'unverifiable' for row in rows) else ''))
+                       row.get('status') == 'unverifiable' for row in rows) else '',
+                   (' · CNO 전용 <b>%d</b> (아래 접기)' % len(cno_only_rows)) if cno_only_rows else ''))
     # nothing new, removed or moved (and nothing unverifiable): the table says "no difference", so it is folded; any difference opens it
     unchanged = not (counts['new'] or counts['removed'] or moved or unverified)
     if unchanged:
@@ -1241,9 +1260,6 @@ def _section2(ctx):
     elif unverified:
         out.append('<div class="band info" id="band-no-dl1"><b>확인 불가</b> — DL1 전극 목록이 없어 %d 개 전극의 레이어 대응(공통·신규·제거·이동)을 '
                    '확인하지 못했습니다. 빈 칸은 없다는 뜻이 아니라 알 수 없다는 뜻입니다.</div>' % len(unverified))
-    if cno_only_rows:
-        out.append('<p class="small" id="note-cno-only">CNO 전용 %d 개 — 레이어 칸은 CNO 가 관측된 층이며, 비어 있어도 없다는 뜻은 아닙니다.</p>'
-                   % len(cno_only_rows))
     out.append('<p class="legend" id="corr-legend"><span class="st-both">●</span> 양쪽 · <span class="st-a">◀</span> A 만 · '
                '<span class="st-b">▶</span> B 만 · <span class="st-mv">⇄</span> 레이어 이동(A 전용 칸 ⇄<sub>A</sub> → B 전용 칸 ⇄<sub>B</sub>)'
                ' &nbsp;|&nbsp; 전극 이름 칸 색: <span class="hd-up3">증가</span> <span class="hd-dn3">감소</span> '
@@ -1251,7 +1267,7 @@ def _section2(ctx):
                    ' <span id="corr-observed" class="muted">· <b>관찰 기준</b>: DL1 이 없는 전극의 기호는 관찰된 레이어만 보인 것입니다(없다는 뜻이 아님)</span>')
                    if unverified and not list_complete else ''))
     out.append('<p class="searchrow"><label>전극 검색 <input type="search" id="el-q" autocomplete="off" placeholder="이름 일부"></label> '
-               '<span id="el-count" class="muted">%d / %d</span></p>' % (len(rows), len(rows)))
+               '<span id="el-count" class="muted">%d / %d</span> <span class="muted small">(본 표 + CNO 전용 표)</span></p>' % (len(all_rows), len(all_rows)))
     head = ''.join('<th data-layer="%s" data-href="%s" title="이 레이어를 선택">%s</th>' % (esc(layer), esc(_href('layer:' + layer)), esc(layer))
                    for layer in layers)
     body = []
@@ -1262,12 +1278,14 @@ def _section2(ctx):
         badge = esc(next((c['label'] for c in doc.get('electrode_status') or [] if c['code'] == row.get('status')), row.get('status')))
         body.append('<tr %s data-row="corr"><td class="l nm%s"><b>%s</b></td><td class="l"><span class="badge">%s</span></td>%s</tr>' % (
             _el_attrs(row['electrode']), shade,
-            esc(row['electrode']) + (' <span class="badge" title="CNO 케이스에만 있는 전극">CNO</span>' if row.get('cno_only') else ''), badge,
+            esc(row['electrode']), badge,
             ''.join(_layer_cell(row, layer, verified) for layer in layers)))
     out.append('<div class="s2row"><div class="s2tab"><div class="scrl"><table id="corr-table"><thead><tr><th class="l">전극</th><th class="l">상태</th>%s</tr></thead><tbody>%s</tbody></table></div></div>%s</div>' % (
         head, ''.join(body), _layout_maps(ctx)))
     if unchanged:
         out.append('</details>')
+    if cno_only_rows:
+        out.append(_cno_only_fold(doc, cno_only_rows))
     out.append('<p class="small" id="cell-cards" data-has="%d"></p>' % (1 if ctx.bundles is not None else 0))
     out.append('<div id="el-partners" class="partners"><p class="muted">전극 이름이나 칸을 누르면 그 전극의 상대 전극과 쌍 Δ 가 이 자리에 나옵니다. '
                '이 목록은 스크립트가 그립니다.</p></div>')

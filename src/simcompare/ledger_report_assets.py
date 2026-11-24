@@ -252,7 +252,11 @@ function topPairs(){var seen={},out=[];['line','pixel'].forEach(function(k){(D.t
 function byLayer(a,b){var ra=LORD.indexOf(a),rb=LORD.indexOf(b);ra=ra<0?LORD.length:ra;rb=rb<0?LORD.length:rb;return ra-rb||(a<b?-1:(a>b?1:0));}
 function pairLayer(p){var i,ks;for(i=0;i<p.items.length;i++){if(p.items[i].al&&MP.layers.indexOf(p.items[i].al)>=0)return p.items[i].al;}
  ks=Object.keys(layersOfPair(p)).sort(byLayer);for(i=0;i<ks.length;i++){if(MP.layers.indexOf(ks[i])>=0)return ks[i];}return null;}
-function mapCfg(st,sel){var L=st.kv.layer,t,ul=null;if(MP.layers.indexOf(L)<0)L=null;
+function tableLayers(){var o={},hs=document.querySelectorAll('#corr-table th[data-layer]'),i;for(i=0;i<hs.length;i++)o[hs[i].getAttribute('data-layer')]=1;return o;}
+function mapCfg(st,sel){var L=st.kv.layer,t,ul=null,want=null,TL=tableLayers();
+ if(MP.layers.indexOf(L)<0){if(L&&TL[L])want=L;L=null;}   /* rexp/T9: a layer of the table with no picture is kept, so the map says so */
+ if(!want&&sel&&sel.t==='layer'&&MP.layers.indexOf(sel.id)<0&&TL[sel.id])want=sel.id;
+ if(want&&!(sel&&sel.t==='unit'))return {layer:want,single:want};
  if(sel&&sel.t==='unit'&&BU[sel.id]){ul=BU[sel.id].layers.filter(function(l){return MP.layers.indexOf(l)>=0;});   /* M3: only the layers of the cause candidate */
   if(!L||ul.indexOf(L)<0)L=ul[0]||null;}
  if(!L&&sel&&sel.t==='layer'&&MP.layers.indexOf(sel.id)>=0)L=sel.id;
@@ -293,7 +297,7 @@ function mapCheck(){var root=document.documentElement,v=DECODED?(ANYFAIL?'failed
 /* section 2 map: electrode outlines of one layer, the selected electrode bold; the unit window of the product as a yellow dashed box */
 function render(cv,r,L,sel){var e=DEC[r+'|'+L],note=noteOf(cv);cv._drawn=0;cv._lay=L;
  if(note)note.innerHTML='';
- if(!e||!e.w){cv.hidden=true;if(note)note.textContent='이 제품에는 이 레이어 지도가 없습니다';return 0;}
+ if(!e||!e.w){cv.hidden=true;if(note)note.textContent=MP.layers.indexOf(L)<0?'이 층은 DL1 layout 그림이 없습니다':'이 제품에는 이 레이어 지도가 없습니다';return 0;}
  if(!e.ok){cv.hidden=true;if(note)note.innerHTML=failList(r,L);return 0;}
  var w=e.w,h=e.h,g=cv.getContext('2d'),i,x,y,v;cv.width=w;cv.height=h;cv.hidden=false;
  var sc=MP.sides[r].sc,mm=e.m.it||e.m.el,bk=(mm&&mm.b)||1;cv._phys=sc?[w*bk*sc.p,h*bk*sc.p]:null;cv._sc=sc||null;cv._win=null;
@@ -547,7 +551,11 @@ function cellCards(st){var p=$('cell-cards');if(!p||p.getAttribute('data-has')!=
  p.innerHTML='<b>이 칸('+esc(e)+' · '+esc(l)+')의 원인 후보</b> → '+(cc.length?cc.map(function(b){return '<a class="lk" href="#unit='+encodeURIComponent(b.id)+'&to=s3">'+esc(b.title)+'</a>';}).join(' · ')+(oth?' <span class="muted">(카드에 없는 '+oth+' 개는 3 의 "기타" 표)</span>':''):
   cs.length?'<span class="muted">카드에 없는 원인 후보 '+cs.length+' 개 (3 의 "기타" 표)</span>':'<span class="muted">이 칸에 배정된 원인 후보 없음</span>');}
 function mapKey(st,sel){return [sel?sel.t+':'+sel.id:'',st.kv.layer||'',st.kv.unit||''].join('|');}
-function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel),ms=msel(st,sel),mpr=related(ms);filterRows(st);drawFind(st);drawPartners(ms);drawDetail(st,sel);drawKinds(st,sel);
+var CNOK='';
+function openCno(ms){var d=$('cno-only'),k=ms&&ms.t==='electrode'&&!ms.implied?ms.id:'',rows,i;   /* rexp/T9: a CNO-only electrode chosen from anywhere opens its fold (once per choice) */
+ if(!d||k===CNOK)return;CNOK=k;if(!k)return;rows=d.querySelectorAll('tr[data-el]');
+ for(i=0;i<rows.length;i++){if(rows[i].getAttribute('data-el')===k){openUp(d);return;}}}
+function apply(){var st=parseHash(),sel=selOf(st),pr=related(sel),ms=msel(st,sel),mpr=related(ms);filterRows(st);openCno(ms);drawFind(st);drawPartners(ms);drawDetail(st,sel);drawKinds(st,sel);
  if(st.flags.print){document.body.className='print';var d=document.querySelectorAll('details');for(var i=0;i<d.length;i++)d[i].open=true;}
  var lab=$('sel-label');if(lab)lab.innerHTML=label(sel,st.kv.unit);var clr=$('sel-clear');if(clr)clr.disabled=!(sel||st.kv.unit);
  mark(ms,mpr);markUnit(st,detailOf(st,sel));cellCards(st);drawCond(sel,pr,st);document.documentElement.setAttribute('data-sel',sel?sel.t+':'+sel.id:'');

@@ -473,8 +473,36 @@ def test_rexp_cno_only_row_has_no_folder_mark_no_band_count_and_no_move(tmp_path
     assert 'CNO 전용 1 개 — 레이어 칸은 CNO 가 관측된 층이며, 비어 있어도 없다는 뜻은 아닙니다.' in s2
     assert s2.count('id="band-no-dl1"') == 1 and 'DL1 전극 폴더에 없는 전극 1 개는' in s2     # Vint only
     assert '레이어 이동 <b>0</b>' in s2 and '⇄' not in s2_row(page, 'Shift')
-    assert '(DL1 폴더 없음)' not in s2_row(page, 'Shift') and 'CNO</span>' in s2_row(page, 'Shift')
-    assert 'CNO 관측 층' in s2_cell(page, 'Shift', 'L1')[1] or 'CNO 관측 층' in s2_row(page, 'Shift')
+    assert '(DL1 폴더 없음)' not in s2_row(page, 'Shift')
+
+
+def test_rexp_t9_cno_only_names_leave_the_main_table_and_sit_in_a_fold(tmp_path):
+    """rexp/T9 (e): no row and no layer column of the main table for a CNO-only name; the fold lists it (electrode, A, B, observed layers)."""
+    doc = corr_doc()
+    _el(doc, 'Shift').update(cno_only=True, status='new', present_a=False, present_b=True, layer_state={'PXL': 'b_only', 'pcnt': 'b_only'},
+                             layer_state_status='unverified', moved=None)
+    page = html_of(run_report(tmp_path, doc)[1])
+    s2 = section(page, 2)
+    main = re.search(r'<table id="corr-table">.*?</table>', s2, re.S).group(0)
+    assert 'data-el="Shift"' not in main and 'data-layer="pcnt"' not in main
+    fold = re.search(r'<details id="cno-only">.*?</details>', s2, re.S).group(0)
+    assert 'CNO 전용 전극 1 개 — DL1 전극 폴더가 없고 CNO 케이스에만 있는 이름' in fold
+    assert 'data-el="Shift"' in fold and 'data-href="#sel=electrode:Shift"' in fold and 'PXL, pcnt' in fold and '<td>—</td><td>●</td>' in fold
+    assert 'CNO 전용 <b>1</b>' in s2 and 'id="cno-only"' not in section(html_of(run_report(tmp_path, corr_doc(), name='no_cno')[1]), 2)
+
+
+def test_chrome_rexp_t9_an_electrode_hash_of_a_cno_only_name_opens_the_fold(tmp_path):
+    doc = corr_doc()
+    _el(doc, 'Shift').update(cno_only=True, status='common', present_a=True, present_b=True, layer_state={'PXL': 'b_only'},
+                             layer_state_status='unverified', moved=None)
+    page = run_report(tmp_path, doc)[1] / 'ledger_report.html'
+    dom, text = dump_dom(page, '#sel=electrode:Shift')
+    assert 'data-err' not in dom.root
+    assert any(t == 'details' and a.get('id') == 'cno-only' and 'open' in a for t, a in dom.elements)
+    dom, text = dump_dom(page, '#')
+    assert not any(t == 'details' and a.get('id') == 'cno-only' and 'open' in a for t, a in dom.elements)
+    dom, text = dump_dom(page, '#eq=Shift')
+    assert '<span id="el-count" class="muted">1 / %d</span>' % len(doc['electrodes']) in text
 
 
 def test_rexp_without_cno_only_rows_the_note_is_absent(tmp_path):
@@ -696,6 +724,17 @@ def test_chrome_map_hash_states_draw_with_the_self_check_passed(tmp_path):
     assert dom.root['data-map-layer'] == 'PXL'
     dom, text = dump_dom(page, '#sel=layer:PXL')
     assert dom.root['data-map-layer'] == 'PXL'
+
+
+def test_chrome_rexp_t9_a_table_layer_without_a_picture_says_so_instead_of_an_empty_picture(tmp_path):
+    doc = corr_doc()
+    _el(doc, 'Data')['layer_state']['NOPIC'] = 'both'
+    doc, page = chrome_page(tmp_path, doc=doc)
+    dom, text = dump_dom(page, '#layer=NOPIC')
+    body = re.sub(r'<script.*?</script>', '', text, flags=re.S)
+    assert 'data-err' not in dom.root and dom.root['data-map-layer'] == 'NOPIC' and body.count('이 층은 DL1 layout 그림이 없습니다') == 2
+    dom, text = dump_dom(page, '#layer=L1')
+    assert dom.root['data-map-layer'] == 'L1' and '이 층은 DL1 layout 그림이 없습니다' not in re.sub(r'<script.*?</script>', '', text, flags=re.S)
 
 
 def test_chrome_a_map_whose_pixel_counts_do_not_match_gets_a_warning_and_a_list(tmp_path):
