@@ -965,19 +965,22 @@ def test_chrome_pair_detail_has_the_equation_the_item_table_and_the_places(tmp_p
     assert '연결 영역 A → B' not in items and 'id="cond-detail"' in panel and 'id="dp-layer"' in panel and 'id="dp-zoom"' in panel     # no occurrence data in this fixture: that column is left out
     assert 'id="dp-eq-all"' in panel and '쌍 <b>' in panel and '<b>전체</b>' in panel and 'data-dp-sumcheck=' in panel     # rexp/T7: two scopes + the item sum check (this fixture's pair delta is not the sum of its items: see the narrative tests)
     assert 'id="dcv-A"' in panel and 'id="dcv-B"' in panel                         # ④ A | B side by side
-    assert dom.root['data-dp-drawn'] == '2' and dom.root['data-dp-zoom'] == '1' and dom.root['data-map-check'] == 'passed'
+    assert dom.root['data-dp-drawn'] == '2' and dom.root['data-dp-zoom'] == '0' and dom.root['data-map-check'] == 'passed'       # rexp/T10: the whole view first
     assert 'id="ov-btn"' not in text and '겹쳐 보기' not in text
 
 
-def test_chrome_zoom_follows_the_pixels_of_the_pair_and_the_button_shows_the_whole_map(tmp_path):
+ZOOM_CLICK = "setTimeout(function(){document.getElementById('dp-zoom').click();setTimeout(function(){},200);},400);"
+
+
+def test_chrome_zoom_starts_whole_and_the_button_enlarges_around_the_pixels_of_the_pair(tmp_path):
     doc, page = chrome_t8(tmp_path, name='zoom')
     dom, text = dump_dom(page, '#sel=pair:P1')
-    x0, y0, x1, y1 = [int(v) for v in dom.root['data-dp-box'].split(',')]
-    assert 0 <= x0 < x1 <= 40 and 0 <= y0 < y1 <= 40 and (x1 - x0, y1 - y0) != (40, 40)       # the crop is the box of the pair pixels + a margin
-    assert int(dom.root['data-dp-pixels'].split(',')[0]) > 0
-    script = ("setTimeout(function(){document.getElementById('dp-zoom').click();setTimeout(function(){},200);},400);")
-    dom2, text2 = run_in_page(page, '#sel=pair:P1', script, tag='rexp_zoom')
-    assert dom2.root['data-dp-zoom'] == '0' and dom2.root['data-dp-box'] == '0,0,40,40' and 'data-err' not in dom2.root       # [전체 보기]
+    assert dom.root['data-dp-zoom'] == '0' and dom.root['data-dp-box'] == '0,0,40,40' and 'data-err' not in dom.root       # (b) the default is the whole map
+    assert int(dom.root['data-dp-pixels'].split(',')[0]) > 0 and dom.root['data-dp-zbox']             # the dashed "확대 영역" box is planned
+    dom2, text2 = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='rexp_zoom')
+    x0, y0, x1, y1 = [int(v) for v in dom2.root['data-dp-box'].split(',')]
+    assert dom2.root['data-dp-zoom'] == '1' and 0 <= x0 < x1 <= 40 and 0 <= y0 < y1 <= 40 and (x1 - x0, y1 - y0) != (40, 40) and 'data-err' not in dom2.root
+    assert x1 - x0 == y1 - y0                                                                          # a square crop
 
 
 def widened_b_report(tmp_path, name='wide'):
@@ -1014,21 +1017,107 @@ def widened_b_report(tmp_path, name='wide'):
 
 def test_chrome_maps_of_different_sizes_crop_each_product_to_its_own_box(tmp_path):
     page = widened_b_report(tmp_path)
-    dom, text = dump_dom(page, '#sel=pair:P1')                                       # (a) a pair that both products have
-    assert 'data-err' not in dom.root and dom.root['data-dp-drawn'] == '2'
+    dom, text = dump_dom(page, '#sel=pair:P1')                                       # (a) a pair that both products have: whole first
+    assert 'data-err' not in dom.root and dom.root['data-dp-drawn'] == '2' and dom.root['data-dp-zoom'] == '0'
+    assert dom.root['data-dp-box'] == '0,0,40,40' and dom.root['data-dp-boxb'] == '0,0,100,40'
+    dom, text = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='rexp_wide1')
     ax0, ay0, ax1, ay1 = [int(v) for v in dom.root['data-dp-box'].split(',')]
     bx0, by0, bx1, by1 = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '1'
     assert 0 <= ax0 < ax1 <= 40 and 0 <= bx0 < bx1 <= 100 and ax1 - ax0 >= 1 and bx1 - bx0 >= 1 and ay1 > ay0 and by1 > by0
     dom, text = dump_dom(page, '#sel=pair:P5')                                       # (b) only B has it, far right of what A can show
     assert 'data-err' not in dom.root and dom.root['data-dp-pixels'] == '0,%s' % dom.root['data-dp-pixels'].split(',')[1]
     assert int(dom.root['data-dp-pixels'].split(',')[1]) > 0
-    assert dom.root['data-dp-box'] == '0,0,40,40'                                     # A: its whole map
-    bx0, by0, bx1, by1 = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
-    assert bx0 >= 40 and bx1 <= 100 and bx1 - bx0 >= 1                                # B: its own box, inside its own map
+    assert dom.root['data-dp-box'] == '0,0,40,40' and dom.root['data-dp-boxb'] == '0,0,100,40'
     assert '이 제품에는 이 쌍의 영역이 없습니다' in text
-    script = ("setTimeout(function(){document.getElementById('dp-zoom').click();setTimeout(function(){},200);},400);")
-    dom2, text2 = run_in_page(page, '#sel=pair:P5', script, tag='rexp_wide')         # (c) [전체 보기]: both whole
-    assert dom2.root['data-dp-box'] == '0,0,40,40' and dom2.root['data-dp-boxb'] == '0,0,100,40' and 'data-err' not in dom2.root
+    dom2, text2 = run_in_page(page, '#sel=pair:P5', ZOOM_CLICK, tag='rexp_wide')     # (c) enlarged: BOTH products enlarge, the same place of the unit window
+    assert 'data-err' not in dom2.root and dom2.root['data-dp-zoom'] == '1'
+    ax0, ay0, ax1, ay1 = [int(v) for v in dom2.root['data-dp-box'].split(',')]
+    bx0, by0, bx1, by1 = [int(v) for v in dom2.root['data-dp-boxb'].split(',')]
+    assert (ax1 - ax0, ay1 - ay0) != (40, 40) or (bx1 - bx0, by1 - by0) != (100, 40)
+    assert ax1 - ax0 >= 1 and ay1 - ay0 >= 1 and bx1 - bx0 >= 1 and by1 - by0 >= 1 and 0 <= bx0 and bx1 <= 100 and 0 <= ax0 and ax1 <= 40
+
+
+def painted_report(tmp_path, name, size, el_paint, it_paint):
+    """rexp/T10: both products get `size` x `size` maps; the P1 items are painted by it_paint(arr) and the electrodes by el_paint(arr, number-of-Data,
+    number-of-ELVDD) on every layer."""
+    import numpy as np
+    from test_ledger_report_maps import counts_of, png_of
+    doc = comp_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, changes=map_changes())
+    mj = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+    for role, side in mj['sides'].items():
+        p1 = [row['number'] for row in side['items'] if row['pair_id'] == 'P1'][0]
+        els = {row['name']: row['number'] for row in side['electrodes']}
+        for m in side['maps']:
+            arr = np.zeros((size, size), dtype=np.uint16)
+            if m['kind'] == 'it':
+                it_paint(arr, p1)
+            else:
+                el_paint(arr, els['Data'], els['ELVDD'])
+            (maps / m['file']).write_bytes(png_of(arr))
+            m['shape_yx'] = [size, size]
+            m['numbers'] = counts_of(arr)
+        side['frame']['shape_yx'] = [size, size]
+    (maps / 'ledger_maps.json').write_text(json.dumps(mj, sort_keys=True), encoding='utf-8')
+    out = tmp_path / ('out_' + name)
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) in (0, 3)
+    return out / 'ledger_report.html'
+
+
+def _lines(arr, d, v):
+    arr[600:602, 100:1100] = d                                  # a 2 px wide horizontal electrode
+    arr[100:1100, 300] = v                                      # a 1 px wide vertical electrode
+
+
+def _strip(arr, n):
+    arr[700:706, 300:1000] = n                                  # a long thin failure area (700 x 6 px)
+
+
+def test_chrome_t10_a_long_area_is_followed_in_squares_and_both_products_move_together(tmp_path):
+    page = painted_report(tmp_path, 'long', 1200, _lines, _strip)
+    dom, text = dump_dom(page, '#sel=pair:P1')
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '0' and dom.root['data-dp-pan'].startswith('1/')
+    n = int(dom.root['data-dp-pan'].split('/')[1])
+    assert n > 1
+    script = ("setTimeout(function(){var d=document.documentElement,q=function(i){return document.getElementById(i);};q('dp-zoom').click();"
+              "setTimeout(function(){d.setAttribute('data-first',d.getAttribute('data-dp-box')+'|'+d.getAttribute('data-dp-boxb')+'|'+d.getAttribute('data-dp-pan'));"
+              "q('dp-pan-r').click();setTimeout(function(){},200);},200);},400);")
+    dom2, text2 = run_in_page(page, '#sel=pair:P1', script, tag='rexp_long')
+    assert 'data-err' not in dom2.root and dom2.root['data-dp-zoom'] == '1' and dom2.root['data-first'].endswith('|1/%d' % n)
+    first = [int(v) for v in dom2.root['data-first'].split('|')[0].split(',')]
+    second = [int(v) for v in dom2.root['data-dp-box'].split(',')]
+    assert dom2.root['data-dp-pan'] == '2/%d' % n and dom2.root['data-dp-box'] == dom2.root['data-dp-boxb']      # both products see the same place
+    assert first[2] - first[0] == first[3] - first[1] and second[2] - second[0] == second[3] - second[1]        # squares
+    assert second[0] > first[0] and second[1] == first[1]                                                       # moved along the long axis only
+
+
+def test_chrome_t10_shrinking_keeps_a_thin_electrode_outline_unbroken(tmp_path):
+    page = painted_report(tmp_path, 'thin', 1200, _lines, _strip)
+    dom, text = dump_dom(page, '#sel=pair:P1')                                      # whole view of a 1200 px map: s = 0.5
+    e1a, e2a = [int(v) for v in dom.root['data-dp-outline'].split(',')[0].split('/')]
+    assert 'data-err' not in dom.root and e1a >= 450 and e2a >= 450               # about the screen length of each line (1000 px x 0.5), not half of it
+
+
+def test_chrome_t10_a_crop_inside_an_electrode_draws_no_false_outline_at_its_edge(tmp_path):
+    def block(arr, d, v):
+        arr[100:1100, 100:1100] = d
+    page = painted_report(tmp_path, 'block', 1200, block, _strip)
+    dom, text = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='rexp_block')
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '1'
+    assert dom.root['data-dp-outline'].split(',')[0] == '0/0'                      # the crop lies inside the face of Data: no outline
+
+
+def test_chrome_t10_the_same_place_is_enlarged_on_both_products_of_different_size(tmp_path):
+    page = widened_b_report(tmp_path)
+    dom, text = run_in_page(page, '#sel=pair:P5', ZOOM_CLICK, tag='rexp_same')    # P5 exists in B only (x 60-98 of 100)
+    rel = [float(v) for v in dom.root['data-dp-rel'].split(',')]
+    a = [int(v) for v in dom.root['data-dp-box'].split(',')]
+    b = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    assert 'data-err' not in dom.root and (a[2] - a[0], a[3] - a[1]) != (40, 40) and (b[2] - b[0], b[3] - b[1]) != (100, 40)
+    rcx = (rel[0] + rel[2]) / 2
+    assert abs((a[0] + a[2]) / 2 / 40 - rcx) < 0.2 and abs((b[0] + b[2]) / 2 / 100 - rcx) < 0.2         # the same relative place (windows are pushed inside the map)
 
 
 def test_item_occurrence_accepts_only_non_negative_ints():

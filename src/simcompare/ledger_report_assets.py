@@ -67,7 +67,7 @@ canvas.mapcv,canvas.dcv{display:block;width:100%;height:auto;background:var(--su
 canvas.mapcv{cursor:pointer}
 .mnote{font-size:12px;color:var(--text-muted)}.mwarn{border-left:4px solid var(--pixel);background:var(--trade);padding:4px 8px;margin:4px 0;font-size:12px}
 .s2row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}.s2map{position:sticky;top:44px}
-.s3two{display:grid;grid-template-columns:minmax(340px,470px) minmax(0,1fr);gap:14px;align-items:start}.s3two .bgrid{grid-template-columns:1fr;gap:0}
+.s3two{display:grid;grid-template-columns:minmax(340px,400px) minmax(0,1fr);gap:14px;align-items:start}.s3two .bgrid{grid-template-columns:1fr;gap:0}
 .s3side{position:sticky;top:44px;align-self:start;height:calc(100vh - 54px);min-height:380px}
 .dirs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0 10px}.dirnote{margin:4px 0;color:var(--text-secondary)}
 .dir{border:1px solid var(--border);border-left:5px solid var(--line);border-radius:8px;background:var(--surface-0);padding:8px 12px;cursor:pointer}
@@ -91,7 +91,8 @@ canvas.mapcv{cursor:pointer}
 #s3-detail{flex:1;min-height:0;display:flex;flex-direction:column}#s3-detail>p{margin:8px 12px}
 .dph{flex:none;padding:7px 12px;border-bottom:1px solid var(--border);display:flex;gap:4px 12px;align-items:baseline;flex-wrap:wrap}.dph .dpt{font-size:15px;font-weight:800}.dph .dpk{white-space:nowrap}
 .dmaps{flex:none;padding:5px 12px 4px;border-bottom:1px solid var(--border)}.dmaps h4{margin:0 0 2px}
-.dmaps canvas.dcv{max-height:24vh;object-fit:contain}
+.dmaps canvas.dcv{aspect-ratio:1/1;height:30vh;width:auto;max-width:100%;margin:0 auto;object-fit:contain}
+button.zbtn{border:2px solid var(--text-primary);font-weight:700;border-radius:14px;padding:1px 12px}button.pch{padding:0 8px;border-radius:10px}.pan{display:inline-flex;gap:4px;align-items:center}.pan[hidden]{display:none}
 .dtabs{flex:none;display:flex;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--border)}
 .dtab{border:1px solid var(--border);border-bottom:0;border-radius:7px 7px 0 0;background:var(--surface-1);color:var(--text-secondary);padding:3px 12px;font-size:12.5px}
 .dtab.on{background:var(--surface-0);color:var(--text-primary);font-weight:700;position:relative;top:1px}
@@ -124,8 +125,8 @@ a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto
 .cbtns{margin-left:8px}a.lkbtn{display:inline-block;border:1px solid var(--border);border-radius:14px;padding:0 9px;margin-right:4px;font-size:11px;color:var(--text-primary);text-decoration:none;background:var(--surface-1)}a.lkbtn:hover{background:var(--sel)}
 @media (max-width:1180px){.bgrid{grid-template-columns:1fr}}
 @media (max-width:1180px){.s2row{grid-template-columns:1fr}.s2map{position:static}}
-@media (max-width:1100px){.s3two{grid-template-columns:1fr}.s3side{position:static;height:auto}.dpanel{height:auto;overflow:visible}#s3-detail{display:block}.dtb{overflow:visible}.dmaps canvas.dcv{max-height:none}}
-body.print .s3side{position:static;height:auto}body.print .dpanel{height:auto;overflow:visible}body.print #s3-detail{display:block}body.print .dtb{overflow:visible}body.print .dmaps canvas.dcv{max-height:none}
+@media (max-width:1100px){.s3two{grid-template-columns:1fr}.s3side{position:static;height:auto}.dpanel{height:auto;overflow:visible}#s3-detail{display:block}.dtb{overflow:visible}.dmaps canvas.dcv{aspect-ratio:auto;height:auto;width:100%;max-width:none}}
+body.print .s3side{position:static;height:auto}body.print .dpanel{height:auto;overflow:visible}body.print #s3-detail{display:block}body.print .dtb{overflow:visible}body.print .dmaps canvas.dcv{aspect-ratio:auto;height:auto;width:100%;max-width:none}
 @media (max-width:1180px){.g3,.g2,.kpis{grid-template-columns:1fr}}
 @media (max-width:900px){.dirs{grid-template-columns:1fr}}
 @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}.klist[hidden]{display:block!important}.crow .cexp{display:block}}
@@ -366,7 +367,7 @@ function onMapClick(cv,ev){var r=cv.getAttribute('data-role'),q=pickAt(cv,ev),x=
  var e=DEC[r+'|'+cv._lay];if(!e||!e.ok||x<0||y<0||x>=e.w||y>=e.h)return;
  var en=e.el?e.el[y*e.w+x]:0;if(en&&SD[r].els[en]){var st=parseHash();st.kv.sel='electrode:'+SD[r].els[en];st.flags.demo=false;delete st.kv.cand;delete st.kv.it;setHash(st);}}
 /* ---- detail panel of section 3 (rexp/T2): cause candidate -> its pairs -> failure types of a pair -> the places of the pair on the maps ---- */
-var PRES={both:'증감',gone:'없어짐',new:'새로 생김'},DS={u:null,p:null,layer:null,zoom:true,key:'',tab:'items'},DGEN=0,SHOWPAIRS=30;
+var PRES={both:'증감',gone:'없어짐',new:'새로 생김'},DS={u:null,p:null,layer:null,zoom:false,pan:0,key:'',tab:'items'},DGEN=0,SHOWPAIRS=30;
 var TINY_FRACTION=0.01;   /* rexp/T7: a pair (or item) is "미미" when its value is 0 or smaller than this fraction of the total variation it belongs to */
 var EMPTY='<p class="muted" id="dp-empty">원인 후보 카드나 4 결과의 쌍을 누르면 이 자리에 그 후보의 쌍, 불량 방식, 자리가 나옵니다.</p>';
 function kchip(k){return '<span class="chip" style="background:var(--'+(k==='pixel'?'pixel':'line')+')"></span>';}
@@ -442,13 +443,14 @@ function pairLayers(p){var o={};['A','B'].forEach(function(r){var its=SD[r].item
 function defaultLayer(p,ls,itId){var i,l,its;if(itId&&ITL[itId]&&ls.indexOf(ITL[itId])>=0)return ITL[itId];
  its=p.items.slice().sort(function(x,y){return Math.abs(y.d||0)-Math.abs(x.d||0);});   /* the layer of the item with the largest |delta| that has a map */
  for(i=0;i<its.length;i++){l=ITL[its[i].id];if(l&&ls.indexOf(l)>=0)return l;}return ls[0];}
-function zoomText(){return DS.zoom?'전체 보기':'확대로 돌아가기';}
+function zoomText(){return DS.zoom?'전체 보기':'확대 보기';}
 function legendHtml(p){var k=p.kind==='pixel'?'pixel':'line',   /* swatches: a tinted face (--c at --a) with the outline --b */
  sw=function(c,a,b){return '<i style="--c:var(--'+c+');--a:'+a+';--b:'+b+'"></i>';};
- return '<div class="leg" id="dp-legend"><span>'+sw('e1','.25','2px solid var(--e1)')+esc(p.e[0]||'')+'</span>'+
-  (p.e.length>1?'<span>'+sw('e2','.25','2px solid var(--e2)')+esc(p.e[1])+'</span>':'')+
-  '<span>'+sw('mid','.35','1px solid var(--common)')+'다른 전극</span>'+
-  '<span>'+sw(k,'.85','1px solid var(--text-secondary)')+'이 쌍의 불량 영역('+k+')</span></div>';}
+ return '<div class="leg" id="dp-legend"><span>'+sw('e1','.28','2px solid var(--e1)')+esc(p.e[0]||'')+'</span>'+
+  (p.e.length>1?'<span>'+sw('e2','.28','2px solid var(--e2)')+esc(p.e[1])+'</span>':'')+
+  '<span>'+sw('common','.22','1px solid var(--common)')+'다른 전극</span>'+
+  '<span>'+sw(k,'.85','1px solid var(--text-secondary)')+'이 쌍의 불량 영역('+k+')</span>'+
+  '<span>'+sw('text-primary','0','1.5px dashed var(--text-primary)')+'확대 영역</span></div>';}
 /* the places of the chosen pair: A | B in one row (layer chips, a small link for the whole map), the legend under them */
 function placesHtml(d){var p=d.p?PB[d.p]:null;if(!p)return '';
  var h='<div class="mctl"><b>자리 보기</b> — 쌍 <b>'+esc(p.e.join('–'))+'</b>';
@@ -457,7 +459,8 @@ function placesHtml(d){var p=d.p?PB[d.p]:null;if(!p)return '';
  if(!ls.length){DS.layer=null;return h+'</div><p class="muted" id="dp-nolayer">이 쌍의 영역이 지도에 없습니다(지도 자료에 이 쌍의 item 번호가 없음).</p>';}
  if(!DS.layer||ls.indexOf(DS.layer)<0)DS.layer=defaultLayer(p,ls,parseHash().kv.it);
  return h+' · 레이어 <span id="dp-layer" class="lchs">'+ls.map(function(l){return '<button type="button" class="lch'+(l===DS.layer?' on':'')+'" data-l="'+esc(l)+'">'+esc(l)+'</button>';}).join('')+'</span>'+
-  '<span class="sp"></span><button type="button" class="linkbtn" id="dp-zoom">'+zoomText()+'</button></div>'+
+  '<span class="sp"></span><button type="button" class="zbtn" id="dp-zoom">'+zoomText()+'</button>'+
+  '<span class="pan" id="dp-pan" hidden><button type="button" class="pch" id="dp-pan-l" aria-label="이전 칸">◀</button><span id="dp-pan-t" class="small"></span><button type="button" class="pch" id="dp-pan-r" aria-label="다음 칸">▶</button></span></div>'+
   '<div class="mpair">'+['A','B'].map(function(r){return '<figure class="mfig"><figcaption><b>'+(r==='A'?'기준 A':'대상 B')+'</b> · <span class="dplay">'+esc(DS.layer)+'</span></figcaption><canvas class="dcv" id="dcv-'+r+'" data-role="'+r+'" width="1" height="1" role="img" aria-label="'+(r==='A'?'기준 A':'대상 B')+' 지도" hidden></canvas><div class="mnote"></div></figure>';}).join('')+'</div>'+legendHtml(p);}
 function bbox(e,r,pid){var memo={},n=0,x0=1e9,y0=1e9,x1=-1,y1=-1,w=e.w,i,v,z,x,y,it;if(!e.it)return {n:0};
  for(i=0;i<e.it.length;i++){v=e.it[i];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===pid);}if(!z)continue;
@@ -468,12 +471,19 @@ function blend(d,o,col,a){d[o]=d[o]*(1-a)+col[0]*a;d[o+1]=d[o+1]*(1-a)+col[1]*a;
    a light face and a 1 px outline for every electrode, the two electrodes of the pair in their own colours (--e1, --e2: 25 % face, 2 px outline),
    the failure areas of the pair in the kind colour (85 %) with a 1 px dark border. A map pixel of the pair is never lost when the crop is shrunk. */
 var DRAWPX=600;
-function drawCrop(cv,e,r,p,x0,y0,x1,y1){var cw=x1-x0,ch=y1-y0,g=cv.getContext('2d'),w=e.w,h=e.h,col=p.kind==='pixel'?CC.pixel:CC.line,memo={},x,y,v,z,it,si,o,i,q,
+/* rexp/T10: an electrode outline is judged on the ORIGINAL map (never on the crop edge, so a crop makes no false outline). Shrunk (s<1): a screen pixel
+   whose block of map pixels holds a border pixel is a border pixel (a thin electrode stays one unbroken line); enlarged (s>=1): the neighbours are read
+   from the map even beyond the crop. `mark` = a box (map px) drawn as a dashed "확대 영역" rectangle. */
+function drawCrop(cv,e,r,p,x0,y0,x1,y1,mark){var cw=x1-x0,ch=y1-y0,g=cv.getContext('2d'),w=e.w,h=e.h,col=p.kind==='pixel'?CC.pixel:CC.line,memo={},x,y,v,z,it,si,o,i,q,k,sx,sy,
   s=DRAWPX/Math.max(cw,ch),ow=Math.max(1,Math.round(cw*s)),oh=Math.max(1,Math.round(ch*s)),n1=0,n2=0,
-  dark=[col[0]*0.55,col[1]*0.55,col[2]*0.55],role={},rl=function(num){var k=role[num];if(k===undefined){var nm=SD[r].els[num];k=role[num]=(nm!==undefined&&nm===p.e[0])?1:((nm!==undefined&&p.e.length>1&&nm===p.e[1])?2:0);}return k;};
+  dark=[col[0]*0.55,col[1]*0.55,col[2]*0.55],role={},rl=function(num){var kk=role[num];if(kk===undefined){var nm=SD[r].els[num];kk=role[num]=(nm!==undefined&&nm===p.e[0])?1:((nm!==undefined&&p.e.length>1&&nm===p.e[1])?2:0);}return kk;};
  cv.width=ow;cv.height=oh;cv.hidden=false;
- var elD=new Uint16Array(ow*oh),itD=new Uint8Array(ow*oh);
- if(e.el){for(y=0;y<oh;y++){for(x=0;x<ow;x++){elD[y*ow+x]=e.el[(y0+Math.min(ch-1,Math.floor(y/s)))*w+x0+Math.min(cw-1,Math.floor(x/s))];}}}
+ var elD=new Uint16Array(ow*oh),itD=new Uint8Array(ow*oh),bp=new Uint8Array(ow*oh),bo=new Uint8Array(ow*oh),pr=new Uint8Array(ow*oh),shrink=s<1;
+ if(e.el&&!shrink){for(y=0;y<oh;y++){for(x=0;x<ow;x++){elD[y*ow+x]=e.el[(y0+Math.min(ch-1,Math.floor(y/s)))*w+x0+Math.min(cw-1,Math.floor(x/s))];}}}
+ if(e.el&&shrink){for(sy=y0;sy<y1;sy++){var qy=Math.min(oh-1,Math.floor((sy-y0)*s))*ow;for(sx=x0;sx<x1;sx++){v=e.el[sy*w+sx];if(!v)continue;k=rl(v);q=qy+Math.min(ow-1,Math.floor((sx-x0)*s));
+   var pri=k?2:1;if(pri>pr[q]){pr[q]=pri;elD[q]=v;}
+   if(isBorder(e.el,w,h,sx,sy,v,1)){if(k)bp[q]=k;else bo[q]=1;}}}}   /* the electrode of a block: a pair electrode first; its border flags come from the original map */
+ var elS=function(xx,yy){var ax=x0+Math.floor(xx/s),ay=y0+Math.floor(yy/s);return (ax<0||ay<0||ax>=w||ay>=h)?-1:e.el[ay*w+ax];};
  if(e.it){for(y=0;y<ch;y++){for(x=0;x<cw;x++){v=e.it[(y+y0)*w+x+x0];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===p.id);}
    if(z)itD[Math.min(oh-1,Math.floor(y*s))*ow+Math.min(ow-1,Math.floor(x*s))]=1;}}}   /* a source pixel of the pair marks its screen pixel (never lost by shrinking) */
  if(s>1){for(y=0;y<oh;y++){for(x=0;x<ow;x++){   /* enlarged: every screen pixel of a block of a pair pixel is the pair's */
@@ -482,29 +492,69 @@ function drawCrop(cv,e,r,p,x0,y0,x1,y1){var cw=x1-x0,ch=y1-y0,g=cv.getContext('2
  for(i=0;i<ow*oh;i++){d[i*4]=CC.bg[0];d[i*4+1]=CC.bg[1];d[i*4+2]=CC.bg[2];d[i*4+3]=255;}
  for(y=0;y<oh;y++){for(x=0;x<ow;x++){q=y*ow+x;o=q*4;
   v=elD[q];
-  if(v){var k=rl(v);
-   if(k===1)blend(d,o,CC.e1,0.25);else if(k===2)blend(d,o,CC.e2,0.25);else blend(d,o,CC.mid,0.35);
-   if(k&&isBorder(elD,ow,oh,x,y,v,2)){blend(d,o,k===1?CC.e1:CC.e2,1);if(k===1)n1++;else n2++;}
-   else if(!k&&isBorder(elD,ow,oh,x,y,v,1))blend(d,o,CC.common,0.7);}
+  if(v){k=rl(v);
+   if(k===1)blend(d,o,CC.e1,0.28);else if(k===2)blend(d,o,CC.e2,0.28);else blend(d,o,CC.common,0.22);}
+  var kb=0;   /* the outline of a pair electrode (2-3 px) and a thin grey outline of the others */
+  if(shrink){kb=bp[q]||(x>0&&bp[q-1])||(x+1<ow&&bp[q+1])||(y>0&&bp[q-ow])||(y+1<oh&&bp[q+ow])||0;
+   if(!kb&&bo[q])blend(d,o,CC.common,0.9);}
+  else if(v){if(k){if(elS(x-2,y)!==v||elS(x+2,y)!==v||elS(x,y-2)!==v||elS(x,y+2)!==v)kb=k;}
+   else if(elS(x-1,y)!==v||elS(x+1,y)!==v||elS(x,y-1)!==v||elS(x,y+1)!==v)blend(d,o,CC.common,0.9);}
+  if(kb){blend(d,o,kb===1?CC.e1:CC.e2,1);if(kb===1)n1++;else n2++;}
   if(itD[q]){blend(d,o,col,0.85);
    if(x<1||y<1||x+1>=ow||y+1>=oh||!itD[q-1]||!itD[q+1]||!itD[q-ow]||!itD[q+ow])blend(d,o,dark,1);}}}
- g.putImageData(img,0,0);cv.setAttribute('data-e1',String(n1));cv.setAttribute('data-e2',String(n2));}
-function cropOf(e,b){if(!b||!b.n)return null;   /* the box of THIS product's pixels + 20 % (>= 10 px), cut by THIS product's map; null = show the whole map */
- var mg=Math.max(10,Math.round(0.2*Math.max(b.x1-b.x0+1,b.y1-b.y0+1))),x0=Math.max(0,b.x0-mg),y0=Math.max(0,b.y0-mg),x1=Math.min(e.w,b.x1+1+mg),y1=Math.min(e.h,b.y1+1+mg);
- return (x1-x0>=1&&y1-y0>=1)?[x0,y0,x1,y1]:null;}
-function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},drawn=0,cnt={A:0,B:0},boxes={A:[],B:[]},ol={A:[0,0],B:[0,0]};
+ g.putImageData(img,0,0);
+ if(mark){var mx=(mark[0]-x0)*s,my=(mark[1]-y0)*s,mw=(mark[2]-mark[0])*s,mh=(mark[3]-mark[1])*s;   /* the area the zoom would show: a dashed box with a label */
+  if(mw<ow-2||mh<oh-2){g.save();g.font='bold 13px sans-serif';g.textBaseline='alphabetic';
+   var ly=my>16?my-5:my+mh+14;g.lineJoin='round';g.lineWidth=4;g.strokeStyle='rgba('+CC.bg[0]+','+CC.bg[1]+','+CC.bg[2]+',0.95)';g.setLineDash([]);g.strokeRect(mx+0.5,my+0.5,mw,mh);g.strokeText('확대 영역',mx+3,ly);
+   g.lineWidth=1.5;g.strokeStyle='rgb('+CC.text[0]+','+CC.text[1]+','+CC.text[2]+')';g.setLineDash([6,4]);g.strokeRect(mx+0.5,my+0.5,mw,mh);g.setLineDash([]);
+   g.fillStyle=g.strokeStyle;g.fillText('확대 영역',mx+3,ly);g.restore();}}
+ cv.setAttribute('data-e1',String(n1));cv.setAttribute('data-e2',String(n2));}
+/* rexp/T10: where a pair sits in the unit window (0-1) of each product, so that A and B show the SAME place even when their maps differ in size or origin.
+   relOf = the pair pixels of one product as a box in unit-window coordinates; pxOf = a unit-window point back to a map pixel of that product. */
+function mapGeo(r,e){var sc=MP.sides[r].sc,mm=e.m.it||e.m.el,bk=(mm&&mm.b)||1,o=(mm&&mm.o)||[0,0];return {sc:(sc&&sc.ws&&sc.ws[0]>0&&sc.ws[1]>0)?sc:null,bk:bk,o:o};}
+function relOf(r,e,b){var q=mapGeo(r,e),sc=q.sc;if(!b||!b.n)return null;
+ if(sc)return [(q.o[0]+b.x0*q.bk-sc.wo[0])/sc.ws[0],(q.o[1]+b.y0*q.bk-sc.wo[1])/sc.ws[1],(q.o[0]+(b.x1+1)*q.bk-sc.wo[0])/sc.ws[0],(q.o[1]+(b.y1+1)*q.bk-sc.wo[1])/sc.ws[1]];
+ return [b.x0/e.w,b.y0/e.h,(b.x1+1)/e.w,(b.y1+1)/e.h];}
+function pxOf(r,e,v){var q=mapGeo(r,e),sc=q.sc;
+ if(sc)return [(sc.wo[0]+v[0]*sc.ws[0]-q.o[0])/q.bk,(sc.wo[1]+v[1]*sc.ws[1]-q.o[1])/q.bk];
+ return [v[0]*e.w,v[1]*e.h];}
+function fitBox(cx,cy,sq,w,h){var bw=Math.min(sq,w),bh=Math.min(sq,h),x0=Math.round(cx-bw/2),y0=Math.round(cy-bh/2);   /* a square of sq px around the centre, pushed inside the map (the map is smaller: the whole side) */
+ x0=Math.max(0,Math.min(w-bw,x0));y0=Math.max(0,Math.min(h-bh,y0));return [x0,y0,x0+bw,y0+bh];}
+/* the zoom box of the pair: the union of both products' boxes + 20 % (at least 0.15 of the window); a long thin area (length / thickness > 3) is followed
+   in squares of 6 x its thickness, moving 80 % of a square per step (DS.pan = the step). null = the pair has no pixel on either map (no zoom). */
+function zoomPlan(es,p){var rb={},u=null,len,thick,uw,uh,win,n=1,idx=0,isLong=false;
+ ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.w||!e.ok)return;var q=relOf(r,e,bbox(e,r,p.id));if(!q)return;rb[r]=q;
+  u=u?[Math.min(u[0],q[0]),Math.min(u[1],q[1]),Math.max(u[2],q[2]),Math.max(u[3],q[3])]:q.slice();});
+ if(!u)return null;
+ uw=u[2]-u[0];uh=u[3]-u[1];len=Math.max(uw,uh);thick=Math.max(Math.min(uw,uh),1e-6);
+ if(len/thick>3){isLong=true;var side=Math.min(1,Math.max(0.15,thick*6)),step=side*0.8,hz=uw>=uh,c,cc;
+  n=Math.max(1,Math.ceil((len-side)/step-1e-9)+1);idx=Math.max(0,Math.min(n-1,Math.floor(DS.pan)||0));DS.pan=idx;
+  c=hz?Math.min(u[0]+side/2+idx*step,u[2]-side/2):Math.min(u[1]+side/2+idx*step,u[3]-side/2);cc=hz?(u[1]+u[3])/2:(u[0]+u[2])/2;
+  win=hz?[c-side/2,cc-side/2,c+side/2,cc+side/2]:[cc-side/2,c-side/2,cc+side/2,c+side/2];}
+ else{var cx=(u[0]+u[2])/2,cy=(u[1]+u[3])/2,ww=Math.max(uw*1.4,0.15),hh=Math.max(uh*1.4,0.15);win=[cx-ww/2,cy-hh/2,cx+ww/2,cy+hh/2];DS.pan=0;}
+ var boxes={};
+ ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.w||!e.ok)return;var a=pxOf(r,e,[win[0],win[1]]),b=pxOf(r,e,[win[2],win[3]]),
+   sq=Math.max(1,Math.round(Math.max(Math.abs(b[0]-a[0]),Math.abs(b[1]-a[1]))));boxes[r]=fitBox((a[0]+b[0])/2,(a[1]+b[1])/2,sq,e.w,e.h);});
+ return {boxes:boxes,rel:win,n:n,i:idx,long:isLong};}
+function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},drawn=0,cnt={A:0,B:0},boxes={A:[],B:[]},zb={A:[],B:[]},ol={A:[0,0],B:[0,0]},plan=zoomPlan(es,p),zoom=!!(DS.zoom&&plan);
+ if(DS.zoom&&!plan)DS.zoom=false;   /* no pixel of the pair on either map: nothing to enlarge */
  ['A','B'].forEach(function(r){var e=es[r],cv=$('dcv-'+r);if(!cv)return;var note=noteOf(cv);note.innerHTML='';
   if(!e||!e.w){cv.hidden=true;note.textContent='이 제품에는 이 레이어 지도가 없습니다';return;}
   if(!e.ok){cv.hidden=true;note.innerHTML=failList(r,L);return;}
-  var b=bbox(e,r,p.id),c=DS.zoom?cropOf(e,b):null,x0=0,y0=0,x1=e.w,y1=e.h;cnt[r]=b.n||0;
+  var b=bbox(e,r,p.id),c=zoom&&plan.boxes[r]?plan.boxes[r]:null,x0=0,y0=0,x1=e.w,y1=e.h;cnt[r]=b.n||0;
+  if(plan&&plan.boxes[r])zb[r]=plan.boxes[r];
   if(c){x0=c[0];y0=c[1];x1=c[2];y1=c[3];}
   if(x1-x0<1||y1-y0<1){x0=0;y0=0;x1=Math.max(1,e.w);y1=Math.max(1,e.h);c=null;}   /* never a zero or negative canvas */
-  drawCrop(cv,e,r,p,x0,y0,x1,y1);drawn++;boxes[r]=[x0,y0,x1,y1];ol[r]=[cv.getAttribute('data-e1'),cv.getAttribute('data-e2')];
+  drawCrop(cv,e,r,p,x0,y0,x1,y1,(!c&&plan)?plan.boxes[r]:null);drawn++;boxes[r]=[x0,y0,x1,y1];ol[r]=[cv.getAttribute('data-e1'),cv.getAttribute('data-e2')];
   var sc=MP.sides[r].sc,mm=e.m.it||e.m.el,bk=(mm&&mm.b)||1;
   note.textContent=(b.n?'':'이 제품에는 이 쌍의 영역이 없습니다 · ')+(c?'확대 ':'전체 ')+(x1-x0)+' × '+(y1-y0)+' px'+(sc?' (≈ '+fnum((x1-x0)*bk*sc.p)+' × '+fnum((y1-y0)*bk*sc.p)+' µm)':'');});
- var box=boxes.A;root.setAttribute('data-dp-boxb',boxes.B.join(','));
+ var box=boxes.A,zbn=$('dp-zoom'),pan=$('dp-pan');root.setAttribute('data-dp-boxb',boxes.B.join(','));
+ if(zbn){zbn.textContent=zoomText();zbn.disabled=!plan;zbn.title=plan?'':'이 쌍의 영역이 두 제품 지도 어디에도 없어 확대할 수 없습니다';}
+ if(pan){pan.hidden=!(zoom&&plan.long);if(!pan.hidden){$('dp-pan-t').textContent=(plan.i+1)+' / '+plan.n+' (긴 영역 따라가기)';$('dp-pan-l').disabled=plan.i<=0;$('dp-pan-r').disabled=plan.i>=plan.n-1;}}
+ root.setAttribute('data-dp-pan',plan&&plan.long?(plan.i+1)+'/'+plan.n:'');root.setAttribute('data-dp-rel',plan?plan.rel.map(function(v){return v.toFixed(4);}).join(','):'');
+ root.setAttribute('data-dp-zbox',zb.A.join(','));root.setAttribute('data-dp-zboxb',zb.B.join(','));
  root.setAttribute('data-dp-drawn',String(drawn));root.setAttribute('data-dp-pixels',cnt.A+','+cnt.B);root.setAttribute('data-dp-box',box.join(','));
- root.setAttribute('data-dp-layer',L);root.setAttribute('data-dp-zoom',DS.zoom?'1':'0');
+ root.setAttribute('data-dp-layer',L);root.setAttribute('data-dp-zoom',zoom?'1':'0');
  root.setAttribute('data-dp-outline',ol.A.join('/')+','+ol.B.join('/'));   /* pair-electrode outline pixels drawn: A e1/e2, B e1/e2 */
  mapCheck();}
 function drawDetailMaps(){var p=DS.p?PB[DS.p]:null,root=document.documentElement;
@@ -515,7 +565,7 @@ function drawDetail(st,sel){var box=$('s3-detail'),root=document.documentElement
  var d=detailOf(st,sel),key=(d.u||'')+'|'+(d.p||'')+'|'+(st.kv.it||'')+'|'+(sel&&!d.u&&!d.p?sel.t+':'+sel.id:'')+(st.flags.print?'|print':'');
  root.setAttribute('data-dp-unit',d.u||'');root.setAttribute('data-dp-pair',d.p||'');
  if(key===DS.key&&box.getAttribute('data-drawn')==='1')return;   /* the same state: keep the panel (chosen layer, zoom, tab, scroll) */
- DS.key=key;if(DS.u!==d.u||DS.p!==d.p){DS.layer=null;DS.zoom=true;DS.tab=d.p?'items':'pairs';}   /* a new candidate or pair: the failure types of the pair (no pair: the pair list) */
+ DS.key=key;if(DS.u!==d.u||DS.p!==d.p){DS.layer=null;DS.zoom=false;DS.pan=0;DS.tab=d.p?'items':'pairs';}   /* a new candidate or pair: the failure types of the pair (no pair: the pair list) */
  DS.u=d.u;DS.p=d.p;box.setAttribute('data-drawn','1');
  if(!d.u&&!d.p){DGEN++;root.setAttribute('data-dp-drawn','0');
   box.innerHTML=sel&&sel.t==='pair'?'<p class="muted" id="dp-none">없는 쌍입니다.</p>':EMPTY;return;}
@@ -589,8 +639,9 @@ document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest
  var fb=t.closest('[data-f="more"]');if(fb){var fs=parseHash();fs.kv.more='1';setHash(fs);return;}
  var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
- if(t.closest('#dp-zoom')){DS.zoom=!DS.zoom;var zbtn=$('dp-zoom');if(zbtn)zbtn.textContent=zoomText();drawDetailMaps();return;}
- var lc=t.closest('#dp-layer .lch');if(lc){DS.layer=lc.getAttribute('data-l');   /* a layer chip of the places row */
+ if(t.closest('#dp-zoom')){DS.zoom=!DS.zoom;DS.pan=0;var zbtn=$('dp-zoom');if(zbtn)zbtn.textContent=zoomText();drawDetailMaps();return;}
+ if(t.closest('#dp-pan-l')||t.closest('#dp-pan-r')){DS.pan=Math.max(0,(DS.pan|0)+(t.closest('#dp-pan-l')?-1:1));drawDetailMaps();return;}   /* the long-area follower: the same step for A and B */
+ var lc=t.closest('#dp-layer .lch');if(lc){DS.layer=lc.getAttribute('data-l');DS.zoom=false;DS.pan=0;   /* a layer chip of the places row: a new layer starts with the whole view */
   var chips=document.querySelectorAll('#dp-layer .lch'),ci;for(ci=0;ci<chips.length;ci++)chips[ci].classList.toggle('on',chips[ci]===lc);
   var pls=document.querySelectorAll('.dplay');for(ci=0;ci<pls.length;ci++)pls[ci].textContent=DS.layer;drawDetailMaps();return;}
  var dt=t.closest('.dtab');if(dt){DS.tab=dt.getAttribute('data-dtab');applyTab();return;}   /* the three tabs of the detail panel */

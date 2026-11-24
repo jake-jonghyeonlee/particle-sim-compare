@@ -1098,7 +1098,7 @@ def test_chrome_the_place_maps_paint_the_pair_electrodes_in_their_own_colours_an
     assert a_e1 > 0 and a_e2 > 0 and 0 < int(dom.root['data-e1px']) <= a_e1 and 0 < int(dom.root['data-e2px']) <= a_e2     # (the failure areas are drawn over a part of the outlines)
     legend = [a for t, a in dom.elements if a.get('id') == 'dp-legend']
     assert legend and all(name in text[text.index('id="dp-legend"'):text.index('id="dp-legend"') + 900] for name in p0['electrodes'])
-    assert dom.root['data-zoomtext'] == '확대로 돌아가기' and int(dom.root['data-cw']) >= 1          # the small link switches to the whole map and says how to come back
+    assert dom.root['data-zoomtext'] == '전체 보기' and int(dom.root['data-cw']) >= 1          # rexp/T10: the button starts as "확대 보기" (whole view) and switches to "전체 보기"
 
 
 def test_chrome_an_unknown_list_kind_in_the_hash_is_ignored(tmp_path):
