@@ -50,6 +50,26 @@ def test_rexp_t4_three_tuple_jobs_get_step_lines_and_a_summary(tmp_path):
     assert '===== [B] 실패 · validate-data exit 2 · 이후 단계는 실행하지 않음 =====' in log
     assert '[simcompare_job]   [B] 2  ' in log and '[simcompare_job]   [C] -  (실행 안 함)' in log and '전체 ' in log
 
+def test_r2_unhandled_exception_still_logs_the_step_failure_and_summary(tmp_path):
+    jobs = [('A', 'demo-data', ['--out', str(tmp_path / 'demo')]), ('B', 'boom', []), ('C', 'compare', [])]
+    script = _build(tmp_path, jobs)
+    text = script.read_text(encoding='utf-8')
+    stub = ("from simcompare.cli import main as _real_main\n"
+            "    def main(argv):\n"
+            "        if argv[0] == 'boom':\n"
+            "            raise MemoryError('boom')\n"
+            "        return _real_main(argv)\n")
+    assert text.count('    from simcompare.cli import main\n') == 1
+    script.write_text(text.replace('    from simcompare.cli import main\n', '    ' + stub, 1), encoding='utf-8')
+    result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+    log = (tmp_path / 'job.log').read_text(encoding='utf-8')
+    assert result.returncode == 1                       # same exit code as an uncaught exception
+    assert 'MemoryError' in log and 'boom exit 1' in log
+    assert '===== [B] 실패 · boom exit 1 · 이후 단계는 실행하지 않음 =====' in log
+    assert '[simcompare_job]   [B] 1  ' in log and '[simcompare_job]   [C] -  (실행 안 함)' in log
+    assert 'start compare' not in log
+
+
 def test_relative_paths_resolve_from_runner_folder_not_launch_cwd(tmp_path):
     work = tmp_path / 'runner'
     work.mkdir()

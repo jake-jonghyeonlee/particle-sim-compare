@@ -169,7 +169,6 @@ def run_jobs(jobs):
     for step, _, _, _ in plan:
         if step is not None and step not in step_ids:
             step_ids.append(step)
-    labels = {step: label for step, label, _, _ in plan if step is not None}
     counts = {step: sum(1 for item in plan if item[0] == step) for step in step_ids}
     results = {}        # 단계 -> [시작 시각, [(명령, exit)...], 끝 시각 또는 None]
 
@@ -224,6 +223,9 @@ def run_jobs(jobs):
             code = main(argv)
         except SystemExit as exc:  # argparse 오류 등
             code = exc.code if isinstance(exc.code, int) else 2
+        except Exception:  # 처리되지 않은 예외(MemoryError 등): 예전처럼 traceback 과 종료 코드 1, 단계 실패 줄·요약은 남긴다
+            traceback.print_exc()
+            code = 1
         code = 0 if code is None else code
         print(f"[simcompare_job] {stamp()} {name} exit {code} in {time.time() - started:.0f}s", file=sys.stderr, flush=True)
         if step is not None:

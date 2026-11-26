@@ -8,7 +8,7 @@ set "PY="
 set "ANY="
 rem Candidates, in order: 1) SIMCOMPARE_PYTHON  2) every python.exe on PATH (Store alias under \WindowsApps\ is skipped)  3) common Anaconda / Miniconda folders
 if defined SIMCOMPARE_PYTHON if not exist "%SIMCOMPARE_PYTHON%" echo [simcompare] Warning: SIMCOMPARE_PYTHON does not exist, ignored: "%SIMCOMPARE_PYTHON%"
-if defined SIMCOMPARE_PYTHON if exist "%SIMCOMPARE_PYTHON%" call :try "%SIMCOMPARE_PYTHON%"
+if defined SIMCOMPARE_PYTHON if exist "%SIMCOMPARE_PYTHON%" call :tryenv
 if not defined PY for /f "delims=" %%P in ('where python.exe 2^>nul') do call :try "%%P"
 if not defined PY call :try "%USERPROFILE%\anaconda3\python.exe"
 if not defined PY call :try "%USERPROFILE%\miniconda3\python.exe"
@@ -40,15 +40,24 @@ echo [simcompare] log: runs\simcompare_job_local.log under BASE_DIR (default: th
 pause
 exit /b %RC%
 
+:tryenv
+rem Same test for SIMCOMPARE_PYTHON; WARN makes :try say why it ignores the value (PATH candidates stay quiet).
+set "WARN=1"
+call :try "%SIMCOMPARE_PYTHON%"
+set "WARN="
+exit /b 0
+
 :try
 rem Test one candidate: keep it in PY only when it is a python.exe that can import numpy and Pillow.
 if defined PY exit /b 0
-if /i not "%~x1"==".exe" exit /b 0
 set "CAND=%~1"
+if /i not "%~x1"==".exe" if defined WARN echo [simcompare] Warning: SIMCOMPARE_PYTHON is not a python.exe, ignored: "%~1"
+if /i not "%~x1"==".exe" exit /b 0
+if not "%CAND:\WindowsApps\=%"=="%CAND%" if defined WARN echo [simcompare] Warning: SIMCOMPARE_PYTHON is under \WindowsApps\ (Store alias), ignored: "%~1"
 if not "%CAND:\WindowsApps\=%"=="%CAND%" exit /b 0
 if not exist "%~1" exit /b 0
 set "ANY=1"
 "%~1" -c "import numpy, PIL" >nul 2>nul
-if errorlevel 1 echo [simcompare] no numpy/Pillow, skipped: "%~1" & exit /b 0
+if not "%ERRORLEVEL%"=="0" echo [simcompare] no numpy/Pillow, skipped: "%~1" & exit /b 0
 set "PY=%~1"
 exit /b 0

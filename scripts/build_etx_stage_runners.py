@@ -6,7 +6,7 @@
 - bundles/etx/dv/simcompare_job_NN_*.py: ΔV·위험도 흐름 회차별 실행기.
 - bundles/local/simcompare_job_local.py: 로컬 PC(Windows·macOS) 통합 실행기. 통합 실행기와 같은 흐름이고 EDIT 블록의 STEPS(01·02·08)·LOG_FILE 만 다르다.
 모든 파일은 같은 simcompare 묶음을 담는다. 경로는 실행기 BASE_DIR(작업 폴더) 기준 상대 경로다.
-사용 순서와 사용자가 미리 둘 파일은 docs/usage.md "ETX(Linux GPU 서버) 실행 순서"를 따른다."""
+사용 순서와 사용자가 미리 둘 파일은 docs/usage.md "ETX (Linux 서버)" 절을 따른다."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +23,7 @@ CONFIG = "real.yaml"
 FLOW_NAME = "etx"      # 통합 실행기 파일 이름: simcompare_job_etx.py
 
 FLOW_HEADER = [
-    "ETX 통합 실행기. EDIT 블록만 고친다. 단계 설명·재실행 방법: docs/usage.md \"ETX 실행 순서\".",
+    "ETX 통합 실행기. EDIT 블록만 고친다. 단계 설명·재실행 방법: docs/usage.md \"ETX (Linux 서버)\" 절.",
 ]
 
 FLOW_EDIT = '''BASE_DIR = None                     # 작업 폴더(절대 경로). None = 이 파일이 있는 폴더

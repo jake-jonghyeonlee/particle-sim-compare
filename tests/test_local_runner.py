@@ -62,15 +62,20 @@ def test_run_local_cmd_content():
     raw.decode('ascii')                                   # ASCII only: no code page issue on any Windows
     text = raw.decode('ascii')
     assert raw.count(b'\r\n') == raw.count(b'\n'), 'run_local.cmd must use CRLF line ends'
-    order = ['call :try "%SIMCOMPARE_PYTHON%"', "where python.exe", r'call :try "%USERPROFILE%\anaconda3\python.exe"',
+    assert 'call :try "%SIMCOMPARE_PYTHON%"' in text                              # inside :tryenv (with the warning flag)
+    order = ['call :tryenv', "where python.exe", r'call :try "%USERPROFILE%\anaconda3\python.exe"',
              r'call :try "%USERPROFILE%\miniconda3\python.exe"', r'call :try "%ProgramData%\anaconda3\python.exe"',
              r'call :try "%LOCALAPPDATA%\anaconda3\python.exe"', r'call :try "%ProgramData%\miniconda3\python.exe"']
     positions = [text.index(item) for item in order]
     assert positions == sorted(positions)
     assert 'where python\n' not in text.replace('\r\n', '\n') and "where python " not in text
-    assert r'\WindowsApps\\' not in text and r'\WindowsApps\=' in text           # Store alias is skipped
+    assert 'if not "%CAND:\\WindowsApps\\=%"=="%CAND%" exit /b 0' in text        # Store alias is skipped
     assert '"%~1" -c "import numpy, PIL"' in text                                # every candidate is tested
     assert 'SIMCOMPARE_PYTHON does not exist' in text                            # warning for a missing file
+    assert 'Warning: SIMCOMPARE_PYTHON is not a python.exe, ignored' in text     # warning for a non-.exe value
+    assert 'Warning: SIMCOMPARE_PYTHON is under \\WindowsApps\\ (Store alias), ignored' in text
+    assert 'if not "%ERRORLEVEL%"=="0" echo [simcompare] no numpy/Pillow' in text   # a negative exit code is a failure too
+    assert 'if errorlevel' not in text                                           # `if errorlevel 1` treats negative codes as success
     assert '-X utf8 "%~dp0simcompare_job_local.py"' in text
     assert 'echo [simcompare] Python: "%PY%"' in text
     assert 'exit /b %RC%' in text and text.count('pause') >= 3
@@ -82,7 +87,7 @@ def test_run_local_cmd_content():
 def test_run_local_cmd_flow_is_static_consistent():
     lines = (LOCAL / 'run_local.cmd').read_text(encoding='ascii').splitlines()
     labels = [line[1:].strip() for line in lines if line.startswith(':') and not line.startswith('::')]
-    assert labels == ['nopython', 'run', 'try']
+    assert labels == ['nopython', 'run', 'tryenv', 'try']
     for target in re.findall(r'goto :(\w+)', '\n'.join(lines)):
         assert target in labels
     for target in re.findall(r'call :(\w+)', '\n'.join(lines)):
@@ -92,7 +97,8 @@ def test_run_local_cmd_flow_is_static_consistent():
     try_block = body[body.index(':try\n'):]
     assert try_block.rstrip().endswith('exit /b 0')                              # the subroutine always returns
     assert 'set "PY=%~1"' in try_block and 'goto :eof' not in body              # PY is set only after the import test
-    assert not re.search(r'^\s*for .*python(?!\.exe)', body, re.M)              # only python.exe, never .bat/.cmd shims
+    for_lines = [line for line in lines if re.search(r'\bfor /f\b', line)]
+    assert for_lines and all('where python.exe' in line for line in for_lines)  # only python.exe, never .bat/.cmd shims
     assert try_block.index('import numpy, PIL') < try_block.index('set "PY=%~1"')
 
 
@@ -122,3 +128,4 @@ def test_readme_local_covers_the_agreed_points():
         assert needle in text, needle
     assert 'real.yaml 의 경로는 BASE_DIR 안의 상대 경로만 쓴다(절대 경로·`..`·백슬래시는 거부된다)' in text
     assert '`hotspot_root`·`dl1_root`' in text and '`python.exe`' in text and r'\WindowsApps\ ' not in text
+    assert '작업 폴더·Python 경로에 `%` `^` 를 쓰지 않는다' in text

@@ -116,7 +116,7 @@ BASE_DIR/
 | 상수 | 기본값 | 뜻 |
 |---|---|---|
 | `STEPS` | `['01', '03', '02', 'diag', '04', '06', '07', '08']` | 돌릴 단계. 순서는 적은 순서가 아니라 항상 01, 03, 02, diag, 04, 05, 06, 07, 08이다. 모르는 이름은 실행 전에 오류로 멈춘다. `'05'`(DL2 확정)는 단계로 있지만 기본에서 뺐다 |
-| `RUN_TAG` | `None` | 이전 출력 보관 폴더 이름. `None`이면 UTC 시각 `YYYYMMDD-HHMMSS` |
+| `RUN_TAG` | `None` | 이전 출력 보관 폴더 이름. `None`이면 UTC 시각 `YYYYMMDD-HHMMSS`. 문자열이면 `/`·`\`가 없는 폴더 이름이어야 한다(아니면 실행 전 오류) |
 | `DRY_RUN` | `False` | `True`이면 만든 JOBS와 옮길 폴더 목록을 로그에 찍기만 하고 아무것도 실행·이동하지 않는다. 처음에는 `True`로 확인한다 |
 | `REAL_CONFIG`, `COMPARE2_CONFIG` | `real.yaml`, `compare2.yaml` | BASE_DIR 안의 설정 파일 이름. `compare2.yaml`의 `numeric_config`가 같은 `real.yaml`을 가리켜야 한다 |
 | `INCLUDE_CNO` | `True` | 01에서 CNO case도 import한다. 켠/끈 실행은 01부터 다시 한다 |
@@ -124,11 +124,11 @@ BASE_DIR/
 | `ALIGN_ARGS` | 예시 목록 | 04 `candidates-change` 인수(탐색 반경 30 µm, 최소 Dice 0.3, 층 허용 1 µm, 변경 허용 0.5 µm, 병합 0.5, top-k 20, `--mask-derivation-rule between_stack_order_v1`, `--merge-scope all`, `--suppress-overlap 0.3`, unit 정렬 3 µm, 국소 정렬 1 µm, `--unit-fold`). 모두 **예시**다. `--config`, `--cnt-from-dl1-root`, `--electrode-png-root`, `--window-um`, `--diameter-um`, `--out`은 설정 파일에서 오므로 여기 적으면 오류다 |
 | `EXTRA_WINDOWS_UM` | `[]` | 06에서 `report.map_window_um` 말고 더 볼 창(µm). 예 `[20, 30]` |
 | `JITTER_UM` | `0.5` | 06 `--jitter-um` |
-| `DL2_MATCH_ARGS`, `DL2_DECISION_ARGS` | 예시 | 05를 STEPS에 넣을 때만 쓰는 DL2 인수(`--match`, `--decisions`, `--labelled-by`, `--mutual-tolerance-um`) |
+| `DL2_MATCH_ARGS`, `DL2_DECISION_ARGS` | 예시 | 05를 STEPS에 넣을 때만 쓰는 DL2 인수(`--match`, `--decisions`, `--labelled-by`, `--mutual-tolerance-um`). 05를 고르면 06은 `data/confirmed`의 대응을, 07은 `--confirm data/confirmed`를 쓴다 |
 | `CHANGES_DIR`, `CONFIRMED_DIR`, `LOCAL_DIR`, `REPORT_DIR` | `data/changes`, `data/confirmed`, `data/local`, `data/compare2_report` | 04~07 출력 폴더(기본 그대로 쓴다) |
 | `LEDGER_DIR`, `LEDGER_REPORT_DIR` | `data/ledger`, `data/ledger_report` | 08 출력 폴더(기본 그대로 쓴다) |
 | `LEDGER_MAPS`, `LEDGER_MAPS_DIR`, `LEDGER_MAPS_ARGS` | `True`, `data/ledger_maps`, `[]` | 08 의 `ledger-maps` 스위치·출력 폴더·추가 인수(예 `["--range-um", "10"]`). `False` 면 `ledger` → `ledger-report` 두 작업만 돌고 변경 위치·지도·카드가 없다(보고서 띠). 메모리 초과(`cards_budget_reduced`)면 `["--tile-um", "2"]` 로 타일을 키운다 |
-| `LOG_FILE`, `WORK_DIR`, `BASE_DIR` | `runs/simcompare_job_etx.log`, `None`, `None` | 로그, 패키지를 풀 폴더, 상대 경로 기준 폴더 |
+| `LOG_FILE`, `WORK_DIR`, `BASE_DIR` | `runs/simcompare_job_etx.log`, `None`, `None` | 로그(`None`이면 파일 로그 없이 화면에만), 패키지를 풀 폴더(`None`이면 실행기 옆, 쓸 수 없으면 임시 폴더), 상대 경로 기준 폴더 |
 
 설정 파일에서 오는 값은 다음과 같다.
 

@@ -25,6 +25,9 @@ class Job(tuple):
         job.label = STEP_LABELS.get(step, step)
         return job
 
+    def __getnewargs__(self):       # copy·pickle 이 __new__(cls, name, args, step) 로 다시 만들 수 있게 한다
+        return (self[0], self[1], self.step)
+
 
 RUNS_DIR = 'data/_runs'
 SOURCE_VERSION = 'LAYOUT_V1'

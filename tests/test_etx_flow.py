@@ -118,6 +118,16 @@ def expected_default_jobs(align, with_08=True, ledger_jobs=None):
     return jobs + ((LEDGER_JOBS_WITH_04 if ledger_jobs is None else ledger_jobs) if with_08 else [])
 
 
+def test_job_survives_copy_and_pickle_with_step_and_label():
+    import copy
+    import pickle
+    job = etx_flow.Job('compare2', ['--out', 'x'], '02')
+    for clone in (copy.copy(job), copy.deepcopy(job), pickle.loads(pickle.dumps(job)), pickle.loads(pickle.dumps(job, 0))):
+        assert isinstance(clone, etx_flow.Job) and clone == job
+        assert (clone.step, clone.label) == ('02', etx_flow.STEP_LABELS['02'])
+        assert clone[0] == 'compare2' and clone[1] == ['--out', 'x']
+
+
 def test_template_configs_give_the_expected_jobs_in_the_fixed_order(tmp_path):
     base = template_base(tmp_path)
     settings = edit_settings()
