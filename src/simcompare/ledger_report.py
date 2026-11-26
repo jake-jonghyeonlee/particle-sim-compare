@@ -674,7 +674,7 @@ def _unit_badge(b):
     return '<span class="badge%s">%s</span>' % (cls, esc(TYPE_NAME.get(t, t)))
 
 
-CARD_BADGE = {'electrode_new': '신규', 'electrode_removed': '삭제', 'layer_change': '레이어 변경', 'pair': '쌍', 'hub': '허브', 'self': '동일 전극',
+CARD_BADGE = {'electrode_new': '신규', 'electrode_removed': '삭제', 'layer_change': '레이어 변경', 'pair': '쌍', 'hub': '다중 쌍', 'self': '동일 전극',
               'cno': 'CNO'}
 
 
@@ -1180,7 +1180,7 @@ def _hub_sensitivity(ctx):
     bd = ctx.bundles
     grid = bd.get('hub_sensitivity') if isinstance(bd, dict) else None
     if not grid:
-        return _rerun_line('허브 민감도')
+        return _rerun_line('다중 쌍 민감도')
     cur = (bd.get('hub_min_fraction'), bd.get('hub_min_share'))
 
     def cell(entry, kind, key, fmt):
@@ -1193,10 +1193,10 @@ def _hub_sensitivity(ctx):
         body.append('<tr%s><td class="l">%s</td><td class="l">%s</td>%s<td class="l">%s</td></tr>' % (
             ' class="sum"' if now else '', '%g%%' % ((e.get('hub_min_fraction') or 0.0) * 100), '%g%%' % (e['hub_min_share'] * 100) if e.get('hub_min_share') else '0',
             cells, '현재 설정' if now else ''))
-    return ('<h3>허브 민감도 <span class="muted" style="font-weight:400">(허브 기준을 바꿨을 때 다중 쌍 변화 카드가 얼마나 달라지나)</span></h3>'
-            '<table id="hub-sensitivity"><thead><tr><th class="l">변한 상대 비율 ≥</th><th class="l">상대 크기 ≥</th><th>line 허브 수</th><th>line 허브 몫</th>'
-            '<th>pixel 허브 수</th><th>pixel 허브 몫</th><th class="l"></th></tr></thead><tbody>%s</tbody></table>'
-            '<p class="muted small">허브 몫 = 허브로 묶인 item 의 총 변동이 그 종류 총 변동에서 차지하는 비율입니다. 상대 크기는 그 종류 총 변동에 대한 비율입니다.</p>' % ''.join(body))
+    return ('<h3>다중 쌍 민감도 <span class="muted" style="font-weight:400">(다중 쌍 기준을 바꿨을 때 다중 쌍 변화 카드가 얼마나 달라지나)</span></h3>'
+            '<table id="hub-sensitivity"><thead><tr><th class="l">변한 상대 비율 ≥</th><th class="l">상대 크기 ≥</th><th>line 다중 쌍 수</th><th>line 다중 쌍 몫</th>'
+            '<th>pixel 다중 쌍 수</th><th>pixel 다중 쌍 몫</th><th class="l"></th></tr></thead><tbody>%s</tbody></table>'
+            '<p class="muted small">다중 쌍 몫 = 다중 쌍으로 묶인 item 의 총 변동이 그 종류 총 변동에서 차지하는 비율입니다. 상대 크기는 그 종류 총 변동에 대한 비율입니다.</p>' % ''.join(body))
 
 
 def _appendix_extra(ctx):
@@ -2114,8 +2114,8 @@ def _section3(ctx):
                '<li>전극이 하나인 불량은 그 전극이 신규·삭제면 전극 카드, 그 레이어 상태가 바뀌었으면 레이어 변경 카드, 아니면 동일 전극 카드입니다. 전극이 3 개 이상 걸리면 쌍 카드입니다.</li>'
                '<li>두 전극 중 한쪽만 신규·삭제이면 그 전극 카드(모든 레이어와 CNO)입니다. 둘 다이면 쌍 카드입니다.</li>'
                '<li>두 전극이 모두 공통이고 한쪽만 그 레이어 상태가 바뀌었으면 그 전극의 레이어 변경 카드입니다. 둘 다 바뀌었으면 쌍 카드입니다.</li>'
-               '<li>나머지에서는 설계가 변한 상대가 많은 전극을 다중 쌍 변화(허브)로 봅니다. 증가인지 감소인지는 묻지 않습니다. 한쪽만 허브이면 그 허브 카드, 양쪽이면 변한 상대가 더 많은 쪽, 같으면 쌍 카드입니다. 허브가 없으면 쌍 카드입니다.</li></ol>'
-               '<p class="small" style="margin:3px 0">허브 기준: 변한 상대가 %d 개 이상이고 전체 상대의 %s 이상입니다. 허용 오차 안의 변화(잡음)는 변한 상대로 세지 않습니다%s. 기준을 바꿨을 때의 차이는 부록의 허브 민감도 표에 있습니다.</p>'
+               '<li>나머지에서는 설계가 변한 상대가 많은 전극을 다중 쌍 변화로 봅니다. 증가인지 감소인지는 묻지 않습니다. 한쪽만 다중 쌍이면 그 다중 쌍 카드, 양쪽이면 변한 상대가 더 많은 쪽, 같으면 쌍 카드입니다. 다중 쌍이 없으면 쌍 카드입니다.</li></ol>'
+               '<p class="small" style="margin:3px 0">다중 쌍 기준: 변한 상대가 %d 개 이상이고 전체 상대의 %s 이상입니다. 허용 오차 안의 변화(잡음)는 변한 상대로 세지 않습니다%s. 기준을 바꿨을 때의 차이는 부록의 다중 쌍 민감도 표에 있습니다.</p>'
                '<p class="small" style="margin:3px 0">상대별 증가·감소는 line·pixel 순 변화를 합친 부호입니다.</p></details>' % (
                    hub, share_txt(fraction if fraction is not None else 0.5),
                    '' if not share else '. 한 종류의 총 변동 %s 이상인 상대만 셉니다' % share_txt(share)))

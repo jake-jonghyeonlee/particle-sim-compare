@@ -248,7 +248,9 @@ function drawPartners(sel){var box=$('el-partners');if(!box)return;
   (rows.length?'<div class="scrl"><table id="partner-table"><thead><tr><th class="l">상대 전극</th><th class="l">종류</th><th class="l">변화</th><th>A → B</th><th class="l">Δ</th></tr></thead><tbody>'+rows.join('')+'</tbody></table></div>':'<p class="muted">이 전극이 들어 있는 계산 쌍이 없습니다.</p>');}
 function filterRows(st){var q=(st.kv.eq||'').toLowerCase(),inp=$('el-q'),n=0,tot=0,rows=document.querySelectorAll('tr[data-row="corr"]'),i;
  if(inp&&inp.value!==(st.kv.eq||''))inp.value=st.kv.eq||'';   /* the section 2 search (#eq=) filters the section 2 table only; the section 5 ledger is not filtered */
- for(i=0;i<rows.length;i++){var hit=!q||rows[i].getAttribute('data-el').toLowerCase().indexOf(q)>=0;rows[i].classList.toggle('hide',!hit);tot++;if(hit)n++;}
+ var mainHit=0,cnoHit=0;
+ for(i=0;i<rows.length;i++){var hit=!q||rows[i].getAttribute('data-el').toLowerCase().indexOf(q)>=0;rows[i].classList.toggle('hide',!hit);tot++;if(hit){n++;if(q){if(rows[i].closest('#cno-only'))cnoHit++;else mainHit++;}}}
+ if(q&&cnoHit&&!mainHit){var cd=$('cno-only');if(cd)cd.open=true;}   /* rexp/T14: a search word that fits the CNO-only table alone opens its fold */
  var c=$('el-count');if(c)c.textContent=n+' / '+tot;}
 /* ---- section 4 pair finder: name search over the rows of every pair, the first SHOW rows unless more=1 ---- */
 var SHOW=20;
@@ -311,6 +313,7 @@ function load(r,L,cb){var key=r+'|'+L,e=DEC[key];if(e&&e.done){cb(e);return;}if(
   decodeOne(m,function(num){if(num)e[k]=num;else e.ok=false;left--;if(left===0)fin();});});}
 function isBorder(a,w,h,x,y,n,t){if(x<t||y<t||x+t>=w||y+t>=h)return true;var i=y*w+x;
  return a[i-t]!==n||a[i+t]!==n||a[i-t*w]!==n||a[i+t*w]!==n;}
+function rowsEq(a,w,ya,yb,x0,x1){var o=ya*w,p=yb*w,x;for(x=x0;x<x1;x++){if(a[o+x]!==a[p+x])return false;}return true;}
 function hiSets(sel){var hi={},par={};if(!sel)return {hi:hi,par:par};
  if(sel.t==='electrode'){hi[sel.id]=1;D.pairs.forEach(function(p){if(p.e.indexOf(sel.id)>=0)p.e.forEach(function(x){if(x!==sel.id)par[x]=1;});});}
  else if(sel.t==='pair'&&PB[sel.id]){PB[sel.id].e.forEach(function(x){hi[x]=1;});}
@@ -489,10 +492,12 @@ function placesHtml(d){var p=d.p?PB[d.p]:null;if(!p)return '';
   '<span class="sp"></span><button type="button" class="zbtn" id="dp-zoom">'+zoomText()+'</button>'+
   '<span class="pan" id="dp-pan" hidden><button type="button" class="pch" id="dp-pan-l" aria-label="이전 칸">◀</button><span id="dp-pan-t" class="small"></span><button type="button" class="pch" id="dp-pan-r" aria-label="다음 칸">▶</button></span></div>'+
   '<div class="mpair">'+['A','B'].map(function(r){return '<figure class="mfig"><figcaption><b>'+(r==='A'?'기준 A':'대상 B')+'</b> · <span class="dplay">'+esc(DS.layer)+'</span></figcaption><canvas class="dcv" id="dcv-'+r+'" data-role="'+r+'" width="1" height="1" role="img" aria-label="'+(r==='A'?'기준 A':'대상 B')+' 지도" hidden></canvas><div class="mnote"></div></figure>';}).join('')+'</div>'+legendHtml(p);}
-function bbox(e,r,pid){var memo={},n=0,x0=1e9,y0=1e9,x1=-1,y1=-1,w=e.w,i,v,z,x,y,it;if(!e.it)return {n:0};
+function bbox(e,r,pid){var memo={},n=0,x0=1e9,y0=1e9,x1=-1,y1=-1,w=e.w,i,v,z,x,y,it,bc=e.bb||(e.bb={});   /* rexp/T14: cached per (product, layer) map and pair, so zoomPlan and paintDetail scan the map once */
+ if(bc[pid])return bc[pid];
+ if(!e.it)return (bc[pid]={n:0});
  for(i=0;i<e.it.length;i++){v=e.it[i];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===pid);}if(!z)continue;
   x=i%w;y=(i/w)|0;n++;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
- return {n:n,x0:x0,y0:y0,x1:x1,y1:y1};}
+ return (bc[pid]={n:n,x0:x0,y0:y0,x1:x1,y1:y1});}
 function blend(d,o,col,a){d[o]=d[o]*(1-a)+col[0]*a;d[o+1]=d[o+1]*(1-a)+col[1]*a;d[o+2]=d[o+2]*(1-a)+col[2]*a;}
 /* rexp/T8: the crop is drawn at screen size (long side DRAWPX), not at the map's pixels, so a 1 px / 2 px outline stays 1 px / 2 px on the screen:
    a light face and a 1 px outline for every electrode, the two electrodes of the pair in their own colours (--e1, --e2: 25 % face, 2 px outline),
@@ -507,9 +512,11 @@ function drawCrop(cv,e,r,p,x0,y0,x1,y1,mark){var cw=x1-x0,ch=y1-y0,g=cv.getConte
  cv.width=ow;cv.height=oh;cv.hidden=false;
  var elD=new Uint16Array(ow*oh),itD=new Uint8Array(ow*oh),bp=new Uint8Array(ow*oh),bo=new Uint8Array(ow*oh),pr=new Uint8Array(ow*oh),shrink=s<1;
  if(e.el&&!shrink){for(y=0;y<oh;y++){for(x=0;x<ow;x++){elD[y*ow+x]=e.el[(y0+Math.min(ch-1,Math.floor(y/s)))*w+x0+Math.min(cw-1,Math.floor(x/s))];}}}
- if(e.el&&shrink){for(sy=y0;sy<y1;sy++){var qy=Math.min(oh-1,Math.floor((sy-y0)*s))*ow;for(sx=x0;sx<x1;sx++){v=e.el[sy*w+sx];if(!v)continue;k=rl(v);q=qy+Math.min(ow-1,Math.floor((sx-x0)*s));
+ if(e.el&&shrink){for(sy=y0;sy<y1;sy++){var qy=Math.min(oh-1,Math.floor((sy-y0)*s))*ow,
+   flat=sy>0&&sy+1<h&&rowsEq(e.el,w,sy,sy-1,x0,x1)&&rowsEq(e.el,w,sy,sy+1,x0,x1);   /* rexp/T14: when the rows above and below are the same as this one over the crop, a pixel is a border pixel only where its value changes along the row */
+   for(sx=x0;sx<x1;sx++){v=e.el[sy*w+sx];if(!v)continue;k=rl(v);q=qy+Math.min(ow-1,Math.floor((sx-x0)*s));
    var pri=k?2:1;if(pri>pr[q]){pr[q]=pri;elD[q]=v;}
-   if(isBorder(e.el,w,h,sx,sy,v,1)){if(k)bp[q]=k;else bo[q]=1;}}}}   /* the electrode of a block: a pair electrode first; its border flags come from the original map */
+   if(flat?(sx<1||sx+1>=w||e.el[sy*w+sx-1]!==v||e.el[sy*w+sx+1]!==v):isBorder(e.el,w,h,sx,sy,v,1)){if(k)bp[q]=k;else bo[q]=1;}}}}   /* the electrode of a block: a pair electrode first; its border flags come from the original map */
  var elS=function(xx,yy){var ax=x0+Math.floor(xx/s),ay=y0+Math.floor(yy/s);return (ax<0||ay<0||ax>=w||ay>=h)?-1:e.el[ay*w+ax];};
  if(e.it){for(y=0;y<ch;y++){for(x=0;x<cw;x++){v=e.it[(y+y0)*w+x+x0];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===p.id);}
    if(z)itD[Math.min(oh-1,Math.floor(y*s))*ow+Math.min(ow-1,Math.floor(x*s))]=1;}}}   /* a source pixel of the pair marks its screen pixel (never lost by shrinking) */
@@ -549,19 +556,25 @@ function fitBox(cx,cy,sq,w,h){var bw=Math.min(sq,w),bh=Math.min(sq,h),x0=Math.ro
  x0=Math.max(0,Math.min(w-bw,x0));y0=Math.max(0,Math.min(h-bh,y0));return [x0,y0,x0+bw,y0+bh];}
 /* the zoom box of the pair: the union of both products' boxes + 20 % (at least 0.15 of the window); a long thin area (length / thickness > 3) is followed
    in squares of 6 x its thickness, moving 80 % of a square per step (DS.pan = the step). null = the pair has no pixel on either map (no zoom). */
-function zoomPlan(es,p){var rb={},u=null,len,thick,uw,uh,win,n=1,idx=0,isLong=false;
- ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.w||!e.ok)return;var q=relOf(r,e,bbox(e,r,p.id));if(!q)return;rb[r]=q;
+function plainWin(u){var cx=(u[0]+u[2])/2,cy=(u[1]+u[3])/2,ww=Math.max((u[2]-u[0])*1.4,0.15),hh=Math.max((u[3]-u[1])*1.4,0.15);return [cx-ww/2,cy-hh/2,cx+ww/2,cy+hh/2];}
+function boxIn(r,e,win){var a=pxOf(r,e,[win[0],win[1]]),b=pxOf(r,e,[win[2],win[3]]),
+ sq=Math.max(1,Math.round(Math.max(Math.abs(b[0]-a[0]),Math.abs(b[1]-a[1]))));return fitBox((a[0]+b[0])/2,(a[1]+b[1])/2,sq,e.w,e.h);}
+function zoomPlan(es,p){var rb={},u=null,len,thick,uw,uh,win,n=1,idx=0,isLong=false,have=[],nsc=0;
+ ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.w||!e.ok)return;var q=relOf(r,e,bbox(e,r,p.id));if(!q)return;rb[r]=q;have.push(r);if(mapGeo(r,e).sc)nsc++;
   u=u?[Math.min(u[0],q[0]),Math.min(u[1],q[1]),Math.max(u[2],q[2]),Math.max(u[3],q[3])]:q.slice();});
  if(!u)return null;
+ if(have.length===2&&nsc===1){var mb={};DS.pan=0;   /* rexp/T14: only one product has a unit window: the two boxes are in different coordinates, so they are not merged; each product is enlarged around its own area */
+  have.forEach(function(r){mb[r]=boxIn(r,es[r],plainWin(rb[r]));});
+  return {boxes:mb,rel:plainWin(rb[have[0]]),n:1,i:0,long:false};}
  uw=u[2]-u[0];uh=u[3]-u[1];len=Math.max(uw,uh);thick=Math.max(Math.min(uw,uh),1e-6);
- if(len/thick>3){isLong=true;var side=Math.min(1,Math.max(0.15,thick*6)),step=side*0.8,hz=uw>=uh,c,cc;
-  n=Math.max(1,Math.ceil((len-side)/step-1e-9)+1);idx=Math.max(0,Math.min(n-1,Math.floor(DS.pan)||0));DS.pan=idx;
+ var side=Math.min(1,Math.max(0.15,thick*6)),step=side*0.8,nn=Math.max(1,Math.ceil((len-side)/step-1e-9)+1);
+ if(len/thick>3&&nn>1){isLong=true;var hz=uw>=uh,c,cc;   /* rexp/T14: a long area with one square only (n = 1) is no "follow": the plain enlargement */
+  n=nn;idx=Math.max(0,Math.min(n-1,Math.floor(DS.pan)||0));DS.pan=idx;
   c=hz?Math.min(u[0]+side/2+idx*step,u[2]-side/2):Math.min(u[1]+side/2+idx*step,u[3]-side/2);cc=hz?(u[1]+u[3])/2:(u[0]+u[2])/2;
   win=hz?[c-side/2,cc-side/2,c+side/2,cc+side/2]:[cc-side/2,c-side/2,cc+side/2,c+side/2];}
- else{var cx=(u[0]+u[2])/2,cy=(u[1]+u[3])/2,ww=Math.max(uw*1.4,0.15),hh=Math.max(uh*1.4,0.15);win=[cx-ww/2,cy-hh/2,cx+ww/2,cy+hh/2];DS.pan=0;}
+ else{win=plainWin(u);DS.pan=0;}
  var boxes={};
- ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.w||!e.ok)return;var a=pxOf(r,e,[win[0],win[1]]),b=pxOf(r,e,[win[2],win[3]]),
-   sq=Math.max(1,Math.round(Math.max(Math.abs(b[0]-a[0]),Math.abs(b[1]-a[1]))));boxes[r]=fitBox((a[0]+b[0])/2,(a[1]+b[1])/2,sq,e.w,e.h);});
+ ['A','B'].forEach(function(r){var e=es[r];if(!e||!e.w||!e.ok)return;boxes[r]=boxIn(r,e,win);});
  return {boxes:boxes,rel:win,n:n,i:idx,long:isLong};}
 function paintDetail(p,L){var root=document.documentElement,es={A:DEC['A|'+L],B:DEC['B|'+L]},drawn=0,cnt={A:0,B:0},boxes={A:[],B:[]},zb={A:[],B:[]},ol={A:[0,0],B:[0,0]},plan=zoomPlan(es,p),zoom=!!(DS.zoom&&plan);
  if(DS.zoom&&!plan)DS.zoom=false;   /* no pixel of the pair on either map: nothing to enlarge */
@@ -618,9 +631,12 @@ function markUnit(st,d){var i,els=document.querySelectorAll('.selcard,.unitcell'
 /* the list of 3 shows one kind (the band cell, #k=, or the kind of the open candidate); #print shows both */
 /* rexp/T11: a candidate of both kinds has a card in each list (the second one has id '<id>--pixel'); data-unit holds the candidate id. cardEl = the card of u in the list k (else the first one) */
 function cardEl(u,k){var l=u?document.querySelectorAll('.crow[data-unit="'+u+'"]'):[],i,f=null;for(i=0;i<l.length;i++){if(!f)f=l[i];if(k&&l[i].getAttribute('data-k')===k)return l[i];}return f;}
+/* rexp/T14: a candidate that is in the list of both kinds: the list where its rank is better (the smaller number; a card or a folded row; a tie = line) is the one that opens when the hash has no k */
+function bestRow(u){var l=document.querySelectorAll('.crow[data-unit="'+u+'"],.frow[data-unit="'+u+'"]'),i,best=null,br=1e9,r;
+ for(i=0;i<l.length;i++){r=parseInt(l[i].getAttribute('data-rank'),10);if(!(r>0))r=1e8;if(!best||r<br){best=l[i];br=r;}}return best;}
 function drawKinds(st,sel){var lists=document.querySelectorAll('.klist'),i,k=st.kv.k,u,c,pr=!!st.flags.print;if(!lists.length)return;
  if(!k){u=st.kv.unit||detailOf(st,sel).u||st.kv.cand||'';   /* R4:1: no k in the hash: the kind of the open candidate (the default one, or the selected one) */
-  c=u?(cardEl(u)||$('rest-line-'+u)||$('rest-pixel-'+u)):null;c=c&&c.closest?c.closest('.klist'):null;
+  c=u?bestRow(u):null;c=c&&c.closest?c.closest('.klist'):null;
   if(!c){for(i=0;i<lists.length;i++){if(lists[i].querySelector('.crow')){c=lists[i];break;}}}   /* else the first kind that has cards (not a skipped one) */
   k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
  for(i=0;i<lists.length;i++)lists[i].hidden=!pr&&lists[i].getAttribute('data-k')!==k;

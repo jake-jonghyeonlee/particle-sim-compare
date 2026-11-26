@@ -503,6 +503,9 @@ def test_chrome_rexp_t9_an_electrode_hash_of_a_cno_only_name_opens_the_fold(tmp_
     assert not any(t == 'details' and a.get('id') == 'cno-only' and 'open' in a for t, a in dom.elements)
     dom, text = dump_dom(page, '#eq=Shift')
     assert '<span id="el-count" class="muted">1 / %d</span>' % len(doc['electrodes']) in text
+    assert any(t == 'details' and a.get('id') == 'cno-only' and 'open' in a for t, a in dom.elements)      # rexp/T14: a search word that fits the CNO-only table alone opens its fold
+    dom, text = dump_dom(page, '#eq=Anode')
+    assert not any(t == 'details' and a.get('id') == 'cno-only' and 'open' in a for t, a in dom.elements)  # a word of the main table does not
 
 
 def test_rexp_without_cno_only_rows_the_note_is_absent(tmp_path):
@@ -1034,7 +1037,7 @@ def test_chrome_maps_of_different_sizes_crop_each_product_to_its_own_box(tmp_pat
     assert 'data-err' not in dom2.root and dom2.root['data-dp-zoom'] == '1'
     ax0, ay0, ax1, ay1 = [int(v) for v in dom2.root['data-dp-box'].split(',')]
     bx0, by0, bx1, by1 = [int(v) for v in dom2.root['data-dp-boxb'].split(',')]
-    assert (ax1 - ax0, ay1 - ay0) != (40, 40) or (bx1 - bx0, by1 - by0) != (100, 40)
+    assert (ax1 - ax0, ay1 - ay0) != (40, 40) and (bx1 - bx0, by1 - by0) != (100, 40)             # rexp/T14: each product on its own, not "either"
     assert ax1 - ax0 >= 1 and ay1 - ay0 >= 1 and bx1 - bx0 >= 1 and by1 - by0 >= 1 and 0 <= bx0 and bx1 <= 100 and 0 <= ax0 and ax1 <= 40
 
 
@@ -1118,6 +1121,90 @@ def test_chrome_t10_the_same_place_is_enlarged_on_both_products_of_different_siz
     assert 'data-err' not in dom.root and (a[2] - a[0], a[3] - a[1]) != (40, 40) and (b[2] - b[0], b[3] - b[1]) != (100, 40)
     rcx = (rel[0] + rel[2]) / 2
     assert abs((a[0] + a[2]) / 2 / 40 - rcx) < 0.2 and abs((b[0] + b[2]) / 2 / 100 - rcx) < 0.2         # the same relative place (windows are pushed inside the map)
+
+
+def origin_report(tmp_path, name='origin', off=(7, 3), b_scale=True):
+    """rexp/T14: 60 x 60 maps; the P1 failure area is a 6 x 6 square at the absolute place (30, 30) of both products, but the maps of B start at
+    origin `off` px (so the square is at map pixel (30, 30) - off of B). The unit window of both is 40 x 40 px at (20, 20). b_scale False: B has no pitch (no scale)."""
+    import numpy as np
+    from test_ledger_report_maps import counts_of, png_of
+    doc = comp_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, changes=map_changes())
+    mj = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+    mj['window'] = {}
+    for role, side in mj['sides'].items():
+        o = (0, 0) if role == 'reference' else off
+        p1 = [row['number'] for row in side['items'] if row['pair_id'] == 'P1'][0]
+        for m in side['maps']:
+            arr = np.zeros((60, 60), dtype=np.uint16)
+            if m['kind'] == 'it':
+                arr[30 - o[1]:36 - o[1], 30 - o[0]:36 - o[0]] = p1
+            (maps / m['file']).write_bytes(png_of(arr))
+            m['shape_yx'] = [60, 60]
+            m['numbers'] = counts_of(arr)
+            m['origin_px'] = list(o)
+        side['frame']['shape_yx'] = [60, 60]
+        if role == 'reference' or b_scale:
+            side['frame']['pitch_um'] = 2.0
+            side['region'] = {'origin_px': list(o), 'size_px': [60, 60], 'block_px': 1}
+            mj['window'][role] = {'origin_px': [20, 20], 'size_px': [40, 40], 'unit_um': [80.0, 80.0], 'unit_source': 'config'}
+        else:
+            side['frame'].pop('pitch_um', None)
+    mj['options']['range_um'] = 10.0
+    (maps / 'ledger_maps.json').write_text(json.dumps(mj, sort_keys=True), encoding='utf-8')
+    out = tmp_path / ('out_' + name)
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) in (0, 3)
+    return out / 'ledger_report.html'
+
+
+def test_chrome_t14_maps_with_different_origins_are_enlarged_around_the_same_place_within_0_02(tmp_path):
+    off = (7, 3)
+    page = origin_report(tmp_path, off=off)
+    dom, text = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='t14_origin')
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '1'
+    rel = [float(v) for v in dom.root['data-dp-rel'].split(',')]
+    a = [int(v) for v in dom.root['data-dp-box'].split(',')]
+    b = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    rcx, rcy = (rel[0] + rel[2]) / 2, (rel[1] + rel[3]) / 2
+    # the centre of each box, back in unit-window coordinates: (origin + pixel - window origin) / window size
+    for box, o in ((a, (0, 0)), (b, off)):
+        cx, cy = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+        assert abs((o[0] + cx - 20) / 40.0 - rcx) < 0.02 and abs((o[1] + cy - 20) / 40.0 - rcy) < 0.02, (box, o, rel)
+    assert abs(rcx - 0.325) < 0.02 and abs(rcy - 0.325) < 0.02                      # the 6 x 6 square at 30-36 of the 20-60 window
+
+
+def test_chrome_t14_one_product_without_a_scale_is_enlarged_around_its_own_area_not_merged(tmp_path):
+    off = (7, 3)
+    page = origin_report(tmp_path, name='noscale', off=off, b_scale=False)
+    dom, text = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='t14_noscale')
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '1' and dom.root['data-dp-pan'] == ''
+    a = [int(v) for v in dom.root['data-dp-box'].split(',')]
+    b = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    # the square is at (30..36) of A and (30 - off .. 36 - off) of B on the map pixels: each box is centred on its own area
+    assert abs((a[0] + a[2]) / 2.0 - 33) <= 1.5 and abs((a[1] + a[3]) / 2.0 - 33) <= 1.5
+    assert abs((b[0] + b[2]) / 2.0 - (33 - off[0])) <= 1.5 and abs((b[1] + b[3]) / 2.0 - (33 - off[1])) <= 1.5
+
+
+def test_chrome_t14_a_long_area_that_needs_one_square_only_is_a_plain_enlargement_and_the_last_square_covers_the_end(tmp_path):
+    def small(arr, n):
+        arr[600:604, 600:620] = n                               # 20 x 4 px: long and thin, but one window square holds it
+    page = painted_report(tmp_path, 'oneq', 1200, _lines, small)
+    dom, text = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='t14_oneq')
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '1' and dom.root['data-dp-pan'] == ''          # no "follow" control
+    assert [a for t, a in dom.elements if a.get('id') == 'dp-pan' and 'hidden' in a]
+    box = [int(v) for v in dom.root['data-dp-box'].split(',')]
+    assert abs((box[0] + box[2]) / 2.0 - 610) <= 2 and abs((box[1] + box[3]) / 2.0 - 602) <= 2                         # centred on the area
+    last = ("setTimeout(function(){var d=document.documentElement,q=function(i){return document.getElementById(i);};q('dp-zoom').click();"
+            "setTimeout(function(){var n=parseInt(d.getAttribute('data-dp-pan').split('/')[1],10),k=0;"
+            "(function step(){if(k<n-1){k++;q('dp-pan-r').click();setTimeout(step,150);}else{d.setAttribute('data-last',d.getAttribute('data-dp-pan'));}})();},200);},400);")
+    for tag, paint, axis, end in (('t14_h', _strip, 2, 1000), ('t14_v', lambda arr, n: arr.__setitem__((slice(300, 1000), slice(700, 706)), n), 3, 1000)):
+        page = painted_report(tmp_path, tag, 1200, _lines, paint)
+        dom, text = run_in_page(page, '#sel=pair:P1', last, tag=tag)
+        n = int(dom.root['data-dp-pan'].split('/')[1])
+        assert 'data-err' not in dom.root and n > 1 and dom.root['data-last'] == '%d/%d' % (n, n)
+        box = [int(v) for v in dom.root['data-dp-box'].split(',')]
+        assert box[axis] >= end - 2 and box[axis] - box[axis - 2] >= 100, (tag, box)                                  # the last square reaches the end of the area
 
 
 def test_item_occurrence_accepts_only_non_negative_ints():

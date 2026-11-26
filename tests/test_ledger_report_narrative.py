@@ -377,7 +377,7 @@ def test_r17b_1_the_assignment_rules_say_the_partner_signs_join_line_and_pixel(r
     s3 = new_section(render(real), 's3')
     rules = s3[s3.index('id="assign-rules"'):]
     assert '상대별 증가·감소는 line·pixel 순 변화를 합친 부호입니다.' in rules[:rules.index('</details>')]
-    assert '허브 기준: 변한 상대가 3 개 이상이고 전체 상대의 50% 이상입니다' in rules
+    assert '다중 쌍 기준: 변한 상대가 3 개 이상이고 전체 상대의 50% 이상입니다' in rules
 
 
 def test_conflict_sentence_and_card_badge(real):
@@ -1005,7 +1005,7 @@ def test_rexp_t12_card_rows_carry_a_short_name_a_badge_one_fact_line_and_the_ful
     c = card(new2)
     assert '<span class="badge b-gone">삭제</span>' in c and '<div class="cw">ACT·GAT1</div>' in c and ' 외 ' not in c[:c.index('<div class="cexp">')]
     c = card(hub)
-    assert '>Scan3 · SD1</a><span class="badge">허브</span>' in c and '<div class="cw">상대 8 (증가 5 · 감소 3)</div>' in c
+    assert '>Scan3 · SD1</a><span class="badge">다중 쌍</span>' in c and '<div class="cw">상대 8 (증가 5 · 감소 3)</div>' in c
     c = card(pair)
     assert '<span class="badge">쌍</span>' in c and re.search(r'<div class="cw">M3</div>', c)
     assert '>Vdd · M2</a><span class="badge">동일 전극</span>' in card(self_)
@@ -1478,3 +1478,34 @@ def test_t13_chrome_a_piece_or_a_legend_row_selects_the_candidate_and_a_card_is_
     ids = re.findall(r'class="bseg dn" data-unit="([^"]+)"', page.read_text(encoding='utf-8'))
     assert dom.root['data-nseg'] == '7' and dom.root['data-sel1'] == 'unit:' + ids[1] and dom.root['data-onseg'] == '1'
     assert dom.root['data-sel2'] == 'unit:' + ids[2] and int(dom.root['data-onrow']) >= 2
+
+
+# ---- rexp/T14: the word "다중 쌍", the list kind of a candidate in both lists -------------------------------------------------------------
+
+def test_t14_the_screen_says_multi_pair_not_hub_and_the_data_keeps_the_hub_key(real):
+    page = render(rich(real))
+    shown = re.sub(r'<(script|style).*?</\1>', '', page, flags=re.S)                   # every tag, attribute and text outside script and style
+    assert '허브' not in shown and 'class="badge">다중 쌍</span>' in shown and '다중 쌍 민감도' in shown and '다중 쌍 기준:' in shown
+    assert '다중 쌍 변화(허브)' not in shown
+    data = json.loads(re.search(r'id="report-data">(.*?)</script>', page, re.S).group(1))
+    assert any(b['ty'] == '다중 쌍 변화' for b in data['bundles'])
+    assert 'id="hub-sensitivity"' in shown                                             # ids and JSON keys keep `hub`
+
+
+def test_chrome_t14_a_candidate_in_both_lists_opens_the_list_where_its_rank_is_better_a_tie_is_line(real, tmp_path):
+    doc = copy.deepcopy(real)
+    both = mk(doc, 1, 'pair', {'line': -0.02, 'pixel': 0.01}, salt=2)
+    finish(doc, [mk(doc, 0, 'pair', {'line': -0.05}, salt=1), both])
+    page = tmp_path / 'r.html'
+    page.write_text(render(doc), encoding='utf-8')
+    dom, text = dump_dom(page, '#unit=%s' % both['id'])                              # line rank 2, pixel rank 1: pixel
+    assert 'data-err' not in dom.root and dom.root['data-kind'] == 'pixel'
+    doc2 = copy.deepcopy(real)
+    tie = mk(doc2, 1, 'pair', {'line': -0.05, 'pixel': 0.01}, salt=2)
+    finish(doc2, [tie])
+    page2 = tmp_path / 'r2.html'
+    page2.write_text(render(doc2), encoding='utf-8')
+    dom2, text2 = dump_dom(page2, '#unit=%s' % tie['id'])                            # rank 1 in both: line
+    assert 'data-err' not in dom2.root and dom2.root['data-kind'] == 'line'
+    dom3, text3 = dump_dom(page2, '#unit=%s&k=pixel' % tie['id'])                    # a k in the hash still wins
+    assert dom3.root['data-kind'] == 'pixel'
