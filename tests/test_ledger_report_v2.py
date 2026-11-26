@@ -1041,6 +1041,56 @@ def test_chrome_maps_of_different_sizes_crop_each_product_to_its_own_box(tmp_pat
     assert ax1 - ax0 >= 1 and ay1 - ay0 >= 1 and bx1 - bx0 >= 1 and by1 - by0 >= 1 and 0 <= bx0 and bx1 <= 100 and 0 <= ax0 and ax1 <= 40
 
 
+def apart_pair_report(tmp_path, name='apart'):
+    """R1b:2: A is 40 x 40 and B is 40 x 100 (no unit window). P1 is a 6 x 6 square in both, but in the top left of A (rows 4-9, cols 4-9) and in
+    the lower right of B (rows 28-33, cols 70-75): the two products show it at very different relative places."""
+    import numpy as np
+    from PIL import Image
+    from test_ledger_report_maps import counts_of, png_of
+    doc = comp_doc()
+    folder = write_ledger(tmp_path / ('led_' + name), doc)
+    maps = write_maps(tmp_path, doc, ledger_sha(folder), name='maps_' + name, full=True, changes=map_changes())
+    mj = json.loads((maps / 'ledger_maps.json').read_text(encoding='utf-8'))
+    for role, side in mj['sides'].items():
+        p1 = [row['number'] for row in side['items'] if row['pair_id'] == 'P1']
+        assert p1
+        for m in side['maps']:
+            old = np.array(Image.open(maps / m['file']))
+            num = old[..., 0].astype(np.uint16) | (old[..., 1].astype(np.uint16) << 8)
+            hit = np.isin(num, p1)
+            rest = np.where(hit, 0, num)
+            if role == 'reference':
+                new = rest.copy()
+                if m['kind'] == 'it' and hit.any():
+                    new[4:10, 4:10] = p1[0]
+            else:
+                new = np.zeros((40, 100), dtype=np.uint16)
+                new[:, :40] = rest
+                if m['kind'] == 'it' and hit.any():
+                    new[28:34, 70:76] = p1[0]
+                m['shape_yx'] = [40, 100]
+            (maps / m['file']).write_bytes(png_of(new))
+            m['numbers'] = counts_of(new)
+        if role == 'target':
+            side['frame']['shape_yx'] = [40, 100]
+    (maps / 'ledger_maps.json').write_text(json.dumps(mj, sort_keys=True), encoding='utf-8')
+    out = tmp_path / ('out_' + name)
+    assert ledger_report.main_ledger_report(str(folder), str(out), lambda r: None, maps_dir=str(maps)) in (0, 3)
+    return out / 'ledger_report.html'
+
+
+def test_chrome_r1b_both_products_enlarge_the_union_of_their_areas_not_each_own_area(tmp_path):
+    page = apart_pair_report(tmp_path)
+    dom, text = run_in_page(page, '#sel=pair:P1', ZOOM_CLICK, tag='r1b_apart')
+    assert 'data-err' not in dom.root and dom.root['data-dp-zoom'] == '1', dom.root.get('data-err')
+    a = [int(v) for v in dom.root['data-dp-box'].split(',')]
+    b = [int(v) for v in dom.root['data-dp-boxb'].split(',')]
+    # each own area would give a small box (6 px x 1.4 = about 10 px). The union (x 0.1-0.76, y 0.1-0.85 of the maps, +40 %) covers A completely
+    # and 92 of the 100 columns of B, so the two boxes are different from the own-area boxes AND from each other.
+    assert a == [0, 0, 40, 40], a
+    assert b[0] == 0 and b[1] == 0 and 88 <= b[2] <= 96 and b[3] == 40, b
+
+
 def painted_report(tmp_path, name, size, el_paint, it_paint):
     """rexp/T10: both products get `size` x `size` maps; the P1 items are painted by it_paint(arr) and the electrodes by el_paint(arr, number-of-Data,
     number-of-ELVDD) on every layer."""

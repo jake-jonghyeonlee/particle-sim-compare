@@ -1511,10 +1511,12 @@ def test_chrome_t14_a_candidate_in_both_lists_opens_the_list_where_its_rank_is_b
     assert dom3.root['data-kind'] == 'pixel'
 
 
-CLICK_SCRIPT = """<script>setTimeout(function(){var R=document.documentElement,U='%s',steps=[
+CLICK_SCRIPT = """<script>setTimeout(function(){var R=document.documentElement,U='%s',Z='%s',PID='%s',noop={dispatchEvent:function(){}},steps=[
  ['card',function(){return document.querySelector('.klist[data-k="line"] .crow[data-unit="'+U+'"]');}],
  ['seg',function(){return document.querySelector('.kbal[data-k="line"] .bseg[data-unit="'+U+'"]');}],
- ['leg',function(){return document.querySelector('.kbal[data-k="line"] .lgr[data-unit="'+U+'"]');}]],i=0;
+ ['leg',function(){return document.querySelector('.kbal[data-k="line"] .lgr[data-unit="'+U+'"]');}],
+ ['frow',function(){return document.querySelector('.klist[data-k="line"] .frow[data-unit="'+Z+'"]');}],
+ ['pairsel',function(){location.hash='#unit='+U+'&k=pixel';setTimeout(function(){location.hash='#sel=pair:'+PID;},200);return noop;}]],i=0;
 function next(){if(i>=steps.length){R.setAttribute('data-t-done','1');return;}var s=steps[i++];location.hash='';
  setTimeout(function(){var el=s[1]();R.setAttribute('data-t-'+s[0]+'-found',el?'1':'0');if(el)el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
   setTimeout(function(){R.setAttribute('data-t-'+s[0],R.getAttribute('data-kind'));var sc=document.querySelector('.klist[data-k="line"] .crow.selcard');
@@ -1527,11 +1529,13 @@ def test_chrome_r6_a_card_piece_or_legend_click_keeps_the_list_kind(real, tmp_pa
     first = mk(doc, 0, 'pair', {'line': -0.05}, salt=1)
     second = mk(doc, 2, 'pair', {'line': -0.04}, salt=3)
     both = mk(doc, 1, 'pair', {'line': -0.02, 'pixel': 0.01}, salt=2)        # line rank 3, pixel rank 1
-    finish(doc, [first, second, both])
+    zero = mk(doc, 3, 'pair', {'line': 0.0, 'pixel': 0.005}, salt=4, abs={'line': 0.03})   # net 0 in line: a folded row (.frow) there, a card in pixel
+    finish(doc, [first, second, both, zero])
+    free = [p['pair_id'] for p in doc['pairs'] if p['pair_id'] not in {b['pair_id'] for b in (first, second, both, zero)}]
     html = render(doc)
-    assert '</body>' in html
+    assert '</body>' in html and 'id="rest-line-%s"' % zero['id'] in html
     page = tmp_path / 'r.html'
-    page.write_text(html.replace('</body>', CLICK_SCRIPT % both['id'] + '</body>'), encoding='utf-8')
+    page.write_text(html.replace('</body>', CLICK_SCRIPT % (both['id'], zero['id'], free[0] if free else 'NOPE') + '</body>'), encoding='utf-8')
     dom, text = dump_dom(page, '')
     r = dom.root
     dbg = {k: v for k, v in r.items() if k.startswith('data-t') or k in ('data-err', 'data-kind')}
@@ -1540,6 +1544,8 @@ def test_chrome_r6_a_card_piece_or_legend_click_keeps_the_list_kind(real, tmp_pa
         assert r['data-t-%s-found' % step] == '1', step
         assert r['data-t-%s' % step] == 'line', step                          # the click never switches the list
         assert r['data-t-%s-sel' % step] == both['id'], step                  # the clicked card stays visible and selected
+    assert r['data-t-frow-found'] == '1' and r['data-t-frow'] == 'line'       # R6b:2: a folded row click keeps the list kind too
+    assert r['data-t-pairsel'] == 'pixel', (free, json.dumps(dbg))                                  # R6b:1/2: sel=pair: with no candidate keeps the kind on the screen (not the first list)
     plain = tmp_path / 'plain.html'
     plain.write_text(html, encoding='utf-8')
     dom2, text2 = dump_dom(plain, '#unit=%s' % both['id'])                     # a direct entry still opens the better-ranked list
@@ -1558,19 +1564,19 @@ def test_r6_a_kind_with_only_net_zero_candidates_still_has_its_fold(real):
 def test_chrome_r6_the_shrunk_crop_flat_shortcut_equals_isborder(tmp_path):
     src = ledger_report.__file__.replace('ledger_report.py', 'ledger_report_assets.py')
     js = open(src, encoding='utf-8').read()
-    flat_expr = 'flat?(sx<1||sx+1>=w||e.el[sy*w+sx-1]!==v||e.el[sy*w+sx+1]!==v):isBorder(e.el,w,h,sx,sy,v,1)'
-    assert flat_expr in js                                                          # the one place that decides (the test copies this expression)
+    assert 'flat=flatRow(e.el,w,h,sy,x0,x1)' in js and 'flatBorder(e.el,w,h,sx,sy,v,flat)' in js       # drawCrop calls the named functions the test runs below
     ib = re.search(r'function isBorder\(.*?\n.*?\n', js).group(0)
     rq = re.search(r'function rowsEq\(.*?\n', js).group(0)
+    fr = re.search(r'function flatRow\(.*?\n', js).group(0) + re.search(r'function flatBorder\(.*?\n', js).group(0)
     test = ('var w=9,h=9,bad=0,flatN=0,seed=7,t,i,sx,sy,v,flat,x0=0,x1=w,a,e={};function rnd(){seed=(seed*1103515245+12345)&0x7fffffff;return seed;}\n'
             'for(t=0;t<300;t++){a=new Uint16Array(w*h);var bands=t%3===0;\n'
             ' for(i=0;i<w*h;i++){a[i]=bands?((i%w)>3?2:1):(rnd()%3);}\n'      # banded maps make rows equal, so the flat branch is taken
             ' if(t%5===0){a[4*w+4]=5;}\n'
-            ' e.el=a;for(sy=0;sy<h;sy++){flat=sy>0&&sy+1<h&&rowsEq(e.el,w,sy,sy-1,x0,x1)&&rowsEq(e.el,w,sy,sy+1,x0,x1);\n'
+            ' e.el=a;for(sy=0;sy<h;sy++){flat=flatRow(e.el,w,h,sy,x0,x1);\n'
             '  for(sx=x0;sx<x1;sx++){v=a[sy*w+sx];if(!v)continue;if(!flat)continue;flatN++;\n'
-            '   var f=(sx<1||sx+1>=w||e.el[sy*w+sx-1]!==v||e.el[sy*w+sx+1]!==v),b=isBorder(e.el,w,h,sx,sy,v,1);if(f!==b)bad++;}}}\n'
+            '   var f=flatBorder(e.el,w,h,sx,sy,v,flat),b=isBorder(e.el,w,h,sx,sy,v,1);if(f!==b)bad++;}}}\n'
             'document.documentElement.setAttribute("data-bad",String(bad));document.documentElement.setAttribute("data-flat",String(flatN));')
     page = tmp_path / 'f.html'
-    page.write_text('<!doctype html><html><body><script>%s%s%s</script></body></html>' % (ib, rq, test), encoding='utf-8')
+    page.write_text('<!doctype html><html><body><script>%s%s%s</script></body></html>' % (ib, rq + fr, test), encoding='utf-8')
     dom, _ = dump_dom(page, '')
     assert int(dom.root['data-flat']) > 100 and dom.root['data-bad'] == '0'

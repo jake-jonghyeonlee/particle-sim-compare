@@ -314,6 +314,9 @@ function load(r,L,cb){var key=r+'|'+L,e=DEC[key];if(e&&e.done){cb(e);return;}if(
 function isBorder(a,w,h,x,y,n,t){if(x<t||y<t||x+t>=w||y+t>=h)return true;var i=y*w+x;
  return a[i-t]!==n||a[i+t]!==n||a[i-t*w]!==n||a[i+t*w]!==n;}
 function rowsEq(a,w,ya,yb,x0,x1){var o=ya*w,p=yb*w,x;for(x=x0;x<x1;x++){if(a[o+x]!==a[p+x])return false;}return true;}
+/* rexp/T15 R6b:3: the shrunk crop of drawCrop. flatRow = the rows above and below row y are the same over x0..x1; flatBorder = isBorder(t=1) of (x,y), cheaper when flat (the same answer: only the value change along the row counts) */
+function flatRow(a,w,h,y,x0,x1){return y>0&&y+1<h&&rowsEq(a,w,y,y-1,x0,x1)&&rowsEq(a,w,y,y+1,x0,x1);}
+function flatBorder(a,w,h,x,y,v,flat){return flat?(x<1||x+1>=w||a[y*w+x-1]!==v||a[y*w+x+1]!==v):isBorder(a,w,h,x,y,v,1);}
 function hiSets(sel){var hi={},par={};if(!sel)return {hi:hi,par:par};
  if(sel.t==='electrode'){hi[sel.id]=1;D.pairs.forEach(function(p){if(p.e.indexOf(sel.id)>=0)p.e.forEach(function(x){if(x!==sel.id)par[x]=1;});});}
  else if(sel.t==='pair'&&PB[sel.id]){PB[sel.id].e.forEach(function(x){hi[x]=1;});}
@@ -513,10 +516,10 @@ function drawCrop(cv,e,r,p,x0,y0,x1,y1,mark){var cw=x1-x0,ch=y1-y0,g=cv.getConte
  var elD=new Uint16Array(ow*oh),itD=new Uint8Array(ow*oh),bp=new Uint8Array(ow*oh),bo=new Uint8Array(ow*oh),pr=new Uint8Array(ow*oh),shrink=s<1;
  if(e.el&&!shrink){for(y=0;y<oh;y++){for(x=0;x<ow;x++){elD[y*ow+x]=e.el[(y0+Math.min(ch-1,Math.floor(y/s)))*w+x0+Math.min(cw-1,Math.floor(x/s))];}}}
  if(e.el&&shrink){for(sy=y0;sy<y1;sy++){var qy=Math.min(oh-1,Math.floor((sy-y0)*s))*ow,
-   flat=sy>0&&sy+1<h&&rowsEq(e.el,w,sy,sy-1,x0,x1)&&rowsEq(e.el,w,sy,sy+1,x0,x1);   /* rexp/T14: when the rows above and below are the same as this one over the crop, a pixel is a border pixel only where its value changes along the row */
+   flat=flatRow(e.el,w,h,sy,x0,x1);   /* rexp/T14: when the rows above and below are the same as this one over the crop, a pixel is a border pixel only where its value changes along the row */
    for(sx=x0;sx<x1;sx++){v=e.el[sy*w+sx];if(!v)continue;k=rl(v);q=qy+Math.min(ow-1,Math.floor((sx-x0)*s));
    var pri=k?2:1;if(pri>pr[q]){pr[q]=pri;elD[q]=v;}
-   if(flat?(sx<1||sx+1>=w||e.el[sy*w+sx-1]!==v||e.el[sy*w+sx+1]!==v):isBorder(e.el,w,h,sx,sy,v,1)){if(k)bp[q]=k;else bo[q]=1;}}}}   /* the electrode of a block: a pair electrode first; its border flags come from the original map */
+   if(flatBorder(e.el,w,h,sx,sy,v,flat)){if(k)bp[q]=k;else bo[q]=1;}}}}   /* the electrode of a block: a pair electrode first; its border flags come from the original map */
  var elS=function(xx,yy){var ax=x0+Math.floor(xx/s),ay=y0+Math.floor(yy/s);return (ax<0||ay<0||ax>=w||ay>=h)?-1:e.el[ay*w+ax];};
  if(e.it){for(y=0;y<ch;y++){for(x=0;x<cw;x++){v=e.it[(y+y0)*w+x+x0];if(!v)continue;z=memo[v];if(z===undefined){it=SD[r].items[v];z=memo[v]=!!(it&&it.p===p.id);}
    if(z)itD[Math.min(oh-1,Math.floor(y*s))*ow+Math.min(ow-1,Math.floor(x*s))]=1;}}}   /* a source pixel of the pair marks its screen pixel (never lost by shrinking) */
@@ -637,7 +640,7 @@ function bestRow(u){var l=document.querySelectorAll('.crow[data-unit="'+u+'"],.f
 function drawKinds(st,sel){var lists=document.querySelectorAll('.klist'),i,k=st.kv.k,u,c,pr=!!st.flags.print;if(!lists.length)return;
  if(!k){u=st.kv.unit||detailOf(st,sel).u||st.kv.cand||'';   /* R4:1: no k in the hash: the kind of the open candidate (the default one, or the selected one) */
   var cur=document.documentElement.getAttribute('data-kind');c=null;   /* R6:1: the kind on the screen stays when the candidate has a row in it (a card, piece, legend or fold click never switches the list); else the better-ranked list */
-  if(u&&cur){var kl=document.querySelectorAll('.klist[data-k="'+cur+'"]');if(kl.length&&kl[0].querySelector('[data-unit="'+u+'"]'))c=kl[0];}
+  if(cur){var kl=document.querySelectorAll('.klist[data-k="'+cur+'"]');if(kl.length&&(!u||kl[0].querySelector('[data-unit="'+u+'"]')))c=kl[0];}   /* R6b:1: no target candidate (sel=electrode:, a pair with no candidate): the kind on the screen stays too */
   if(!c){c=u?bestRow(u):null;c=c&&c.closest?c.closest('.klist'):null;}
   if(!c){for(i=0;i<lists.length;i++){if(lists[i].querySelector('.crow')){c=lists[i];break;}}}   /* else the first kind that has cards (not a skipped one) */
   k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
