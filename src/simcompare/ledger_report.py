@@ -536,7 +536,11 @@ WHY_TEXT = {'both': '두 전극 모두 이 레이어의 상태가 바뀌었습�
             'multi': '전극 3 개 이상이 걸린 불량이라 전극 규칙을 적용하지 않고 이 쌍 하나로 묶었습니다.',
             'both_new_removed': '두 전극이 모두 신규·삭제라서 이 쌍 하나로 묶었습니다.'}
 MIXED_WHY = '두 전극 중 한쪽에 맡길 수 없어 이 쌍 하나로 묶었습니다.'
-SPREAD_K80 = 20      # M1/K4: a direction that needs more cause candidates than this for 80 % reads as "spread out"
+# rexp/T13: how many cause candidates one compartment (one direction of one kind) shows: the balance bar, its legend and the card list all use the same rule
+SHOW_MAIN, MIN_MAIN = 7, 5      # the net change direction: at most 7, at least 5
+SHOW_OPP, MIN_OPP = 3, 2        # the opposite direction: at most 3, at least 2
+SHOW_MIN_SHARE = 0.02           # inside the maximum, a candidate under this share of its compartment ends the list (the minimum is always filled)
+FLAT_TOP_SHARE = 0.15           # a compartment whose first candidate holds less than this reads as "evenly spread"
 
 
 def share_txt(x):
@@ -758,16 +762,59 @@ def _cards_of(ctx, ids):
     return [ctx.bundle_by_id[i] for i in ids or [] if i in ctx.bundle_by_id]
 
 
+def _pick_count(nets, total, is_main):
+    """rexp/T13: how many of the candidates of one compartment (largest |net| first) are shown: at most 7 (opposite 3), at least 5 (opposite 2);
+    inside the maximum a candidate under 2 % of the compartment ends the list."""
+    most, least = (SHOW_MAIN, MIN_MAIN) if is_main else (SHOW_OPP, MIN_OPP)
+    n = 0
+    for v in nets:
+        if n >= most:
+            break
+        if (abs(v) / abs(total) if total else 0.0) >= SHOW_MIN_SHARE or n < least:
+            n += 1
+        else:
+            break
+    return n
+
+
+def _split(ctx, kind):
+    """rexp/T13: the two compartments of a kind of a version 2 ledger (None: older ledger, a kind with no candidates to name).
+    main = the net change direction of the ledger, other = the opposite one. For each: `all` (every candidate of that sign, largest |net| first),
+    `shown` (the first ones by the display rule), `folded` (the others), `total` (the sum of their net). `zero` = candidates whose net is 0."""
+    if not ctx.v2:
+        return None
+    rk = ctx.bundles['ranking'][kind]
+    main = rk.get('main')
+    if rk.get('status') != 'ok' or main not in DIR_WORD:
+        return None
+    other = 'decrease' if main == 'increase' else 'increase'
+    out = {'main': main, 'other': other, 'all': {}, 'shown': {}, 'folded': {}, 'total': {}, 'zero': _cards_of(ctx, rk.get('zero'))}
+    for name in (main, other):
+        d = rk.get(name) or {}
+        bs = sorted(_cards_of(ctx, list(d.get('cards') or []) + list(d.get('rest') or [])),
+                    key=lambda b: (-abs(b['kinds'][kind]['net'] or 0.0), b['id']))
+        total = math.fsum(b['kinds'][kind]['net'] or 0.0 for b in bs)
+        n = _pick_count([b['kinds'][kind]['net'] or 0.0 for b in bs], total, name == main)
+        out['all'][name], out['shown'][name], out['folded'][name], out['total'][name] = bs, bs[:n], bs[n:], total
+    return out
+
+
+def _cancel_ratio(sp):
+    """|the opposite direction sum| / |the net direction sum| (None without a net direction sum)."""
+    base = abs(sp['total'][sp['main']])
+    return None if base == 0 else abs(sp['total'][sp['other']]) / base
+
+
 def _ranked_ids(ctx, kind):
-    """Every card id of a kind, the vi change direction first (an older ledger: its one `cards` list)."""
+    """Every card id of a kind that has a card or a folded card row, the net change direction first: the shown candidates only (an older
+    ledger: its one `cards` list)."""
     rk = ctx.bundles['ranking'][kind]
     if not ctx.v2:
         return list(rk.get('cards') or [])
-    main = rk.get('main')
-    if main not in DIR_WORD:
+    sp = _split(ctx, kind)
+    if sp is None:
         return []
-    other = 'decrease' if main == 'increase' else 'increase'
-    return list((rk.get(main) or {}).get('cards') or []) + list((rk.get(other) or {}).get('cards') or [])
+    return [b['id'] for name in (sp['main'], sp['other']) for b in sp['shown'][name]]
 
 
 def _top_type(ctx, kind, direction):
@@ -806,36 +853,41 @@ def _kind_lines_v2(ctx, kind):
     elif not inc_t and dec_t:
         out = ['증가 요인은 없고, 감소 요인은 <b>%s</b> 입니다.' % esc(pp_txt(dec_t))]
     else:
-        out = ['감소 요인은 <b>%s</b>, 증가 요인은 <b>%s</b> 입니다.' % (esc(pp_txt(dec_t)), esc(pp_txt(inc_t)))]
+        sp0 = _split(ctx, kind)
+        ratio = None if sp0 is None else _cancel_ratio(sp0)
+        # rexp/T13: the opposite direction cancels this much of the net direction (the cancel ratio)
+        tail = '' if ratio is None else ' 반대 방향 요인이 %s을 상쇄합니다(상쇄 비율 <b>%d%%</b>).' % (
+            '감소 요인' if sp0['main'] == 'decrease' else '증가 요인', round(ratio * 100))
+        out = ['감소 요인은 <b>%s</b>, 증가 요인은 <b>%s</b> 입니다.%s' % (esc(pp_txt(dec_t)), esc(pp_txt(inc_t)), tail)]
     if _crp_dominates(ctx, kind):
         # R18:1: the bridge between the vi change and the direction of the cause candidates; the CRP part is named here once
         out.append('보정값(CRP) 차이 %s 를 빼면 원인 후보의 순 변화는 %s입니다.' % (
             esc(pp_txt((ctx.bundles.get('crp') or {}).get(kind))), '증가' if rk['main'] == 'increase' else '감소'))
-    if rk.get('direction') == 'balanced':
-        n = max(len(inc.get('cards') or []), len(dec.get('cards') or []))
-        out.append('증가 요인과 감소 요인이 비슷합니다. 두 방향을 각각 상위 %d 개까지 보여 줍니다.' % n)
-        for name in ('increase', 'decrease'):
-            cards = _cards_of(ctx, (rk.get(name) or {}).get('cards'))
-            if cards:
-                out.append(_factor_sentence(ctx, kind, cards[0], name, '%s 요인' % DIR_WORD[name]))
+    sp = _split(ctx, kind)       # rexp/T13: the counts below are the ones the page shows (7 / 3 by the display rule)
+    if sp is None:
         return out
     main = rk['main']
     opposite = 'decrease' if main == 'increase' else 'increase'
-    cards = _cards_of(ctx, (rk.get(main) or {}).get('cards'))
+    cards = sp['shown'][main]
+    if rk.get('direction') == 'balanced':
+        out.append('증가 요인과 감소 요인이 비슷합니다. 큰 후보를 순 변화 방향 %d 개, 반대 방향 %d 개 보여 줍니다.' % (len(cards), len(sp['shown'][opposite])))
+        for name in (main, opposite):
+            if sp['shown'][name]:
+                out.append(_factor_sentence(ctx, kind, sp['shown'][name][0], name, '%s 요인' % DIR_WORD[name]))
+        return out
     if not cards:
         out.append('%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.' % kind)
         return out
-    m, word = rk[main], DIR_WORD[main]
-    if (m.get('k80') or 0) > SPREAD_K80:
-        out.append('변화가 넓게 퍼져 있어 유형별 합계로 봅니다(%s 요인의 80%% 까지 원인 후보 %d 개). 상위 %d 개는 %s 입니다.' % (
-            word, m['k80'], len(cards), share_txt(m.get('cover'))))
-    elif not m.get('rest'):
+    word = DIR_WORD[main]
+    folded = sp['folded'][main]
+    cover = math.fsum(b['kinds'][kind].get('direction_share') or 0.0 for b in cards)
+    if not folded:
         out.append('%s 요인은 원인 후보 %d 개에 모두 있습니다.' % (word, len(cards)))
     else:
-        out.append('%s 요인의 %s 가 원인 후보 %d 개에서 나왔습니다.' % (word, share_txt(m.get('cover')), len(cards)))
-        out.append('나머지 %d 원인 후보가 %s 를 나눠 가집니다.' % (len(m['rest']), share_txt(1.0 - (m.get('cover') or 0.0))))
+        out.append('%s 요인의 %s 가 원인 후보 %d 개에서 나왔습니다.' % (word, share_txt(cover), len(cards)))
+        out.append('나머지 %d 원인 후보가 %s 를 나눠 가집니다.' % (len(folded), share_txt(1.0 - cover)))
     out.append(_factor_sentence(ctx, kind, cards[0], main, '%s 요인' % word))
-    others = _cards_of(ctx, (rk.get(opposite) or {}).get('cards'))
+    others = sp['shown'][opposite]
     if others:
         out.append(_factor_sentence(ctx, kind, others[0], None, '반대 방향 요인'))
     top = _top_type(ctx, kind, main)
@@ -1655,18 +1707,67 @@ def _card_share(ctx, b, kind):
     return _role_text(ctx, b, kind)
 
 
-def _card_fraction(ctx, b, kind):
-    """The 0..1 length of the share bar of a folded card."""
+def _updown(b, kind):
+    """(down, up) of one candidate and kind: the sums of its decreases and its increases inside the candidate; down = (|Δ| sum − net) / 2,
+    up = (|Δ| sum + net) / 2. None for an older ledger that has no |Δ| sum."""
     s = b['kinds'][kind]
-    x = s.get('direction_share') if ctx.v2 else s.get('share')
-    return 0.0 if not isinstance(x, (int, float)) else max(0.0, min(1.0, float(x)))
+    if s.get('net') is None or s.get('abs') is None:
+        return None
+    return (s['abs'] - s['net']) / 2.0, (s['abs'] + s['net']) / 2.0
 
 
-def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None, dup=False):
-    """One folded card (a row of the list of `kind`): rank circle, title, type, net change, share, bar, one-line 'what changed'.
+def _ud_txt(x):
+    """The size of a decrease or an increase inside a candidate, in %p without a unit: '0.24', '0.012', '0'."""
+    p = abs(x) * 100
+    return '0' if p < 5e-4 else ('%.2f' % p if p >= 0.095 else '%.3f' % p)
+
+
+def _heavy_cancel(b, kind):
+    """rexp/T13: a decrease and an increase are both inside the candidate and their |Δ| sum is at least twice the |net| ('내부 상쇄 큼')."""
+    ud = _updown(b, kind)
+    if ud is None:
+        return False
+    s = b['kinds'][kind]
+    return ud[0] > 1e-12 and ud[1] > 1e-12 and s['abs'] >= 2 * abs(s['net']) - 1e-12
+
+
+def _kind_gmax(ctx, kind):
+    """The scale of the card bars of a kind: the largest decrease or increase inside any of its candidates (every card of the kind shares it)."""
+    best = 0.0
+    for b in ctx.bundles.get('list') or []:
+        ud = _updown(b, kind)
+        if ud is not None:
+            best = max(best, ud[0], ud[1])
+    return best
+
+
+def _card_bar(b, kind, gmax):
+    """rexp/T13: the full-width bar under a card: 0 in the middle, a strong thick bar = the net (the direction colour), light thin bars = the
+    decrease (left) and the increase (right) inside the candidate; the same scale for every card of the kind."""
+    ud = _updown(b, kind)
+    if ud is None or not gmax:
+        return ''
+    net = b['kinds'][kind]['net']
+    wd, wu, wn = (round(46.0 * v / gmax, 2) for v in (ud[0], ud[1], abs(net)))
+    return ('<div class="cbar" title="순 %s · 후보 안 감소 %s · 증가 %s"><i class="cd" style="width:%s%%"></i><i class="cu" style="width:%s%%"></i>'
+            '<i class="cn %s" style="width:%s%%"></i></div>' % (esc(pp_txt(net)), _ud_txt(ud[0]), _ud_txt(ud[1]), wd, wu, 'dn' if net < 0 else 'up', wn))
+
+
+def _card_sub(ctx, b, kind):
+    """The second line of the right side of a card: '몫 51% · ↓0.24 ↑0.06' (an older ledger: its one role text)."""
+    s = b['kinds'][kind]
+    ud = _updown(b, kind)
+    if not ctx.v2 or ud is None or s.get('net') is None:
+        return _card_share(ctx, b, kind)
+    share = s.get('direction_share')
+    return '%s · ↓%s ↑%s' % ('몫 ' + share_txt(share) if share is not None else '몫 —', _ud_txt(ud[0]), _ud_txt(ud[1]))
+
+
+def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None, dup=False, gmax=None):
+    """One folded card (a row of the list of `kind`): rank circle, name, type, 'what changed' fact, net change, share, the bar under it.
     The ▸ unfolds the layer table, the amount and the notes; the row click opens the detail panel (the script).
     rexp/T11: a candidate that is in the list of the other kind too has a second card here; its element id is '<id>--<kind>' (`dup`),
-    data-unit always holds the candidate id."""
+    data-unit always holds the candidate id. rexp/T13: the card is 65 px high; `gmax` is the scale of the bar of its kind."""
     uid = esc(b['id'])
     eid = uid + '--' + kind if dup else uid
     s = b['kinds'][kind]
@@ -1674,19 +1775,19 @@ def _bundle_card(ctx, b, kind, rank, opposite=False, direction=None, dup=False):
     word = direction or ('increase' if (net or 0) > 0 else 'decrease')
     rk_cls = 'rk %s%s' % ('dn' if word == 'decrease' else 'up', ' op' if opposite else '')
     what = unit_what(ctx, b)
-    bar_cls = 'dn' if word == 'decrease' else ''
-    head = ('<span class="%s" title="%s">%d</span><div class="cmain"><div class="ct"><a class="ctl nm" href="%s">%s</a>%s</div><div class="cw">%s</div>'
-            '<div class="shb"><i class="%s" style="width:%d%%"></i></div></div><div class="cv">%s<div class="sh">%s</div></div>'
-            '<span class="tw" data-x="1" role="button" tabindex="0" title="펼치기: 레이어별 내역 · 얼마나" aria-label="펼치기">▸</span>' % (
-                rk_cls, '반대 방향 요인 순위' if opposite else '순위', rank, esc(_href('unit:' + b['id'])), esc(_card_name(b)), _card_badge(b), esc(_card_fact(b)),
-                bar_cls, round(_card_fraction(ctx, b, kind) * 100), pp_cell(net, None), esc(_card_share(ctx, b, kind))))
+    heavy = '<span class="badge b-cx">내부 상쇄 큼</span>' if ctx.v2 and _heavy_cancel(b, kind) else ''
+    head = ('<span class="%s" title="%s">%d</span><div class="cmain"><div class="ct"><a class="ctl nm" href="%s">%s</a>%s%s</div><div class="cw">%s</div>'
+            '</div><div class="cv">%s<div class="sh">%s</div></div>'
+            '<span class="tw" data-x="1" role="button" tabindex="0" title="펼치기: 레이어별 내역 · 얼마나" aria-label="펼치기">▸</span>%s' % (
+                rk_cls, '반대 방향 요인 순위' if opposite else '순위', rank, esc(_href('unit:' + b['id'])), esc(_card_name(b)), _card_badge(b), heavy,
+                esc(_card_fact(b)), pp_cell(net, None), esc(_card_sub(ctx, b, kind)), _card_bar(b, kind, gmax) if ctx.v2 else ''))
     notes = []
     if b.get('conflict'):
         notes.append('<span class="badge b-mv">상충</span>')
     if any((b['kinds'][k].get('cancelling')) for k in KINDS):
         notes.append('<span class="badge b-mv">내부 상쇄(순 변화 ≈ 0)</span>')
-    parts = ['<div class="crow" id="%s" data-unit="%s" data-k="%s"%s title="%s">%s<div class="cexp"><p class="bp cwhat">%s</p>' % (
-        eid, uid, kind, ' data-opp="1"' if opposite else '', esc(bundle_title(b) + '\n' + what), head, esc(what))]
+    parts = ['<div class="crow" id="%s" data-unit="%s" data-k="%s" data-rank="%d"%s title="%s">%s<div class="cexp"><p class="bp cwhat">%s</p>' % (
+        eid, uid, kind, rank, ' data-opp="1"' if opposite else '', esc(bundle_title(b) + '\n' + what), head, esc(what))]
     if notes:
         parts.append('<p class="bp">%s</p>' % ' '.join(notes))
     parts += [_layer_rows_html(b), _hub_partner_line(b)]
@@ -1774,84 +1875,215 @@ def _types_crp_line(ctx):
     return '<p class="muted small" id="types-crp" style="margin:3px 0">%s</p>' % esc(' '.join(lines)) if lines else ''
 
 
-def _dir_cell(ctx, kind):
-    """One cell of the direction band of 3: the kind, the direction of its vi change (big), and how the cards are ranked."""
-    delta = ctx.doc['totals'][kind]['delta']
+def _dir_wide(ctx, kind):
+    """The one wide cell of a kind that has no number row: the skip sentences (no candidates to name), or an older ledger's vi change and sentences."""
     skip = _skip_lines(ctx, kind)
     if skip is not None:
-        return '<span class="k">%s%s vi</span><div class="dhow">%s</div>' % (chip(kind), kind, ' '.join(skip))
-    if not ctx.v2:
-        return '<span class="k">%s%s vi</span><span class="v">%s</span><div class="dhow">%s</div>' % (
-            chip(kind), kind, esc(pp_txt(delta)), ' '.join(_kind_lines_legacy(ctx, kind)))
-    rk = ctx.bundles['ranking'][kind]
-    inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
-    if rk.get('direction') == 'balanced':
-        how = '증가 요인 %s 와 감소 요인 %s 가 비슷해 순 변화는 %s 입니다.' % (
-            esc(pp_txt(inc.get('total'))), esc(pp_txt(dec.get('total'))), esc(pp_txt(rk.get('net_total'))))
-        return '<span class="k">%s%s vi</span><span class="v">증가·감소 비슷 %s</span><div class="dhow">%s</div>' % (chip(kind), kind, esc(pp_txt(delta)), how)
-    main = rk.get('main')
-    other = 'decrease' if main == 'increase' else 'increase'
-    m = rk.get(main) or {}
-    word = DIR_WORD.get(main, '—')
-    crp = _crp_dominates(ctx, kind)
-    value = rk.get('net_total') if crp else delta
-    n, n_other = len(m.get('cards') or []), len((rk.get(other) or {}).get('cards') or [])
-    how = '순위 = <b>%s 방향 기여가 큰 순</b>. %s 요인 상위 %d 개가 %s분의 <b>%s</b>' % (word, word, n, word, share_txt(m.get('cover')))
-    if n_other:
-        how += ' · 반대 방향 요인 %d 개는 아래' % n_other
-    if m.get('k80') is not None:
-        how += ' <span class="muted small">(%s 요인 %s 의 80%% 까지 원인 후보 %s 개)</span>' % (word, esc(pp_txt(m.get('total'))), m['k80'])
-    return '<span class="k">%s%s %s</span><span class="v %s">%s %s</span><div class="dhow">%s</div>' % (
-        chip(kind), kind, '원인 후보 순 변화' if crp else 'vi', 'up' if main == 'increase' else 'down', word, esc(pp_txt(value)), how)
+        return ' '.join(skip)
+    delta = ctx.doc['totals'][kind]['delta']
+    return '<span class="v">%s</span> %s' % (esc(pp_txt(delta)), ' '.join(_kind_lines_legacy(ctx, kind))) if not ctx.v2 else ''
+
+
+def _dir_pp(value):
+    """A signed %p value of the number block, with its direction colour."""
+    return '<span class="kv %s">%s</span>' % ('' if not value else 'up' if value > 0 else 'down', esc(pp_txt(value)))
+
+
+def _dir_row(ctx, kind):
+    """rexp/T13: one row of the number block of 3 (a click switches the list): kind | A → B (% of A) | net increase or decrease and the number of
+    candidates | net-direction sum, count, first candidate | opposite sum, count, cancel ratio."""
+    sp = _split(ctx, kind)
+    kd, delta = ctx.doc['kinds'][kind], ctx.doc['totals'][kind]['delta']
+    main, other = sp['main'], sp['other']
+    net = math.fsum(sp['total'].values())
+    p = pct_of(net, kd['vi_a'])
+    word = DIR_WORD[main]
+    first = sp['all'][main][0] if sp['all'][main] else None
+    ratio = _cancel_ratio(sp)
+    top = ''
+    if first is not None:
+        fs = first['kinds'][kind]
+        top = ' · 1 위 <b>%s</b> %s (%s)' % (esc(_card_name(first)), esc(pp_txt(fs['net'])), esc(share_txt(fs.get('direction_share'))))
+    return ('<div class="dc dname"><span class="k">%s%s vi</span></div>'
+            '<div class="dc dab"><span class="kl">A → B</span><span class="kv plain">%s → %s</span><span class="ks">%s</span></div>'
+            '<div class="dc dnet %s"><span class="kl">순 %s</span>%s<span class="ks">후보 %d 개</span></div>'
+            '<div class="dc dmain"><span class="kl">%s 요인 합</span>%s<span class="ks">후보 %d 개%s</span></div>'
+            '<div class="dc dopp"><span class="kl">%s 요인 합</span>%s<span class="ks">후보 %d 개%s</span></div>' % (
+                chip(kind), kind, esc(vi_txt(kd['vi_a'])), esc(vi_txt(kd['vi_b'])), 'A 대비 ' + esc(spct(p)) if p is not None else '',
+                'down' if net < 0 else 'up' if net > 0 else '', word if net else '변화', _dir_pp(net), len(sp['all'][main]) + len(sp['all'][other]),
+                word, _dir_pp(sp['total'][main]), len(sp['all'][main]), top,
+                DIR_WORD[other], _dir_pp(sp['total'][other]), len(sp['all'][other]),
+                '' if ratio is None else ' · <b>상쇄 비율 %d%%</b>' % round(ratio * 100)))
 
 
 def _dirband(ctx):
-    """The band under the head of 3 (one cell per kind; a click on a cell switches the list). Older ledger: its one sentence first."""
+    """The number block of 3 (one row per kind; a click on a row switches the list). Older ledger: its one sentence first."""
     note = '' if ctx.v2 else '<p class="dirnote">이 ledger 는 원인 후보를 총 변동 기준으로 순위 매긴 옛 방식입니다. 증가·감소 방향 기준으로 보려면 %s</p>' % RERUN
-    return '<div id="dirband">%s<div class="dirs">%s</div></div>' % (note, ''.join(
-        '<div class="dir %s" data-k="%s" role="button" tabindex="0">%s</div>' % (kind, kind, _dir_cell(ctx, kind)) for kind in KINDS))
+    rows = []
+    for kind in KINDS:
+        sp = _split(ctx, kind)
+        if sp is None:
+            body = '<div class="dc dname"><span class="k">%s%s vi</span></div><div class="dc dwide">%s</div>' % (chip(kind), kind, _dir_wide(ctx, kind))
+        else:
+            body = _dir_row(ctx, kind)
+        rows.append('<div class="dir %s" data-k="%s" role="button" tabindex="0">%s</div>' % (kind, kind, body))
+    crp = ''.join('<p class="muted small dircrp" id="dircrp-%s">%s 의 보정값(CRP) 차이 %s 는 위 합에 없음</p>' % (k, k, esc(pp_txt(_crp_outside(ctx, k))))
+                  for k in KINDS if ctx.v2 and _crp_outside(ctx, k) is not None)
+    return '<div id="dirband">%s<div class="dirs">%s</div>%s</div>' % (note, ''.join(rows), crp)
+
+
+def _fold_id(kind, sp, name):
+    """The id of the fold of one compartment (the net direction: bd-rest-<kind>; the opposite one: bd-rest-<kind>-opposite)."""
+    return 'bd-rest-%s' % kind if name == sp['main'] else 'bd-rest-%s-opposite' % kind
+
+
+def _fold_table(ctx, kind, bs, first_rank):
+    """rexp/T13: the small table inside a fold: rank, name, type, net, ↓↑; a click on a row selects the candidate. first_rank None = no rank (net 0)."""
+    def row(n, b):
+        s, ud = b['kinds'][kind], _updown(b, kind)
+        return ('<tr id="rest-%s-%s" class="frow" data-unit="%s" data-rank="%s" data-href="%s" role="button" tabindex="0" title="%s"><td class="muted">%s</td>'
+                '<td class="l nm">%s</td><td class="l">%s</td><td>%s</td><td class="muted">%s</td></tr>' % (
+                    kind, esc(b['id']), esc(b['id']), '' if first_rank is None else first_rank + n, esc(_href('unit:' + b['id'])), esc(bundle_title(b)),
+                    '–' if first_rank is None else first_rank + n, esc(_card_name(b)), _card_badge(b), pp_cell(s['net'], None),
+                    '' if ud is None else '↓%s ↑%s' % (_ud_txt(ud[0]), _ud_txt(ud[1]))))
+    return ('<div class="scrl"><table class="ftab"><thead><tr><th>순위</th><th class="l">이름</th><th class="l">유형</th><th>%s 순</th><th>↓ ↑</th></tr></thead><tbody>%s</tbody></table></div>' % (
+        kind, ''.join(row(n, b) for n, b in enumerate(bs))))
+
+
+def _compartment(ctx, kind, sp, name, gmax, dup_ids):
+    """rexp/T13: one compartment of the card list: the head band (direction, cancel ratio, sum, count), a line when the shares are even, the shown
+    cards, and the fold of the others (the net direction first, the opposite direction second)."""
+    bs, shown, folded, total = sp['all'][name], sp['shown'][name], sp['folded'][name], sp['total'][name]
+    if not bs:
+        return ''
+    is_main = name == sp['main']
+    ratio = _cancel_ratio(sp)
+    title = '%s %s 요인' % ('①' if is_main else '②', DIR_WORD[name]) + ('' if is_main or ratio is None else ' · 상쇄 비율 %d%%' % round(ratio * 100))
+    out = ['<div class="cgrp" id="grp-%s-%s"><div class="gh %s"><span>%s</span><span><span class="gv">%s</span> <span class="gc">· 후보 %d 개</span></span></div>' % (
+        kind, 'main' if is_main else 'opp', 'd' if name == 'decrease' else 'u', esc(title), esc(pp_txt(total)), len(bs))]
+    top = abs(bs[0]['kinds'][kind]['net'] or 0.0) / abs(total) if total else 1.0
+    if top < FLAT_TOP_SHARE:
+        cum = math.fsum(abs(b['kinds'][kind]['net'] or 0.0) for b in shown) / abs(total)
+        out.append('<div class="spread" id="spread-%s-%s">고르게 퍼짐 — 1 위 <b>%s</b> · 상위 %d 개 <b>%s</b></div>' % (
+            kind, 'main' if is_main else 'opp', esc(share_txt(top)), len(shown), esc(share_txt(cum))))
+    out.append('<div class="bgrid" id="cards-%s%s">%s</div>' % (kind, '' if is_main else '-opposite', ''.join(
+        _bundle_card(ctx, b, kind, n, not is_main, name, dup=b['id'] in dup_ids, gmax=gmax) for n, b in enumerate(shown, 1))))
+    if folded:
+        rest_sum = math.fsum(b['kinds'][kind]['net'] or 0.0 for b in folded)
+        out.append('<details class="rest" id="%s"><summary><span><b>접힌 %d 개</b> <span class="muted small">각 %s 이하</span></span>'
+                   '<span class="n">합 %s <span class="muted small">(%s)</span></span></summary>%s</details>' % (
+                       _fold_id(kind, sp, name), len(folded), esc(_mag_pp(folded[0]['kinds'][kind]['net'] or 0.0)), esc(pp_txt(rest_sum)),
+                       esc(share_txt(abs(rest_sum) / abs(total) if total else None)), _fold_table(ctx, kind, folded, len(shown) + 1)))
+    out.append('</div>')
+    return ''.join(out)
 
 
 def _kind_cards(ctx, kind, rk, line_rk=None):
-    """The card lists of one kind: the vi change direction first (top 6), then the opposite direction (top 3); a balanced kind
-    shows both directions (top 6 each). The rest of both directions and the zero-net candidates are folded as 기타."""
-    inc, dec = rk.get('increase') or {}, rk.get('decrease') or {}
+    """rexp/T13: the card list of one kind in two compartments: the net change direction (at most 7) and the opposite direction (at most 3), each
+    with a fold of the others; the candidates whose net is 0 are folded last. The ranks are the numbers of the balance bar and its legend."""
+    sp = _split(ctx, kind)
     shown_line = set(_ranked_ids(ctx, 'line')) if line_rk is not None else set()
-
-    def block(name, title, ident, opposite=False):
-        d = rk.get(name) or {}
-        cards = _cards_of(ctx, d.get('cards'))
-        if not cards:
-            return ''
-        cover = '' if d.get('cover') is None else ' · 카드 몫 합 %s' % share_txt(d['cover'])
-        k80 = '' if d.get('k80') is None else ' · 80%% 까지 %d 개' % d['k80']
-        return '<h4>%s <span class="muted" style="font-weight:400">(합 %s%s%s)</span></h4><div class="bgrid" id="%s">%s</div>' % (
-            esc(title), esc(pp_txt(d.get('total'))), cover, k80, ident,
-            ''.join(_bundle_card(ctx, b, kind, n, opposite, name, dup=b['id'] in shown_line) for n, b in enumerate(cards, 1)))
-    direction = rk.get('direction')
-    parts = []
-    if direction == 'balanced':
-        parts.append(block('increase', '증가 요인 상위 %d 개' % len(inc.get('cards') or []), 'cards-%s' % kind))
-        parts.append(block('decrease', '감소 요인 상위 %d 개' % len(dec.get('cards') or []), 'cards-%s-decrease' % kind))
-        head = '증가 요인과 감소 요인이 비슷합니다'
-    else:
-        main = rk['main']
-        other = 'decrease' if main == 'increase' else 'increase'
-        parts.append(block(main, '%s — %s 요인 상위 %d 개' % (_dir_name(ctx, kind), DIR_WORD[main], len(rk[main].get('cards') or [])), 'cards-%s' % kind))
-        parts.append(block(other, '반대 방향 요인 — %s 요인 상위 %d 개' % (DIR_WORD[other], len(rk[other].get('cards') or [])), 'cards-%s-opposite' % kind, True))
-        head = '%s은 %s 입니다' % (_dir_name(ctx, kind), DIR_WORD[main])
-        if (rk[main].get('k80') or 0) > SPREAD_K80:
-            parts.insert(0, '<div class="band info" id="spread-%s">변화가 넓게 퍼져 있어 유형별 합계로 봅니다. %s 요인의 80%% 까지 원인 후보 %d 개가 필요하고, 아래 카드 %d 개는 %s 입니다.</div>' % (
-                kind, DIR_WORD[main], rk[main]['k80'], len(rk[main].get('cards') or []), share_txt(rk[main].get('cover'))))
-    if not any('class="bgrid"' in p for p in parts):
+    gmax = _kind_gmax(ctx, kind)
+    parts = [] if sp is None else [_compartment(ctx, kind, sp, name, gmax, shown_line) for name in (sp['main'], sp['other'])]
+    if not any(parts):
         return '<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.</p>' % (kind, kind, kind)
-    entries = [(i, DIR_WORD[name]) for name in ('increase', 'decrease') for i in (rk.get(name) or {}).get('rest') or []]
-    entries += [(i, '순 변화 0') for i in rk.get('zero') or []]
-    rest = ''
-    if entries:
-        rest = ('<details id="bd-rest-%s"><summary>기타 %s 원인 후보 %d 개 — 반대 방향 4 위 이하와 순 변화 0 포함 ▸</summary>%s</details>' % (
-            kind, kind, len(entries), _rest_rows(ctx, kind, entries)))
-    return '<h3>%s · %s</h3>%s%s' % (chip(kind) + esc(kind), esc(head), ''.join(parts), rest)
+    zero = ''
+    if sp['zero']:
+        zero = '<details class="rest" id="bd-zero-%s"><summary>순 변화 0 %d 개 ▸</summary>%s</details>' % (kind, len(sp['zero']), _fold_table(ctx, kind, sp['zero'], None))
+    head = '%s은 %s 입니다' % (_dir_name(ctx, kind), DIR_WORD[sp['main']])
+    return '<h3>%s · %s</h3>%s%s' % (chip(kind) + esc(kind), esc(head), ''.join(parts), zero)
+
+
+def _fit_text(text, px, size):
+    """Cut a text to fit px at a font size (a wide character = 1 em, the others 0.6 em), with … at the cut."""
+    width = lambda t: sum(size if ord(c) > 0x2e80 else size * 0.6 for c in t)
+    if width(text) <= px:
+        return text
+    out = ''
+    for c in text:
+        if width(out + c) > px - size:
+            break
+        out += c
+    return out + '…'
+
+
+BAL_W, BAL_Y, BAL_BH, BAL_H = 1420, 22, 44, 86      # rexp/T13: the viewBox of the balance bar (it shrinks with the page width)
+BAL_LABEL2, BAL_LABEL1 = 110, 18                    # a piece at least 110 wide shows 'number. name' + 'type · share', at least 18 wide the number only
+
+
+def _balance(ctx, kind):
+    """rexp/T13: '감소 요인 · 증가 요인 균형' of one kind: the equation line, the horizontal bar (0 in the middle, decreases left, increases right, a ▲ at
+    the net change) and a two-column legend. The pieces and the legend rows are the shown candidates of the compartments; a click selects one."""
+    sp = _split(ctx, kind)
+    if sp is None:
+        return ''
+    dec_t, inc_t = sp['total']['decrease'], sp['total']['increase']
+    net = dec_t + inc_t
+    mx = max(-dec_t, inc_t) * 1.04
+    if mx <= 0:
+        return ''
+    cx = BAL_W / 2.0
+    sc = (cx - 16) / mx
+    ratio = _cancel_ratio(sp)
+    cls = lambda v: 'down' if v < 0 else 'up' if v > 0 else ''
+    eq = '순 변화 <b class="%s">%s</b> = 감소 요인 <b class="down">%s</b> + 증가 요인 <b class="up">%s</b>%s' % (
+        cls(net), esc(pp_txt(net)), esc(pp_txt(dec_t)), esc(pp_txt(inc_t)), '' if ratio is None else ' · 상쇄 비율 <b>%d%%</b>' % round(ratio * 100))
+    svg = ['<svg class="balsvg" viewBox="0 0 %d %d" width="100%%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="감소 요인과 증가 요인 균형 막대">' % (BAL_W, BAL_H)]
+    legend = {}
+    y, bh = BAL_Y, BAL_BH
+    for name in ('decrease', 'increase'):
+        left = name == 'decrease'
+        side = 'dn' if left else 'up'
+        tot = abs(sp['total'][name])
+        x, used, rows = cx, 0.0, []
+        for i, b in enumerate(sp['shown'][name], 1):
+            s = b['kinds'][kind]
+            v = s['net'] or 0.0
+            w = abs(v) * sc
+            x0 = x - w if left else x
+            share = abs(v) / tot if tot else None
+            ud = _updown(b, kind)
+            tip = '%d. %s · %s\n순 %s (%s)%s' % (i, _card_name(b), CARD_BADGE.get(btype(b), TYPE_NAME.get(btype(b), '')), pp_txt(v), share_txt(share),
+                                                '' if ud is None else ' · ↓%s ↑%s' % (_ud_txt(ud[0]), _ud_txt(ud[1])))
+            g = ['<g class="bseg %s" data-unit="%s" data-href="%s" role="button" tabindex="0"><title>%s</title>' % (side, esc(b['id']), esc(_href('unit:' + b['id'])), esc(tip)),
+                 '<rect x="%.1f" y="%d" width="%.1f" height="%d" opacity="%.2f"/>' % (x0, y, w, bh, max(0.5, 1 - (i - 1) * 0.07))]
+            mid = x0 + w / 2
+            if w >= BAL_LABEL2:
+                g.append('<text class="bl1" x="%.1f" y="%d" text-anchor="middle">%s</text><text class="bl2" x="%.1f" y="%d" text-anchor="middle">%s</text>' % (
+                    mid, y + 19, esc(_fit_text('%d. %s' % (i, _card_name(b)), w - 8, 12.5)), mid, y + 35,
+                    esc(_fit_text('%s · %s' % (CARD_BADGE.get(btype(b), TYPE_NAME.get(btype(b), '')), share_txt(share)), w - 8, 11))))
+            elif w >= BAL_LABEL1:
+                g.append('<text class="bl1" x="%.1f" y="%.1f" text-anchor="middle">%d</text>' % (mid, y + bh / 2 + 5, i))
+            g.append('</g>')
+            svg.append(''.join(g))
+            x = x0 if left else x0 + w
+            used += abs(v)
+            rows.append('<div class="lgr" data-unit="%s" data-href="%s" role="button" tabindex="0"><span class="lgn %s">%d</span> <b>%s</b> <span class="badge">%s</span> '
+                        '<span class="%s n">%s</span> <span class="muted">%s</span></div>' % (
+                            esc(b['id']), esc(_href('unit:' + b['id'])), side, i, esc(_card_name(b)), esc(CARD_BADGE.get(btype(b), TYPE_NAME.get(btype(b), ''))),
+                            cls(v), esc(pp_txt(v)), esc(share_txt(share))))
+        folded = sp['folded'][name]
+        rw = (tot - used) * sc
+        if folded and rw > 0.5:
+            rx = x - rw if left else x
+            rest_sum = math.fsum(b['kinds'][kind]['net'] or 0.0 for b in folded)
+            svg.append('<g class="brest %s"><title>%s</title><rect x="%.1f" y="%d" width="%.1f" height="%d"/>%s</g>' % (
+                side, esc('그 밖 %d 개 · 합 %s' % (len(folded), pp_txt(rest_sum))), rx, y, rw, bh,
+                '<text x="%.1f" y="%.1f" text-anchor="middle">그 밖</text>' % (rx + rw / 2, y + bh / 2 + 4) if rw > 60 else ''))
+        if folded:
+            rows.append('<div class="lgr lgmore muted" data-fold="%s" role="button" tabindex="0">접힌 %d 개 · 합 %s ▸</div>' % (
+                _fold_id(kind, sp, name), len(folded), esc(pp_txt(math.fsum(b['kinds'][kind]['net'] or 0.0 for b in folded)))))
+        legend[name] = ''.join(rows)
+        svg.append('<text class="bh %s" x="%.1f" y="%d" text-anchor="%s">%s %s</text>' % (
+            side, cx + (-tot if left else tot) * sc, y - 6, 'start' if left else 'end', DIR_WORD[name] + ' 요인', esc(pp_txt(sp['total'][name]))))
+    svg.append('<line class="bzero" x1="%.1f" x2="%.1f" y1="%d" y2="%d"/>' % (cx, cx, y - 12, y + bh + 6))
+    nx = cx + net * sc
+    svg.append('<g class="bnet"><path d="M%.1f %d L%.1f %d L%.1f %d Z"/><text x="%.1f" y="%d" text-anchor="%s">순 %s</text></g>' % (
+        nx - 7, y + bh + 14, nx + 7, y + bh + 14, nx, y + bh + 3, nx + (12 if net < 0 else -12), y + bh + 15, 'start' if net < 0 else 'end', esc(pp_txt(net))))
+    svg.append('</svg>')
+    return ('<div class="kbal" id="bal-%s" data-k="%s"><div class="bal"><div class="hd"><b>감소 요인 · 증가 요인 균형</b> <span class="eqline" id="eq-%s">%s</span></div>%s'
+            '<div class="lg2"><div class="lgc lgl">%s</div><div class="lgc lgr2">%s</div></div></div></div>' % (
+                kind, kind, kind, eq, ''.join(svg), legend['decrease'], legend['increase']))
 
 
 def _section3(ctx):
@@ -1862,12 +2094,16 @@ def _section3(ctx):
     same_res = all((design.get(k) or {}).get('status') == 'available' and 'resolution' in (design[k].get('negligible') or []) for k in KINDS)
     how = ['<p style="margin:3px 0">한 layout 변화는 여러 전극 쌍의 불량을 함께 바꿉니다. 그래서 변화 하나(쌍 × 방식 × 레이어)를 \'무엇이 바뀌었나\' 기준으로 정확히 한 원인 후보에 통째로 넣습니다. '
            '카드의 값은 증가한 것과 감소한 것을 부호대로 더한 순 변화입니다. 모든 원인 후보의 순 변화를 더하면 보정값(CRP)을 뺀 전체 변화와 같고, 같은 변화가 두 카드에 나오지 않습니다.</p>',
-           '<p style="margin:3px 0">순위와 몫은 종류별 <b>vi 변화 방향</b>으로 셉니다. 이 방향은 원인 후보 순 변화(보정값 차이 제외)의 부호입니다. 보정값 차이가 커서 vi 의 부호와 달라지면 \'원인 후보 순 변화 방향\' 이라고 씁니다. 그 방향 카드 상위 6 개 다음에 반대 방향 요인의 큰 카드 3 개를 보여 주고, 나머지는 기타에 있습니다. '
-           '총 변동은 %s 입니다. 카드 안에서 증가와 감소가 서로 지우면 "내부 상쇄" 로 표시합니다.</p>' % TOTAL_TEXT,
+           '<p style="margin:3px 0">원인 후보는 종류(line·pixel)마다 두 구획으로 나뉩니다. <b>순 변화 방향 요인</b>은 원인 후보 순 변화(보정값 차이 제외)의 부호와 같은 방향의 후보이고, <b>반대 방향 요인</b>은 나머지입니다. 보정값 차이가 커서 vi 의 부호와 달라지면 \'원인 후보 순 변화 방향\' 이라고 씁니다. '
+           '각 구획은 |순 변화|가 큰 순서로 세운 순위입니다. 순 변화 방향은 최대 7 개(최소 5), 반대 방향은 최대 3 개(최소 2)를 보여 주고, 구획 합의 2%% 미만이 나오면 거기서 멈춥니다. 나머지는 접힌 표에 있고, 순 변화가 0 인 후보는 맨 끝 줄에 있습니다. '
+           '번호는 구획 안 순위이며 균형 막대·범례·카드 목록이 같습니다. 몫 = 후보 순 변화 ÷ 그 구획 합입니다. 상쇄 비율 = |반대 방향 요인 합| ÷ |순 변화 방향 요인 합| 입니다. 총 변동은 %s 입니다.</p>' % TOTAL_TEXT,
+           '<p style="margin:3px 0">균형 막대는 가운데가 0 이고 왼쪽이 감소 요인, 오른쪽이 증가 요인입니다. 조각 하나가 후보 하나이고 ▲ 가 순 변화입니다. '
+           '카드 아래 막대도 가운데가 0 입니다. 진하고 굵은 막대는 후보의 순 기여, 옅고 얇은 막대는 후보 안의 감소(왼쪽)·증가(오른쪽)이며 같은 종류의 카드는 눈금이 같습니다. '
+           '후보 안에서 감소와 증가가 모두 있고 그 합이 |순 변화|의 2 배 이상이면 "내부 상쇄 큼" 으로 표시합니다.</p>',
            '<p style="margin:3px 0"><a href="#s4" data-go="s4">4 결과</a>의 \'가장 많이 달라진 쌍\' 은 쌍마다 모든 레이어의 변화를 합친 값이고, 여기 카드는 같은 변화를 \'무엇이 바뀌었나\' 기준으로 다시 묶은 값입니다. '
            '쌍 하나가 두 카드 이상으로 나뉠 수 있어 1 의 쌍 기준과 다를 수 있습니다.</p>',
            '<p style="margin:3px 0">카드(한 줄)를 누르면 오른쪽 상세 패널이 그 원인 후보의 쌍·불량 방식·자리로 바뀝니다. 카드 끝의 ▸ 를 누르면 그 자리에서 레이어별 내역과 얼마나를 펼칩니다. 어떤 불량이 어떻게 변했는지는 상세 패널의 \'불량 방식\' 탭에 있습니다. '
-           '[제품 대응] 은 2 제품 대응의 그 칸을 강조합니다. 위 띠를 누르면 목록이 line 과 pixel 로 바뀝니다.</p>']
+           '[제품 대응] 은 2 제품 대응의 그 칸을 강조합니다. 위 수치 블록의 줄을 누르면 균형 막대와 목록이 line 과 pixel 로 바뀝니다.</p>']
     if not same_res:
         how.append('<p style="margin:3px 0">원인 후보 값은 실제 vi 차이이며 해상도 차이 몫도 들어 있습니다. 해상도 몫을 뺀 값은 <a href="#s6" data-go="s6">6 해상도 차이 비교</a>에 있습니다.</p>')
     hub = ctx.bundles.get('hub_min') or 3
@@ -1883,7 +2119,7 @@ def _section3(ctx):
                '<p class="small" style="margin:3px 0">상대별 증가·감소는 line·pixel 순 변화를 합친 부호입니다.</p></details>' % (
                    hub, share_txt(fraction if fraction is not None else 0.5),
                    '' if not share else '. 한 종류의 총 변동 %s 이상인 상대만 셉니다' % share_txt(share)))
-    out = ['<section id="s3">', _hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?'), _dirband(ctx)]
+    out = ['<section id="s3">', _hd('3', '원인 후보', '그 layout 변화 중 무엇이 vi 를 바꿨나?'), _dirband(ctx), ''.join(_balance(ctx, kind) for kind in KINDS)]
     notes = []                    # folded under the lists: the type table, how to read, the assignment rules
     if ctx.v2:
         notes.append('<h3>유형별 합계<span class="muted" style="font-weight:400">(원인 후보를 유형으로 묶은 값 · 증가는 순 변화 &gt; 0 인 후보의 합, 감소는 &lt; 0 인 후보의 합)</span></h3>'

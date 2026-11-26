@@ -67,22 +67,47 @@ canvas.mapcv,canvas.dcv{display:block;width:100%;height:auto;background:var(--su
 canvas.mapcv{cursor:pointer}
 .mnote{font-size:12px;color:var(--text-muted)}.mwarn{border-left:4px solid var(--pixel);background:var(--trade);padding:4px 8px;margin:4px 0;font-size:12px}
 .s2row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;align-items:start}.s2map{position:sticky;top:44px}
-.s3two{display:grid;grid-template-columns:minmax(340px,400px) minmax(0,1fr);gap:14px;align-items:start}.s3two .bgrid{grid-template-columns:1fr;gap:0}
+.s3two{display:grid;grid-template-columns:minmax(340px,420px) minmax(0,1fr);gap:14px;align-items:start}.s3two .bgrid{grid-template-columns:1fr;gap:0}
 .s3side{position:sticky;top:44px;align-self:start;height:calc(100vh - 54px);min-height:380px}
-.dirs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0 10px}.dirnote{margin:4px 0;color:var(--text-secondary)}
-.dir{border:1px solid var(--border);border-left:5px solid var(--line);border-radius:8px;background:var(--surface-0);padding:8px 12px;cursor:pointer}
-.dir.pixel{border-left-color:var(--pixel)}.dir.on{box-shadow:0 0 0 2px var(--text-primary) inset}
-.dir .k{font-size:15px;font-weight:700}.dir .v{font-size:22px;font-weight:800;margin:0 8px}.dir .v.up{color:var(--up)}.dir .v.down{color:var(--down)}
-.dir .dhow{font-size:13.5px;color:var(--text-secondary);margin-top:2px}.dir .dhow b{color:var(--text-primary)}
-.klist[hidden]{display:none}
-.crow{display:grid;grid-template-columns:34px minmax(0,1fr) 104px 18px;gap:6px;align-items:center;background:var(--surface-0);border:1px solid var(--border);border-radius:7px;padding:6px 8px;margin:4px 0;cursor:pointer}
+.dirs{display:grid;grid-template-columns:1fr;gap:8px;margin:8px 0 8px}.dirnote{margin:4px 0;color:var(--text-secondary)}
+.dir{display:grid;grid-template-columns:140px repeat(4,minmax(0,1fr));border:1px solid var(--border);border-radius:10px;background:var(--surface-0);overflow:hidden;cursor:pointer}
+.dir.on{box-shadow:0 0 0 2px var(--text-primary) inset}
+.dir .dc{padding:7px 14px;border-left:1px solid var(--border);min-width:0}.dir .dc.dname{border-left:0;display:flex;align-items:center}
+.dir .k{font-size:16px;font-weight:800}.dir .kl{display:block;font-size:11.5px;color:var(--text-muted)}
+.dir .kv{display:block;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.25}.dir .kv.plain{font-weight:600}
+.dir .kv.up{color:var(--up)}.dir .kv.down{color:var(--down)}.dir .ks{display:block;font-size:12px;color:var(--text-secondary)}.dir .ks b{color:var(--text-primary)}
+.dir .dnet.down{background:rgba(42,120,214,.09)}.dir .dnet.up{background:rgba(208,59,59,.09)}.dir .dnet .kv{font-size:28px;font-weight:900}
+.dir .dwide{grid-column:2/-1;padding:8px 14px;color:var(--text-secondary)}.dir .dwide .v{font-size:18px;font-weight:800;margin-right:8px}
+.dircrp{margin:-2px 0 8px 4px}
+.klist[hidden],.kbal[hidden]{display:none}
+.bal{background:var(--surface-0);border:1px solid var(--border);border-radius:10px;padding:8px 14px 10px;margin:0 0 12px}
+.bal .hd{display:flex;gap:4px 12px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}.bal .hd>b{font-size:14px}.bal .eqline{font-size:15px}
+.bal .eqline b.up{color:var(--up)}.bal .eqline b.down{color:var(--down)}
+svg.balsvg{display:block;width:100%;height:auto}.balsvg text{font-family:inherit}
+.bseg{cursor:pointer}.bseg rect{stroke:var(--surface-0);stroke-width:1.5}.bseg.dn rect{fill:var(--down)}.bseg.up rect{fill:var(--up)}.bseg.selcard rect{stroke:var(--text-primary);stroke-width:2.5}
+.bseg text{fill:#fff;pointer-events:none}.bl1{font-size:12.5px;font-weight:800}.bl2{font-size:11px;opacity:.92}
+.brest rect{stroke:var(--surface-0);stroke-width:1.5}.brest.dn rect{fill:var(--down);opacity:.28}.brest.up rect{fill:var(--up);opacity:.28}.brest text{font-size:11px;fill:var(--text-secondary)}
+.bh{font-size:12.5px;font-weight:800}.bh.dn{fill:var(--down)}.bh.up{fill:var(--up)}
+.bzero{stroke:var(--text-secondary);stroke-width:1.5}.bnet path{fill:var(--text-primary)}.bnet text{font-size:12px;font-weight:800;fill:var(--text-primary)}
+.lg2{display:grid;grid-template-columns:1fr 1fr;margin-top:2px}.lgc{padding:0 10px}.lgc.lgl{border-right:1.5px solid var(--text-secondary);text-align:right}.lgc.lgr2{text-align:left}
+.lgr{font-size:12.5px;padding:1px 4px;border-radius:4px;cursor:pointer}.lgr:hover,.lgr.selcard{background:var(--sel)}.lgr .n{font-weight:800;font-variant-numeric:tabular-nums}.lgr .n.up{color:var(--up)}.lgr .n.down{color:var(--down)}
+.lgn{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;color:#fff;font-size:11px;font-weight:800}.lgn.dn{background:var(--down)}.lgn.up{background:var(--up)}
+.cgrp{margin:2px 0 10px}
+.gh{display:flex;justify-content:space-between;align-items:baseline;padding:4px 10px;border-radius:7px;color:#fff;font-weight:800;font-size:13.5px}.gh.d{background:var(--down)}.gh.u{background:var(--up)}
+.gh .gv{font-size:16px;font-variant-numeric:tabular-nums}.gh .gc{font-weight:400;font-size:12px;opacity:.92}
+.spread{font-size:12px;background:var(--grid);border-radius:6px;padding:3px 8px;margin:4px 0}
+details.rest{margin-top:3px}details.rest>summary{cursor:pointer;list-style:none;background:var(--surface-0);border:1px dashed var(--common);border-radius:7px;padding:3px 8px;display:flex;justify-content:space-between;gap:8px}
+.ftab th,.ftab td{padding:2px 6px;font-size:12px}.frow{cursor:pointer}.frow:hover td,tr.frow.selcard td{background:var(--sel)}
+.crow{display:grid;grid-template-columns:28px minmax(0,1fr) 124px 16px;gap:0 6px;align-items:center;background:var(--surface-0);border:1px solid var(--border);border-radius:7px;padding:7px 8px 6px;margin:3px 0;min-height:65px;line-height:1.35;cursor:pointer}
 .crow:hover{border-color:var(--common)}.crow.selcard{background:var(--sel);border-color:#e0b04a;box-shadow:0 0 0 1px #e0b04a inset}
-.crow .rk{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;font-weight:800;font-size:13px;color:#fff;background:var(--up)}
-.crow .rk.dn{background:var(--down)}.crow .rk.op{background:var(--surface-1);border:2px solid var(--up);color:var(--up)}.crow .rk.dn.op{border-color:var(--down);color:var(--down)}
+.crow .rk{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;font-weight:800;font-size:11.5px;color:#fff;background:var(--up)}
+.crow .rk.dn{background:var(--down)}.b-cx{background:#fff0d6;color:#8a5a00;border:1px solid #e8c27a}
+.cbar{grid-column:1/-1;position:relative;height:12px;margin:3px 4px 0;background:linear-gradient(90deg,transparent calc(50% - .5px),var(--common) calc(50% - .5px),var(--common) calc(50% + .5px),transparent calc(50% + .5px))}
+.cbar i{position:absolute;display:block}.cbar .cd,.cbar .cu{top:4px;height:4px;border-radius:2px;opacity:.3}.cbar .cd{right:50%;background:var(--down)}.cbar .cu{left:50%;background:var(--up)}
+.cbar .cn{top:1px;height:10px;border-radius:2px}.cbar .cn.dn{right:50%;background:var(--down)}.cbar .cn.up{left:50%;background:var(--up)}
 .crow .cmain{min-width:0}.crow .ct{font-weight:700;display:flex;gap:6px;align-items:center;min-width:0}
-.crow .ct .nm{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crow .ct .badge{flex:none;margin-right:0}.crow .cexp .cwhat{margin:0 0 4px;color:var(--text-secondary)}
+.crow .ct .nm{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crow .ct .badge{flex:none;margin-right:0}.crow .cexp .cwhat{margin:0 0 4px;color:var(--text-secondary)}
 .crow .cw{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.crow .shb{height:6px;background:var(--grid);border-radius:3px;margin-top:3px;overflow:hidden}.crow .shb i{display:block;height:100%;background:var(--up)}.crow .shb i.dn{background:var(--down)}
 .crow .cv{text-align:right}.crow .cv .sh{font-size:11px;color:var(--text-muted)}
 .crow .tw{color:var(--text-muted);font-size:13px;text-align:center;user-select:none;cursor:pointer}.crow.open .tw{transform:rotate(90deg)}
 .crow .cexp{grid-column:1/-1;border-top:1px dashed var(--border);margin-top:4px;padding-top:5px;font-size:12px;display:none;cursor:default}
@@ -130,8 +155,8 @@ a.lk{border-bottom:1px dotted var(--down)}a.chip{display:inline-block;width:auto
 @media (max-width:1100px){.s3two{grid-template-columns:1fr}.s3side{position:static;height:auto}.dpanel{height:auto;overflow:visible}#s3-detail{display:block}.dtb{overflow:visible}.dmaps canvas.dcv{aspect-ratio:auto;height:auto;width:100%;max-width:none}}
 body.print .s3side{position:static;height:auto}body.print .dpanel{height:auto;overflow:visible}body.print #s3-detail{display:block}body.print .dtb{overflow:visible}body.print .dmaps canvas.dcv{aspect-ratio:auto;height:auto;width:100%;max-width:none}
 @media (max-width:1180px){.g3,.g2,.kpis{grid-template-columns:1fr}}
-@media (max-width:900px){.dirs{grid-template-columns:1fr}}
-@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}.klist[hidden]{display:block!important}.crow .cexp{display:block}}
+@media (max-width:1100px){.dir{grid-template-columns:repeat(2,minmax(0,1fr))}.dir .dc.dname{grid-column:1/-1;border-top:0}.dir .dc{border-top:1px solid var(--border)}.dir .dc:nth-child(2),.dir .dc:nth-child(4){border-left:0}}
+@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}#bar{position:static}body{font-size:11px}.klist[hidden],.kbal[hidden]{display:block!important}.crow .cexp{display:block}}
 """
 
 # The page works without the script (sections 1 and 5 are plain HTML). The script reads the location hash, marks the selected rows
@@ -586,7 +611,7 @@ function applyTab(){var root=document.documentElement,pr=!!parseHash().flags.pri
  for(i=0;i<ts.length;i++){var on=ts[i].getAttribute('data-dtab')===DS.tab;ts[i].classList.toggle('on',on);ts[i].setAttribute('aria-selected',on?'true':'false');}
  root.setAttribute('data-dp-tab',DS.tab);}
 function markUnit(st,d){var i,els=document.querySelectorAll('.selcard,.unitcell');for(i=0;i<els.length;i++)els[i].classList.remove('selcard','unitcell');
- [st.kv.unit,d.u].forEach(function(u){if(!u)return;var cs=document.querySelectorAll('.crow[data-unit="'+u+'"]'),ci;for(ci=0;ci<cs.length;ci++)cs[ci].classList.add('selcard');});
+ [st.kv.unit,d.u].forEach(function(u){if(!u)return;var cs=document.querySelectorAll('.crow[data-unit="'+u+'"],.bseg[data-unit="'+u+'"],.lgr[data-unit="'+u+'"],.frow[data-unit="'+u+'"]'),ci;for(ci=0;ci<cs.length;ci++)cs[ci].classList.add('selcard');});
  var u=st.kv.unit;if(!u)return;
  var uc=unitCellOf(u);if(uc){var rows=document.querySelectorAll('tr[data-row="corr"]');for(i=0;i<rows.length;i++){if(rows[i].getAttribute('data-el')!==uc.e)continue;
   var cs=rows[i].querySelectorAll('td[data-layer]');for(var j=0;j<cs.length;j++){if(cs[j].getAttribute('data-layer')===uc.l)cs[j].classList.add('unitcell');}}}}
@@ -599,6 +624,7 @@ function drawKinds(st,sel){var lists=document.querySelectorAll('.klist'),i,k=st.
   if(!c){for(i=0;i<lists.length;i++){if(lists[i].querySelector('.crow')){c=lists[i];break;}}}   /* else the first kind that has cards (not a skipped one) */
   k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
  for(i=0;i<lists.length;i++)lists[i].hidden=!pr&&lists[i].getAttribute('data-k')!==k;
+ var bals=document.querySelectorAll('.kbal');for(i=0;i<bals.length;i++)bals[i].hidden=!pr&&bals[i].getAttribute('data-k')!==k;   /* rexp/T13: the balance bar follows the kind of the list */
  var ds=document.querySelectorAll('.dir');for(i=0;i<ds.length;i++)ds[i].classList.toggle('on',ds[i].getAttribute('data-k')===k);
  document.documentElement.setAttribute('data-kind',k||'');}
 function msel(st,sel){var uc=unitCellOf(st.kv.unit);return sel||(uc?{t:'electrode',id:uc.e,implied:true}:null);}
@@ -643,6 +669,7 @@ document.addEventListener('click',function(ev){var t=ev.target;t=t&&t.closest?t.
    var cs=cardsOfCell(add.kv.sel.replace(/^electrode:/,''),add.kv.layer);if(cs.length)st2.kv.unit=cs[0].id;else delete st2.kv.unit;}
   setHash(st2);if(t.hasAttribute('data-scroll'))go(t.getAttribute('data-scroll'));}});
 document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest)return;
+ var op=t.closest('[data-fold]');if(op){var od=$(op.getAttribute('data-fold'));if(od){od.open=true;od.scrollIntoView({block:'nearest'});}return;}   /* rexp/T13: a legend line opens the fold of its compartment */
  var fb=t.closest('[data-f="more"]');if(fb){var fs=parseHash();fs.kv.more='1';setHash(fs);return;}
  var zb=t.closest('.zf');if(zb){var zt=zb.closest('table').querySelector('tbody.zrows'),n0=zb.getAttribute('data-n');zt.hidden=!zt.hidden;zb.textContent='값 0 인 크기 '+n0+(zt.hidden?'개 펼치기':'개 접기');return;}
  var cv=t.closest('canvas.mapcv');if(cv){onMapClick(cv,ev);return;}
@@ -657,7 +684,7 @@ document.addEventListener('click',function(ev){var t=ev.target;if(!t||!t.closest
  var dirc=t.closest('.dir');if(dirc){var ks=parseHash();ks.kv.k=dirc.getAttribute('data-k');setHash(ks);return;}   /* the band switches the list */
  var card=t.closest('.s3cards .crow');   /* a click on a card row (not on its links, buttons, folds or unfolded part) opens its detail */
  if(card&&!t.closest('a,button,summary,details,input,select,.cexp')&&UNIT.test(card.getAttribute('data-unit')||'')&&BU[card.getAttribute('data-unit')]){var cs2=parseHash();cs2.kv.sel='unit:'+card.getAttribute('data-unit');delete cs2.kv.cand;delete cs2.kv.it;cs2.flags.demo=false;setHash(cs2);}});
-document.addEventListener('keydown',function(ev){var t=ev.target;if((ev.key==='Enter'||ev.key===' ')&&t&&t.getAttribute&&(t.getAttribute('data-href')||t.classList.contains('dir')||t.classList.contains('tw'))){ev.preventDefault();t.click();}});
+document.addEventListener('keydown',function(ev){var t=ev.target;if((ev.key==='Enter'||ev.key===' ')&&t&&t.getAttribute&&(t.getAttribute('data-href')||t.getAttribute('data-fold')||t.classList.contains('dir')||t.classList.contains('tw'))){ev.preventDefault();if(t.click)t.click();else t.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));}});
 var qi=$('el-q');if(qi)qi.addEventListener('input',function(){var st=parseHash();if(qi.value)st.kv.eq=qi.value;else delete st.kv.eq;
  var h=buildHash(st);history.replaceState(null,'',h==='#'?location.pathname+location.search:h);apply();});
 var pqi=$('pf-q');if(pqi)pqi.addEventListener('input',function(){var st=parseHash();if(pqi.value)st.kv.q=pqi.value;else delete st.kv.q;delete st.kv.more;

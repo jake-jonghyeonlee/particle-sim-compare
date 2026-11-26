@@ -232,7 +232,7 @@ def test_seven_sections_in_order_with_a_head_and_a_pointer_each(real):
         assert s.startswith('<section id="%s"><p class="q">' % sid) and '<h2>' in s and 'class="nextl"' in s
     assert 'id="purpose"' in page and 'id="pair-find"' in new_section(page, 's4') and 'id="s3-detail"' in new_section(page, 's3')       # rexp/T2
     text = all_text(page)
-    for old in '①②③④⑤⑥⑦':
+    for old in '③④⑤⑥⑦':          # rexp/T13: ① ② are the two compartments of the card list of 3
         assert old not in text, old
     assert '때문' not in text
 
@@ -333,12 +333,12 @@ def test_h4_six_cards_or_fewer_hold_everything_and_more_say_the_rest(real):
     s1 = new_section(render(real), 's1')
     assert '증가 요인은 원인 후보 3 개에 모두 있습니다' in s1 and '나머지' not in s1
 
-    def more(d):
-        rk = d['summary']['bundles']['ranking']['line']
-        rk[rk['main']]['rest'] = [cards_of(d, 'pixel')[0]]
-        rk[rk['main']]['cover'] = 0.9
-    s1 = new_section(render(variant(real, more)), 's1')
-    assert '나머지 1 원인 후보가 10% 를 나눠 가집니다' in s1 and '모두 있습니다' not in s1.split('pixel vi 는')[0]
+    # rexp/T13: the counts are the shown ones (at least 5; a candidate under 2 % of its compartment ends the list)
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, i, 'pair', {'line': n}, salt=i * 1000) for i, n in enumerate([-0.05, -0.03, -0.02, -0.01, -0.005, -0.0002, -0.0002])]
+           + [mk(doc, 0, 'pair', {'pixel': 0.01}, salt=77)])
+    s1 = new_section(render(doc), 's1')
+    assert '원인 후보 5 개에서 나왔습니다' in s1 and '나머지 2 원인 후보가' in s1 and '모두 있습니다' not in s1.split('pixel vi 는')[0]
 
 
 def test_a_one_electrode_card_and_the_hub_sentence_numbers(real):
@@ -416,7 +416,8 @@ def test_the_card_is_one_folded_row_with_a_fold_for_the_amount_and_no_evidence_p
     s3 = new_section(render(real), 's3')
     card = s3[s3.index('<div class="crow"'):]
     one_line = card[:card.index('<div class="cexp">')]
-    assert 'class="tw"' in one_line and 'class="shb"' in one_line and 'class="rk ' in one_line and 'class="cw"' in one_line   # rank circle, bar, what changed, fold mark
+    assert 'class="tw"' in one_line and 'class="cbar"' in one_line and 'class="rk ' in one_line and 'class="cw"' in one_line   # rank circle, bar, what changed, fold mark
+    assert 'class="shb"' not in s3
     assert '<h4>얼마나</h4>' in card[card.index('<div class="cexp">'):] and '제품 대응 ▸' in card
     assert '<h4>근거</h4>' not in s3 and '연결 영역 지표' not in s3 and 'class="bcard"' not in s3
     assert '<h4>어떤 불량이 어떻게</h4>' not in s3                                    # the failure-type table moved to the detail panel
@@ -735,7 +736,8 @@ def test_decrease_first_names_the_decrease_factor_then_the_biggest_opposite_one(
     s3 = new_section(page, 's3')
     assert s3.index('id="cards-line"') < s3.index('id="cards-line-opposite"')
     assert s3.index('id="%s"' % first['id']) < s3.index('id="%s"' % opposite['id'])
-    assert 'vi 변화 방향 — 감소 요인 상위 4 개' in s3 and '반대 방향 요인 — 증가 요인 상위 2 개' in s3
+    assert '① 감소 요인' in s3 and '② 증가 요인 · 상쇄 비율' in s3 and 'vi 변화 방향은 감소 입니다' in s3       # rexp/T13: two compartments
+    assert s3.count('class="crow"') >= 6 and s3.index('id="grp-line-main"') < s3.index('id="grp-line-opp"')
 
 
 def test_balanced_says_so_and_shows_both_directions(real):
@@ -745,7 +747,7 @@ def test_balanced_says_so_and_shows_both_directions(real):
     page = render(doc)
     assert '증가 요인과 감소 요인이 비슷합니다' in new_section(page, 's1')
     s3 = new_section(page, 's3')
-    assert 'id="cards-line"' in s3 and 'id="cards-line-decrease"' in s3 and 'id="cards-line-opposite"' not in s3
+    assert 'id="cards-line"' in s3 and 'id="cards-line-opposite"' in s3 and 'id="cards-line-decrease"' not in s3      # rexp/T13: the ledger's main direction is the first compartment
 
 
 def test_a_spread_out_direction_is_read_through_the_type_totals(real):
@@ -754,8 +756,10 @@ def test_a_spread_out_direction_is_read_through_the_type_totals(real):
     rk = doc['summary']['bundles']['ranking']['line']
     assert rk['decrease']['k80'] > 20 and len(rk['decrease']['cards']) == 6
     page = render(doc)
-    assert '변화가 넓게 퍼져 있어 유형별 합계로 봅니다' in new_section(page, 's1')
-    assert 'id="spread-line"' in new_section(page, 's3') and 'id="spread-pixel"' not in new_section(page, 's3')
+    assert '80%' not in new_section(page, 's1') and '변화가 넓게 퍼져' not in new_section(page, 's1')      # rexp/T13: the 80 % sentence is gone
+    s3 = new_section(page, 's3')
+    assert 'id="spread-line-main"' in s3 and 'id="spread-pixel-main"' not in s3 and '고르게 퍼짐 — 1 위 <b>3.3%</b> · 상위 7 개 <b>23%</b>' in s3
+    assert 'SPREAD' not in s3 and 'id="spread-line"' not in s3
 
 
 def test_m2_the_type_table_has_no_crp_row_and_a_crp_difference_gets_one_line_below_it(real):
@@ -795,7 +799,7 @@ def test_m3_every_card_has_the_map_and_the_correspondence_buttons_with_a_whiteli
 def test_a_card_with_an_internal_cancel_says_so(real):
     s3 = new_section(render(rich(real)), 's3')
     assert '내부 상쇄' in s3
-    assert 'id="bd-rest-line"' in s3 and '순 변화 0' in s3[s3.index('id="bd-rest-line"'):]
+    assert 'id="bd-zero-line"' in s3 and '순 변화 0 1 개' in s3[s3.index('id="bd-zero-line"'):]       # rexp/T13: the net-0 candidates are the last fold
 
 
 def test_every_screen_text_uses_the_m1_names(real):
@@ -999,7 +1003,7 @@ def test_rexp_t12_card_rows_carry_a_short_name_a_badge_one_fact_line_and_the_ful
     assert 'title="ELVDD — B 에 신규(ACT·GAT1·SD1·SD2·PXL)\nELVDD 전극이 B 에 신규로 놓였습니다' in c      # the tooltip: the full title + the full sentence
     assert '<div class="cexp"><p class="bp cwhat">ELVDD 전극이 B 에 신규로 놓였습니다(ACT·GAT1·SD1·SD2·PXL).' in c   # the first unfolded line
     c = card(new2)
-    assert '<span class="badge b-gone">삭제</span>' in c and '<div class="cw">ACT·GAT1</div>' in c and ' 외 ' not in c[:c.index('<div class="shb">')]
+    assert '<span class="badge b-gone">삭제</span>' in c and '<div class="cw">ACT·GAT1</div>' in c and ' 외 ' not in c[:c.index('<div class="cexp">')]
     c = card(hub)
     assert '>Scan3 · SD1</a><span class="badge">허브</span>' in c and '<div class="cw">상대 8 (증가 5 · 감소 3)</div>' in c
     c = card(pair)
@@ -1007,7 +1011,7 @@ def test_rexp_t12_card_rows_carry_a_short_name_a_badge_one_fact_line_and_the_ful
     assert '>Vdd · M2</a><span class="badge">동일 전극</span>' in card(self_)
     from simcompare import ledger_report_assets
     css = ledger_report_assets.CSS
-    assert '.crow .ct .badge{flex:none' in css and 'text-overflow:ellipsis' in css and '.crow .ct .nm{flex:1 1 auto;min-width:0' in css      # a long name is cut, the badge stays
+    assert '.crow .ct .badge{flex:none' in css and 'text-overflow:ellipsis' in css and '.crow .ct .nm{flex:0 1 auto;min-width:0' in css      # a long name is cut, the badge stays
     assert ledger_report.bundle_title(new5) == 'ELVDD — B 에 신규(ACT·GAT1·SD1·SD2·PXL)'                                                 # the title elsewhere is unchanged
 
 
@@ -1033,7 +1037,7 @@ def test_chrome_rexp_t11_a_candidate_in_both_lists_has_a_ranked_card_in_each_wit
     assert '<span class="rk' in mine[:600]                                              # the rank circle of the ranked card
     dom, text2 = dump_dom(page, '#unit=%s&k=pixel' % both['id'])
     assert 'data-err' not in dom.root and dom.root['data-kind'] == 'pixel'
-    sel = [a['id'] for t, a in dom.elements if t == 'div' and 'selcard' in (a.get('class') or '').split()]
+    sel = [a['id'] for t, a in dom.elements if t == 'div' and 'crow' in (a.get('class') or '').split() and 'selcard' in (a.get('class') or '').split()]
     assert sorted(sel) == sorted([both['id'], both['id'] + '--pixel'])
 
 
@@ -1052,7 +1056,7 @@ def test_chrome_rexp_t11_the_list_kind_without_k_follows_the_open_candidate_and_
 
 def cardkind(text, unit):
     """The list kind (klist) that holds the first card of `unit`."""
-    pos = text.index('data-unit="%s"' % unit)
+    pos = re.search(r'<div class="crow[^"]*" id="[^"]*" data-unit="%s"' % re.escape(unit), text).start()      # rexp/T13: the balance bar has data-unit too
     return 'line' if text.rfind('id="klist-line"', 0, pos) > text.rfind('id="klist-pixel"', 0, pos) else 'pixel'
 
 
@@ -1248,10 +1252,10 @@ def test_r18_1_a_crp_dominated_kind_says_the_cause_candidate_direction_not_the_v
     assert '−0.4000%p 감소했습니다' in pixel and '감소 요인은 없고, 증가 요인은 +0.2000%p' in pixel
     assert '보정값(CRP) 차이 −0.6000%p 를 빼면 원인 후보의 순 변화는 증가입니다.' in pixel
     assert pixel.index('증가 요인은') < pixel.index('를 빼면') and s1.count('보정값(CRP)') == 1       # said once, not twice
-    assert 'pixel 원인 후보 순 변화 증가 +0.2000%p' in s3, s3          # the band cell of the CRP-dominated kind names the cause candidate net change
-    assert 'pixel vi 증가' not in s3 and 'line vi 감소' in s3
-    assert '원인 후보 순 변화 방향 — 증가 요인 상위' in s3 and '증가분의 100%' in s3
-    assert 'vi 변화 방향 — 감소 요인 상위' in s3                                    # line is not CRP-dominated
+    assert '순 증가 +0.2000%p' in s3, s3          # rexp/T13: the number block of the CRP-dominated kind is the cause candidate net change
+    assert 'pixel vi 증가' not in s3
+    assert '보정값(CRP) 차이 −0.6000%p 는 위 합에 없음' in s3 and 'pixel · 원인 후보 순 변화 방향은 증가 입니다' in s3
+    assert 'line · vi 변화 방향은 감소 입니다' in s3                                    # line is not CRP-dominated
     assert '원인 후보 순 변화(보정값 차이 제외)의 부호' in s3 and 'pixel vi 는 A' in s1
     for text in (s1, s3):                                                          # no sentence says the pixel vi direction is "increase"
         assert not re.search(r'pixel[^.]*vi 변화 방향은 증가', text)
@@ -1261,7 +1265,7 @@ def test_r18_1_a_kind_that_goes_the_same_way_keeps_the_vi_direction_wording(real
     doc = copy.deepcopy(real)
     finish(doc, [mk(doc, 0, 'pair', {'line': -0.01, 'pixel': -0.003})], crp=-0.001)
     s3 = all_text(new_section(render(doc), 's3'))
-    assert 'pixel vi 감소' in s3 and '원인 후보 순 변화 방향' not in s3.replace('\'원인 후보 순 변화 방향\' 이라고', '')
+    assert 'pixel · vi 변화 방향은 감소 입니다' in s3 and '원인 후보 순 변화 방향' not in s3.replace('\'원인 후보 순 변화 방향\' 이라고', '')
 
 
 def test_r18_2_the_fixture_identity_holds_for_every_finished_fixture(real):
@@ -1341,3 +1345,136 @@ def test_r18_6_the_bundle_data_carries_item_positions_not_item_ids(tmp_path):
     print('R18 6 html bytes after:', len(page.encode('utf-8')), '| its before:', old_bytes, 'after:', new_bytes,
           '| html before ~', len(page.encode('utf-8')) - new_bytes + old_bytes)
     assert new_bytes < old_bytes / 3
+
+
+# ---- rexp/T13: the number block, the balance bar, the two compartments and the 65 px cards of 3 -------------------------------------------
+
+def _t13_doc(real, line_nets, pixel_nets=(), abs_=None, crp=None):
+    doc = copy.deepcopy(real)
+    blist = [mk(doc, i, 'pair', {'line': n}, salt=i * 1000, **({'abs': {'line': abs_[i]}} if abs_ else {})) for i, n in enumerate(line_nets)]
+    blist += [mk(doc, i, 'pair', {'pixel': n}, salt=i * 1000 + 500) for i, n in enumerate(pixel_nets)]
+    return finish(doc, blist, crp=crp)
+
+
+def _s3_line_list(s3):
+    start = s3.index('id="klist-line"')
+    return s3[start:s3.index('id="klist-pixel"', start)]
+
+
+def test_t13_the_display_rule_is_7_and_3_at_most_5_and_2_at_least_and_stops_under_2_percent():
+    pick = ledger_report._pick_count
+    assert pick([10] * 10, 100, True) == 7 and pick([10] * 10, 100, False) == 3                # the maxima
+    assert pick([96, 1, 1, 1, 0.5, 0.5], 100, True) == 5 and pick([97, 1, 1, 0.5], 100, False) == 2      # the minima are filled, the small ones stop
+    assert pick([5, 4], 100, True) == 2 and pick([], 0, True) == 0 and pick([5], 5, False) == 1           # fewer candidates than the minimum
+    assert pick([50, 30, 10, 5, 2, 2, 1], 100, True) == 6                                      # a share of exactly 2 % is kept, 1 % ends the list
+
+
+def test_t13_the_number_block_holds_the_ledger_values_and_a_skipped_kind_says_so(real):
+    doc = _t13_doc(real, [-0.05, -0.03, -0.02, 0.01, 0.005], [0.004])
+    page = render(doc)
+    band = new_section(page, 's3')
+    band = band[band.index('id="dirband"'):band.index('id="bal-line"')]
+    line = band[band.index('class="dir line"'):band.index('class="dir pixel"')]
+    assert '순 감소' in line and '−8.5000%p' in line and '감소 요인 합' in line and '−10.0000%p' in line and '후보 3 개' in line
+    assert '증가 요인 합' in line and '+1.5000%p' in line and '후보 2 개' in line and '상쇄 비율 15%' in line and '후보 5 개' in line
+    assert re.search(r'1 위 <b>[^<]+</b> −5\.0000%p \(50%\)', line) and 'A 대비' in line and ' → ' in line
+    pixel = band[band.index('class="dir pixel"'):]
+    assert '순 증가' in pixel and '+0.4000%p' in pixel and 'dnet up' in pixel and 'dnet down' in line
+    skipped = copy.deepcopy(doc)
+    _statuses(skipped, None, 'no_change')
+    band2 = new_section(render(skipped), 's3')
+    assert 'class="dc dwide">pixel 에는 item 변화가 없습니다' in band2 and 'id="bal-pixel"' not in band2
+    assert 'data-k="line"' in band2 and 'class="dir line"' in band2                            # the other kind keeps its row
+
+
+def test_t13_the_balance_bar_the_legend_and_the_cards_show_the_same_candidates(real):
+    dec = [-0.05, -0.04, -0.03, -0.02, -0.01, -0.008, -0.006, -0.004, -0.002, -0.001]
+    inc = [0.02, 0.01, 0.005, 0.004, 0.001]
+    s3 = new_section(render(_t13_doc(real, dec + inc, [0.001])), 's3')
+    bal = s3[s3.index('id="bal-line"'):s3.index('id="bal-pixel"')]
+    assert bal.count('class="bseg dn"') == 7 and bal.count('class="bseg up"') == 3 and 'class="brest dn"' in bal and 'class="brest up"' in bal
+    assert bal.count('class="lgr"') == 10 and bal.count('data-fold=') == 2 and '접힌 3 개 · 합 −0.7000%p ▸' in bal and '접힌 2 개 · 합 +0.5000%p ▸' in bal
+    cards = _s3_line_list(s3)
+    assert cards.count('<div class="crow"') == 10 and 'id="grp-line-main"' in cards and 'id="grp-line-opp"' in cards
+    ids = re.findall(r'class="(?:bseg (?:dn|up)|lgr)" data-unit="([^"]+)"', bal)
+    card_ids = re.findall(r'<div class="crow" id="([^"]+)"', cards)
+    assert ids[:10] == card_ids and ids[10:] == card_ids        # the pieces, the legend rows and the cards: the same candidates in the same order (rank = number)
+    assert re.findall(r'<span class="lgn dn">(\d+)</span>', bal) == [str(i) for i in range(1, 8)]
+    assert '접힌 3 개</b>' in cards and '접힌 2 개</b>' in cards and '각 0.4000%p 이하' in cards and 'id="bd-rest-line"' in cards and 'id="bd-rest-line-opposite"' in cards
+    assert 'data-fold="bd-rest-line"' in bal and 'data-fold="bd-rest-line-opposite"' in bal
+    assert '고르게 퍼짐' not in cards                                                          # the first candidate holds 28 % of the decrease
+    assert '② 증가 요인 · 상쇄 비율 ' in cards and '① 감소 요인' in cards and '후보 10 개' in cards
+    ratio = 0.04 / 0.171
+    assert '상쇄 비율 %d%%' % round(ratio * 100) in cards
+
+
+def test_t13_the_balance_labels_have_three_steps_and_the_triangle_sits_at_the_net(real):
+    s3 = new_section(render(_t13_doc(real, [-0.05, -0.02, -0.002, -0.0003, -0.0003, -0.0002, 0.03], [0.001])), 's3')
+    bal = s3[s3.index('id="bal-line"'):s3.index('id="bal-pixel"')]
+    pieces = re.findall(r'<g class="bseg (?:dn|up)".*?</g>', bal, re.S)
+    assert len(pieces) == 6                                                                  # 5 of the decrease (the minimum) and 1 of the increase
+    levels = []
+    for g in pieces:
+        w = float(re.search(r'<rect [^>]*width="([\d.]+)"', g).group(1))
+        two, one = 'class="bl2"' in g, 'class="bl1"' in g
+        levels.append(2 if two else 1 if one else 0)
+        assert (two, one) == ((True, True) if w >= 110 else (False, True) if w >= 18 else (False, False)), (w, g)
+    assert 2 in levels and 1 in levels and 0 in levels
+    assert '<title>1. ' in pieces[0] and '순 −5.0000%p (69%)' in pieces[0] and '↓' in pieces[0] and 'data-href="#sel=unit:' in pieces[0]
+    net = -0.0728 + 0.03
+    nx = float(re.search(r'<g class="bnet"><path d="M([\d.]+) ', bal).group(1)) + 7
+    assert nx < 710 and abs(nx - (710 + net * ((710 - 16) / (0.0728 * 1.04)))) < 1.0           # a net decrease: the triangle is left of the 0 line
+    up = new_section(render(_t13_doc(real, [-0.01], [0.03, 0.02])), 's3')
+    up_bal = up[up.index('id="bal-pixel"'):]
+    assert float(re.search(r'<g class="bnet"><path d="M([\d.]+) ', up_bal).group(1)) + 7 > 710
+
+
+def test_t13_cards_carry_a_signed_value_a_share_line_and_a_scaled_bar_and_a_heavy_cancel_badge(real):
+    s3 = new_section(render(_t13_doc(real, [-0.01, -0.02], abs_=[0.04, 0.02])), 's3')
+    lst = _s3_line_list(s3)
+    big, heavy = lst[lst.index('<div class="crow"'):].split('<div class="crow"')[1:3]          # the largest |net| first: −0.02 (↓0.02 ↑0), then −0.01 (↓0.025 ↑0.015)
+    assert '<span class="badge b-cx">내부 상쇄 큼</span>' in heavy and 'b-cx' not in big.split('<div class="cexp">')[0]      # ↓ and ↑ both > 0 and abs >= 2 |net|
+    assert '몫 67% · ↓2.00 ↑0<' in big and '몫 33% · ↓2.50 ↑1.50<' in heavy
+    pat = (r'<div class="cbar"[^>]*><i class="cd" style="width:([\d.]+)%"></i><i class="cu" style="width:([\d.]+)%"></i>'
+           r'<i class="cn (dn|up)" style="width:([\d.]+)%"></i></div>')
+    b_big, b_heavy = re.search(pat, big), re.search(pat, heavy)
+    assert b_big and b_heavy and b_big.group(3) == 'dn' and b_heavy.group(3) == 'dn'
+    # the largest decrease or increase of the kind (2.5 %p) is 46 % of the half width: the same scale on every card
+    assert [float(b_big.group(i)) for i in (1, 2, 4)] == [36.8, 0.0, 36.8] and [float(b_heavy.group(i)) for i in (1, 2, 4)] == [46.0, 27.6, 18.4]
+    assert 'class="shb"' not in s3
+
+
+def test_t13_an_even_spread_says_so_and_the_net_zero_candidates_are_the_last_line(real):
+    doc = copy.deepcopy(real)
+    finish(doc, [mk(doc, i, 'pair', {'line': -0.001}, salt=i * 1000) for i in range(30)] + [mk(doc, 40, 'pair', {'line': 0.0}, salt=99, abs={'line': 0.002}),
+                                                                                         mk(doc, 0, 'pair', {'pixel': 0.01}, salt=77)])
+    s3 = new_section(render(doc), 's3')
+    lst = _s3_line_list(s3)
+    assert '고르게 퍼짐 — 1 위 <b>3.3%</b> · 상위 7 개 <b>23%</b>' in lst and 'id="spread-pixel-main"' not in s3
+    assert lst.count('<div class="crow"') == 7 and '접힌 23 개' in lst and '순 변화 0 1 개 ▸' in lst
+    assert lst.index('id="bd-rest-line"') < lst.index('id="bd-zero-line"')
+    assert 'id="rest-line-%s"' % doc['summary']['bundles']['ranking']['line']['zero'][0] in lst
+
+
+def test_t13_the_cancel_ratio_closes_the_factor_sentence_of_1(real):
+    s1 = new_section(render(_t13_doc(real, [-0.05, -0.03, -0.02, 0.01, 0.005], [0.004])), 's1')
+    assert '감소 요인은 <b>−10.0000%p</b>, 증가 요인은 <b>+1.5000%p</b> 입니다. 반대 방향 요인이 감소 요인을 상쇄합니다(상쇄 비율 <b>15%</b>).' in s1
+    assert '80%' not in s1
+
+
+def test_t13_chrome_a_piece_or_a_legend_row_selects_the_candidate_and_a_card_is_65px_high(tmp_path, real):
+    from test_ledger_report_v2 import run_in_page
+    page = tmp_path / 'r.html'
+    page.write_text(render(_t13_doc(real, [-0.05, -0.04, -0.03, -0.02, -0.01, 0.02, 0.01])), encoding='utf-8')
+    script = ("setTimeout(function(){var d=document.documentElement,c=document.querySelector('.crow'),b=c.getBoundingClientRect();"
+              "d.setAttribute('data-h',String(b.height));d.setAttribute('data-gap',getComputedStyle(c).marginTop);"
+              "var segs=document.querySelectorAll('#bal-line .bseg');d.setAttribute('data-nseg',String(segs.length));"
+              "segs[1].dispatchEvent(new MouseEvent('click',{bubbles:true}));setTimeout(function(){d.setAttribute('data-sel1',d.getAttribute('data-sel'));"
+              "d.setAttribute('data-onseg',String(document.querySelectorAll('#bal-line .bseg.selcard').length));"
+              "document.querySelectorAll('#bal-line .lgr')[2].click();setTimeout(function(){d.setAttribute('data-sel2',d.getAttribute('data-sel'));"
+              "d.setAttribute('data-onrow',String(document.querySelectorAll('#bal-line .lgr.selcard,.crow.selcard').length));},200);},200);},300);")
+    dom, text = run_in_page(page, '#', script, tag='t13_click')
+    assert 'data-err' not in dom.root and abs(float(dom.root['data-h']) - 65.0) < 0.6 and dom.root['data-gap'] == '3px'
+    ids = re.findall(r'class="bseg dn" data-unit="([^"]+)"', page.read_text(encoding='utf-8'))
+    assert dom.root['data-nseg'] == '7' and dom.root['data-sel1'] == 'unit:' + ids[1] and dom.root['data-onseg'] == '1'
+    assert dom.root['data-sel2'] == 'unit:' + ids[2] and int(dom.root['data-onrow']) >= 2
