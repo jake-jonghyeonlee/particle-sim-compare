@@ -636,7 +636,9 @@ function bestRow(u){var l=document.querySelectorAll('.crow[data-unit="'+u+'"],.f
  for(i=0;i<l.length;i++){r=parseInt(l[i].getAttribute('data-rank'),10);if(!(r>0))r=1e8;if(!best||r<br){best=l[i];br=r;}}return best;}
 function drawKinds(st,sel){var lists=document.querySelectorAll('.klist'),i,k=st.kv.k,u,c,pr=!!st.flags.print;if(!lists.length)return;
  if(!k){u=st.kv.unit||detailOf(st,sel).u||st.kv.cand||'';   /* R4:1: no k in the hash: the kind of the open candidate (the default one, or the selected one) */
-  c=u?bestRow(u):null;c=c&&c.closest?c.closest('.klist'):null;
+  var cur=document.documentElement.getAttribute('data-kind');c=null;   /* R6:1: the kind on the screen stays when the candidate has a row in it (a card, piece, legend or fold click never switches the list); else the better-ranked list */
+  if(u&&cur){var kl=document.querySelectorAll('.klist[data-k="'+cur+'"]');if(kl.length&&kl[0].querySelector('[data-unit="'+u+'"]'))c=kl[0];}
+  if(!c){c=u?bestRow(u):null;c=c&&c.closest?c.closest('.klist'):null;}
   if(!c){for(i=0;i<lists.length;i++){if(lists[i].querySelector('.crow')){c=lists[i];break;}}}   /* else the first kind that has cards (not a skipped one) */
   k=c?c.getAttribute('data-k'):lists[0].getAttribute('data-k');}
  for(i=0;i<lists.length;i++)lists[i].hidden=!pr&&lists[i].getAttribute('data-k')!==k;

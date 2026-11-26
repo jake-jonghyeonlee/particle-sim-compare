@@ -1985,11 +1985,11 @@ def _kind_cards(ctx, kind, rk, line_rk=None):
     shown_line = set(_ranked_ids(ctx, 'line')) if line_rk is not None else set()
     gmax = _kind_gmax(ctx, kind)
     parts = [] if sp is None else [_compartment(ctx, kind, sp, name, gmax, shown_line) for name in (sp['main'], sp['other'])]
-    if not any(parts):
-        return '<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.</p>' % (kind, kind, kind)
     zero = ''
-    if sp['zero']:
+    if sp is not None and sp['zero']:
         zero = '<details class="rest" id="bd-zero-%s"><summary>순 변화 0 %d 개 ▸</summary>%s</details>' % (kind, len(sp['zero']), _fold_table(ctx, kind, sp['zero'], None))
+    if not any(parts):   # R6:2: no card, but the net-0 fold (and its rows) still exists for the links of 2 and the detail
+        return '<h3>%s 을 바꾼 변화</h3><p class="muted" id="cards-%s-none">%s 변화는 원인 후보마다 아주 작아 따로 꼽지 않습니다.</p>%s' % (kind, kind, kind, zero)
     head = '%s은 %s 입니다' % (_dir_name(ctx, kind), DIR_WORD[sp['main']])
     return '<h3>%s · %s</h3>%s%s' % (chip(kind) + esc(kind), esc(head), ''.join(parts), zero)
 
