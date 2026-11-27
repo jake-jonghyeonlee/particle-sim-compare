@@ -254,6 +254,15 @@ def _parser() -> argparse.ArgumentParser:
     c2c.add_argument("--side-reference", required=True, help="reference side.json 이 있는 폴더")
     c2c.add_argument("--side-target", required=True, help="target side.json 이 있는 폴더")
     c2c.add_argument("--out", help="출력 디렉터리(생략하면 설정의 output_dir). 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어씀")
+    pcfg = _korean_help(sub.add_parser(
+        "products-config", add_help=False,
+        help="products.yaml(simcompare_products_v1)을 검증하고 그룹 파일·gen.*.yaml 설정을 만든다(mask 는 읽지 않음)"))
+    pcfg.add_argument("--config", required=True, help="products.yaml")
+    pcfg.add_argument("--check", action="store_true", help="검증과 그룹 호환 검사만 한다(아무것도 쓰지 않음)")
+    pcfg.add_argument("--pair", nargs=2, action="append", default=[], metavar=("A", "B"),
+                      help="쌍 설정(gen.pair.A__B.real.yaml/.compare2.yaml)도 만든다. A 가 reference, B 가 target. 여러 번 가능")
+    pcfg.add_argument("--data-dir", action="append", default=[], metavar="P=PATH",
+                      help="제품 P 의 01 출력 폴더(products.yaml 폴더 기준 상대 경로). 쌍 설정과 gen.product.P.real.yaml 에 쓴다. 여러 번 가능")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
@@ -426,6 +435,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "compare2-compose":
             from simcompare import compare2_side
             return compare2_side.main_compose(args.config, args.side_reference, args.side_target, args.out, _print)
+        if args.command == "products-config":
+            from simcompare import products_config
+            data_dirs = {}
+            for item in args.data_dir:
+                name, separator, value = item.partition("=")
+                if not separator or not name or not value:
+                    parser.error("--data-dir 는 P=PATH 형식이어야 합니다: %s" % item)
+                data_dirs[name] = value
+            try:
+                _print(products_config.run_products_config(args.config, check=args.check,
+                                                           pairs=[tuple(p) for p in args.pair], data_dirs=data_dirs))
+            except products_config.GroupCompatibilityError as exc:
+                print("오류: %s" % exc, file=sys.stderr)
+                _print({"status": "incompatible", "violations": exc.violations})
+                return 2
+            return 0
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report

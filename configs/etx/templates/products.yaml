@@ -1,0 +1,82 @@
+# ETX products.yaml 템플릿 (simcompare_products_v1, Run 20261127-product-assets T3)
+#
+# 제품(모델)을 한 번 등록하고 비교 그룹을 정하면, `simcompare products-config` 가 아래를 만든다.
+#   data/products/_groups/<그룹>/expected_cases.txt, group.json   그룹의 기대 case 이름 합집합
+#   gen.product.<제품>.real.yaml                                  제품 하나의 numeric 설정(--data-dir 을 준 제품만)
+#   gen.pair.<A>__<B>.real.yaml / .compare2.yaml                  쌍 설정(--pair A B). 기존 2 칸 스키마 그대로
+# gen.*.yaml 은 첫 줄 표지가 있을 때만 다시 쓴다. 손으로 고치지 않는다.
+#
+# 사용:   python -m simcompare products-config --config products.yaml --check
+#         python -m simcompare products-config --config products.yaml --pair QA4_R00 QA4_T00 \
+#                --data-dir QA4_R00=data/products/QA4_R00/hotspots/current --data-dir QA4_T00=...
+#
+# 경로 규칙: 입력 경로는 모두 이 파일이 있는 폴더(BASE_DIR) 기준 상대 경로. 절대 경로·..·백슬래시는 거부된다.
+#   입력은 data/products, data/compare, data/_runs(출력 루트) 안에 두지 않는다.
+# 이름 규칙: 제품·그룹 이름은 영문으로 시작, 영문·숫자·_·- 만, 64 자 이하. "__" 와 Windows 예약 이름(CON, COM1 …) 불가.
+#   대소문자만 다른 이름은 같은 이름으로 본다.
+# 모르는 키는 거부된다. note 만 자유 문자열이다.
+schema_version: simcompare_products_v1
+
+common:
+  density_dir: data/input/density
+  model_groups:
+    mobile:
+      glass_area: {value: 1387500, unit: mm2}
+      weight_line: 2.5
+      weight_pixel: 2.5
+    other:
+      glass_area: {value: 975000, unit: mm2}
+      weight_line: 1.4285714285714286  # 10/7
+      weight_pixel: 2.0
+  report: {dl1_root: data/input/dl1, map_window_um: 10, diameter_um: 3, top_n: 4}
+  lambda_diameters_um: null
+  numeric:                 # real.yaml 의 제품 밖 키(reference·target·output_dir 는 만들어 넣는다)
+    mode: real
+    map: {diameter_um: 5}  # map.input 은 reference 제품으로 채운다
+
+# 비교 그룹: 제품은 그룹 하나에 속한다. 같은 그룹 제품끼리만 쌍을 만들 수 있다(compare_cross_group).
+# 기대 case = 그룹 제품들의 short case 이름 합집합. 그룹의 모든 제품은 같은 pairs.csv 내용을 써야 한다.
+groups:
+  QA4: [QA4_R00, QA4_T00]
+
+products:
+  QA4_R00:
+    note: "기준 설계 r0"
+    hotspot_root: data/input/QA4_R00
+    include_cno: true
+    model_group: mobile
+    resolution: [1500, 1850]
+    unit_size_um: [45, 45]
+    dl1_model: QA4_R00
+    condition_assignment: &assignment
+      design_version: UNSPECIFIED
+      process_step_id: UNSPECIFIED
+      exposure_id: UNSPECIFIED
+      unit_id: UNSPECIFIED
+      layer_stack:         # 층 쌓는 순서. stack_order 가 클수록 위층
+        - {actual_layer: BML,  stack_order: 1,  density_process_layer: BML}
+        - {actual_layer: ACT,  stack_order: 2,  density_process_layer: ACT}
+        - {actual_layer: GAT1, stack_order: 3,  density_process_layer: GAT1}
+        - {actual_layer: GATC, stack_order: 4,  density_process_layer: GATC}
+        - {actual_layer: GAT2, stack_order: 5,  density_process_layer: GAT2}
+        - {actual_layer: OACT, stack_order: 6,  density_process_layer: OACT}
+        - {actual_layer: GAT3, stack_order: 7,  density_process_layer: GAT3}
+        - {actual_layer: SD1,  stack_order: 8,  density_process_layer: SD1}
+        - {actual_layer: SD2,  stack_order: 9,  density_process_layer: SD2}
+        - {actual_layer: SD3,  stack_order: 10, density_process_layer: SD3}
+        - {actual_layer: PXL,  stack_order: 11, density_process_layer: PXL}
+      pair_table_path: data/input/pairs.csv                       # 그룹 안 모든 제품이 같은 내용
+      interlayer_distance_path: data/input/thk_info-QA4_R00.txt   # vertical case 가 있으면 필수
+      electrode_role_policy: electrode_id
+      max_materialized_source_cells: 20000000000
+      max_group_mask_cells: 5000000000
+  QA4_T00:
+    note: "대상 설계 t0"
+    hotspot_root: data/input/QA4_T00
+    include_cno: true
+    model_group: mobile
+    resolution: [1500, 1850]
+    dl1_model: QA4_T00
+    condition_assignment:
+      <<: *assignment
+      interlayer_distance_path: data/input/thk_info-QA4_T00.txt
