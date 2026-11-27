@@ -181,7 +181,7 @@ def test_01_then_02_build_assets_and_a_second_run_skips_everything(world):
         maps_src = side.complete['maps_src']                # RECORD_MAPS default: the 02 side is recorded (pasx/T8)
         assert maps_src['status'] == 'complete' and maps_src['reason'] is None and maps_src['calls'] > 0
         assert maps_src['raw_bytes'] > 0 and maps_src['stored_bytes'] > 0     # (a tiny array grows by the zlib header)
-        assert maps_src['conditions']['maps_basis'] == 'maps_src_v1'
+        assert maps_src['conditions']['maps_basis'] == 'maps_src_v2'
         assert {e['path'] for e in side.complete['files']} == {'side.json', 'maps_src/index.json'}
         assert side.file_sha256('maps_src/index.json') == pa.sha256_file(side.path / 'maps_src' / 'index.json')
         assert side.complete['depends'] == [{'kind': 'hotspots', 'generation': hot.name, 'complete_sha256': hot.complete_sha256}]
@@ -960,7 +960,9 @@ def test_02_a_recording_failure_still_publishes_the_side(built, monkeypatch):
     assert code == 0 and any('maps_src 02 P1: failed (disk_full)' == line for line in outs)
     assert any('지도 원자료 녹화가 실패' in e for e in errs)
     side = side_bytes(world, 'P1')
-    assert side.complete['maps_src'] == {'status': 'failed', 'reason': 'disk_full'}
+    failed = side.complete['maps_src']
+    assert (failed['status'], failed['reason'], failed['calls']) == ('failed', 'disk_full', 0)
+    assert 'No space left' in failed['detail']
     assert [e['path'] for e in side.complete['files']] == ['side.json']
     assert states(world, 'P1')['side'] == (pa.OK, [])
     line = [json.loads(t) for t in (world.base / 'data/products/P1/asset_log.jsonl').read_text().splitlines()
@@ -972,7 +974,42 @@ def test_02_the_size_cap_stops_only_the_recording(built):
     world = built
     code, outs, errs = run02(world, 'P1', force=True, maps_max_bytes=100)
     assert code == 0
-    assert side_bytes(world, 'P1').complete['maps_src'] == {'status': 'failed', 'reason': 'cap_exceeded'}
+    capped = side_bytes(world, 'P1').complete['maps_src']
+    assert (capped['status'], capped['reason']) == ('failed', 'cap_exceeded')
+
+
+def test_02_a_side_without_a_recording_is_stale_while_recording_is_on(built):
+    """R8:4: status none + RECORD_MAPS on -> 낡음 `maps_src_missing`; a rerun records it; failed and --no-record-maps
+    never add the reason."""
+    world = built
+    assert states(world, 'P1')['side'] == (pa.OK, [])
+    assert run02(world, 'P1', force=True, record_maps=False)[0] == 0                 # a side without a recording
+    assert states(world, 'P1')['side'] == (pa.STALE, ['maps_src_missing'])
+    assert pa.asset_status(world.base, 'P1', world.path) == (pa.STALE, ['maps_src_missing'])
+    assert pa.asset_status(world.base, 'P1', world.path, record_maps=False) == (pa.OK, [])
+    assert pa.check_assets(world.base, 'P1', world.path, record_maps=False)['side'].state == pa.OK
+    code, outs, _errs = run02(world, 'P1', record_maps=False)                      # off: the fresh side is skipped
+    assert code == 0 and any(line.startswith('skip fresh 02 side') for line in outs)
+    code, outs, _errs = run02(world, 'P1')                                          # on: built again, with a recording
+    assert code == 0 and any(line.startswith('built 02 side') for line in outs)
+    assert side_bytes(world, 'P1').complete['maps_src']['status'] == 'complete'
+    assert states(world, 'P1')['side'] == (pa.OK, [])
+    code, outs, _errs = run02(world, 'P1')
+    assert any(line.startswith('skip fresh 02 side') for line in outs)
+
+
+def test_02_a_failed_recording_is_not_repeated(built, monkeypatch):
+    world = built
+    from simcompare import maps_source as ms
+    import errno
+
+    def enospc(self, handle, data):
+        raise OSError(errno.ENOSPC, 'No space left on device')
+    monkeypatch.setattr(ms.MapsRecorder, '_write', enospc)
+    assert run02(world, 'P1', force=True)[0] == 0
+    assert states(world, 'P1')['side'] == (pa.OK, [])
+    code, outs, _errs = run02(world, 'P1')
+    assert any(line.startswith('skip fresh 02 side') for line in outs)
 
 
 def test_02_a_side_json_write_failure_is_an_asset_failure_not_a_recording_failure(built, monkeypatch):

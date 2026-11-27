@@ -57,13 +57,18 @@ def finish(recorder):
     return recorder.close(lambda: {'estimate_bytes': 123, 'input_hash': 'h', 'side_sha256': 's'})
 
 
+def brief(summary):
+    """status and reason of a summary (a failed one also carries calls and detail, R8:2)."""
+    return {key: summary[key] for key in ('status', 'reason')}
+
+
 def test_index_and_lines_describe_the_recording(tmp_path):
     folder = tmp_path / 'maps_src'
     recorder = record_small(folder)
     summary = finish(recorder)
     index = json.loads((folder / 'index.json').read_text())
     assert summary['status'] == 'complete' and summary['calls'] == 4 == index['calls']
-    assert index['schema_version'] == 'maps_src_v1' and index['conditions'] == CONDITIONS
+    assert index['schema_version'] == 'maps_src_v2' and index['conditions'] == CONDITIONS
     assert index['estimate_bytes'] == 123 and index['input_hash'] == 'h' and index['frames'] == 2
     assert index['files'] == {name: (folder / name).stat().st_size for name in ms.DATA_FILES}
     assert index['stored_bytes'] == (folder / 'calls.bin').stat().st_size == summary['stored_bytes']
@@ -82,6 +87,31 @@ def test_index_and_lines_describe_the_recording(tmp_path):
     assert [f['has_valid'] for f in frames] == [True, False] and frames[0]['shape_yx'] == [3, 4]
     assert len(frames[0]['sha256']) == 64 and frames[1]['valid'] is None
     assert sum(1 for line in lines if line['frame_ref'] == 0) == 2
+    # v2: group keys and items are tables, a call line only refers to them (first-seen order, shared where equal)
+    groups = [json.loads(text) for text in (folder / 'groups.jsonl').read_text().splitlines()]
+    items = [json.loads(text) for text in (folder / 'items.jsonl').read_text().splitlines()]
+    assert [g['g'] for g in groups] == [0, 1, 2] and [i['i'] for i in items] == [0, 1, 2, 3]   # diameters 3, 1, 2 (3 again)
+    assert [line['g'] for line in lines] == [0, 1, 2, 0] and [line['i'] for line in lines] == [0, 1, 2, 3]
+    assert all('group_key' not in line and 'item' not in line and 'item_key' not in line for line in lines)
+    assert groups[0]['group_key']['diameter_um'] != groups[1]['group_key']['diameter_um']
+    assert '"pair_id","p0"' in json.dumps(items[0], separators=(',', ':'))
+    assert index['groups'] == 3 and index['items'] == 4
+    assert index['sha256'] == {name: sha(folder / name) for name in ms.LINE_FILES}
+    assert index['line_bytes'] == sum((folder / name).stat().st_size for name in ms.LINE_FILES) == summary['line_bytes']
+
+
+def test_equal_calls_share_one_group_and_one_item(tmp_path):
+    folder = tmp_path / 'maps_src'
+    recorder = ms.MapsRecorder(folder, CONDITIONS)
+    assert recorder.open()
+    frame = Frame((3, 4))
+    for _ in range(3):
+        call(recorder, Decimal(3), frame, [1], [1], [0.5], 7)
+    call(recorder, Decimal(3), frame, [1], [1], [0.5], 8)
+    assert finish(recorder)['status'] == 'complete'
+    assert len((folder / 'groups.jsonl').read_text().splitlines()) == 1
+    assert len((folder / 'items.jsonl').read_text().splitlines()) == 2
+    assert [c['item']['pair_id'] for c in collect(source_of(folder))] == ['p7', 'p7', 'p7', 'p8']
 
 
 def collect(source):
@@ -153,6 +183,57 @@ def test_one_changed_byte_is_a_replay_failure_and_the_sink_is_not_reached_for_it
     assert caught.value.code == 'maps_src_replay_failed'
 
 
+def swap_once(path, old, new):
+    """Replace one text once, keeping the file size (and, as the tests assert, the JSON valid)."""
+    assert len(old) == len(new)
+    data = path.read_bytes()
+    assert old in data
+    path.write_bytes(data.replace(old, new, 1))
+    for text in path.read_text().splitlines():
+        json.loads(text)
+
+
+@pytest.mark.parametrize('name, old, new', [
+    ('calls.jsonl', b'"geom_len":2', b'"geom_len":3'),         # a wrong length-only value (nothing else checks it)
+    ('calls.jsonl', b'"kind":"pixel"', b'"kind":"pixeo"'),       # a letter inside a string
+    ('items.jsonl', b'["upper_layer","L1"]', b'["upper_layer","L9"]'),
+    ('groups.jsonl', b'"analysis_layer":"L1"', b'"analysis_layer":"L8"'),
+    ('frames.jsonl', b'"frame_id":"f"', b'"frame_id":"g"')])
+def test_a_same_size_valid_json_edit_of_a_line_file_is_a_replay_failure(tmp_path, name, old, new):
+    """R8:1: the per-file sha256 in the index catches what the structure checks cannot."""
+    folder = tmp_path / 'maps_src'
+    finish(record_small(folder))
+    assert len(collect(source_of(folder))) == 4
+    before = (folder / name).stat().st_size
+    swap_once(folder / name, old, new)
+    assert (folder / name).stat().st_size == before
+    with pytest.raises(NumericContractError) as caught:
+        collect(source_of(folder))
+    assert caught.value.code == 'maps_src_replay_failed'
+
+
+def test_line_bytes_count_against_the_cap(tmp_path):
+    """R8:2: the arrays are tiny here; the cap trips on the line files alone."""
+    recorder = ms.MapsRecorder(tmp_path / 'maps_src', CONDITIONS, max_bytes=400)
+    assert recorder.open()
+    for number in range(6):
+        call(recorder, Decimal(2), Frame((3, 4), valid=False), [1], [1], [0.5], number)
+    summary = finish(recorder)
+    assert brief(summary) == {'status': 'failed', 'reason': 'cap_exceeded'}
+    assert summary['calls'] < 6 and 'detail' in summary and 'line bytes' in summary['detail']
+
+
+def test_a_full_disk_while_flushing_is_disk_full(tmp_path):
+    """R8:5: ENOSPC from flush/fsync in close() is `disk_full`, any other error stays `finalize_failed`."""
+    for error, reason in ((errno.ENOSPC, 'disk_full'), (errno.EIO, 'finalize_failed')):
+        recorder = record_small(tmp_path / ('maps_%d' % error))
+
+        def flush_all():
+            raise OSError(error, 'flush failed')
+        recorder._flush_all = flush_all
+        assert brief(finish(recorder)) == {'status': 'failed', 'reason': reason}
+
+
 @pytest.mark.parametrize('cut', ['bin', 'jsonl', 'frames', 'line'])
 def test_truncated_files_are_replay_failures(tmp_path, cut):
     folder = tmp_path / 'maps_src'
@@ -190,7 +271,7 @@ def test_persistent_enospc_marks_the_recording_failed_and_later_calls_are_ignore
     call(recorder, Decimal(3), Frame((3, 4)), [1], [1], [1.0])
     call(recorder, Decimal(3), Frame((3, 4)), [1], [1], [1.0])
     assert recorder.status == 'failed' and recorder.reason == 'disk_full' and not recorder.recording
-    assert recorder.close() == {'status': 'failed', 'reason': 'disk_full'}
+    assert brief(recorder.close()) == {'status': 'failed', 'reason': 'disk_full'}
     assert [p.name for p in folder.iterdir()] == ['index.json'] or not list(folder.iterdir())
 
 
@@ -202,7 +283,9 @@ def test_other_write_errors_are_write_error(tmp_path, monkeypatch):
         raise OSError(errno.EIO, 'io')
     monkeypatch.setattr(recorder, '_write', broken)
     call(recorder, Decimal(3), Frame((3, 4)), [1], [1], [1.0])
-    assert finish(recorder) == {'status': 'failed', 'reason': 'write_error'}
+    summary = finish(recorder)
+    assert brief(summary) == {'status': 'failed', 'reason': 'write_error'}
+    assert summary['calls'] == 0 and 'OSError' in summary['detail']
 
 
 @pytest.mark.parametrize('what', ['bytes', 'calls', 'array'])
@@ -212,7 +295,7 @@ def test_caps_stop_only_the_recording(tmp_path, what):
     assert recorder.open()
     for number in range(3):
         call(recorder, Decimal(3), Frame((3, 4)), [1, 2, 3], [1, 2, 3], [1.0, 1.0, 1.0], number)
-    assert finish(recorder) == {'status': 'failed', 'reason': 'cap_exceeded'}
+    assert brief(finish(recorder)) == {'status': 'failed', 'reason': 'cap_exceeded'}
     index = json.loads((tmp_path / 'maps_src' / 'index.json').read_text())
     assert index['status'] == 'failed' and index['reason'] == 'cap_exceeded'
 
@@ -231,7 +314,7 @@ def test_open_failure_is_a_failed_recording(tmp_path):
     blocker.write_text('a file where the folder should be')
     recorder = ms.MapsRecorder(blocker, CONDITIONS)
     assert not recorder.open()
-    assert recorder.close() == {'status': 'failed', 'reason': 'write_error'}
+    assert brief(recorder.close()) == {'status': 'failed', 'reason': 'write_error'}
 
 
 def test_close_failure_is_finalize_failed(tmp_path, monkeypatch):
@@ -251,7 +334,7 @@ def test_close_failure_is_finalize_failed(tmp_path, monkeypatch):
             self.real.close()
             raise OSError(errno.EIO, 'close failed')
     recorder._calls = Bad(recorder._calls)
-    assert finish(recorder) == {'status': 'failed', 'reason': 'finalize_failed'}
+    assert brief(finish(recorder)) == {'status': 'failed', 'reason': 'finalize_failed'}
 
 
 def test_cleanup_failure_is_only_noted(tmp_path, monkeypatch):
@@ -267,7 +350,7 @@ def test_cleanup_failure_is_only_noted(tmp_path, monkeypatch):
         return real_unlink(self, *args, **kwargs)
     monkeypatch.setattr(Path, 'unlink', unlink)
     summary = finish(recorder)
-    assert summary == {'status': 'failed', 'reason': 'disk_full'}
+    assert brief(summary) == {'status': 'failed', 'reason': 'disk_full'}
     assert any('calls.bin' in text for text in recorder.cleanup_errors)
 
 
@@ -289,7 +372,7 @@ def test_finalize_steps_that_fail_leave_a_failed_recording(tmp_path, monkeypatch
     else:
         def extra():
             raise ValueError('estimate failed')
-    assert recorder.close(extra) == {'status': 'failed', 'reason': 'finalize_failed'}
+    assert brief(recorder.close(extra)) == {'status': 'failed', 'reason': 'finalize_failed'}
 
 
 def test_keyboard_interrupt_is_not_swallowed(tmp_path, monkeypatch):
@@ -369,7 +452,7 @@ def test_recording_does_not_change_side_json_and_the_index_matches(tmp_path):
     assert index['calls'] == record['maps_src']['calls'] > 0
     assert index['raw_bytes'] == record['maps_src']['raw_bytes']
     assert index['side_sha256'] == sha(out / 'side.json') and index['input_hash']
-    assert index['conditions'] == {'maps_basis': 'maps_src_v1', 'report_diameter_um': '3',
+    assert index['conditions'] == {'maps_basis': 'maps_src_v2', 'report_diameter_um': '3',
                                    'lambda_diameters_um': None, 'top_buckets': index['conditions']['top_buckets']}
     assert index['estimate_bytes'] > 0
     lines = (out / 'maps_src' / 'calls.jsonl').read_text().splitlines()
@@ -474,7 +557,7 @@ def test_items_made_of_several_pieces_replay_the_same(tmp_path, monkeypatch, bud
     pieces = {}
     for line in lines:
         if 'geom_idx' in line and line['geom_len']:
-            pieces[json.dumps(line['item_key'])] = pieces.get(json.dumps(line['item_key']), 0) + 1
+            pieces[line['i']] = pieces.get(line['i'], 0) + 1
     assert max(pieces.values()) >= 2
     code, wide = maps_direct(tmp_path, 'wide')
     kwargs = {} if budget == 'wide' else {'max_operation_bytes': execution(wide)['max_reserved_bytes']}
@@ -587,7 +670,7 @@ def test_a_failed_recording_leaves_the_side_published(tmp_path, monkeypatch):
     chain(tmp_path)
     monkeypatch.setattr(ms.MapsRecorder, '_write', enospc)
     out, record = make_side(tmp_path, 'reference', 'side_fail')
-    assert record['maps_src'] == {'status': 'failed', 'reason': 'disk_full'}
+    assert brief(record['maps_src']) == {'status': 'failed', 'reason': 'disk_full'}
     assert (out / 'side.json').is_file()
     complete = json.loads((out / 'complete.json').read_text())
     assert [entry['path'] for entry in complete['files']] == ['side.json']

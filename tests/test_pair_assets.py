@@ -59,6 +59,19 @@ def run_all(world, tag='T1', cards=False):
         assert code in (0, 3), (name, outs, errs)
 
 
+def test_a_side_without_a_recording_does_not_block_pair_step(built):
+    """R8:4: `maps_src_missing` is a 02 verdict only; pair-step still runs on such a side (maps goes direct)."""
+    assert pa.run_products_step(built.path, 'P1', '02', force=True, run_tag='T2', record_maps=False,
+                                out=lambda text: None, err=lambda text: None) == 0
+    assert pa.asset_status(built.base, 'P1', built.path) == (pa.STALE, ['maps_src_missing'])
+    code, outs, errs = pstep(built, 'P1', 'P2', 'compose')
+    assert code in (0, 3), (outs, errs)
+    code, outs, errs = pstep(built, 'P1', 'P2', 'ledger')
+    assert code in (0, 3), (outs, errs)
+    code, outs, errs = pstep(built, 'P1', 'P2', 'maps')
+    assert code in (0, 3), (outs, errs)
+
+
 # ---- acceptance 1: the four steps -----------------------------------------------------------------------------------
 
 def test_four_steps_make_the_pair_folder_and_the_log(built):

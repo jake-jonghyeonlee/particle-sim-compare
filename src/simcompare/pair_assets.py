@@ -114,7 +114,7 @@ def check_pair_assets(ctx: PairContext) -> None:
     results = pc.check_groups(config)
     missing, stale = [], []
     for product in (ctx.first, ctx.second):
-        verdicts = pa.check_assets(ctx.base, product, config, results)
+        verdicts = pa.check_assets(ctx.base, product, config, results, record_maps=False)   # a missing recording never blocks a pair
         for kind in ('hotspots', 'side'):
             verdict = verdicts[kind]
             if verdict.state == pa.OK:

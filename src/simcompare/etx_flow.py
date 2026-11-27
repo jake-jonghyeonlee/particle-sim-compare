@@ -358,7 +358,8 @@ def plan_jobs(base_dir, settings):
 class ProductPlan(object):
     """제품 모드의 검증된 계획. 아무것도 쓰지 않고 만든다."""
 
-    def __init__(self, config, products, pairs, asset_steps, compare_steps, force, tag, jobs):
+    def __init__(self, config, products, pairs, asset_steps, compare_steps, force, tag, jobs, record_maps=True):
+        self.record_maps = record_maps
         self.config, self.products, self.pairs = config, products, pairs
         self.asset_steps, self.compare_steps, self.force, self.tag, self.jobs = asset_steps, compare_steps, force, tag, jobs
 
@@ -464,7 +465,8 @@ def _product_plan(base_dir, settings):
     if not jobs:
         raise FlowError('etx_no_jobs', 'nothing to do: ASSET_STEPS is empty and COMPARE has no pair for COMPARE_STEPS %s' % (
             compare_steps,))
-    return ProductPlan(config, selected, pairs, asset_steps, compare_steps, force, tag, jobs)
+    return ProductPlan(config, selected, pairs, asset_steps, compare_steps, force, tag, jobs,
+                       record_maps=cfg['record_maps'] is True)
 
 
 def plan_product_jobs(base_dir, settings):
@@ -490,7 +492,7 @@ def _product_status_lines(plan):
                 wanted.append(name)
     for name in wanted:
         try:
-            state, reasons = products_assets.asset_status(plan.config.base, name, plan.config)
+            state, reasons = products_assets.asset_status(plan.config.base, name, plan.config, record_maps=plan.record_maps)
             lines.append('  asset %s: %s%s' % (name, state, ' [%s]' % ', '.join(reasons) if reasons else ''))
         except Exception as exc:        # 읽기 전용 판정이 실패해도 계획 출력은 막지 않는다
             lines.append('  asset %s: 판정 실패 %s: %s' % (name, type(exc).__name__, exc))

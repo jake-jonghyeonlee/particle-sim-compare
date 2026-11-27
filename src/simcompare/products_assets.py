@@ -726,13 +726,19 @@ def current_side_binding(cfg_pair) -> dict:
     return compare2_side.side_binding(cfg, 'reference', top)
 
 
-def side_verdict(base, config: pc.ProductsConfig, product: str, hotspots: Generation, cfg_pair) -> Verdict:
+def side_verdict(base, config: pc.ProductsConfig, product: str, hotspots: Generation, cfg_pair,
+                 record_maps: bool = True) -> Verdict:
+    """record_maps: the recording switch of `products-step 02` (default on). A side whose `complete.json` `maps_src`
+    says `none` is then 낡음 (`maps_src_missing`) so the next 02 builds it again with a recording. `failed` is not
+    repeated; with record_maps off the reason is never added (R8:4). Reads complete.json only."""
     try:
         generation = open_generation(base, product, 'side')
     except AssetError as exc:
         return Verdict(exc.state, ['asset_missing' if exc.state == MISSING else exc.code])
     now = side_fingerprint(hotspots, current_side_binding(cfg_pair))
     reasons = _side_reasons(generation.complete.get('fingerprint') or {}, now)
+    if record_maps and ((generation.complete.get('maps_src') or {}).get('status') or 'none') == 'none':
+        reasons.append('maps_src_missing')
     return Verdict(STALE if reasons else OK, reasons, generation=generation)
 
 
@@ -781,7 +787,8 @@ def _load_config(base, config) -> pc.ProductsConfig:
     return pc.load_products_config(Path(config) if config is not None else Path(base) / 'products.yaml')
 
 
-def check_assets(base, product: str, config=None, results: Optional[dict] = None) -> Dict[str, Verdict]:
+def check_assets(base, product: str, config=None, results: Optional[dict] = None,
+                 record_maps: bool = True) -> Dict[str, Verdict]:
     """{'hotspots': Verdict, 'side': Verdict, 'summary': Verdict}. Reads names, small files and the source tree stat
     (and a source file's bytes only when its size or mtime moved); no mask is read. Read only (R5:1): the generated
     settings are built in memory; when the file on disk differs, side and summary are 낡음 (`product_settings_changed`,
@@ -810,15 +817,15 @@ def check_assets(base, product: str, config=None, results: Optional[dict] = None
         return {'hotspots': hotspots, 'side': Verdict(STALE, reasons), 'summary': Verdict(STALE, list(reasons))}
     compare2_path = config.base / product_settings_names(product)[1]
     cfg_pair = compare2_side.load_pair_config(compare2_path)
-    side = side_verdict(config.base, config, product, hotspots.generation, cfg_pair)
+    side = side_verdict(config.base, config, product, hotspots.generation, cfg_pair, record_maps)
     if side.generation is None:
         return {'hotspots': hotspots, 'side': side, 'summary': Verdict(MISSING, ['side_unavailable'])}
     return {'hotspots': hotspots, 'side': side, 'summary': summary_verdict(config.base, product, side.generation, cfg_pair)}
 
 
-def asset_status(base, product: str, config=None) -> Tuple[str, List[str]]:
+def asset_status(base, product: str, config=None, record_maps: bool = True) -> Tuple[str, List[str]]:
     """(state, reason codes) of one product: the worst of the three assets (손상 > 없음 > 낡음 > 정상)."""
-    verdicts = check_assets(base, product, config)
+    verdicts = check_assets(base, product, config, record_maps=record_maps)
     order = (CORRUPT, MISSING, STALE, OK)
     state = min((v.state for v in verdicts.values()), key=order.index)
     reasons = _unique([r for key in ('hotspots', 'side', 'summary') for r in verdicts[key].reasons])
@@ -970,7 +977,7 @@ def run_step_02(ctx: StepContext, force: bool) -> int:
     compare2_path = ensure_product_settings(ctx.config, ctx.product, hotspots)
     cfg_pair = compare2_side.load_pair_config(compare2_path)
     exit_code = 0
-    side = side_verdict(ctx.base, ctx.config, ctx.product, hotspots, cfg_pair)
+    side = side_verdict(ctx.base, ctx.config, ctx.product, hotspots, cfg_pair, ctx.record_maps)
     if side.state == OK and not force:
         ctx.out('skip fresh 02 side %s' % ctx.product)
         ctx.log.append('02', 'skip', OK, [], side.generation.name, time.time() - started, 0, None, part='side')
