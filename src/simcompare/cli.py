@@ -307,6 +307,8 @@ def _parser() -> argparse.ArgumentParser:
     lmaps.add_argument("--config", required=True, help="compare2 를 실행할 때 쓴 compare2_config_v1 YAML(같은 파일이어야 함)")
     lmaps.add_argument("--ledger-dir", required=True, help="ledger 출력 폴더(ledger.json 이 있는 곳)")
     lmaps.add_argument("--candidates", help="(선택) 04 candidates-change 출력 폴더(이 단계는 존재만 확인)")
+    lmaps.add_argument("--no-cards", action="store_true",
+                       help="카드를 만들지 않는다(카드 목록·카드 검사 not_evaluated, options.cards=false). 지도·수치는 그대로. 생략하면 이전과 byte 동일")
     lmaps.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-maps 가 이전에 만든 폴더만 덮어씀")
     for flag, kind, default, text in (
             ("range-um", float, 10, "줄 범위 넓힘(µm, >0)"), ("tile-um", float, 1.0, "분석 타일 크기(µm, 0.5~2.0)"),
@@ -486,7 +488,7 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare import ledger_maps
             options = {name: getattr(args, name) for name in ledger_maps.OPTION_DEFAULTS}
             return ledger_maps.main_ledger_maps(args.compare2_dir, args.config, args.ledger_dir, args.out, _print,
-                                                options=options, candidates=args.candidates)
+                                                options=options, candidates=args.candidates, cards=not args.no_cards)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

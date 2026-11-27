@@ -1791,9 +1791,10 @@ class _Card(object):
 class _CardRun(object):
     """Shared state of the card step of one run (the two products share it through ctx.run)."""
 
-    def __init__(self, led_doc, opts, budget, cfg2, infos, corr):
+    def __init__(self, led_doc, opts, budget, cfg2, infos, corr, cards=True):
         self.led_doc, self.opts, self.budget, self.cfg2, self.infos, self.corr = led_doc, opts, budget, cfg2, infos, corr
-        self.plans = _select_cards(led_doc, opts['top_cards'])
+        # --no-cards (pasx/T12): no plan, so `_cards` ends at once and the card checks stay `not_evaluated`
+        self.plans = _select_cards(led_doc, opts['top_cards']) if cards else []
         self.carried = {}                # (pair_id, kind) -> _Card whose reference part is done (reserved, evictable)
         self.dropped = []                # cards left out because of the memory budget (README 28.4)
         self.checks = {name: [] for name in CARD_CHECKS}
@@ -2670,10 +2671,13 @@ def _changes_section(candidates, led_doc, c2_doc, infos, sides_json, window_json
 
 # ---- run ----------------------------------------------------------------------------------------------------------------
 
-def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candidates=None, max_operation_bytes=None):
+def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candidates=None, max_operation_bytes=None,
+                    cards=True):
     """Compute and publish the maps; returns the execution record (exit_code 0 or 3) or raises.
 
-    max_operation_bytes overrides the limit of real.yaml (tests and tuning; the CLI leaves it out)."""
+    max_operation_bytes overrides the limit of real.yaml (tests and tuning; the CLI leaves it out).
+    cards=False (`--no-cards`) leaves the cards out; ledger_maps.json then has `options.cards: false` and no other
+    `cards` key is added when it is on (the default output is byte for byte what it was)."""
     started = time.time()
     clock0 = time.perf_counter()
     common = {}                         # elapsed_by_stage.common (observation only)
@@ -2731,7 +2735,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     common['geometry'] = t2 - t1
     corr = load_correspondence(candidates, infos, cfg, opts)
     common['correspondence'] = time.perf_counter() - t2
-    run = _CardRun(led_doc, opts, budget, cfg2, infos, corr)
+    run = _CardRun(led_doc, opts, budget, cfg2, infos, corr, cards=cards)
     budget.evictor = run.evict_one          # a reserve outside a card that does not fit first drops finished cards (E2)
     if cand.get('given'):
         cand.update({'apply_align': corr.mode, 'status': 'ok' if corr.ok else corr.band, 'detail': corr.detail})
@@ -2810,6 +2814,8 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         'checks': summary,
         'scale_steps': scale_steps,
         'warnings': warnings, 'bands': run.bands}
+    if not cards:
+        document['options']['cards'] = False
     if occurrence is not None:
         document['occurrence'] = occurrence
     if _layer_order(led_doc) is not None:
@@ -2848,13 +2854,13 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
 
 
 def main_ledger_maps(compare2_dir, config, ledger_dir, out, print_result, options=None, candidates=None,
-                     error_stream=None, max_operation_bytes=None):
+                     error_stream=None, max_operation_bytes=None, cards=True):
     """CLI body: prints the record, or leaves error.json + execution.json only and returns 2."""
     error_stream = error_stream or sys.stderr
     output = Path(out)
     try:
         record = run_ledger_maps(compare2_dir, config, ledger_dir, out, options=options, candidates=candidates,
-                                 max_operation_bytes=max_operation_bytes)
+                                 max_operation_bytes=max_operation_bytes, cards=cards)
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
         code = getattr(exc, 'code', 'input_or_config_error')
         print(f'오류: {exc}', file=error_stream)
