@@ -284,11 +284,11 @@ class _FrameInfo(object):
         self.shape_yx = tuple(spec['shape_yx'])
 
 
-def _side_info(cfg, cfg2, role):
+def _side_info(cfg, cfg2, role, verify='full', seal=None):
     from .pipeline import _real_source
     section = cfg.get(role)
     _t0 = time.perf_counter()
-    real = _real_source(cfg, section)
+    real = _real_source(cfg, section, verify, seal) if verify != 'full' else _real_source(cfg, section)
     real_source_s = time.perf_counter() - _t0           # observation only (ledger-maps execution.json elapsed_by_stage)
     if real is None:
         raise NumericContractError('compare2_real_source_required', f'{role}: real_hotspot_v1 data_dir needed')

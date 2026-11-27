@@ -26,6 +26,7 @@ from .compare2 import (AREA_BASIS, LEDGER_BASIS, ROLES, _compute_side,
                        _diameter_json, _json_text, _load_side, _publish, _side_json, assemble_compare2,
                        load_pair_config, main_compare2, prepare_compare2, run_compare2)
 from .compare2_inputs import collect_cno, load_density
+from .maps_source import DEFAULT_MAX_BYTES, DIR_NAME, MapsRecorder, conditions_for as maps_conditions
 from .numeric_schema import NumericContractError
 from .pair_exclusion import PAIR_EXCLUSION_RULE
 
@@ -248,20 +249,56 @@ def _check_owned(out, names, command):
         raise NumericContractError('compare2_output_not_owned', f'{out}: use a new folder or a previous {command} folder')
 
 
-def run_side(config_path, role, out):
-    """Measure one role and publish side.json into out; returns a small record."""
+def _estimate_bytes(cfg, role, top, seal):
+    """The `compute_areas` holding estimate ledger-maps reserves (same `_configured_real` call as its `_process_side`)."""
+    from .pipeline import _configured_real, _real_source
+    section = cfg.get(role)
+    real = _real_source(cfg, section, 'seal' if seal is not None else 'full', seal)
+    if real is None:
+        raise NumericContractError('compare2_real_source_required', f'{role}: real_hotspot_v1 data_dir needed')
+    dataset = _configured_real(cfg, section, real, {'bucket_detail': 'summary', 'top_buckets': top}, require_distance=True)
+    if dataset is None:
+        raise NumericContractError('compare2_condition_assignment_required', f'{role}: condition_assignment needed')
+    provenance = getattr(dataset[1], 'provenance', None) or {}
+    return int(((provenance.get('resource_estimate') or {}).get('estimated_peak_bytes')) or 0)
+
+
+def run_side(config_path, role, out, record_maps=None, seal=None, max_maps_bytes=DEFAULT_MAX_BYTES):
+    """Measure one role and publish side.json into out; returns a small record.
+
+    record_maps: a folder; the same `compute_areas` run then also records its share-sink calls there (`maps_src_v1`).
+    The recording never changes side.json and never fails the run: the record gets `maps_src` (status complete|failed,
+    reason). seal: the mask seal of the hotspots generation, only to make the estimate step cheap."""
     if role not in ROLES:
         raise NumericContractError('invalid_compare2_role', f'role must be reference or target: {role!r}')
     out = Path(out)
-    _check_owned(out, {SIDE_FILE, 'error.json'}, SIDE_COMMAND)
-    _cfg2, cfg, top = load_pair_config(config_path)
+    _check_owned(out, {SIDE_FILE, 'error.json', DIR_NAME}, SIDE_COMMAND)
+    cfg2, cfg, top = load_pair_config(config_path)
     binding = side_binding(cfg, role, top)
-    extracted, meta = _load_side(cfg, role, top)
-    text = side_text(extracted, meta, binding)
+    recorder = None
+    if record_maps is not None:
+        recorder = MapsRecorder(record_maps, maps_conditions(cfg2, top), max_bytes=max_maps_bytes)
+        recorder.open()
+    try:
+        extracted, meta = _load_side(cfg, role, top, share_sink=recorder.sink if recorder is not None and recorder.recording
+                                     else None)
+        text = side_text(extracted, meta, binding)
+    except BaseException:
+        if recorder is not None:
+            recorder.abort()
+        raise
+    side_sha = sha256_bytes(text.encode('utf-8'))
+    maps_src = None
+    if recorder is not None:
+        maps_src = recorder.close(lambda: {'estimate_bytes': _estimate_bytes(cfg, role, top, seal),
+                                           'input_hash': meta.get('input_hash'), 'side_sha256': side_sha})
     _publish(out, [(SIDE_FILE, text)])
     (out / 'error.json').unlink(missing_ok=True)
-    return {'command': SIDE_COMMAND, 'status': 'available', 'output': str(out / SIDE_FILE),
-            'side_sha256': sha256_bytes(text.encode('utf-8')), 'exit_code': 0}
+    record = {'command': SIDE_COMMAND, 'status': 'available', 'output': str(out / SIDE_FILE),
+              'side_sha256': side_sha, 'exit_code': 0}
+    if maps_src is not None:
+        record['maps_src'] = maps_src
+    return record
 
 
 # ---- summary -----------------------------------------------------------------------------------------------------
@@ -377,7 +414,7 @@ def _main_single(command, names, run, out, print_result, error_stream):
         print(f'오류: {exc}', file=error_stream)
         if code != 'compare2_output_not_owned' and _owned(out, names, command):
             try:
-                for name in names - {'error.json'}:
+                for name in names - {'error.json', DIR_NAME}:
                     (Path(out) / name).unlink(missing_ok=True)
                 _publish(Path(out), [('error.json', _json_text({'command': command, 'code': code,
                                                                 'detail': str(exc), 'exit_code': 2}))])
@@ -388,9 +425,11 @@ def _main_single(command, names, run, out, print_result, error_stream):
     return record['exit_code']
 
 
-def main_side(config, role, out, print_result, error_stream=None):
-    return _main_single(SIDE_COMMAND, {SIDE_FILE, 'error.json'}, lambda: run_side(config, role, out), out,
-                        print_result, error_stream)
+def main_side(config, role, out, print_result, error_stream=None, record_maps=None, seal=None,
+              max_maps_bytes=DEFAULT_MAX_BYTES):
+    return _main_single(SIDE_COMMAND, {SIDE_FILE, 'error.json', DIR_NAME},
+                        lambda: run_side(config, role, out, record_maps=record_maps, seal=seal,
+                                         max_maps_bytes=max_maps_bytes), out, print_result, error_stream)
 
 
 def main_summary(config, role, side_dir, out, print_result, error_stream=None):

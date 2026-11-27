@@ -240,6 +240,10 @@ def _parser() -> argparse.ArgumentParser:
     c2s.add_argument("--config", required=True, help="compare2_config_v1 YAML")
     c2s.add_argument("--role", required=True, choices=["reference", "target"], help="측정할 제품 절")
     c2s.add_argument("--out", required=True, help="출력 디렉터리(새 폴더 또는 compare2-side 가 이전에 만든 폴더)")
+    c2s.add_argument("--record-maps", default=None,
+                     help="(선택) 같은 compute_areas 에서 ledger-maps 용 sink 호출을 이 폴더에 녹화(maps_src_v1). side.json 은 녹화 유무와 byte 동일, 녹화 실패는 계산을 멈추지 않음")
+    c2s.add_argument("--maps-src-max-bytes", type=int, default=32 * 1024 ** 3,
+                     help="녹화 비압축 바이트 합 상한(기본 32 GiB). 넘으면 녹화만 중단")
     c2m = _korean_help(sub.add_parser(
         "compare2-summary", add_help=False,
         help="side.json 으로 제품 단독 지표(summary.json)와 의존 지문을 만든다"))
@@ -335,6 +339,8 @@ def _parser() -> argparse.ArgumentParser:
     lmaps.add_argument("--candidates", help="(선택) 04 candidates-change 출력 폴더(이 단계는 존재만 확인)")
     lmaps.add_argument("--no-cards", action="store_true",
                        help="카드를 만들지 않는다(카드 목록·카드 검사 not_evaluated, options.cards=false). 지도·수치는 그대로. 생략하면 이전과 byte 동일")
+    lmaps.add_argument("--maps-src", nargs=2, metavar=("REF_SIDE_DIR", "TGT_SIDE_DIR"), default=None,
+                       help="(선택) 두 제품 side 세대 폴더의 maps_src 녹화로 hotspot 을 다시 읽지 않고 재생. 조건이 다르면 직접 계산(execution.json 에 이유). 재생 중 읽기 오류는 maps_src_replay_failed(종료 2). 생략하면 이전과 byte 동일")
     lmaps.add_argument("--out", required=True, help="새 출력 디렉터리 또는 ledger-maps 가 이전에 만든 폴더만 덮어씀")
     for flag, kind, default, text in (
             ("range-um", float, 10, "줄 범위 넓힘(µm, >0)"), ("tile-um", float, 1.0, "분석 타일 크기(µm, 0.5~2.0)"),
@@ -464,7 +470,8 @@ def main(argv: list[str] | None = None) -> int:
             return compare2.main_compare2(args.config, args.out, _print)
         if args.command == "compare2-side":
             from simcompare import compare2_side
-            return compare2_side.main_side(args.config, args.role, args.out, _print)
+            return compare2_side.main_side(args.config, args.role, args.out, _print, record_maps=args.record_maps,
+                                           max_maps_bytes=args.maps_src_max_bytes)
         if args.command == "compare2-summary":
             from simcompare import compare2_side
             return compare2_side.main_summary(args.config, args.role, args.side, args.out, _print)
@@ -528,7 +535,8 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare import ledger_maps
             options = {name: getattr(args, name) for name in ledger_maps.OPTION_DEFAULTS}
             return ledger_maps.main_ledger_maps(args.compare2_dir, args.config, args.ledger_dir, args.out, _print,
-                                                options=options, candidates=args.candidates, cards=not args.no_cards)
+                                                options=options, candidates=args.candidates, cards=not args.no_cards,
+                                                maps_src=args.maps_src)
         if args.command == "candidates":
             # 출력 폴더는 새 것이어야 한다. run_candidates가 이 실행이 만든 파일만 정리하므로
             # 공용 오류 핸들러(error.json 기록·_remove_reports)를 거치지 않는다.

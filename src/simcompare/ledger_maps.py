@@ -42,7 +42,7 @@ TABS = ('same', 'comp', 'all')
 STAGES = ('read', 'merge', 'maps', 'cards')
 # execution.json `elapsed_by_stage.<role>` keys (seconds, perf_counter, 3 decimals; observation only)
 STAGE_TIME_KEYS = ('read_total', 'read_configured_estimate', 'read_load_side', 'read_sink', 'read_occurrence', 'merge',
-                   'maps_items', 'maps_electrodes', 'cards')
+                   'maps_items', 'maps_electrodes', 'cards', 'read_replay')   # read_replay: reading the maps_src recording
 COMMAND = 'ledger-maps'
 ROLES = ('reference', 'target')
 KINDS = ('line', 'pixel')
@@ -2301,11 +2301,53 @@ def _timed(acc, name, func):
     return wrapper
 
 
+def _seal_of(side_dir):
+    """The mask seal of the hotspots generation a side generation was made from, or None (then `_side_info` verifies in
+    full). Only through `products_assets.open_generation(...).seal()`; the generation must be the one the side names."""
+    try:
+        from . import products_assets as pa
+        side_dir = Path(side_dir).resolve()
+        complete = json.loads((side_dir / 'complete.json').read_text(encoding='utf-8'))
+        base, product = side_dir.parents[4], complete['product']
+        if pa.kind_dir(base, product, 'side') / complete['generation'] != side_dir:
+            return None
+        hotspots = pa.open_generation(base, product, 'hotspots')
+        named = [dep for dep in complete.get('depends') or [] if dep.get('kind') == 'hotspots']
+        if (len(named) != 1 or named[0].get('generation') != hotspots.name
+                or named[0].get('complete_sha256') != hotspots.complete_sha256):
+            return None
+        return hotspots.seal()
+    except Exception:
+        return None
+
+
+def _plan_maps_src(maps_src, cfg2, top, recorded_hash):
+    """{role: {'source': MapsSource or None, 'reason': why not, 'seal': seal or None, 'used': bool}}.
+    The structure checks of the recording before anything is read (index complete, file sizes, conditions, input hash)."""
+    from . import maps_source
+    plan = {role: {'source': None, 'reason': 'no_maps_src', 'seal': None, 'used': False} for role in ROLES}
+    if maps_src is None:
+        return plan
+    conditions = maps_source.conditions_for(cfg2, top)
+    for role, side_dir in zip(ROLES, maps_src):
+        entry = plan[role]
+        source, reason = maps_source.load_source(side_dir)
+        if source is not None:
+            reason = source.reason_against(conditions, recorded_hash[role])
+        entry['reason'] = reason
+        if reason is None:
+            entry['source'] = source
+            entry['seal'] = _seal_of(side_dir)
+    return plan
+
+
 def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings, run=None,
-                  occ_out=None, timing=None):
+                  occ_out=None, timing=None, replay=None):
     """Read one product once and return (side json, files, window json, checks, ctx-free summary).
 
-    timing: optional dict that receives the seconds of each stage (observation only, see `elapsed_by_stage`)."""
+    timing: optional dict that receives the seconds of each stage (observation only, see `elapsed_by_stage`).
+    replay: the `_plan_maps_src` entry of this role. A checked recording plays back into the same sink instead of
+    `_load_side` (no mask is read); with another estimate than the recorded one the product is read directly."""
     from .pipeline import _configured_real
     tm = timing if timing is not None else {}
     t_read = time.perf_counter()
@@ -2346,6 +2388,14 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
         warnings.append({'code': 'maps_resource_estimate_missing', 'role': role})
     del dataset
     _check_input_hash(role, doc_hash, current_hash)
+    use_source = None
+    if replay is not None and replay['source'] is not None:
+        if replay['source'].index.get('estimate_bytes') != estimate:
+            replay['reason'], replay['source'] = 'estimate_changed', None
+        else:
+            use_source = replay['source']
+    if replay is not None:
+        replay['used'] = use_source is not None
     budget.reserve(estimate, f'compute_areas holding ({role})')
     grid_bytes = ctx.ntx * ctx.nty * 8
     canvas_bytes = ctx.dh * ctx.dw * 6
@@ -2360,7 +2410,11 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     try:
         t0 = time.perf_counter()
         try:
-            _extracted, meta = _load_side(cfg, role, geom['top'], share_sink=_timed(tm, 'read_sink_all', sink))
+            if use_source is not None:
+                _extracted = None
+                meta, tm['read_replay'] = use_source.replay(_timed(tm, 'read_sink_all', sink))
+            else:
+                _extracted, meta = _load_side(cfg, role, geom['top'], share_sink=_timed(tm, 'read_sink_all', sink))
         finally:
             tm['read_load_side'] = time.perf_counter() - t0
         del _extracted
@@ -2672,10 +2726,14 @@ def _changes_section(candidates, led_doc, c2_doc, infos, sides_json, window_json
 # ---- run ----------------------------------------------------------------------------------------------------------------
 
 def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candidates=None, max_operation_bytes=None,
-                    cards=True):
+                    cards=True, maps_src=None):
     """Compute and publish the maps; returns the execution record (exit_code 0 or 3) or raises.
 
     max_operation_bytes overrides the limit of real.yaml (tests and tuning; the CLI leaves it out).
+    maps_src=(reference side dir, target side dir) (`--maps-src`): products whose `maps_src_v1` recording passes the
+    structure checks play it back instead of reading the masks (same sink calls, same budget; the outputs are byte for
+    byte the direct ones). A recording that does not fit is ignored with a warning and `execution.json` `maps_source`
+    says why. A read error while playing back ends the run without output: `maps_src_replay_failed`, exit 2.
     cards=False (`--no-cards`) leaves the cards out; ledger_maps.json then has `options.cards: false` and no other
     `cards` key is added when it is on (the default output is byte for byte what it was)."""
     started = time.time()
@@ -2695,14 +2753,16 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     top = _compare_options(cfg)[1]
     t0 = time.perf_counter()
     common['inputs_read'] = t0 - clock0
-    infos = {role: _side_info(cfg, cfg2, role) for role in ROLES}
+    recorded_hash = {role: ((c2_doc.get('inputs') or {}).get('manifests') or {}).get(role, {}).get('input_hash')
+                     for role in ROLES}
+    replays = _plan_maps_src(maps_src, cfg2, top, recorded_hash)
+    infos = {role: (_side_info(cfg, cfg2, role, 'seal', replays[role]['seal']) if replays[role]['seal'] is not None
+                    else _side_info(cfg, cfg2, role)) for role in ROLES}
     t1 = time.perf_counter()
     common['side_info'] = t1 - t0
     limit = max_operation_bytes if max_operation_bytes is not None else min(info['limit'] for info in infos.values())
     budget = _Budget(limit)
     report_diameter = size_key(cfg2.report.diameter_um)
-    recorded_hash = {role: ((c2_doc.get('inputs') or {}).get('manifests') or {}).get(role, {}).get('input_hash')
-                     for role in ROLES}
 
     # geometry of both products (no mask is read here)
     geoms, side_layers, has_dl1 = {}, {}, {}
@@ -2748,7 +2808,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     for role in ROLES:
         side, files, side_checks, side_cards, meta = _process_side(
             role, infos[role], cfg, cfg2, led_doc, recorded_hash[role], opts, budget, geoms[role],
-            report_diameter, warnings, run=run, occ_out=occ_out, timing=stage_times[role])
+            report_diameter, warnings, run=run, occ_out=occ_out, timing=stage_times[role], replay=replays[role])
         sides_json[role] = side
         window_json[role] = geoms[role]['window']
         checks[role] = side_checks
@@ -2834,6 +2894,14 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     for role in ROLES:
         elapsed_by_stage[role]['side_info_manifest'] = round(float(infos[role].get('real_source_s', 0.0)), 3)
     elapsed_by_stage['common'] = {name: round(float(value), 3) for name, value in common.items()}
+    maps_source = None
+    if maps_src is not None:
+        maps_source = {role: 'replay' if replays[role]['used'] else 'direct (%s)' % replays[role]['reason']
+                       for role in ROLES}
+        for role in ROLES:
+            if not replays[role]['used']:
+                print(f'경고: --maps-src 를 쓰지 않고 {role} 를 직접 계산했습니다: {replays[role]["reason"]}',
+                      file=sys.stderr)
     record = {'command': COMMAND, 'status': status, 'reasons': reasons,
               'outputs': [str(output / 'ledger_maps.json')] + [str(output / name) for name, _data in texts_files],
               'compare2_dir': str(compare2_dir), 'ledger_dir': str(ledger_dir), 'config': str(cfg2.config_path),
@@ -2845,6 +2913,8 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
               'finished_at': datetime.now(timezone.utc).isoformat(),
               'elapsed_by_stage': elapsed_by_stage,
               'elapsed_seconds': round(time.time() - started, 3), 'exit_code': exit_code}
+    if maps_source is not None:
+        record['maps_source'] = maps_source
     files = texts_files + [('ledger_maps.json', document_text), ('execution.json', _json_text(record))]
     _remove_results(output)             # a previous run's pictures must not outlive this run
     _publish(output, files)
@@ -2855,13 +2925,13 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
 
 
 def main_ledger_maps(compare2_dir, config, ledger_dir, out, print_result, options=None, candidates=None,
-                     error_stream=None, max_operation_bytes=None, cards=True):
+                     error_stream=None, max_operation_bytes=None, cards=True, maps_src=None):
     """CLI body: prints the record, or leaves error.json + execution.json only and returns 2."""
     error_stream = error_stream or sys.stderr
     output = Path(out)
     try:
         record = run_ledger_maps(compare2_dir, config, ledger_dir, out, options=options, candidates=candidates,
-                                 max_operation_bytes=max_operation_bytes, cards=cards)
+                                 max_operation_bytes=max_operation_bytes, cards=cards, maps_src=maps_src)
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
         code = getattr(exc, 'code', 'input_or_config_error')
         print(f'오류: {exc}', file=error_stream)
