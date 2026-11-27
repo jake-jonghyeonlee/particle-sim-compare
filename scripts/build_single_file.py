@@ -157,6 +157,9 @@ def run_jobs(jobs):
     print(f"[simcompare_job] WORK_DIR requested={WORK_DIR!r}; package extracted to {root}", file=sys.stderr, flush=True)
     if callable(jobs):      # 통합 실행기: 패키지를 푼 뒤 설정 파일에서 JOBS 를 만든다
         jobs = jobs()
+    # 마무리 job: jobs.finalizers([(명령, 인자)...])가 있으면 본 job 이 성공하든 실패로 멈추든 마지막에 모두 돈다.
+    # 마무리 job 의 실패는 경고 줄만 남기고 원래 종료 코드를 바꾸지 않는다. KeyboardInterrupt 는 마무리 없이 그대로 나간다.
+    finalizers = [(str(item[0]), [str(a) for a in item[1]]) for item in (getattr(jobs, "finalizers", None) or ())]
     # job 은 (명령, 인자) 2-tuple, 또는 단계가 붙은 것: (단계, 명령, 인자) 3-tuple / .step·.label 이 있는 통합 실행기 job.
     plan = []       # (단계 또는 None, 단계 이름표, 명령, 인자)
     for job in jobs:
@@ -204,6 +207,24 @@ def run_jobs(jobs):
                 say(f"  [{step}] {worst([c for _, c in done])}  {fmt(time.time() - started_at if elapsed is None else elapsed)}")
         say(f"  전체 {fmt(time.time() - run_started)}")
 
+    def finalize():
+        for name, args in finalizers:
+            argv = [name, *args]
+            say(f"마무리 job 시작 {' '.join(argv)}")
+            sys.argv = ["simcompare", *argv]
+            try:
+                code = main(argv)
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 2
+            except Exception:
+                traceback.print_exc()
+                code = 1
+            code = 0 if code is None else code
+            if code in CONTINUE_CODES:
+                say(f"마무리 job {name} exit {code}")
+            else:
+                say(f"경고: 마무리 job {name} 이(가) exit {code} 로 실패했다. 본 job 의 종료 코드는 바뀌지 않는다")
+
     run_started = time.time()
     current = None
     for index, (step, label, name, args) in enumerate(plan):
@@ -234,11 +255,13 @@ def run_jobs(jobs):
             if step is not None:
                 close_step(step, failed=True)
                 summary()
+            finalize()
             raise SystemExit(code)
         if step is not None and (index + 1 == len(plan) or plan[index + 1][0] != step):
             close_step(step)
             current = None
     summary()
+    finalize()
 
 
 def _base_dir():

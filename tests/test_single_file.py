@@ -125,3 +125,80 @@ def test_base_dir_overrides_runner_folder(tmp_path):
     result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert (base / 'demo' / 'config.yaml').is_file() and not (work / 'demo').exists()
+
+
+# ---- pasx/T6: 마무리 job(finalizers). 대체 finalizer = 실제 명령 중 효과가 보이는 것(demo-data = 폴더를 만든다, 없는 설정의
+# validate-data = 종료 코드 2). 실제 products-sheet 연결 검증은 T7 수용이다. -------------------------------------------------------
+
+def _build_finalized(tmp_path, jobs, finalizers, stub=None):
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    try:
+        from build_single_file import build
+    finally:
+        sys.path.pop(0)
+    out = tmp_path / 'job.py'
+    edit = f'BASE_DIR = {str(tmp_path)!r}\nLOG_FILE = "job.log"\nWORK_DIR = None\n'
+    func = ('def _flow_jobs():\n    from simcompare import etx_flow\n'
+            f'    return etx_flow.FlowJobs({jobs!r}, finalizers={finalizers!r})\n')
+    build(out, flow=(edit, func))
+    if stub is not None:
+        text = out.read_text(encoding='utf-8')
+        out.write_text(text.replace('    from simcompare.cli import main\n', '    ' + stub, 1), encoding='utf-8')
+    return out
+
+
+def _run_finalized(tmp_path, script):
+    result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+    return result, (tmp_path / 'job.log').read_text(encoding='utf-8')
+
+
+GOOD_FINALIZER = ('demo-data', ['--out', 'finalized'])
+BAD_FINALIZER = ('validate-data', ['--config', 'missing-finalizer.yaml'])
+GOOD_JOB = ('demo-data', ['--out', 'main-ok'])
+BAD_JOB = ('validate-data', ['--config', 'missing.yaml'])
+
+
+def test_finalizer_runs_after_a_successful_run(tmp_path):
+    result, log = _run_finalized(tmp_path, _build_finalized(tmp_path, [GOOD_JOB], [GOOD_FINALIZER]))
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'finalized/config.yaml').is_file()
+    assert '마무리 job demo-data exit 0' in log
+
+
+def test_finalizer_runs_after_the_main_job_stops_with_exit_2_and_keeps_that_code(tmp_path):
+    result, log = _run_finalized(tmp_path, _build_finalized(tmp_path, [GOOD_JOB, BAD_JOB, ('demo-data', ['--out', 'never'])],
+                                                            [GOOD_FINALIZER]))
+    assert result.returncode == 2
+    assert (tmp_path / 'finalized/config.yaml').is_file() and not (tmp_path / 'never').exists()
+    assert '마무리 job demo-data exit 0' in log and '경고' not in log
+
+
+def test_a_failing_finalizer_only_warns_and_never_changes_the_exit_code(tmp_path):
+    result, log = _run_finalized(tmp_path, _build_finalized(tmp_path, [GOOD_JOB, BAD_JOB], [BAD_FINALIZER, GOOD_FINALIZER]))
+    assert result.returncode == 2                                           # the main job's code
+    assert '경고: 마무리 job validate-data 이(가) exit 2 로 실패했다' in log
+    assert (tmp_path / 'finalized/config.yaml').is_file()                    # the next finalizer still ran
+    tmp2 = tmp_path / 'ok'
+    tmp2.mkdir()
+    result, log = _run_finalized(tmp2, _build_finalized(tmp2, [GOOD_JOB], [BAD_FINALIZER]))
+    assert result.returncode == 0, result.stderr                             # a failed finalizer does not fail a good run
+    assert '경고: 마무리 job validate-data' in log
+
+
+def test_finalizer_does_not_run_on_keyboard_interrupt(tmp_path):
+    stub = ("from simcompare.cli import main as _real_main\n"
+            "    def main(argv):\n"
+            "        if argv[0] == 'validate-data':\n"
+            "            raise KeyboardInterrupt()\n"
+            "        return _real_main(argv)\n")
+    script = _build_finalized(tmp_path, [GOOD_JOB, BAD_JOB], [GOOD_FINALIZER], stub=stub)
+    result, log = _run_finalized(tmp_path, script)
+    assert result.returncode != 0 and 'KeyboardInterrupt' in log
+    assert not (tmp_path / 'finalized').exists() and '마무리 job' not in log
+
+
+def test_plain_job_lists_and_pair_mode_have_no_finalizer(tmp_path):
+    script = _build(tmp_path, [GOOD_JOB])
+    result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode == 0
+    assert '마무리' not in (tmp_path / 'job.log').read_text(encoding='utf-8')

@@ -30,6 +30,7 @@ FLOW_EDIT = '''BASE_DIR = None                     # 작업 폴더(절대 경로
 STEPS = ["01", "03", "02", "diag", "04", "06", "07", "08"]   # 08 보고서만 필요 = ["01", "02", "08"], 보고서만 다시 = ["08"]
 RUN_TAG = None                      # 옛 출력 보관 폴더 data/_runs/<RUN_TAG>. None = 시각
 DRY_RUN = False                     # True = 할 일만 로그에 찍고 실행하지 않음
+MODE = "pair"                       # "products" = 제품 자산 방식(products.yaml). 이때 STEPS·REAL_CONFIG·COMPARE2_CONFIG 는 읽지 않고 맨 아래 "제품 모드" 값을 쓴다
 
 REAL_CONFIG = "real.yaml"
 COMPARE2_CONFIG = "compare2.yaml"
@@ -40,6 +41,7 @@ LEDGER_MAPS_DIR = "data/ledger_maps"
 LEDGER_REPORT_DIR = "data/ledger_report"
 LEDGER_MAPS = True                  # False = 지도 없이 ledger·보고서만(빠름)
 LEDGER_MAPS_ARGS = []               # 예: ["--range-um", "10"]
+LEDGER_MAPS_CARDS = None            # None = 모드 기본(pair 모드 켬, 제품 모드 끔). False = 카드 없이(--no-cards), True = 카드도
 
 LOG_FILE = "runs/simcompare_job_etx.log"
 WORK_DIR = None
@@ -60,6 +62,14 @@ CHANGES_DIR = "data/changes"        # 04 출력
 CONFIRMED_DIR = "data/confirmed"    # 05 출력
 LOCAL_DIR = "data/local"            # 06 출력
 REPORT_DIR = "data/compare2_report" # 07 출력(있으면 08 보고서가 링크)
+
+# ---- 제품 모드: MODE = "products" 일 때만 읽는다(pair 모드는 읽지 않는다) ----
+PRODUCTS_CONFIG = "products.yaml"
+PRODUCTS = None                     # 자산을 만들 제품. None = 등록 전체
+ASSET_STEPS = ["01", "02"]          # [] = 자산을 만들지 않음
+COMPARE = []                        # [("A", "B"), ...] (기준, 대상), 같은 그룹만
+COMPARE_STEPS = ["02", "08"]        # 02 = 조합, 08 = ledger·지도·보고서
+FORCE_ASSETS = []                   # 신선해도 다시 만들 제품
 '''
 
 LOCAL_NAME = "local"   # 로컬 PC 실행기: bundles/local/simcompare_job_local.py
@@ -81,7 +91,9 @@ FLOW_FUNC = '''def _flow_jobs():
                     extra_window_sizes_um=EXTRA_WINDOWS_UM, jitter_um=JITTER_UM, dl2_match_args=DL2_MATCH_ARGS,
                     dl2_decision_args=DL2_DECISION_ARGS, changes_dir=CHANGES_DIR, confirmed_dir=CONFIRMED_DIR,
                     local_dir=LOCAL_DIR, report_dir=REPORT_DIR, ledger_dir=LEDGER_DIR, ledger_report_dir=LEDGER_REPORT_DIR,
-                    ledger_maps=LEDGER_MAPS, ledger_maps_dir=LEDGER_MAPS_DIR, ledger_maps_args=LEDGER_MAPS_ARGS)
+                    ledger_maps=LEDGER_MAPS, ledger_maps_dir=LEDGER_MAPS_DIR, ledger_maps_args=LEDGER_MAPS_ARGS,
+                    ledger_maps_cards=LEDGER_MAPS_CARDS, mode=MODE, products_config=PRODUCTS_CONFIG, products=PRODUCTS,
+                    asset_steps=ASSET_STEPS, compare=COMPARE, compare_steps=COMPARE_STEPS, force_assets=FORCE_ASSETS)
     try:
         return etx_flow.prepare(os.getcwd(), settings, dry_run=DRY_RUN)
     except etx_flow.FlowError as exc:

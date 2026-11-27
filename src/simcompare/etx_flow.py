@@ -13,7 +13,12 @@ from pathlib import Path
 STEP_ORDER = ('01', '03', '02', 'diag', '04', '05', '06', '07', '08')     # 실행 순서(STEPS 의 순서가 아니다)
 DEFAULT_STEPS = ('01', '03', '02', 'diag', '04', '06', '07', '08')       # 05(DL2 확정)는 단계로 남기되 기본에서 뺀다
 STEP_LABELS = {'01': 'hotspot import', '03': '전극 PNG import', '02': 'compare2', 'diag': 'diag 검사·비교', '04': '변경 위치(ROI)',
-               '05': 'DL2 확정', '06': '창별 ΔCA', '07': 'compare2 보고서', '08': '장부·지도·보고서'}      # 로그의 단계 이름표
+               '05': 'DL2 확정', '06': '창별 ΔCA', '07': 'compare2 보고서', '08': '장부·지도·보고서',
+               # 제품 모드(MODE = "products"): P = 제품 자산, C = 쌍 비교
+               'P01': 'hotspot 자산', 'P02': 'side 자산', 'C02': 'compare2 조합', 'C08': '장부·지도·보고서'}      # 로그의 단계 이름표
+PRODUCT_ASSET_STEPS = ('01', '02')
+PRODUCT_COMPARE_STEPS = ('02', '08')
+MODES = ('pair', 'products')
 
 
 class Job(tuple):
@@ -27,6 +32,15 @@ class Job(tuple):
 
     def __getnewargs__(self):       # copy·pickle 이 __new__(cls, name, args, step) 로 다시 만들 수 있게 한다
         return (self[0], self[1], self.step)
+
+
+class FlowJobs(list):
+    """JOBS 목록(list 와 같이 비교된다)과, 본 job 이 성공하든 실패로 멈추든 run_jobs 가 마지막에 돌리는 마무리 job(finalizers).
+    마무리 job 의 실패는 경고만 남기고 원래 종료 코드를 바꾸지 않는다."""
+
+    def __init__(self, jobs=(), finalizers=()):
+        super().__init__(jobs)
+        self.finalizers = list(finalizers)
 
 
 RUNS_DIR = 'data/_runs'
@@ -57,6 +71,15 @@ DEFAULTS = {
     'ledger_maps': True,
     'ledger_maps_dir': 'data/ledger_maps',
     'ledger_maps_args': (),
+    'ledger_maps_cards': None,      # None = 모드 기본(pair 켬, products 끔). False = 08 의 ledger-maps / pair-step maps 에 --no-cards
+    # ---- mode == 'products' 일 때만 읽는다(pair 모드는 읽지 않는다) ----
+    'mode': 'pair',
+    'products_config': 'products.yaml',
+    'products': None,
+    'asset_steps': PRODUCT_ASSET_STEPS,
+    'compare': (),
+    'compare_steps': PRODUCT_COMPARE_STEPS,
+    'force_assets': (),
 }
 
 
@@ -101,6 +124,21 @@ def _steps(settings):
         raise FlowError('etx_unknown_step', 'unknown step %s; allowed: %s' % (
             ', '.join(repr(step) for step in unknown), ', '.join(STEP_ORDER)))
     return [step for step in STEP_ORDER if step in steps]       # 고정 순서, 중복 제거
+
+
+def _mode(settings):
+    mode = settings['mode']
+    if mode not in MODES:
+        raise FlowError('etx_mode_invalid', 'MODE must be one of %s, got %r' % (', '.join(repr(m) for m in MODES), mode))
+    return mode
+
+
+def _cards(settings):
+    """LEDGER_MAPS_CARDS: None(모드 기본), True, False."""
+    value = settings['ledger_maps_cards']
+    if value is not None and type(value) is not bool:
+        raise FlowError('etx_setting_invalid', 'LEDGER_MAPS_CARDS must be True, False or None, got %r' % (value,))
+    return value
 
 
 def _text_list(value, name):
@@ -206,6 +244,8 @@ def _roles():
 
 def plan_jobs(base_dir, settings):
     """[(명령, [인자...])]: 선택한 단계를 고정 순서로. 설정 파일을 읽을 뿐 아무것도 쓰지 않는다."""
+    if _mode(_merged(settings)) == 'products':
+        return plan_product_jobs(base_dir, settings)
     ctx = load_context(base_dir, settings)
     cfg, base, c2 = ctx.settings, ctx.base, ctx.compare2
     steps = _steps(cfg)
@@ -284,13 +324,187 @@ def plan_jobs(base_dir, settings):
                 maps_args = ['--compare2-dir', rel(c2.output_dir), '--config', compare2_arg, '--ledger-dir', rel(ledger)]
                 if '04' in steps or changes.is_dir():
                     maps_args += ['--candidates', rel(changes)]
-                jobs.append(('ledger-maps', maps_args + ['--out', rel(maps)] + maps_extra))
+                maps_args += ['--out', rel(maps)]
+                if _cards(cfg) is False:
+                    maps_args.append('--no-cards')
+                jobs.append(('ledger-maps', maps_args + maps_extra))
                 jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--maps-dir', rel(maps), '--report07-dir', rel(report),
                                                '--out', rel(ledger_report)]))
             else:
                 jobs.append(('ledger-report', ['--ledger-dir', rel(ledger), '--report07-dir', rel(report), '--out', rel(ledger_report)]))
         jobs[first:] = [Job(name, args, step) for name, args in jobs[first:]]       # 단계 표시(비교는 2-tuple 과 같다)
     return jobs
+
+
+# ---- 제품 모드(MODE = "products"): products.yaml 의 제품 자산 + 쌍 비교 ----------------------------------------------------
+
+class ProductPlan(object):
+    """제품 모드의 검증된 계획. 아무것도 쓰지 않고 만든다."""
+
+    def __init__(self, config, products, pairs, asset_steps, compare_steps, force, tag, jobs):
+        self.config, self.products, self.pairs = config, products, pairs
+        self.asset_steps, self.compare_steps, self.force, self.tag, self.jobs = asset_steps, compare_steps, force, tag, jobs
+
+
+def _load_products(base, cfg):
+    from simcompare.numeric_schema import NumericContractError
+    from simcompare.products_config import load_products_config
+    path = _under(base, cfg['products_config']).resolve()
+    try:
+        return load_products_config(path)
+    except OSError as exc:
+        raise FlowError('etx_config_unreadable', '%s: %s' % (path, exc))
+    except NumericContractError as exc:
+        raise FlowError(exc.code, '%s: %s' % (path, exc))
+
+
+def _names(value, name):
+    if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) for item in value):
+        raise FlowError('etx_setting_invalid', '%s must be a list of product names' % name)
+    if len(set(value)) != len(value):
+        raise FlowError('etx_setting_invalid', '%s lists a product twice: %s' % (name, ', '.join(value)))
+    return list(value)
+
+
+def _product_steps(value, allowed, name, code):
+    if not isinstance(value, (list, tuple)) or any(step not in allowed for step in value) or len(set(value)) != len(value):
+        raise FlowError(code, '%s must be a list of %s (no repeats), got %r' % (
+            name, ' / '.join(repr(step) for step in allowed), value))
+    return [step for step in allowed if step in value]        # 고정 순서
+
+
+def _product_run_tag(value):
+    from simcompare.numeric_schema import NumericContractError
+    from simcompare.products_assets import check_run_tag, utc_run_tag
+    try:
+        return check_run_tag(utc_run_tag() if value is None else value)
+    except NumericContractError as exc:
+        raise FlowError('etx_run_tag_invalid', 'RUN_TAG: %s' % exc)
+
+
+def _product_plan(base_dir, settings):
+    cfg = _merged(settings)
+    if _mode(cfg) != 'products':
+        raise FlowError('etx_mode_invalid', 'product jobs need MODE = "products"')
+    base = Path(base_dir).resolve()
+    config = _load_products(base, cfg)
+    registered = list(config.products)
+    selected = registered if cfg['products'] is None else _names(cfg['products'], 'PRODUCTS')
+    for name in selected:
+        if name not in config.products:
+            raise FlowError('etx_product_unknown', 'PRODUCTS: %r is not registered in %s (registered: %s)' % (
+                name, config.path.name, ', '.join(registered)))
+    asset_steps = _product_steps(cfg['asset_steps'], PRODUCT_ASSET_STEPS, 'ASSET_STEPS', 'etx_asset_steps_invalid')
+    compare_steps = _product_steps(cfg['compare_steps'], PRODUCT_COMPARE_STEPS, 'COMPARE_STEPS', 'etx_compare_steps_invalid')
+    if not isinstance(cfg['compare'], (list, tuple)):
+        raise FlowError('etx_setting_invalid', 'COMPARE must be a list of (reference, target) pairs')
+    pairs = []
+    for item in cfg['compare']:
+        if (not isinstance(item, (list, tuple)) or len(item) != 2 or not all(isinstance(name, str) for name in item)):
+            raise FlowError('etx_setting_invalid', 'COMPARE entries must be (reference, target) pairs of product names, got %r' % (item,))
+        first, second = item
+        for name in (first, second):
+            if name not in config.products:
+                raise FlowError('etx_product_unknown', 'COMPARE: %r is not registered in %s (registered: %s)' % (
+                    name, config.path.name, ', '.join(registered)))
+        if first == second:
+            raise FlowError('etx_compare_same_product', 'COMPARE: %r cannot be compared with itself' % first)
+        if config.group_of(first) != config.group_of(second):
+            raise FlowError('etx_compare_cross_group', 'COMPARE: %s is in group %s but %s is in group %s; only products of '
+                            'one group can be compared' % (first, config.group_of(first), second, config.group_of(second)))
+        if (first, second) in pairs:
+            raise FlowError('etx_setting_invalid', 'COMPARE lists the pair (%s, %s) twice' % (first, second))
+        pairs.append((first, second))
+    force = _names(cfg['force_assets'], 'FORCE_ASSETS')
+    for name in force:
+        if name not in config.products:
+            raise FlowError('etx_product_unknown', 'FORCE_ASSETS: %r is not registered in %s' % (name, config.path.name))
+        if name not in selected or not asset_steps:
+            raise FlowError('etx_force_not_selected', 'FORCE_ASSETS: %r is not built by this run (it must be in PRODUCTS and '
+                            'ASSET_STEPS must not be empty)' % name)
+    cards = _cards(cfg) is True            # 제품 모드 기본 끔
+    tag = _product_run_tag(cfg['run_tag'])
+    config_arg = cfg['products_config']
+    jobs = []
+    for step in asset_steps:
+        for name in selected:
+            args = ['--config', config_arg, '--product', name, '--step', step]
+            if name in force:
+                args.append('--force')
+            jobs.append(Job('products-step', args + ['--run-tag', tag], 'P' + step))
+    pair_args = lambda first, second, step: ['--config', config_arg, '--pair', first, second, '--step', step]
+    if '02' in compare_steps:
+        for first, second in pairs:
+            jobs.append(Job('pair-step', pair_args(first, second, 'compose') + ['--run-tag', tag], 'C02'))
+    if '08' in compare_steps:
+        for first, second in pairs:
+            for step in ('ledger', 'maps', 'report'):
+                extra = ['--cards' if cards else '--no-cards'] if step == 'maps' else []
+                jobs.append(Job('pair-step', pair_args(first, second, step) + ['--run-tag', tag] + extra, 'C08'))
+    if not jobs:
+        raise FlowError('etx_no_jobs', 'nothing to do: ASSET_STEPS is empty and COMPARE has no pair for COMPARE_STEPS %s' % (
+            compare_steps,))
+    return ProductPlan(config, selected, pairs, asset_steps, compare_steps, force, tag, jobs)
+
+
+def plan_product_jobs(base_dir, settings):
+    """제품 모드 JOBS: 제품마다 products-step 01 → 제품마다 02 → 쌍마다 compose → 쌍마다 ledger·maps·report.
+    products.yaml 을 읽을 뿐 아무것도 쓰지 않는다. 입력 오류는 FlowError."""
+    return _product_plan(base_dir, settings).jobs
+
+
+def product_finalizers(config_arg):
+    """제품 모드 마무리 job(본 job 뒤에 항상 돈다). T7 의 `products-sheet --config <products.yaml>` 이 들어올 자리다. 지금은 비어 있다."""
+    return []
+
+
+def _product_status_lines(plan):
+    """DRY_RUN 용: 제품·쌍의 현재 자산 상태(읽기 전용). 판정 실패는 줄에 그대로 적는다."""
+    from simcompare import pair_assets, products_assets
+    lines = []
+    wanted = list(plan.products)
+    for first, second in plan.pairs:
+        for name in (first, second):
+            if name not in wanted:
+                wanted.append(name)
+    for name in wanted:
+        try:
+            state, reasons = products_assets.asset_status(plan.config.base, name, plan.config)
+            lines.append('  asset %s: %s%s' % (name, state, ' [%s]' % ', '.join(reasons) if reasons else ''))
+        except Exception as exc:        # 읽기 전용 판정이 실패해도 계획 출력은 막지 않는다
+            lines.append('  asset %s: 판정 실패 %s: %s' % (name, type(exc).__name__, exc))
+    for first, second in plan.pairs:
+        label = 'pair %s__%s compose' % (first, second)
+        try:
+            ctx = pair_assets.PairContext(plan.config, first, second, plan.tag, print, print)
+            pair_assets.check_pair_assets(ctx)
+            reasons = pair_assets.compose_reasons(ctx)
+            lines.append('  %s: %s' % (label, '정상(건너뜀)' if not reasons else '다시 만듦 [%s]' % ', '.join(reasons)))
+        except Exception as exc:
+            lines.append('  %s: 판정 불가 %s' % (label, exc))
+    return lines
+
+
+def _prepare_products(base_dir, settings, dry_run, echo):
+    plan = _product_plan(base_dir, settings)
+    cfg_name = plan.config.path.name
+    echo('flow: mode products; %s; products %s; asset steps %s; compare %s; compare steps %s; run tag %s' % (
+        plan.config.path, ', '.join(plan.products) or '-', ', '.join(plan.asset_steps) or '-',
+        ', '.join('%s->%s' % pair for pair in plan.pairs) or '-', ', '.join(plan.compare_steps) or '-', plan.tag))
+    finalizers = product_finalizers(_merged(settings)['products_config'])
+    echo('flow: %d job(s):' % len(plan.jobs))
+    for job in plan.jobs:
+        echo('  job [%s] %s %s' % (job.step, job[0], ' '.join(job[1])))
+    for name, args in finalizers:
+        echo('  finalizer %s %s' % (name, ' '.join(args)))
+    echo('flow: asset state of %s (read only):' % cfg_name)
+    for line in _product_status_lines(plan):
+        echo(line)
+    echo('flow: no output folder is moved by the runner: products-step and pair-step keep and archive their own generations')
+    if dry_run:
+        echo('flow: DRY_RUN = True: nothing was run or moved')
+        return []
+    return FlowJobs(plan.jobs, finalizers)
 
 
 def output_folders(ctx, steps):
@@ -385,7 +599,10 @@ def archive_outputs(base_dir, settings, run_tag=None):
 
 
 def prepare(base_dir, settings, dry_run=False, echo=_echo):
-    """JOBS 를 만들고 이전 출력을 보관한 뒤 JOBS 를 돌려준다. dry_run 이면 계획만 찍고 빈 목록을 돌려준다."""
+    """JOBS 를 만들고 이전 출력을 보관한 뒤 JOBS 를 돌려준다. dry_run 이면 계획만 찍고 빈 목록을 돌려준다.
+    MODE = "products" 는 보관을 하지 않는다(products-step·pair-step 이 자기 세대를 판단·보관한다)."""
+    if _mode(_merged(settings)) == 'products':
+        return _prepare_products(base_dir, settings, dry_run, echo)
     ctx = load_context(base_dir, settings)
     steps = _steps(ctx.settings)
     jobs = plan_jobs(base_dir, settings)
