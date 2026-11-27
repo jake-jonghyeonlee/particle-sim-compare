@@ -81,7 +81,10 @@ DEFAULTS = {
     'compare': (),
     'compare_steps': PRODUCT_COMPARE_STEPS,
     'force_assets': (),
+    'record_maps': True,                       # 02: 지도 원자료 녹화(maps_src_v1). False = products-step 02 --no-record-maps
+    'maps_src_max_bytes': 32 * 1024 ** 3,      # 02: 녹화 비압축 합 상한. 기본값이면 인자를 붙이지 않는다
 }
+DEFAULT_MAPS_SRC_MAX_BYTES = 32 * 1024 ** 3
 
 
 class FlowError(ValueError):
@@ -140,6 +143,19 @@ def _cards(settings):
     if value is not None and type(value) is not bool:
         raise FlowError('etx_setting_invalid', 'LEDGER_MAPS_CARDS must be True, False or None, got %r' % (value,))
     return value
+
+
+def _record_args(settings):
+    """RECORD_MAPS / MAPS_SRC_MAX_BYTES -> extra args of `products-step 02` (none for the defaults)."""
+    record, limit = settings['record_maps'], settings['maps_src_max_bytes']
+    if type(record) is not bool:
+        raise FlowError('etx_setting_invalid', 'RECORD_MAPS must be True or False, got %r' % (record,))
+    if type(limit) is not int or limit <= 0:
+        raise FlowError('etx_setting_invalid', 'MAPS_SRC_MAX_BYTES must be a positive integer, got %r' % (limit,))
+    args = [] if record else ['--no-record-maps']
+    if record and limit != DEFAULT_MAPS_SRC_MAX_BYTES:
+        args += ['--maps-src-max-bytes', str(limit)]
+    return args
 
 
 def _text_list(value, name):
@@ -424,6 +440,7 @@ def _product_plan(base_dir, settings):
             raise FlowError('etx_force_not_selected', 'FORCE_ASSETS: %r is not built by this run (it must be in PRODUCTS and '
                             'ASSET_STEPS must not be empty)' % name)
     cards = _cards(cfg) is True            # 제품 모드 기본 끔
+    record_args = _record_args(cfg)
     tag = _product_run_tag(cfg['run_tag'])
     config_arg = cfg['products_config']
     jobs = []
@@ -432,6 +449,8 @@ def _product_plan(base_dir, settings):
             args = ['--config', config_arg, '--product', name, '--step', step]
             if name in force:
                 args.append('--force')
+            if step == '02':
+                args += record_args
             jobs.append(Job('products-step', args + ['--run-tag', tag], 'P' + step))
     pair_args = lambda first, second, step: ['--config', config_arg, '--pair', first, second, '--step', step]
     if '02' in compare_steps:

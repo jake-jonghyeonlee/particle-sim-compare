@@ -157,7 +157,8 @@ def test_each_changed_input_has_its_own_reason(built):
     assert pstep(world, 'P1', 'P2', 'compose', 'T2')[0] in (0, 3)
     assert reasons() == []
     (pair_dir(world) / 'compare2/compare2.json').write_bytes(b'{}\n')
-    assert reasons() == ['compare2_json_changed', 'pair_config_changed']     # `{}` also names no config sha
+    # `{}` also names no config sha, and (R12c) an object with another schema_version is stale code
+    assert reasons() == ['compare2_json_changed', 'pair_config_changed', 'compare2_code_stale']
     (pair_dir(world) / 'compare2/compose.json').unlink()
     assert reasons() == ['compose_missing']
 
@@ -550,3 +551,128 @@ def test_report_with_and_without_cards_differs_only_in_the_card_area(built):
     assert on == off.replace('"options": {"cards": false, "coord_min_overlap"', marker, 1)
     for needle in ('예산 부족', 'budget', 'Budget'):
         assert needle not in off or needle in on, needle
+
+
+# ---- pasx/T8: R12c, maps replay and its one retry --------------------------------------------------------------------------
+
+@pytest.mark.parametrize('document, stale', [
+    ({'schema_version': 'other'}, True),                                         # another schema_version
+    ({}, True),
+    ({'schema_version': pr.compare2_mod.SCHEMA_VERSION, 'inputs': None}, True),  # inputs is not an object
+    ({'schema_version': pr.compare2_mod.SCHEMA_VERSION, 'inputs': []}, True),
+    ({'schema_version': pr.compare2_mod.SCHEMA_VERSION}, True),
+    ({'schema_version': pr.compare2_mod.SCHEMA_VERSION, 'inputs': {}}, True),    # no ledger_basis
+    ([], False),                                                                 # not an object: judged by other reasons
+    ('text', False),
+])
+def test_r12c_compare2_code_stale_for_objects_of_another_shape(tmp_path, document, stale):
+    path = tmp_path / 'compare2.json'
+    path.write_text(json.dumps(document), encoding='utf-8')
+    assert pr._compare2_code_stale(path) is stale
+
+
+def test_r12c_unreadable_or_missing_compare2_json_is_not_judged_here(tmp_path):
+    assert pr._compare2_code_stale(tmp_path / 'absent.json') is False
+    (tmp_path / 'bad.json').write_bytes(b'\xff\xfe not json')
+    assert pr._compare2_code_stale(tmp_path / 'bad.json') is False
+
+
+def maps_execution(world):
+    return json.loads((pair_dir(world) / 'ledger_maps/execution.json').read_text(encoding='utf-8'))
+
+
+def test_maps_replays_the_recorded_sides_and_equals_the_direct_run(built, monkeypatch):
+    world = built
+    for name in ('compose', 'ledger'):
+        assert pstep(world, 'P1', 'P2', name)[0] in (0, 3)
+    import simcompare.linepixel as linepixel
+    counts = {'mask': 0, 'areas': 0}
+    real_mask, real_areas = rh._load_mask, linepixel.compute_areas
+
+    def counting_mask(*args, **kwargs):
+        counts['mask'] += 1
+        return real_mask(*args, **kwargs)
+
+    def counting_areas(*args, **kwargs):
+        counts['areas'] += 1
+        return real_areas(*args, **kwargs)
+    monkeypatch.setattr(rh, '_load_mask', counting_mask)
+    monkeypatch.setattr(linepixel, 'compute_areas', counting_areas)
+    code, outs, errs = pstep(world, 'P1', 'P2', 'maps', 'T2')
+    assert code in (0, 3), errs
+    assert counts == {'mask': 0, 'areas': 0}                  # seal check in `_side_info`, replayed sink calls
+    replay_dir = pair_dir(world) / 'ledger_maps'
+    assert maps_execution(world)['maps_source'] == {'reference': 'replay', 'target': 'replay'}
+    assert maps_execution(world)['elapsed_by_stage']['reference']['read_replay'] >= 0
+    assert pair_log(world)[-1]['inputs']['maps_source'] == {'reference': 'replay', 'target': 'replay'}
+    assert pstep(world, 'P1', 'P2', 'report', 'T2')[0] in (0, 3)
+    report = pair_dir(world) / 'ledger_report'
+    replayed = {p.name: p.read_bytes() for p in replay_dir.iterdir() if p.name != 'execution.json'}
+    replayed_report = {p.name: p.read_bytes() for p in report.iterdir() if p.is_file() and p.suffix == '.html'}
+    assert replayed_report
+    monkeypatch.setattr(pr, 'maps_src_dirs', lambda ctx: None)                       # the same step, read directly
+    code, _outs, errs = pstep(world, 'P1', 'P2', 'maps', 'T3')
+    assert code in (0, 3), errs
+    assert counts['areas'] == 2 and counts['mask'] > 0        # the direct run does read the masks (the counters work)
+    assert 'maps_source' not in maps_execution(world)
+    assert {p.name: p.read_bytes() for p in replay_dir.iterdir() if p.name != 'execution.json'} == replayed
+    assert pstep(world, 'P1', 'P2', 'report', 'T3')[0] in (0, 3)
+    assert {p.name: p.read_bytes() for p in report.iterdir() if p.is_file() and p.suffix == '.html'} == replayed_report
+
+
+def test_a_changed_byte_in_the_recording_is_retried_once_without_maps_src_and_succeeds(built):
+    world = built
+    for name in ('compose', 'ledger'):
+        assert pstep(world, 'P1', 'P2', name)[0] in (0, 3)
+    side = pa.open_generation(world.base, 'P1', 'side')
+    calls = side.path / 'maps_src' / 'calls.bin'
+    data = bytearray(calls.read_bytes())
+    data[len(data) // 2] ^= 0x01                                    # same size: only the crc catches it
+    calls.write_bytes(bytes(data))
+    code, outs, errs = pstep(world, 'P1', 'P2', 'maps', 'T2')
+    assert code in (0, 3), errs
+    assert any('maps_src_replay_failed' in e for e in errs)
+    log = pair_log(world)
+    retry = [line for line in log if line['action'] == 'retry']
+    assert len(retry) == 1 and retry[0]['step'] == 'maps' and retry[0]['error_code'] == 'maps_src_replay_failed'
+    assert log[-1]['action'] == 'build' and 'maps_src_replay_failed_retry' in log[-1]['reasons']
+    assert (pair_dir(world) / 'ledger_maps/ledger_maps.json').is_file()
+    assert 'maps_source' not in maps_execution(world)                # the second run had no --maps-src
+    archived = list((world.base / 'data/_runs/T2/compare/P1__P2').iterdir())
+    assert any(p.name.startswith('ledger_maps') and (p / 'error.json').is_file() for p in archived)
+
+
+def test_another_maps_error_is_not_retried(built, monkeypatch):
+    world = built
+    for name in ('compose', 'ledger'):
+        assert pstep(world, 'P1', 'P2', name)[0] in (0, 3)
+    calls = []
+    from simcompare import ledger_maps
+
+    def failing(*args, **kwargs):
+        calls.append(kwargs.get('maps_src'))
+        out = Path(args[3])
+        out.mkdir(parents=True, exist_ok=True)
+        (out / 'error.json').write_text(json.dumps({'command': 'ledger-maps', 'code': 'oversized_real_operation'}))
+        return 2
+    monkeypatch.setattr(ledger_maps, 'main_ledger_maps', failing)
+    code, _outs, errs = pstep(world, 'P1', 'P2', 'maps', 'T2')
+    assert code == 2 and len(calls) == 1 and calls[0] is not None
+    assert not [line for line in pair_log(world) if line['action'] == 'retry']
+
+
+def test_sides_made_without_recording_are_read_directly_and_pass_no_maps_src(world):
+    for product in ('P1', 'P2'):
+        assert step(world, product, '01', 'T0')[0] == 0
+    for product in ('P1', 'P2'):
+        outs, errs = [], []
+        assert pa.run_products_step(world.path, product, '02', run_tag='T0', out=outs.append, err=errs.append,
+                                    record_maps=False) == 0
+        assert pa.open_generation(world.base, product, 'side').complete['maps_src'] == {'status': 'none'}
+        assert not [line for line in outs if line.startswith('maps_src')]
+    for name in ('compose', 'ledger', 'maps'):
+        assert pstep(world, 'P1', 'P2', name)[0] in (0, 3)
+    assert 'maps_source' not in maps_execution(world)
+    ctx = pr.PairContext(pc.load_products_config(world.path), 'P1', 'P2', 'T1', print, print)
+    pr.check_pair_assets(ctx)
+    assert pr.maps_src_dirs(ctx) is None

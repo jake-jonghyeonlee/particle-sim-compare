@@ -82,6 +82,27 @@ def test_d_force_assets_add_force_to_that_products_steps_only(world):
     assert jobs == [asset('01', 'P1'), asset('01', 'P2', '--force'), asset('02', 'P1'), asset('02', 'P2', '--force')]
 
 
+def test_record_maps_settings_only_touch_the_02_jobs(world):
+    """pasx/T8: the defaults add nothing (the job lists above stay as they are); RECORD_MAPS = False and a smaller
+    MAPS_SRC_MAX_BYTES become `products-step 02` arguments."""
+    off = jobs_of(world, products=['P1'], record_maps=False)
+    assert off == [asset('01', 'P1'), asset('02', 'P1', '--no-record-maps')]
+    small = jobs_of(world, products=['P1'], maps_src_max_bytes=10 ** 9)
+    assert small == [asset('01', 'P1'), asset('02', 'P1', '--maps-src-max-bytes', '1000000000')]
+    both = jobs_of(world, products=['P1'], force_assets=['P1'], record_maps=False, maps_src_max_bytes=10 ** 9)
+    assert both == [asset('01', 'P1', '--force'), asset('02', 'P1', '--force', '--no-record-maps')]
+    assert jobs_of(world, products=['P1'], record_maps=True, maps_src_max_bytes=32 * 1024 ** 3) == jobs_of(world, products=['P1'])
+
+
+@pytest.mark.parametrize('overrides', [{'record_maps': 1}, {'record_maps': None}, {'maps_src_max_bytes': 0},
+                                       {'maps_src_max_bytes': -5}, {'maps_src_max_bytes': True},
+                                       {'maps_src_max_bytes': '1'}])
+def test_record_maps_settings_are_validated(world, overrides):
+    with pytest.raises(etx_flow.FlowError) as caught:
+        etx_flow.plan_product_jobs(world.base, settings(products=['P1'], **overrides))
+    assert caught.value.code == 'etx_setting_invalid'
+
+
 def test_jobs_carry_step_ids_and_labels(world):
     jobs = etx_flow.plan_product_jobs(world.base, settings(compare=[('P1', 'P2')]))
     labels = {job.step: job.label for job in jobs}
@@ -213,8 +234,10 @@ def _runner(tmp_path, world, name, **overrides):
 def test_runner_edit_block_carries_the_product_names_and_pair_defaults():
     text = _builder().FLOW_EDIT
     assert re.search(r'^MODE = "pair"', text, re.M)
-    for name in ('PRODUCTS_CONFIG', 'PRODUCTS', 'ASSET_STEPS', 'COMPARE', 'COMPARE_STEPS', 'FORCE_ASSETS', 'LEDGER_MAPS_CARDS'):
+    for name in ('PRODUCTS_CONFIG', 'PRODUCTS', 'ASSET_STEPS', 'COMPARE', 'COMPARE_STEPS', 'FORCE_ASSETS', 'LEDGER_MAPS_CARDS',
+                 'RECORD_MAPS', 'MAPS_SRC_MAX_BYTES'):
         assert re.search(rf'^{name} = ', text, re.M), name
+    assert re.search(r'^RECORD_MAPS = True', text, re.M) and re.search(r'^MAPS_SRC_MAX_BYTES = 32 \* 1024\*\*3', text, re.M)
     assert re.search(r'^ASSET_STEPS = \["01", "02"\]', text, re.M) and re.search(r'^COMPARE_STEPS = \["02", "08"\]', text, re.M)
     assert re.search(r'^LEDGER_MAPS_CARDS = None', text, re.M)
 

@@ -120,7 +120,7 @@ def test_columns_that_come_from_the_assets_and_the_registration(world):
     assert row['기대 case 수'] == '6' and row['absent case 수'] == '0'
     assert row['line 조건 수'] == '3' and row['pixel 조건 수'] == '3'
     assert float(row['관측 지름 최소(um)']) == 1.0 and float(row['관측 지름 최대(um)']) == 50.0 and row['관측 지름 수'] == '32'
-    assert row['지표 상태'] == 'available' and row['지도 원자료 상태'] == 'none' and row['side_basis'] == 'side_extract_v1'
+    assert row['지표 상태'] == 'available' and row['지도 원자료 상태'] == 'complete' and row['side_basis'] == 'side_extract_v1'
     assert row['지름 부분집합'] == '전체' and float(row['자산 폴더(MB)']) > 0
     assert row['01 만든 시각'].endswith('Z') and float(row['02 소요(s)']) >= 0 and row['마지막 실행'].startswith('성공 02')
     for column in ('manifest', 'input', 'code 01', 'code 02', '그룹 합집합', '밀도 line', '밀도 pixel'):

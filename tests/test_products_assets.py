@@ -178,7 +178,12 @@ def test_01_then_02_build_assets_and_a_second_run_skips_everything(world):
         assert hot.complete['verification'] == {'masks': 'full', 'manifest_sha256': hot.file_sha256('manifest.json')}
         assert hot.complete['masks'] and all(set(m) == {'path', 'size', 'mtime_ns'} for m in hot.complete['masks'])
         side = pa.open_generation(world.base, product, 'side')
-        assert side.complete['maps_src'] == {'status': 'none'}
+        maps_src = side.complete['maps_src']                # RECORD_MAPS default: the 02 side is recorded (pasx/T8)
+        assert maps_src['status'] == 'complete' and maps_src['reason'] is None and maps_src['calls'] > 0
+        assert maps_src['raw_bytes'] > 0 and maps_src['stored_bytes'] > 0     # (a tiny array grows by the zlib header)
+        assert maps_src['conditions']['maps_basis'] == 'maps_src_v1'
+        assert {e['path'] for e in side.complete['files']} == {'side.json', 'maps_src/index.json'}
+        assert side.file_sha256('maps_src/index.json') == pa.sha256_file(side.path / 'maps_src' / 'index.json')
         assert side.complete['depends'] == [{'kind': 'hotspots', 'generation': hot.name, 'complete_sha256': hot.complete_sha256}]
         assert len(side.complete['code_sha256']) == 64 and side.complete['elapsed_s'] >= 0
         assert {state for state, _r in states(world, product).values()} == {pa.OK}
@@ -917,3 +922,68 @@ def test_os_side_files_do_not_change_the_inventory(built):
     assert states(world, 'P1')['hotspots'] == (pa.OK, [])
     (folder / 'notes.txt').write_bytes(b'real file')
     assert states(world, 'P1')['hotspots'] == (pa.STALE, ['source_changed'])
+
+
+# ---- pasx/T8: the 02 recording (maps_src_v1) ------------------------------------------------------------------------------
+
+def side_bytes(world, product):
+    return pa.open_generation(world.base, product, 'side')
+
+
+def run02(world, product, tag='T9', **kwargs):
+    outs, errs = [], []
+    code = pa.run_products_step(world.path, product, '02', run_tag=tag, out=outs.append, err=errs.append, **kwargs)
+    return code, outs, errs
+
+
+def test_02_side_json_is_the_same_with_and_without_the_recording(built):
+    world = built
+    recorded = side_bytes(world, 'P1')
+    assert recorded.complete['maps_src']['status'] == 'complete'
+    assert run02(world, 'P1', force=True, record_maps=False)[0] == 0
+    plain = side_bytes(world, 'P1')
+    assert plain.complete['maps_src'] == {'status': 'none'} and plain.name != recorded.name
+    assert [e['path'] for e in plain.complete['files']] == ['side.json']
+    assert (plain.path / 'side.json').read_bytes() == (recorded.path / 'side.json').read_bytes()
+    assert not (plain.path / 'maps_src').exists() or not list((plain.path / 'maps_src').iterdir())
+
+
+def test_02_a_recording_failure_still_publishes_the_side(built, monkeypatch):
+    world = built
+    from simcompare import maps_source as ms
+    import errno
+
+    def enospc(self, handle, data):
+        raise OSError(errno.ENOSPC, 'No space left on device')
+    monkeypatch.setattr(ms.MapsRecorder, '_write', enospc)
+    code, outs, errs = run02(world, 'P1', force=True)
+    assert code == 0 and any('maps_src 02 P1: failed (disk_full)' == line for line in outs)
+    assert any('지도 원자료 녹화가 실패' in e for e in errs)
+    side = side_bytes(world, 'P1')
+    assert side.complete['maps_src'] == {'status': 'failed', 'reason': 'disk_full'}
+    assert [e['path'] for e in side.complete['files']] == ['side.json']
+    assert states(world, 'P1')['side'] == (pa.OK, [])
+    line = [json.loads(t) for t in (world.base / 'data/products/P1/asset_log.jsonl').read_text().splitlines()
+            if '"part": "side"' in t][-1]
+    assert line['status'] == pa.OK and line['maps_src'] == 'failed' and line['maps_src_reason'] == 'disk_full'
+
+
+def test_02_the_size_cap_stops_only_the_recording(built):
+    world = built
+    code, outs, errs = run02(world, 'P1', force=True, maps_max_bytes=100)
+    assert code == 0
+    assert side_bytes(world, 'P1').complete['maps_src'] == {'status': 'failed', 'reason': 'cap_exceeded'}
+
+
+def test_02_a_side_json_write_failure_is_an_asset_failure_not_a_recording_failure(built, monkeypatch):
+    world = built
+    before = side_bytes(world, 'P1').name
+
+    def broken(out, files):
+        raise OSError(28, 'side.json could not be written')
+    monkeypatch.setattr(cs, '_publish', broken)
+    code, _outs, errs = run02(world, 'P1', force=True)
+    assert code == 2 and any('compare2_side_failed' in e or 'asset' in e for e in errs)
+    assert side_bytes(world, 'P1').name == before                 # nothing was published
+    log = [json.loads(t) for t in (world.base / 'data/products/P1/asset_log.jsonl').read_text().splitlines()][-1]
+    assert log['action'] == 'fail' and log['error_code'] not in (None, 'maps_src')

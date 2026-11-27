@@ -71,6 +71,8 @@ ASSET_STEPS = ["01", "02"]          # [] = 자산을 만들지 않음
 COMPARE = []                        # [("A", "B"), ...] (기준, 대상), 같은 그룹만
 COMPARE_STEPS = ["02", "08"]        # 02 = 조합, 08 = ledger·지도·보고서
 FORCE_ASSETS = []                   # 신선해도 다시 만들 제품
+RECORD_MAPS = True                  # 02: side 를 만들 때 08 지도용 원자료도 녹화(08 이 hotspot 을 다시 읽지 않음). 처음 켠 뒤에는 FORCE_ASSETS 로 side 를 다시 만들어야 녹화가 생김
+MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, 기본 32 GiB). 넘으면 녹화만 건너뜀(side 는 정상)
 '''
 
 LOCAL_NAME = "local"   # 로컬 PC 실행기: bundles/local/simcompare_job_local.py
@@ -94,7 +96,8 @@ FLOW_FUNC = '''def _flow_jobs():
                     local_dir=LOCAL_DIR, report_dir=REPORT_DIR, ledger_dir=LEDGER_DIR, ledger_report_dir=LEDGER_REPORT_DIR,
                     ledger_maps=LEDGER_MAPS, ledger_maps_dir=LEDGER_MAPS_DIR, ledger_maps_args=LEDGER_MAPS_ARGS,
                     ledger_maps_cards=LEDGER_MAPS_CARDS, mode=MODE, products_config=PRODUCTS_CONFIG, products=PRODUCTS,
-                    asset_steps=ASSET_STEPS, compare=COMPARE, compare_steps=COMPARE_STEPS, force_assets=FORCE_ASSETS)
+                    asset_steps=ASSET_STEPS, compare=COMPARE, compare_steps=COMPARE_STEPS, force_assets=FORCE_ASSETS,
+                    record_maps=RECORD_MAPS, maps_src_max_bytes=MAPS_SRC_MAX_BYTES)
     try:
         return etx_flow.prepare(os.getcwd(), settings, dry_run=DRY_RUN)
     except etx_flow.FlowError as exc:

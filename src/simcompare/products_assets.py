@@ -46,10 +46,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import compare2_side, products_config as pc
+from . import compare2_side, maps_source, products_config as pc
 from .adapters import real_hotspot
 from .numeric_schema import NumericContractError
 
+MAPS_SRC_MAX_BYTES = maps_source.DEFAULT_MAX_BYTES      # EDIT MAPS_SRC_MAX_BYTES default (32 GiB)
 IMPORT_BASIS = 'import_hotspots_v1'
 COMPLETE_SCHEMA = 'asset_generation_v1'
 POINTER_SCHEMA = 'asset_pointer_v1'
@@ -831,6 +832,9 @@ class StepContext(object):
         self.config, self.product, self.run_tag, self.log, self.out, self.err = config, product, run_tag, log, out, err
         self.base = config.base
         self.diagnostic_counts: Dict[str, int] = {}
+        self.record_maps = True                       # 02 records the share-sink calls for ledger-maps (maps_src_v1)
+        self.maps_max_bytes = MAPS_SRC_MAX_BYTES
+        self.maps_src: dict = {'status': 'none'}      # the result of the last side build (complete.json maps_src)
 
 
 def _recover(ctx: StepContext) -> None:
@@ -911,14 +915,23 @@ def run_step_01(ctx: StepContext, force: bool) -> int:
 
 def _build_side(ctx: StepContext, hotspots: Generation, compare2_path: Path, cfg_pair, started: float) -> Generation:
     def build(staging: Path) -> dict:
-        code = compare2_side.main_side(compare2_path, 'reference', staging, lambda record: None, _Stream(ctx.err))
+        records: List[dict] = []
+        code = compare2_side.main_side(compare2_path, 'reference', staging, records.append, _Stream(ctx.err),
+                                       record_maps=(staging / maps_source.DIR_NAME) if ctx.record_maps else None,
+                                       seal=hotspots.seal(), max_maps_bytes=ctx.maps_max_bytes)
         if code != 0:
             raise AssetError('compare2_side_failed', 'compare2-side exit %s (%s)' % (code, staging))
         side_document, _sha = compare2_side.read_side(staging)
         binding = side_document['binding']
         if _json_normal(binding) != _json_normal(current_side_binding(cfg_pair)):
             raise AssetError('compare2_side_failed', 'the side binding moved while the side was measured')
-        return {'fingerprint': side_fingerprint(hotspots, binding), 'maps_src': {'status': 'none'}}
+        # The recorder's own state decides (not the files in the folder). A failed recording does not fail the side.
+        maps_src = dict((records[-1].get('maps_src') if records else None) or {'status': 'none'})
+        ctx.maps_src = maps_src
+        extra = {'fingerprint': side_fingerprint(hotspots, binding), 'maps_src': maps_src}
+        if maps_src.get('status') == 'complete':
+            extra['optional_files'] = ['%s/%s' % (maps_source.DIR_NAME, maps_source.INDEX_FILE)]
+        return extra
 
     depends = [{'kind': 'hotspots', 'generation': hotspots.name, 'complete_sha256': hotspots.complete_sha256}]
     return publish_generation(ctx.base, ctx.product, 'side', build, depends=depends, started=started)
@@ -966,8 +979,15 @@ def run_step_02(ctx: StepContext, force: bool) -> int:
         side_started = time.time()
         side_generation = _build_side(ctx, hotspots, compare2_path, cfg_pair, side_started)
         ctx.out('built 02 side %s %s' % (ctx.product, side_generation.name))
+        maps_src = ctx.maps_src
+        if ctx.record_maps:
+            ctx.out('maps_src 02 %s: %s%s' % (ctx.product, maps_src.get('status'),
+                                              ' (%s)' % maps_src['reason'] if maps_src.get('reason') else ''))
+            if maps_src.get('status') == 'failed':
+                ctx.err('경고: 지도 원자료 녹화가 실패했습니다(side 는 게시됨, 08 은 직접 계산): %s %s' % (ctx.product, maps_src.get('reason')))
         ctx.log.append('02', 'build', OK, side.reasons if side.state != OK else ['forced'], side_generation.name,
-                       time.time() - side_started, 0, None, part='side')
+                       time.time() - side_started, 0, None, part='side', maps_src=maps_src.get('status'),
+                       maps_src_reason=maps_src.get('reason'))
         _archive_all(ctx, side_started)
     summary = summary_verdict(ctx.base, ctx.product, side_generation, cfg_pair)
     if summary.state == OK and not force:
@@ -989,8 +1009,12 @@ def run_step_02(ctx: StepContext, force: bool) -> int:
 
 
 def run_products_step(config_path, product: str, step: str, force: bool = False, run_tag: Optional[str] = None,
-                      out: Callable[[str], None] = print, err: Optional[Callable[[str], None]] = None) -> int:
-    """products-step: 0 = built or skipped fresh, 2 = error, 3 = built with a partial summary."""
+                      out: Callable[[str], None] = print, err: Optional[Callable[[str], None]] = None,
+                      record_maps: bool = True, maps_max_bytes: int = None) -> int:
+    """products-step: 0 = built or skipped fresh, 2 = error, 3 = built with a partial summary.
+
+    record_maps (02 only): record the share-sink calls of the side into `maps_src/` (maps_src_v1) for ledger-maps
+    replay. A fresh side is not rebuilt for it (use `force` after switching it on)."""
     err = err or (lambda text: print(text, file=sys.stderr))
     if step not in ('01', '02'):
         err('오류: invalid_step: step must be 01 or 02')
@@ -1005,6 +1029,9 @@ def run_products_step(config_path, product: str, step: str, force: bool = False,
         check_safe(config.base, product)
         log = AssetLog(config.base, product, run_tag)
         ctx = StepContext(config, product, run_tag, log, out, err)
+        ctx.record_maps = bool(record_maps)
+        if maps_max_bytes is not None:
+            ctx.maps_max_bytes = int(maps_max_bytes)
         pc.run_products_config(config.path)                  # group files only (no product settings)
         _recover(ctx)
         return run_step_01(ctx, force) if step == '01' else run_step_02(ctx, force)

@@ -168,15 +168,18 @@ def _pair_config_changed(ctx: PairContext, compare2_path: Path) -> bool:
 
 def _compare2_code_stale(compare2_path: Path) -> bool:
     """True when compare2.json was made by other code than this one: the ledger refuses it (`ledger_compare2_stale` /
-    `compare2_stale_*`). Same checks as ledger: `LEDGER_BASIS` and `compare2.stale_reason`. A file that is not a compare2
-    document is judged by the other reasons (`compare2_json_changed`), not here."""
+    `compare2_stale_*`). Same checks as ledger: `LEDGER_BASIS` and `compare2.stale_reason`. A file that is not readable
+    JSON or not a JSON object is judged by the other reasons (`compare2_json_changed`), not here. An object with another
+    `schema_version`, or whose `inputs` is not an object, is stale (R12c)."""
     try:
         doc = pa._parse_json(compare2_path.read_bytes())
     except (OSError, ValueError, AttributeError, TypeError):
         return False
-    if not isinstance(doc, dict) or doc.get('schema_version') != compare2_mod.SCHEMA_VERSION:
+    if not isinstance(doc, dict):
         return False
-    if (doc.get('inputs') or {}).get('ledger_basis') != compare2_mod.LEDGER_BASIS:
+    if doc.get('schema_version') != compare2_mod.SCHEMA_VERSION or not isinstance(doc.get('inputs'), dict):
+        return True
+    if doc['inputs'].get('ledger_basis') != compare2_mod.LEDGER_BASIS:
         return True
     return compare2_mod.stale_reason(doc) is not None
 
@@ -207,7 +210,7 @@ def compose_reasons(ctx: PairContext) -> List[str]:
         reasons.append('pair_config_changed')
     if _compare2_code_stale(compare2_path):
         reasons.append('compare2_code_stale')
-    now =current_compose_deps(ctx)
+    now = current_compose_deps(ctx)
     for key in sorted(set(now) | set(deps)):
         if key == 'common':
             then, current = deps.get(key) or {}, now.get(key) or {}
@@ -241,7 +244,17 @@ def archive_folder(ctx: PairContext, step: str) -> Optional[Path]:
 
 # ---------------------------------------------------------------------------------------------------------- the steps
 
-def _inner(ctx: PairContext, step: str, cards: bool) -> int:
+def maps_src_dirs(ctx: PairContext) -> Optional[Tuple[str, str]]:
+    """(reference side dir, target side dir) for `ledger-maps --maps-src` when at least one side generation says
+    `maps_src.status == complete`; else None. The conditions are checked by ledger-maps itself (a recording that does
+    not fit is ignored there and the run reads that product directly)."""
+    states = [(ctx.sides[name].complete.get('maps_src') or {}).get('status') for name in (ctx.first, ctx.second)]
+    if 'complete' not in states:
+        return None
+    return str(ctx.sides[ctx.first].path), str(ctx.sides[ctx.second].path)
+
+
+def _inner(ctx: PairContext, step: str, cards: bool, maps_src: Optional[Tuple[str, str]] = None) -> int:
     err = pa._Stream(ctx.err)
     nothing = lambda record: None
     compare2_dir, config = str(ctx.folder('compose')), str(ctx.compare2_yaml)
@@ -254,7 +267,7 @@ def _inner(ctx: PairContext, step: str, cards: bool) -> int:
     ledger_dir, maps_dir = ctx.folder('ledger'), ctx.folder('maps')
     if step == 'maps':
         return ledger_maps.main_ledger_maps(compare2_dir, config, str(ledger_dir), str(maps_dir), nothing,
-                                            error_stream=err, cards=cards)
+                                            error_stream=err, cards=cards, maps_src=maps_src)
     return ledger_report.main_ledger_report(str(ledger_dir), str(ctx.folder('report')), nothing, maps_dir=str(maps_dir),
                                             error_stream=err)
 
@@ -302,11 +315,39 @@ def run_later_step(ctx: PairContext, step: str, cards: bool, started: float) -> 
     return _build(ctx, step, cards, ['rebuild'], started)
 
 
+def _error_code(folder: Path) -> Optional[str]:
+    try:
+        return pa._parse_json((folder / 'error.json').read_bytes()).get('code')
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _maps_source(folder: Path) -> Optional[dict]:
+    try:
+        return pa._parse_json((folder / 'execution.json').read_bytes()).get('maps_source')
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def _build(ctx: PairContext, step: str, cards: bool, reasons: Sequence[str], started: float) -> int:
     check_step_order(ctx, step)
     archive_folder(ctx, step)
-    code = _inner(ctx, step, cards)
+    maps_src = maps_src_dirs(ctx) if step == 'maps' else None
+    code = _inner(ctx, step, cards, maps_src)
+    if maps_src is not None and code == 2 and _error_code(ctx.folder('maps')) == 'maps_src_replay_failed':
+        # one retry, here only: the recording could not be read back, so the same step runs again without it. The failed
+        # folder (error.json + execution.json only) goes to data/_runs by the usual archive rule. Other errors are not retried.
+        ctx.err('경고: maps_src_replay_failed: %s 의 maps 를 --maps-src 없이 한 번 다시 돌립니다' % ctx.pair)
+        ctx.log.append(step, 'retry', code, 'maps_src_replay_failed', time.time() - started, ctx.inputs(), reasons)
+        archive_folder(ctx, step)
+        maps_src = None
+        code = _inner(ctx, step, cards, None)
+        reasons = list(reasons) + ['maps_src_replay_failed_retry']
     inputs = ctx.inputs()
+    if step == 'maps':
+        source = _maps_source(ctx.folder('maps'))
+        if source is not None:
+            inputs['maps_source'] = source
     if code in CONTINUE_CODES:
         suffix = ' (cards off)' if step == 'maps' and not cards else ''
         ctx.out('built %s %s%s exit %d' % (step, ctx.pair, suffix, code))

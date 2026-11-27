@@ -274,6 +274,11 @@ def _parser() -> argparse.ArgumentParser:
     pstep.add_argument("--product", required=True, help="제품 이름(products.yaml 에 등록된 것)")
     pstep.add_argument("--step", required=True, choices=["01", "02"], help="01 = hotspot import, 02 = side + summary")
     pstep.add_argument("--force", action="store_true", help="신선해도 그 단계를 다시 만든다")
+    pstep.add_argument("--record-maps", dest="record_maps", action="store_true", default=True,
+                       help="02: side 를 만들 때 ledger-maps 용 지도 원자료(maps_src_v1)도 녹화한다(기본). 신선한 side 는 다시 만들지 않으므로 처음 켠 뒤에는 --force")
+    pstep.add_argument("--no-record-maps", dest="record_maps", action="store_false", help="02: 지도 원자료를 녹화하지 않는다(complete.json maps_src.status = none)")
+    pstep.add_argument("--maps-src-max-bytes", type=int, default=None,
+                       help="02: 녹화 비압축 바이트 합 상한(기본 32 GiB). 넘으면 녹화만 중단(maps_src.status = failed, cap_exceeded)")
     pstep.add_argument("--run-tag", default=None, help="옛 세대·남은 staging 을 옮길 data/_runs/<RUN_TAG> 이름(기본: UTC 시각 YYYYMMDD-HHMMSS)")
     pairstep = _korean_help(sub.add_parser(
         "pair-step", add_help=False,
@@ -497,7 +502,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "products-step":
             from simcompare import products_assets
             return products_assets.run_products_step(args.config, args.product, args.step, force=args.force,
-                                                     run_tag=args.run_tag)
+                                                     run_tag=args.run_tag, record_maps=args.record_maps,
+                                                     maps_max_bytes=args.maps_src_max_bytes)
         if args.command == "pair-step":
             from simcompare import pair_assets
             if args.cards and args.no_cards:
