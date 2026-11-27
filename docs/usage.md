@@ -177,9 +177,11 @@ BASE_DIR/
 
 ### 제품 모드 (선택)
 
-`MODE = "products"` 로 바꾸면 실행기는 `products.yaml` 의 제품 자산 방식으로 돈다. 단계 01·02 는 제품마다 자산을 만들고 낡았을 때만 다시 만든다. 08 은 `COMPARE` 에 적은 같은 그룹의 쌍마다 돈다. 이때 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 는 읽지 않는다. 실행 뒤에는 자산 관리 시트(`data/products/products_sheet.html`)가 갱신된다. 설정, 이유 코드 표, 폴더 정리, 첫 실행 확인 목록은 [제품 자산 관리](product_assets.md)를 따른다.
+처음에는 `products-import` 로 `products.yaml` 을 만든다. 그다음 `bundles/etx/simcompare_job_etx.py`(또는 `bundles/local/simcompare_job_local.py`)의 EDIT 블록에서 `MODE = "products"` 로 바꾸면 실행기는 `products.yaml` 의 제품 자산 방식으로 돈다. 단계 01·02 는 제품마다 자산을 만들고 낡았을 때만 다시 만든다. 08 은 `COMPARE` 에 적은 같은 그룹의 쌍마다 돈다. 이때 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 는 읽지 않는다. 실행 뒤에는 자산 관리 시트(`data/products/products_sheet.html`)가 갱신된다. 설정, 이유 코드 표, 폴더 정리, 첫 실행 확인 목록은 [제품 자산 관리](product_assets.md)를 따른다.
 
 ### 다시 실행하기
+
+이 절은 `MODE = "pair"` 규칙이다. 제품 모드는 실행기가 출력 폴더를 옮기지 않고 `products-step`·`pair-step` 이 낡았을 때만 다시 만든다. 제품 모드의 다시 돌리기는 [제품 자산 관리](product_assets.md) 5절을 따른다.
 
 고른 단계의 출력 폴더가 이미 있으면 실행기가 실행 전에 `data/_runs/<RUN_TAG>/` 아래로 옮긴다(`RUN_TAG`가 `None`이면 UTC 시각 `YYYYMMDD-HHMMSS`). 옮기는 폴더는 고정 경로다: 01 = `real.yaml` 양쪽 `data_dir`, 03 = 양쪽 `asset_manifest.path`의 부모 폴더, 02 = `compare2.yaml`의 `output_dir`, diag = `real.yaml`의 `output_dir`, 04 = `data/changes`, 05 = `data/confirmed`, 06 = `data/local`, 07 = `data/compare2_report`, 08 = `data/ledger`, `data/ledger_maps`(`LEDGER_MAPS = True`일 때), `data/ledger_report`. 지우거나 복사하지 않고 같은 파일 시스템 안에서 `os.rename`만 쓴다. 보관 위치가 이미 있으면(같은 `RUN_TAG`를 다시 썼을 때) 아무것도 옮기지 않고 종료 코드 2로 멈춘다. `real.yaml`은 고치지 않는다. 옮긴 폴더는 쓸모가 없어지면 사용자가 직접 지운다.
 

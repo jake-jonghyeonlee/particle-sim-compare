@@ -50,6 +50,7 @@ COMPARE 의 쌍마다: pair-step compose → ledger → maps → report
 
 실행기 단계 이름표: `P01` = hotspot 자산, `P02` = side 자산, `C02` = 조합(compose), `C08` = 장부·지도·보고서.
 실행기는 본 job 이 끝나면 항상 `products-sheet` 를 한 번 더 돌린다(실패해도 경고만 남긴다).
+시트도 `RECORD_MAPS` 를 따른다. `RECORD_MAPS = False` 면 마무리 job 에 `--no-record-maps` 가 붙어, 녹화가 없는 side 를 `낡음` 으로 보지 않는다.
 
 ## 2. 처음 설정
 
@@ -126,6 +127,7 @@ python -m simcompare products-config --config products.yaml --check
 
 ### 3.1 제품 모드 켜기
 
+실행기 파일은 `bundles/etx/simcompare_job_etx.py`(ETX)와 `bundles/local/simcompare_job_local.py`(로컬 PC)다. 파일 하나를 작업 폴더(BASE_DIR)에 복사해 쓴다. 공통 사용법은 [usage.md](usage.md)의 "제품 모드" 절을 본다.
 EDIT 블록에서 `MODE = "products"` 로 바꾼다(기본은 `"pair"`). 제품 값 원문은 다음과 같다.
 
 ```python
@@ -143,10 +145,10 @@ MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, �
 - `ASSET_STEPS`: 순서는 고정이다(제품마다 01 → 제품마다 02). 모르는 값은 `etx_asset_steps_invalid`.
 - `COMPARE_STEPS`: `"02"` 는 쌍마다 compose, `"08"` 은 쌍마다 ledger → maps → report. 모르는 값은 `etx_compare_steps_invalid`.
 - `COMPARE`: (기준, 대상) 쌍 목록. A 가 reference, B 가 target 이다. 오류: `etx_compare_same_product`, `etx_compare_cross_group`, `etx_product_unknown`, `etx_setting_invalid`(같은 쌍 중복 등).
-- `FORCE_ASSETS`: 그 제품의 01·02 를 신선해도 다시 만든다. `PRODUCTS` 에 없거나 `ASSET_STEPS` 가 비면 `etx_force_not_selected`.
+- `FORCE_ASSETS`: 그 제품의 `ASSET_STEPS` 에 든 단계만 신선해도 다시 만든다(`["02"]` 이면 02 만). `PRODUCTS` 에 없거나 `ASSET_STEPS` 가 비면 `etx_force_not_selected`.
 - `LEDGER_MAPS_CARDS`: `None` = 모드 기본(제품 모드는 카드 끔), `False` = `--no-cards`, `True` = `--cards`.
 - `RECORD_MAPS`: 02 에서 지도 원자료를 녹화한다. 끄면 `products-step 02` 에 `--no-record-maps` 가 붙는다.
-- `MAPS_SRC_MAX_BYTES`: 기본값이 아닐 때만 `--maps-src-max-bytes` 가 붙는다. 양의 정수여야 한다(`etx_setting_invalid`).
+- `MAPS_SRC_MAX_BYTES`: `RECORD_MAPS` 가 켜져 있고 값이 기본값이 아닐 때만 `--maps-src-max-bytes` 가 붙는다. 양의 정수여야 한다(`etx_setting_invalid`).
 - `RUN_TAG`: 옛 세대를 옮길 폴더 이름(`data/_runs/<RUN_TAG>`). `None` 이면 UTC 시각. 이름 규칙 위반은 `etx_run_tag_invalid`.
 - `MODE` 가 `"pair"`, `"products"` 가 아니면 `etx_mode_invalid`. 할 일이 없으면 `etx_no_jobs`.
 
@@ -229,19 +231,21 @@ flow: DRY_RUN = True: nothing was run or moved
 
 ### 4.3 열 묶음
 
+앞의 아홉 열(`요약`)은 항상 보인다. 제품 열은 가로로 밀어도 왼쪽에 고정된다. 나머지 묶음은 HTML 에서 처음에 접혀 있고, 묶음 머리를 눌러 펼친다. CSV 에는 모든 열이 같은 순서로 들어 있다.
+
 | 묶음 | 내용 |
 |---|---|
-| 식별 | 제품, 그룹, note, product_id, 제품군, 해상도, unit 크기 |
+| 요약 | 제품, 그룹, 자산 상태, 이유 코드, vi_line, vi_pixel, 마지막 실행, 쌍(마지막 08), note |
+| 식별 상세 | product_id, 제품군, 해상도, unit 크기 |
 | 입력 위치 | hotspot 폴더, DL1 모델, pairs.csv, 거리표 |
 | 층 | 층 수, 층 이름(stack_order 순) |
 | case | short·CNO·제외 case 수, line·pixel 조건 수, 기대 case 수, absent case 수, 그룹 합집합 |
 | 크기 | 관측 지름 최소·최대·수 |
-| 지표 | vi_line, vi_pixel, caa_line, caa_pixel, λ line·pixel·cno |
+| 지표 상세 | caa_line, caa_pixel, λ line·pixel·cno (vi 는 요약에 있다) |
 | 밀도 | 밀도 line·pixel 해시, 지름 부분집합 |
 | DL1 | DL1 전극 수 |
 | 자산 | 01·02 만든 시각과 소요(s), manifest·input·code 해시, side_basis |
-| 상태 | 자산 상태, 이유 코드, 01·side·summary 상태, 마지막 실행, 지표 상태, 지도 원자료 상태, 자산 폴더(MB) |
-| 쌍 | 마지막 08 쌍 목록 |
+| 세부 상태 | 01·side·summary 상태, 지표 상태, 지도 원자료 상태, 자산 폴더(MB) |
 
 해시 칸은 `sha256:` 뒤에 앞 12 자리만 보인다. HTML 은 칸에 마우스를 올리면 전체 값을 보여 준다.
 
@@ -277,6 +281,7 @@ flow: DRY_RUN = True: nothing was run or moved
 `낡음` 의 이유 코드는 시트의 "이유 코드" 칸, DRY_RUN 의 `asset ...: 낡음 [...]`, `products-step` 의 `asset_log.jsonl` 에 나온다.
 실행기는 `ASSET_STEPS = ["01", "02"]` 로 돌리면 낡은 자산만 알아서 다시 만든다. 아래 "조치" 는 어디서부터 다시 도는지를 말한다.
 신선한 자산을 일부러 다시 만들 때만 `FORCE_ASSETS` 를 쓴다.
+실행기 단계 이름표(`P01`, `P02`, `C02`, `C08`)는 1절에 있다. 표의 조치 `01`·`02` 는 `P01`·`P02` 를 `ASSET_STEPS` 에 넣는다는 뜻이고, 조합의 조치 `02` 는 `C02` 를 `COMPARE_STEPS` 에 넣는다는 뜻이다.
 
 ### 5.1 단계 01 (hotspots)
 
@@ -322,6 +327,7 @@ flow: DRY_RUN = True: nothing was run or moved
 
 ### 5.4 조합 (compose, 쌍 단위)
 
+선행 조건: 두 제품의 자산이 모두 `정상` 이어야 조합을 판정한다. 아니면 먼저 `P01`·`P02` 로 자산을 고친다(DRY_RUN 에서는 `판정 불가`).
 `pair-step` 의 `--step compose` 가 판정한다. `ledger`·`maps`·`report` 는 조합이 낡았으면 `pair_compose_stale` 로 거부한다.
 
 | 이유 코드 | 뜻 | 조치 |
@@ -331,7 +337,7 @@ flow: DRY_RUN = True: nothing was run or moved
 | `compose_unreadable` | `compose.json` 을 읽지 못한다 | 02 |
 | `compare2_json_changed` | `compare2.json` 이 `compose.json` 이 적은 해시와 다르다 | 02 |
 | `pair_config_changed` | `compare2.json` 에 적힌 설정 해시가 지금 설정과 다르다 | 02 |
-| `compare2_code_stale` | 다른 코드로 만든 `compare2.json` 이다 | 02. 신선하게 보이면 `pair-step --force`(명령줄) |
+| `compare2_code_stale` | 다른 코드로 만든 `compare2.json` 이다 | `C02` |
 | `side_changed` | 두 제품 중 한쪽 side 가 바뀌었다 | 02 |
 | `density_changed` | 밀도 CSV 가 바뀌었다 | 02 |
 | `product_block_changed` | 제품 칸이 바뀌었다 | 02 |
@@ -342,8 +348,8 @@ flow: DRY_RUN = True: nothing was run or moved
 | `common_changed` | 그 밖의 공통 입력이 바뀌었다 | 02 |
 | `compose_basis_changed` | 조합 계산 방식이 바뀌었다 | 02 |
 
-조치 02 = 실행기에서 `COMPARE_STEPS = ["02", "08"]`, 명령줄에서 `pair-step --step compose`.
-`pair-step --force` 는 compose 단계에서만 쓴다. 다른 단계와 함께 쓰면 `pair_force_compose_only`(종료 2).
+조치 `02`(= `C02`) = 실행기에서 `COMPARE_STEPS = ["02", "08"]`, 명령줄에서 `pair-step --step compose`.
+`pair-step --force` 는 이유가 없어도 조합을 다시 만들 때 쓴다. compose 단계에서만 쓴다. 다른 단계와 함께 쓰면 `pair_force_compose_only`(종료 2).
 이전 compare2 폴더는 `data/_runs/<RUN_TAG>/compare/<A>__<B>/` 로 옮겨진다.
 
 ### 5.5 `없음`·`손상` 이유 코드
@@ -354,7 +360,7 @@ flow: DRY_RUN = True: nothing was run or moved
 | `hotspots_unavailable` | 01 이 없어 side 를 판정하지 못한다 | 01 → 02 |
 | `side_unavailable` | side 가 없어 summary 를 판정하지 못한다 | 02 |
 
-`손상` 은 `asset_corrupt:<이유>` 로 나온다. 폴더를 직접 옮기지 말고 원인을 먼저 본다.
+`손상` 은 `asset_corrupt:<이유>` 로 나온다. 조치: 폴더를 직접 옮기지 말고 원인을 먼저 본다. 원인을 고쳤거나 알 수 없으면 `P01`·`P02` 를 `ASSET_STEPS` 에 넣어 돌린다(아래 설명처럼 새 세대를 만든다). 의심스러운 변조면 `FORCE_ASSETS` 를 쓴다(9절).
 이유 이름은 다음과 같다.
 
 - 포인터: `pointer_symlink`, `pointer_unreadable`, `pointer_fields`, `pointer_generation_name`, `pointer_missing_with_generations`
@@ -416,7 +422,7 @@ flow: DRY_RUN = True: nothing was run or moved
 - 옛 쌍 방식(`MODE = "pair"`)은 **그 쌍의 두 폴더**만 합집합으로 쓴다(`--expected-cases-from-roots`).
 - 그래서 그룹에 제3 제품 C 가 있으면 A–B 비교의 기대 case 에 **C 에만 있는 case 이름**이 더 들어간다.
 - 이런 case 가 A, B 에 없으면 제품 쪽에서는 absent(관측 없음) 기대 case 로 남는다. 제품 자기 거리표의 필터는 자기 폴더에 있는 case 에만 적용된다.
-- Run 결정 기록(코드로 직접 재현해 확인하지는 않음): 이 차이로 vertical case 가 거리 필터에 걸리면 A–B 비교의 **0 값 행, 관측 지름, partial 표시**가 쌍 방식과 달라질 수 있다. **총 지표는 같다.**
+- 이 절은 설계 때 정한 내용이며 실제 자료로 재현하지 않았다. 이 차이로 vertical case 가 거리 필터에 걸리면 A–B 비교의 **0 값 행, 관측 지름, partial 표시**가 쌍 방식과 달라질 수 있다. **총 지표는 같다.**
 - 쌍 하나를 옛 방식과 정확히 같은 모양으로 재현해야 하면 `MODE = "pair"` 로 돌린다(11절).
 - 그룹에 제품이 둘뿐이면 합집합이 옛 쌍 방식과 같다.
 
@@ -468,7 +474,7 @@ gen.pair.<A>__<B>.real.yaml, gen.pair.<A>__<B>.compare2.yaml 쌍 설정 (자동 
 - **봉인(seal)의 한계**: 마스크는 크기와 수정 시각으로 확인한다. 크기와 수정 시각이 같은 채 내용이 바뀐 변조는 못 잡는다. 의심되면 그 제품을 `FORCE_ASSETS` 에 넣어 01 부터 다시 만든다.
 - **OS 부속 파일**은 원본 폴더 목록에서 뺀다: Thumbs.db, desktop.ini, .DS_Store, `._` 로 시작하는 파일(대소문자 무시).
 - **지도 원자료 녹화 크기**: 02 가 side 와 함께 녹화한다. 크기 상한은 `MAPS_SRC_MAX_BYTES`(비압축 합, 기본 32 GiB, 줄 파일 크기도 센다). 넘으면 녹화만 중단하고 상태가 `failed`(이유 `cap_exceeded`)다. side 는 정상이고 08 은 직접 계산한다. 다른 이유: `disk_full`, `write_error`, `finalize_failed`.
-- **녹화를 처음 켜면**(`RECORD_MAPS` 를 False 에서 True 로) 다음 02 가 `maps_src_missing` 으로 side 를 자동으로 다시 만들며 녹화한다(5.2).
+- **녹화를 처음 켜면**(`RECORD_MAPS` 를 False 에서 True 로) 다음 02 가 `maps_src_missing` 으로 모든 제품의 side 를 자동으로 다시 만들며 녹화한다(5.2). side 를 다시 만드는 시간과 녹화 디스크가 든다. 켜기 전에 `DRY_RUN = True` 로 `낡음 [maps_src_missing]` 제품을 먼저 본다.
 - **녹화와 조합의 결합은 제품 모드 안에서만 보장한다.** 명령줄로 `ledger-maps --maps-src` 에 다른 side 폴더를 손으로 넘기지 않는다. `pair-step maps` 가 맞는 side 만 넘긴다.
 - 녹화를 읽다 실패하면 `maps_src_replay_failed` 로 그 maps 가 멈추지만, `pair-step` 이 **한 번만** 녹화 없이 자동으로 다시 돈다(경고가 나온다). 다른 오류는 재시도하지 않는다.
 - 재생을 거부하는 사유는 `execution.json` 의 `maps_source` 에 `direct (<사유>)` 로 남는다. 사유 예: `not_recorded:<상태>`, `conditions_changed:<키>`, `input_hash_changed`, `side_changed`, `index_changed`.

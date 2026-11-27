@@ -30,6 +30,16 @@ real.yaml 의 경로는 BASE_DIR 안의 상대 경로만 쓴다(절대 경로·`
    - Python 은 `SIMCOMPARE_PYTHON` → PATH 의 모든 `python.exe`(Microsoft Store 별칭 `\WindowsApps\` 는 건너뜀) → Anaconda·Miniconda 기본 폴더 순서로 시험하고, `import numpy, PIL` 이 처음 성공하는 것을 쓴다.
 3. 처음에는 `STEPS = ["01", "02", "08"]`. 보고서만 다시 만들 때는 `STEPS = ["08"]`.
 
+## 제품 모드 (선택)
+
+제품을 `products.yaml` 에 한 번 등록하고 자산을 제품마다 만들어 두는 방식이다. 낡았을 때만 다시 만든다.
+
+1. `python -m simcompare products-import --real real.yaml --compare2 compare2.yaml --group <그룹> --config products.yaml --check` 로 먼저 본 뒤 `--check` 를 빼고 만든다.
+2. 실행기 EDIT 블록에서 `MODE = "products"`, `ASSET_STEPS = ["01", "02"]`, 비교할 쌍은 `COMPARE = [("A", "B")]` 로 한다. 먼저 `DRY_RUN = True` 로 계획을 본다.
+3. 실행 뒤 `data/products/products_sheet.html` 에서 제품별 자산 상태를 본다.
+
+제품 모드에서는 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 를 읽지 않는다. 설정·이유 코드·정리 방법은 [docs/product_assets.md](../../docs/product_assets.md)를 따른다.
+
 ## 결과·로그
 
 - 보고서: `data/ledger_report/ledger_report.html`

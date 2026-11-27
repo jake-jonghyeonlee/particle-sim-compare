@@ -6,9 +6,13 @@
 #   gen.pair.<A>__<B>.real.yaml / .compare2.yaml                  쌍 설정(--pair A B). 기존 2 칸 스키마 그대로
 # gen.*.yaml 은 첫 줄 표지가 있을 때만 다시 쓴다. 손으로 고치지 않는다.
 #
-# 사용:   python -m simcompare products-config --config products.yaml --check
-#         python -m simcompare products-config --config products.yaml --pair QA4_R00 QA4_T00 \
-#                --data-dir QA4_R00=data/products/QA4_R00/hotspots/current --data-dir QA4_T00=...
+# 사용:   기존 real.yaml·compare2.yaml 이 있으면 products-import 로 이 파일을 만든다(--check 로 먼저 본다).
+#           python -m simcompare products-import --real real.yaml --compare2 compare2.yaml --group QA4 --config products.yaml --check
+#         손으로 쓴 파일은 검증만 한다.
+#           python -m simcompare products-config --config products.yaml --check
+#         그다음 실행기(bundles/etx/simcompare_job_etx.py)의 EDIT 블록에서 MODE = "products" 로 돌린다.
+#         gen.*.yaml 과 제품 자산 경로는 products-step·pair-step 이 만들어 쓴다. 실행기는 이 파일만 넘긴다. 손으로 주지 않는다.
+#         설명서: docs/product_assets.md
 #
 # 경로 규칙: 입력 경로는 모두 이 파일이 있는 폴더(BASE_DIR) 기준 상대 경로. 절대 경로·..·백슬래시는 거부된다.
 #   입력은 data/products, data/compare, data/_runs(출력 루트) 안에 두지 않는다.

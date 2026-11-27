@@ -21,8 +21,13 @@ OPTION = re.compile(r'^--[a-z][a-z0-9-]*$')
 COMMAND = re.compile(r'^(?:products|pair)-[a-z]+(?: .*)?$')
 FENCE = re.compile(r'```.*?```', re.S)
 INLINE = re.compile(r'`([^`\n]+)`')
-# words that look like codes but are file, key or JSON field names written in the doc (they must still be in the source)
-SOURCE_ONLY = None
+# reason words that only the log writes (asset_log.jsonl, pair_log.jsonl); they are not stale reasons and the doc need not list them
+LOG_ONLY_REASONS = ('forced', 'rebuild', 'force', 'maps_src_replay_failed_retry')
+
+
+def _in_source(name, source):
+    """True when `name` appears as a whole word (a longer name that contains it does not count)."""
+    return re.search(r'(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])' % re.escape(name), source) is not None
 
 
 def _doc_text():
@@ -81,14 +86,14 @@ def test_doc_exists_and_has_the_eleven_sections():
 def test_every_code_name_in_the_doc_is_in_the_source():
     source = _source_text()
     snake, upper, options, commands = _collected_names()
-    missing = sorted(name for name in snake if name.split(':')[0] not in source)
+    missing = sorted(name for name in snake if not _in_source(name.split(':')[0], source))
     assert not missing, 'in the doc but not in the code: %s' % missing
     runner = RUNNER.read_text(encoding='utf-8')
     edit = runner.split("FLOW_EDIT = '''", 1)[1].split("'''", 1)[0]
-    missing_edit = sorted(name for name in upper if name not in edit and name not in source)
+    missing_edit = sorted(name for name in upper if not _in_source(name, edit) and not _in_source(name, source))
     assert not missing_edit, 'EDIT names not in the code: %s' % missing_edit
     cli = (SRC / 'cli.py').read_text(encoding='utf-8')
-    missing_options = sorted(name for name in options if name not in cli)
+    missing_options = sorted(name for name in options if not _in_source(name, cli))
     assert not missing_options, 'options not in cli.py: %s' % missing_options
     missing_commands = sorted(name for name in commands if '"%s"' % name not in cli)
     assert not missing_commands, 'commands not in cli.py: %s' % missing_commands
@@ -133,10 +138,7 @@ def code_reason_codes():
     found.update(pair_assets._DEPS_REASON.values())
     found.update(re.findall(r"'([a-z0-9_]+_(?:changed))'", assets + pairs))
     found.add('maps_src_missing')
-    found.discard('forced')
-    found.discard('rebuild')
-    found.discard('force')
-    found.discard('maps_src_replay_failed_retry')
+    found.difference_update(LOG_ONLY_REASONS)
     return found
 
 
