@@ -18,7 +18,9 @@ APPROVED = {'demo-data','validate-data','compare','electrode-map','export-review
             # ledger and ledger-report: Run 20261115-ledger-report (2026-11-15)
             'ledger','ledger-report',
             # ledger-maps: Run 20261116-ledger-maps (2026-11-16)
-            'ledger-maps'}
+            'ledger-maps',
+            # product assets: Run 20261127-product-assets (2026-11-27). products-sheet joins in T7.
+            'compare2-side','compare2-summary','compare2-compose','products-config','products-step','pair-step','products-import'}
 
 
 def test_help_lists_exactly_approved_commands():

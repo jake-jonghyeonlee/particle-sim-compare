@@ -282,6 +282,16 @@ def _parser() -> argparse.ArgumentParser:
     pairstep.add_argument("--cards", action="store_true", help="maps 단계에서 카드도 만든다(기본은 끔)")
     pairstep.add_argument("--no-cards", action="store_true", help="maps 단계에서 카드를 만들지 않는다(기본값)")
     pairstep.add_argument("--force", action="store_true", help="compose 단계가 신선해도 다시 만든다(옛 compare2 는 data/_runs 로 보관)")
+    pimport = _korean_help(sub.add_parser(
+        "products-import", add_help=False,
+        help="real.yaml + compare2.yaml 의 두 제품(reference·target)을 products.yaml 에 넣는다. 다르면 거부(--update 로 덮어씀), 같으면 쓰지 않음, 호환 검사 실패면 되돌림"))
+    pimport.add_argument("--real", required=True, help="real.yaml(numeric_config_v1)")
+    pimport.add_argument("--compare2", required=True, help="compare2.yaml(compare2_config_v1, numeric_config 가 --real 을 가리킴)")
+    pimport.add_argument("--group", required=True, help="두 제품을 넣을 비교 그룹 이름(없으면 만든다. 다른 그룹에 이미 있으면 거부)")
+    pimport.add_argument("--config", default="products.yaml", help="products.yaml(없으면 새로 만든다). 기본 products.yaml")
+    pimport.add_argument("--update", action="store_true", help="이미 있는 제품·common 이 다르면 덮어쓴다(사람이 쓴 note 는 유지)")
+    pimport.add_argument("--check", action="store_true", help="쓰지 않고 결과만 본다(대상 파일은 그대로)")
+    pimport.add_argument("--no-cno", action="store_true", help="두 제품의 include_cno 를 false 로 한다(기본 true)")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
@@ -482,6 +492,11 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("--cards 와 --no-cards 는 함께 쓸 수 없습니다")
             return pair_assets.run_pair_step(args.config, args.pair[0], args.pair[1], args.step, run_tag=args.run_tag,
                                              cards=args.cards, force=args.force)
+        if args.command == "products-import":
+            from simcompare import products_import
+            return products_import.run_products_import(args.real, args.compare2, args.group, config_path=args.config,
+                                                       update=args.update, check=args.check, include_cno=not args.no_cno,
+                                                       out=_print)
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report
