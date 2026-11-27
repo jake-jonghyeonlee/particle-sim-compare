@@ -309,14 +309,41 @@ def test_summary_refuses_a_stale_side(base):
     assert not (tmp / 'sum' / 'summary.json').exists()
 
 
-def test_read_side_refuses_non_finite_constants(tmp_path):
+def test_read_side_refuses_non_finite_constants(base):
+    """R2b:1: a valid side document with exactly one float cell replaced (so the refusal cannot come from a bad schema)."""
+    import re
+    tmp, config = base
+    assert side_cmd(config, 'reference', tmp / 'sref') == 0
+    text = (tmp / 'sref' / cs.SIDE_FILE).read_text(encoding='utf-8')
+    cell = re.compile(r'(?<=[\[,])-?\d+\.\d+(?=[,\]])')
+    assert cell.search(text)
+    cs.read_side(tmp / 'sref')       # the original reads fine
     for index, constant in enumerate(('NaN', 'Infinity', '-Infinity')):
-        folder = tmp_path / f'c{index}'
+        folder = tmp / f'c{index}'
         folder.mkdir()
-        (folder / cs.SIDE_FILE).write_text('{"schema_version":"x","binding":{},"meta":{},"extracted":{"v":%s}}' % constant,
-                                           encoding='utf-8')
-        with pytest.raises(NumericContractError):
+        (folder / cs.SIDE_FILE).write_text(cell.sub(constant, text, count=1), encoding='utf-8')
+        with pytest.raises(NumericContractError) as caught:
             cs.read_side(folder)
+        assert caught.value.code == 'compare2_side_invalid'
+        assert 'non-finite JSON constant' in str(caught.value)
+
+
+def test_read_side_refuses_a_duplicate_object_key(tmp_path):
+    """R2b:2: json.loads keeps the last duplicate silently; read_side must refuse it."""
+    (tmp_path / cs.SIDE_FILE).write_text(
+        '{"schema_version":"side_asset_v1","binding":{},"meta":{},"extracted":{},"meta":{"x":1}}', encoding='utf-8')
+    with pytest.raises(NumericContractError) as caught:
+        cs.read_side(tmp_path)
+    assert caught.value.code == 'compare2_side_invalid' and 'duplicate JSON object key' in str(caught.value)
+
+
+def test_decoder_refuses_a_set_that_collapses_elements():
+    """R2b:2: a $set whose restored element count differs from the text (e.g. 1 and 1.0 are equal) is refused."""
+    assert cs.decode({'$set': [1, 2]}) == {1, 2}
+    for body in ([1, 1], [1, 1.0], [{'$tuple': [1, 2]}, {'$tuple': [1, 2]}]):
+        with pytest.raises(NumericContractError) as caught:
+            cs.decode({'$set': body})
+        assert caught.value.code == 'compare2_side_invalid'
 
 
 def test_decoder_refuses_a_duplicate_dict_key():

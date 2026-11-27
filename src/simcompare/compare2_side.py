@@ -109,7 +109,11 @@ def decode(value):
             result[key] = decode(entry[1])
         return result
     if tag == '$set':
-        return {decode(item) for item in _list(body, tag)}
+        items = _list(body, tag)
+        restored = {decode(item) for item in items}
+        if len(restored) != len(items):
+            raise _invalid('$set: duplicate element')
+        return restored
     if tag == '$dec':
         if type(body) is not str:
             raise _invalid('$dec: a string is required')
@@ -190,6 +194,15 @@ def _refuse_constant(name):
     raise ValueError(f'non-finite JSON constant {name}')
 
 
+def _no_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'duplicate JSON object key {key!r}')
+        result[key] = value
+    return result
+
+
 def read_side(side_dir):
     """(decoded document, sha256 of the side.json bytes)."""
     path = Path(side_dir) / SIDE_FILE
@@ -198,7 +211,8 @@ def read_side(side_dir):
     except OSError as exc:
         raise NumericContractError('compare2_side_missing', f'{path}: {exc}') from exc
     try:
-        document = decode(json.loads(raw.decode('utf-8'), parse_constant=_refuse_constant))
+        document = decode(json.loads(raw.decode('utf-8'), parse_constant=_refuse_constant,
+                                     object_pairs_hook=_no_duplicate_keys))
     except (ValueError, UnicodeDecodeError) as exc:
         raise _invalid(f'{path}: {exc}') from exc
     if type(document) is not dict or document.get('schema_version') != SIDE_SCHEMA:

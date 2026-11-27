@@ -318,6 +318,56 @@ def test_same_name_case_skips_pair_check_but_keeps_layer_and_density_checks(tmp_
     assert ('group_case_layer_mismatch', 'P1', 'lateral_short-A-L1-A-L2') in found
 
 
+def test_empty_density_layer_is_reported_together_with_an_unmapped_pair(tmp_path):
+    # R3b: the empty-density check no longer sits behind the pair check: both violations come out in one run
+    unmapped = 'lateral_short-A-L2-D-L2'
+
+    def blank_l2(doc, base):
+        for product in ('P1', 'P2'):
+            doc['products'][product]['condition_assignment']['layer_stack'] = [
+                STACK[0], dict(STACK[1], density_process_layer='')]
+    found = _violations(_world(tmp_path, blank_l2, extra_cases=[('P1', unmapped)])[1])
+    assert found == {('group_case_density_layer_missing', 'P1', unmapped), ('group_case_pair_unmapped', 'P1', unmapped),
+                     ('group_case_density_layer_missing', 'P2', unmapped), ('group_case_pair_unmapped', 'P2', unmapped)}
+
+
+VER_AA = 'vertical_short-A-L1-A-L2'
+
+
+def test_vertical_same_electrode_case_skips_the_pair_check_and_uses_the_top_layer(tmp_path):
+    # R3b: vertical A/A: no pairs.csv row needed; its density layer is the one of the higher stack_order (L2)
+    path = _world(tmp_path / 'ok', extra_cases=[('P1', VER_AA)])[1]
+    assert pc.run_products_config(path, check=True)['status'] == 'checked'
+
+    def blank(layer_index):
+        def mutate(doc, base):
+            for product in ('P1', 'P2'):
+                stack = copy.deepcopy(STACK)
+                stack[layer_index]['density_process_layer'] = ''
+                doc['products'][product]['condition_assignment']['layer_stack'] = stack
+        return mutate
+    found = _violations(_world(tmp_path / 'top', blank(1), extra_cases=[('P1', VER_AA)])[1])
+    assert found == {('group_case_density_layer_missing', 'P1', VER_AA), ('group_case_density_layer_missing', 'P2', VER_AA)}
+    # a blank lower layer (L1) does not matter for this case
+    path = _world(tmp_path / 'low', blank(0), extra_cases=[('P1', VER_AA)])[1]
+    assert not any(v for v in _violations_or_none(path) if v[2] == VER_AA)
+    # the case in its own root is checked against the distance table (a table without L1L2 refuses it)
+
+    def no_pair_in_table(doc, base):
+        (base / 'data/input/thk.txt').write_text('layers\tdistance\nL2L3\t3\n', encoding='utf-8')
+    found = _violations(_world(tmp_path / 'dist', no_pair_in_table, extra_cases=[('P1', VER_AA)])[1])
+    assert ('group_distance_pair_missing', 'P1', VER_AA) in found
+    assert ('group_distance_pair_missing', 'P2', VER_AA) not in found       # P2 only has it through the union
+
+
+def _violations_or_none(path):
+    try:
+        pc.run_products_config(path, check=True)
+    except pc.GroupCompatibilityError as exc:
+        return {(v['code'], v['product'], v['case']) for v in exc.violations}
+    return set()
+
+
 def _three_layers(doc, base):
     stack = STACK + [{'actual_layer': 'L3', 'stack_order': 3, 'density_process_layer': 'P3'}]
     for product in ('P1', 'P2'):

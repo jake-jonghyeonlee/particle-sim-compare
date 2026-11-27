@@ -401,15 +401,19 @@ def check_groups(config: ProductsConfig) -> Dict[str, GroupResult]:
                         continue
                     analysis = la
                 process_layer = stack[analysis][1]
+                # an empty density layer is a violation for every case, also one the pair check rejects (R3b)
+                blank = not isinstance(process_layer, str) or not process_layer
+                if blank:
+                    violate('group_case_density_layer_missing', group, name, case)
                 if ea == eb:
                     # same-name case (A/A): pairs.csv cannot hold it, the loader reports it as unresolved; only the
                     # density layer of its analysis layer must be a non-empty string
-                    if not isinstance(process_layer, str) or not process_layer:
-                        violate('group_case_density_layer_missing', group, name, case)
                     continue
                 pair = pairs.get(frozenset((ea, eb)))
                 if pair is None:
                     violate('group_case_pair_unmapped', group, name, case)
+                    continue
+                if blank:
                     continue
                 if density is None:
                     key = (product['model_group'], config.common['density_dir'])
@@ -418,8 +422,7 @@ def check_groups(config: ProductsConfig) -> Dict[str, GroupResult]:
                                                           product['model_group'])
                     density = density_cache[key]
                 table = density.get(pair.classification)
-                if not isinstance(process_layer, str) or not process_layer or table is None \
-                        or process_layer not in table.layers:
+                if table is None or process_layer not in table.layers:
                     violate('group_case_density_layer_missing', group, name, case)
             if vertical_cases and assignment.get('interlayer_distance_path') is None:
                 for case, _pair in vertical_cases:
