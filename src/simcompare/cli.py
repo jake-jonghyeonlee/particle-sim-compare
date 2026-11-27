@@ -241,7 +241,7 @@ def _parser() -> argparse.ArgumentParser:
     c2s.add_argument("--role", required=True, choices=["reference", "target"], help="측정할 제품 절")
     c2s.add_argument("--out", required=True, help="출력 디렉터리(새 폴더 또는 compare2-side 가 이전에 만든 폴더)")
     c2s.add_argument("--record-maps", default=None,
-                     help="(선택) 같은 compute_areas 에서 ledger-maps 용 sink 호출을 이 폴더에 녹화(maps_src_v1). side.json 은 녹화 유무와 byte 동일, 녹화 실패는 계산을 멈추지 않음")
+                     help="(선택) 같은 compute_areas 에서 ledger-maps 용 sink 호출을 이 폴더에 녹화(maps_src_v2). side.json 은 녹화 유무와 byte 동일, 녹화 실패는 계산을 멈추지 않음")
     c2s.add_argument("--maps-src-max-bytes", type=int, default=32 * 1024 ** 3,
                      help="녹화 비압축 바이트 합 상한(기본 32 GiB). 넘으면 녹화만 중단")
     c2m = _korean_help(sub.add_parser(
@@ -275,7 +275,7 @@ def _parser() -> argparse.ArgumentParser:
     pstep.add_argument("--step", required=True, choices=["01", "02"], help="01 = hotspot import, 02 = side + summary")
     pstep.add_argument("--force", action="store_true", help="신선해도 그 단계를 다시 만든다")
     pstep.add_argument("--record-maps", dest="record_maps", action="store_true", default=True,
-                       help="02: side 를 만들 때 ledger-maps 용 지도 원자료(maps_src_v1)도 녹화한다(기본). 신선한 side 는 다시 만들지 않으므로 처음 켠 뒤에는 --force")
+                       help="02: side 를 만들 때 ledger-maps 용 지도 원자료(maps_src_v2)도 녹화한다(기본). 녹화 없는 side 는 다음 02 에서 자동으로 다시 만든다(maps_src_missing)")
     pstep.add_argument("--no-record-maps", dest="record_maps", action="store_false", help="02: 지도 원자료를 녹화하지 않는다(complete.json maps_src.status = none)")
     pstep.add_argument("--maps-src-max-bytes", type=int, default=None,
                        help="02: 녹화 비압축 바이트 합 상한(기본 32 GiB). 넘으면 녹화만 중단(maps_src.status = failed, cap_exceeded)")
@@ -305,6 +305,10 @@ def _parser() -> argparse.ArgumentParser:
         "products-sheet", add_help=False,
         help="제품 자산 관리 시트(data/products/products_sheet.csv + .html)를 자산 파일에서 매번 전부 다시 만든다. 읽기 전용(시트 두 파일만 씀). 종료 0=씀, 2=오류"))
     psheet.add_argument("--config", required=True, help="products.yaml")
+    psheet.add_argument("--record-maps", dest="record_maps", action="store_true", default=True,
+                        help="(기본) 지도 원자료(maps_src_v2) 녹화가 없는 side 는 낡음(maps_src_missing)으로 본다. products-step 02 의 기본과 같은 판정")
+    psheet.add_argument("--no-record-maps", dest="record_maps", action="store_false",
+                        help="녹화를 끈 실행(products-step 02 --no-record-maps)의 판정: 녹화가 없어도 낡음으로 보지 않는다")
     psheet.add_argument("--now", default=None, help="HTML 머리말의 갱신 시각을 고정한다(재현 시험용, 예: 2026-11-27T09:00:00Z)")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
@@ -517,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
                                                        out=_print)
         if args.command == "products-sheet":
             from simcompare import products_sheet
-            return products_sheet.run_products_sheet(args.config, now=args.now, out=_print)
+            return products_sheet.run_products_sheet(args.config, now=args.now, out=_print, record_maps=args.record_maps)
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report

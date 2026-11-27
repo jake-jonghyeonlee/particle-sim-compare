@@ -203,6 +203,14 @@ def test_prepare_in_product_mode_moves_no_output_folder_and_returns_flow_jobs(wo
     assert snapshot(world.base) == before and not (world.base / 'data/_runs').exists()
 
 
+def test_the_finishing_sheet_job_gets_no_record_maps_when_recording_is_off(world):
+    """R8b:1: RECORD_MAPS = False passes --no-record-maps, so a side without a recording stays 정상 in the sheet."""
+    off = etx_flow.prepare(world.base, settings(products=['P1'], record_maps=False), echo=lambda line: None)
+    assert off.finalizers == [('products-sheet', ['--config', 'products.yaml', '--no-record-maps'])]
+    assert etx_flow.product_finalizers('products.yaml') == [('products-sheet', ['--config', 'products.yaml'])]
+    assert etx_flow.product_finalizers('p.yaml', False) == [('products-sheet', ['--config', 'p.yaml', '--no-record-maps'])]
+
+
 def test_asset_state_lines_are_computed_and_printed_only_in_dry_run(world, monkeypatch):
     calls = []
     monkeypatch.setattr(etx_flow, '_product_status_lines', lambda plan: calls.append(1) or ['  asset X: 없음'])

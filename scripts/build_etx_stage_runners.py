@@ -71,7 +71,7 @@ ASSET_STEPS = ["01", "02"]          # [] = 자산을 만들지 않음
 COMPARE = []                        # [("A", "B"), ...] (기준, 대상), 같은 그룹만
 COMPARE_STEPS = ["02", "08"]        # 02 = 조합, 08 = ledger·지도·보고서
 FORCE_ASSETS = []                   # 신선해도 다시 만들 제품
-RECORD_MAPS = True                  # 02: side 를 만들 때 08 지도용 원자료도 녹화(08 이 hotspot 을 다시 읽지 않음). 처음 켠 뒤에는 FORCE_ASSETS 로 side 를 다시 만들어야 녹화가 생김
+RECORD_MAPS = True                  # 02: side 를 만들 때 08 지도용 원자료도 녹화(08 이 hotspot 을 다시 읽지 않음). 녹화 없는 side 는 다음 02 에서 자동으로 다시 만듦(maps_src_missing). False 면 마무리 시트도 --no-record-maps
 MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, 기본 32 GiB). 넘으면 녹화만 건너뜀(side 는 정상)
 '''
 

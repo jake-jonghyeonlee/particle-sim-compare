@@ -266,7 +266,7 @@ def _estimate_bytes(cfg, role, top, seal):
 def run_side(config_path, role, out, record_maps=None, seal=None, max_maps_bytes=DEFAULT_MAX_BYTES):
     """Measure one role and publish side.json into out; returns a small record.
 
-    record_maps: a folder; the same `compute_areas` run then also records its share-sink calls there (`maps_src_v1`).
+    record_maps: a folder; the same `compute_areas` run then also records its share-sink calls there (`maps_src_v2`).
     The recording never changes side.json and never fails the run: the record gets `maps_src` (status complete|failed,
     reason). seal: the mask seal of the hotspots generation, only to make the estimate step cheap."""
     if role not in ROLES:

@@ -80,7 +80,7 @@ def test_four_lines_with_their_states_and_reasons(world):
     assert rows['P2']['이유 코드'] == 'asset_corrupt:file_sha256_mismatch side_unavailable' and rows['P2']['side 상태'] == '손상'
     assert rows['P3']['이유 코드'] and rows['P3']['01 상태'] == '정상' and rows['P3']['summary 상태'] == '없음'
     assert rows['P3']['02 만든 시각'] == '' and rows['P3']['vi_line'] == '' and rows['P3']['지표 상태'] == '없음'
-    assert rows['P3']['01 만든 시각'] != '' and rows['P3']['short case 수'] == '6'
+    assert rows['P3']['01 만든 시각'] != '' and rows['P3']['short case 수(제외 전)'] == '6'
     assert rows['ZZ_old']['그룹'] == '' and rows['ZZ_old']['마지막 실행'].startswith('성공 01 2026-11-01')
     assert [item['state'] for item in result['products']] == ['정상', '손상', '없음', '등록 없음']
     print('\n--- sheet rows (state, reasons) ---')
@@ -116,8 +116,8 @@ def test_columns_that_come_from_the_assets_and_the_registration(world):
     layers = pa.pc.load_products_config(world.path).products['P1']['condition_assignment']['layer_stack']
     assert int(row['층 수']) == len(layers)
     assert row['층 이름(stack_order 순)'].split(' | ') == [i['actual_layer'] for i in sorted(layers, key=lambda i: i['stack_order'])]
-    assert row['short case 수'] == '6' and row['CNO case 수'] == '0' and row['제외 case 수'] == '0'
-    assert row['기대 case 수'] == '6' and row['absent case 수'] == '0'
+    assert row['short case 수(제외 전)'] == '6' and row['CNO case 수'] == '0' and row['제외 case 수'] == '0'
+    assert row['기대 case 수(제외 전)'] == '6' and row['absent case 수'] == '0' and row['제외 기대 case 수'] in ('0', '')
     assert row['line 조건 수'] == '3' and row['pixel 조건 수'] == '3'
     assert float(row['관측 지름 최소(um)']) == 1.0 and float(row['관측 지름 최대(um)']) == 50.0 and row['관측 지름 수'] == '32'
     assert row['지표 상태'] == 'available' and row['지도 원자료 상태'] == 'complete' and row['side_basis'] == 'side_extract_v1'
@@ -199,6 +199,7 @@ def test_html_is_self_contained_and_shows_the_states_and_the_notice(world):
     assert not re.search(r'(src|href)\s*=\s*["\'](https?:)?//', page) and 'http://' not in page and 'https://' not in page
     assert 'st-ok' in page and 'st-missing' in page and '<details>' in page and 'sha256:' in page
     assert page.count('<tr>') == 1 + 3                                                  # header row + three products
+    assert 'position:sticky;left:0' in page and 'data-open' in page and 'th.gh' in page   # fixed product column, foldable groups
     print('\nHTML sheet: %s (%d bytes)' % (folder(world) / ps.HTML_NAME, len(page.encode('utf-8'))))
 
 
@@ -261,8 +262,8 @@ def test_the_sheet_reads_no_mask(world, monkeypatch):
 def test_a_world_without_assets_has_one_line_per_product_with_state_missing(world):
     sheet(world)
     rows = read_csv(world)
-    assert [rows[p]['자산 상태'] for p in rows] == ['없음'] * 3 and rows['P1']['이유 코드'] == 'asset_missing hotspots_unavailable' \
-        or rows['P1']['이유 코드'].startswith('asset_missing')
+    assert [rows[p]['자산 상태'] for p in rows] == ['없음'] * 3
+    assert rows['P1']['이유 코드'].startswith('asset_missing')
     assert rows['P1']['마지막 실행'] == '' and rows['P1']['지표 상태'] == '없음'
 
 
@@ -281,3 +282,124 @@ def test_cli_products_sheet(world, capsys):
     assert result['status'] == 'written' and [p['state'] for p in result['products']][0] == '정상'
     assert cli.main(['products-sheet', '--config', str(world.base / 'nope.yaml')]) == 2
     assert '오류' in capsys.readouterr().err
+
+
+# ---- pasx/T7b: layout (R7 batch), R7:1-4, R8b:1 -------------------------------------------------------------------------------------------
+
+FRONT = ['제품', '그룹', '자산 상태', '이유 코드', 'vi_line', 'vi_pixel', '마지막 실행', '쌍(마지막 08)', 'note']
+
+
+def html_headers(world):
+    page = (folder(world) / ps.HTML_NAME).read_text(encoding='utf-8')
+    row = re.findall(r'<tr>(.*?)</tr>', page.split('<thead>')[1].split('</thead>')[0], re.S)[0]
+    return [re.sub(r'<[^>]+>', '', cell) for cell in re.findall(r'<th(?![^>]*stub)[^>]*>.*?</th>', row)], page
+
+
+def test_the_first_nine_columns_are_the_reading_order_in_csv_and_html(world):
+    build(world, ('P1',))
+    sheet(world)
+    raw = (folder(world) / ps.CSV_NAME).read_bytes()[3:].decode('utf-8')
+    assert next(csv.reader(io.StringIO(raw, newline='')))[:9] == FRONT
+    headers, page = html_headers(world)
+    assert headers[:9] == FRONT and [c[1] for c in ps.COLUMNS[:9]] == FRONT
+    assert 'short case 수(제외 전)' in headers and '기대 case 수(제외 전)' in headers and '제외 기대 case 수' in headers
+    assert page.count('class="gh"') >= 5 and 'class="c1"' in page and 'position:sticky;left:0' in page
+    assert not re.search(r'(src|href)\s*=\s*["\'](https?:)?//', page)                  # still no external resource
+
+
+def test_a_failed_or_partial_08_execution_marks_the_pair_with_error(world):
+    build(world, ('P1', 'P2'))
+    outs, errs = [], []
+    for name in ('compose', 'ledger', 'maps', 'report'):
+        assert pr.run_pair_step(world.path, 'P1', 'P2', name, run_tag='T1', out=outs.append, err=errs.append) == 0, errs
+    sheet(world)
+    assert '(error)' not in read_csv(world)['P1']['쌍(마지막 08)']
+    path = world.base / 'data/compare/P1__P2/ledger_report/execution.json'
+    document = json.loads(path.read_text(encoding='utf-8'))
+    for change in ({'exit_code': 3}, {'status': 'error'}):
+        path.write_text(json.dumps(dict(document, **change)), encoding='utf-8')
+        sheet(world)
+        assert read_csv(world)['P1']['쌍(마지막 08)'].endswith(' (error)')
+
+
+def test_a_missing_expected_case_list_is_blank_not_zero(world):
+    build(world, ('P1',))
+    generation = pa.open_generation(world.base, 'P1', 'hotspots')
+    row = {key: None for key in ps.KEYS}
+    manifest = json.loads((generation.path / 'manifest.json').read_text(encoding='utf-8'))
+    manifest.pop('expected_cases', None)
+    original = ps._json_file
+    ps._json_file = lambda path: manifest if Path(path).name == 'manifest.json' else original(path)
+    try:
+        ps._fill_hotspots(row, generation)
+    finally:
+        ps._json_file = original
+    assert row['expected_cases'] is None and row['cases_short'] == 6
+
+
+def test_a_line_that_cannot_be_built_is_one_failed_line_and_the_sheet_goes_on(world, monkeypatch):
+    build(world, ('P1', 'P2', 'P3'))
+    real = ps.product_row
+
+    def broken(base, product, *args, **kwargs):
+        if product == 'P2':
+            raise RuntimeError('boom')
+        return real(base, product, *args, **kwargs)
+    monkeypatch.setattr(ps, 'product_row', broken)
+    sheet(world)
+    rows = read_csv(world)
+    assert rows['P2']['자산 상태'] == ps.CHECK_FAILED and rows['P2']['이유 코드'] == 'RuntimeError' and rows['P2']['그룹'] == 'G'
+    assert rows['P1']['자산 상태'] == '정상' and rows['P3']['자산 상태'] == '정상'
+
+
+def test_an_asset_log_with_a_bad_byte_still_gives_the_last_line(world):
+    build(world, ('P1',))
+    log = world.products_dir('P1') / pa.ASSET_LOG
+    log.write_bytes(log.read_bytes() + b'{"at":"2026-11-30T00:00:00Z","step":"02","status":"\xff"}\n')
+    before = tree_state(world)
+    sheet(world)
+    assert read_csv(world)['P1']['마지막 실행'].startswith('성공 02 2026-11-30')
+    assert tree_state(world) == before
+
+
+def test_nan_in_a_summary_value_is_shown_as_text_and_does_not_stop_the_sheet_id(world, monkeypatch):
+    build(world, ('P1',))
+    real = ps._read_summary
+    monkeypatch.setattr(ps, '_read_summary', lambda d: ({'status': 'available', 'vi_line': float('nan'), 'vi_pixel': float('inf')}, 'available')
+                        if d.name == 'P1' else real(d))
+    result = sheet(world)
+    row = read_csv(world)['P1']
+    assert row['vi_line'] == 'NaN' and row['vi_pixel'] == 'Infinity' and result['sheet_id']
+
+
+def test_one_incompatible_group_fails_only_its_own_products_and_the_head_says_which(world, monkeypatch):
+    build(world, ('P1', 'P2', 'P3'))
+    real = ps.pc.check_groups
+
+    def check(config):
+        if 'G' in config.groups:
+            raise ps.pc.GroupCompatibilityError([
+                {'code': 'group_case_pair_unmapped', 'group': 'G', 'product': 'P1', 'case': 'X'},
+                {'code': 'group_case_pair_unmapped', 'group': 'G', 'product': 'P2', 'case': 'Y'},
+                {'code': 'group_case_layer_mismatch', 'group': 'G', 'product': 'P2', 'case': 'Z'}])
+        return real(config)
+    monkeypatch.setattr(ps.pc, 'check_groups', check)
+    sheet(world)
+    rows = read_csv(world)
+    assert [rows[p]['자산 상태'] for p in ('P1', 'P2', 'P3')] == [ps.CHECK_FAILED, ps.CHECK_FAILED, '정상']
+    assert rows['P1']['이유 코드'] == 'group_incompatible'
+    page = (folder(world) / ps.HTML_NAME).read_text(encoding='utf-8')
+    assert '그룹 호환 위반: 그룹 G: group_case_layer_mismatch ×1, group_case_pair_unmapped ×2' in page
+
+
+def test_without_recording_the_sheet_says_stale_by_default_and_normal_with_no_record_maps(world, capsys):
+    assert step(world, 'P1', '01', 'T0')[0] == 0
+    assert pa.run_products_step(world.path, 'P1', '02', run_tag='T0', record_maps=False, out=lambda r: None, err=lambda t: None) == 0
+    sheet(world)
+    row = read_csv(world)['P1']
+    assert row['자산 상태'] == '낡음' and 'maps_src_missing' in row['이유 코드']
+    assert cli.main(['products-sheet', '--config', str(world.path), '--now', NOW, '--no-record-maps']) == 0
+    capsys.readouterr()
+    row = read_csv(world)['P1']
+    assert row['자산 상태'] == '정상' and row['이유 코드'] == ''
+    assert ps.run_products_sheet(world.path, now=NOW, out=lambda r: None, err=lambda t: None, record_maps=False) == 0

@@ -212,6 +212,22 @@ def test_a_same_size_valid_json_edit_of_a_line_file_is_a_replay_failure(tmp_path
     assert caught.value.code == 'maps_src_replay_failed'
 
 
+def test_a_damaged_calls_file_fails_before_a_raising_sink_is_called(tmp_path):
+    """R8b:2: the calls.jsonl hash is checked once before the replay, so a sink that raises on the first call (a damaged
+    recording that the structure checks accept) still gives maps_src_replay_failed, not the sink's own exception."""
+    folder = tmp_path / 'maps_src'
+    finish(record_small(folder))
+    swap_once(folder / 'calls.jsonl', b'"geom_len":2', b'"geom_len":3')
+    seen = []
+
+    def sink(**kwargs):
+        seen.append(kwargs)
+        raise RuntimeError('the sink fails on its first call')
+    with pytest.raises(NumericContractError) as caught:
+        source_of(folder).replay(sink)
+    assert caught.value.code == 'maps_src_replay_failed' and seen == []
+
+
 def test_line_bytes_count_against_the_cap(tmp_path):
     """R8:2: the arrays are tiny here; the cap trips on the line files alone."""
     recorder = ms.MapsRecorder(tmp_path / 'maps_src', CONDITIONS, max_bytes=400)

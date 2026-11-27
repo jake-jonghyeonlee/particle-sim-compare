@@ -2730,7 +2730,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     """Compute and publish the maps; returns the execution record (exit_code 0 or 3) or raises.
 
     max_operation_bytes overrides the limit of real.yaml (tests and tuning; the CLI leaves it out).
-    maps_src=(reference side dir, target side dir) (`--maps-src`): products whose `maps_src_v1` recording passes the
+    maps_src=(reference side dir, target side dir) (`--maps-src`): products whose `maps_src_v2` recording passes the
     structure checks play it back instead of reading the masks (same sink calls, same budget; the outputs are byte for
     byte the direct ones). A recording that does not fit is ignored with a warning and `execution.json` `maps_source`
     says why. A read error while playing back ends the run without output: `maps_src_replay_failed`, exit 2.

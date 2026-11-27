@@ -328,7 +328,8 @@ def test_check_in_a_missing_folder_creates_no_folder_and_no_temporary_file(templ
     names = listing(template_dir)
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', config=config, check=True)
     # ../ paths are refused by products-config (the template inputs sit next to real.yaml); the point is that nothing is created
-    assert code in (0, 2)
+    assert code == 2 and len(errs) == 1 and errs[0].startswith('오류')               # the refusal, not a silent pass
+    assert not any(o.get('status') == 'would_write' for o in outs)
     assert listing(template_dir) == names and not (template_dir / 'newdir').exists()
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True)
     assert code == 0 and outs[-1]['status'] == 'would_write' and 'folder' not in outs[-1]

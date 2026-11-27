@@ -81,7 +81,7 @@ DEFAULTS = {
     'compare': (),
     'compare_steps': PRODUCT_COMPARE_STEPS,
     'force_assets': (),
-    'record_maps': True,                       # 02: 지도 원자료 녹화(maps_src_v1). False = products-step 02 --no-record-maps
+    'record_maps': True,                       # 02: 지도 원자료 녹화(maps_src_v2). False = products-step 02 --no-record-maps
     'maps_src_max_bytes': 32 * 1024 ** 3,      # 02: 녹화 비압축 합 상한. 기본값이면 인자를 붙이지 않는다
 }
 DEFAULT_MAPS_SRC_MAX_BYTES = 32 * 1024 ** 3
@@ -475,10 +475,11 @@ def plan_product_jobs(base_dir, settings):
     return _product_plan(base_dir, settings).jobs
 
 
-def product_finalizers(config_arg):
+def product_finalizers(config_arg, record_maps=True):
     """제품 모드 마무리 job(본 job 뒤에 항상 돈다): `products-sheet --config <products.yaml>` 로 자산 관리 시트를 다시 만든다.
+    RECORD_MAPS 가 False 면 `--no-record-maps` 를 넘겨 녹화 없는 side 를 낡음으로 보지 않는다.
     실패해도 경고만 남기고 원래 종료 코드는 그대로다(run_jobs)."""
-    return [('products-sheet', ['--config', str(config_arg)])]
+    return [('products-sheet', ['--config', str(config_arg)] + ([] if record_maps else ['--no-record-maps']))]
 
 
 def _product_status_lines(plan):
@@ -514,7 +515,7 @@ def _prepare_products(base_dir, settings, dry_run, echo):
     echo('flow: mode products; %s; products %s; asset steps %s; compare %s; compare steps %s; run tag %s' % (
         plan.config.path, ', '.join(plan.products) or '-', ', '.join(plan.asset_steps) or '-',
         ', '.join('%s->%s' % pair for pair in plan.pairs) or '-', ', '.join(plan.compare_steps) or '-', plan.tag))
-    finalizers = product_finalizers(_merged(settings)['products_config'])
+    finalizers = product_finalizers(_merged(settings)['products_config'], plan.record_maps)
     echo('flow: %d job(s):' % len(plan.jobs))
     for job in plan.jobs:
         echo('  job [%s] %s %s' % (job.step, job[0], ' '.join(job[1])))

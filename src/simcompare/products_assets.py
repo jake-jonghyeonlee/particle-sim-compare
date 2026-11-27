@@ -839,7 +839,7 @@ class StepContext(object):
         self.config, self.product, self.run_tag, self.log, self.out, self.err = config, product, run_tag, log, out, err
         self.base = config.base
         self.diagnostic_counts: Dict[str, int] = {}
-        self.record_maps = True                       # 02 records the share-sink calls for ledger-maps (maps_src_v1)
+        self.record_maps = True                       # 02 records the share-sink calls for ledger-maps (maps_src_v2)
         self.maps_max_bytes = MAPS_SRC_MAX_BYTES
         self.maps_src: dict = {'status': 'none'}      # the result of the last side build (complete.json maps_src)
 
@@ -1020,7 +1020,7 @@ def run_products_step(config_path, product: str, step: str, force: bool = False,
                       record_maps: bool = True, maps_max_bytes: int = None) -> int:
     """products-step: 0 = built or skipped fresh, 2 = error, 3 = built with a partial summary.
 
-    record_maps (02 only): record the share-sink calls of the side into `maps_src/` (maps_src_v1) for ledger-maps
+    record_maps (02 only): record the share-sink calls of the side into `maps_src/` (maps_src_v2) for ledger-maps
     replay. A fresh side is not rebuilt for it (use `force` after switching it on)."""
     err = err or (lambda text: print(text, file=sys.stderr))
     if step not in ('01', '02'):

@@ -480,6 +480,11 @@ class MapsSource(object):
             groups = self._load_table(GROUPS_JSONL, 'g', 'group_key')
             items = self._load_table(ITEMS_JSONL, 'i', None)
             expected = self._expected_hash(CALLS_JSONL)
+            try:                                              # R8b:2: a damaged calls.jsonl is found before the sink sees a call
+                if sha256_file(self.folder / CALLS_JSONL) != expected:
+                    _fail('%s: sha256 mismatch' % CALLS_JSONL)
+            except OSError as exc:
+                _fail('%s: %s' % (CALLS_JSONL, exc))
             digest = hashlib.sha256()
             read_s += time.perf_counter() - t0
             try:
