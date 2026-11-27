@@ -1021,7 +1021,7 @@ def run_products_step(config_path, product: str, step: str, force: bool = False,
     """products-step: 0 = built or skipped fresh, 2 = error, 3 = built with a partial summary.
 
     record_maps (02 only): record the share-sink calls of the side into `maps_src/` (maps_src_v2) for ledger-maps
-    replay. A fresh side is not rebuilt for it (use `force` after switching it on)."""
+    replay. A side without a recording is stale (`maps_src_missing`) and is rebuilt by the next 02."""
     err = err or (lambda text: print(text, file=sys.stderr))
     if step not in ('01', '02'):
         err('오류: invalid_step: step must be 01 or 02')

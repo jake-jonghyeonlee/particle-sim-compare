@@ -1,6 +1,6 @@
 """`products-sheet` (pasx/T7): the asset sheet of the registered products, rebuilt from the asset files every time.
 
-  products-sheet --config products.yaml [--now 2026-11-27T09:00:00Z]
+  products-sheet --config products.yaml [--now 2026-11-27T09:00:00Z] [--no-record-maps]
 
 Writes exactly two files, nothing else (no asset, no generated settings, no folder below data/products/<P>):
 
