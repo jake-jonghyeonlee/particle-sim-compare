@@ -15,6 +15,7 @@ from simcompare import pair_assets as pr
 from simcompare import products_assets as pa
 from simcompare import products_config as pc
 from simcompare.adapters import real_hotspot as rh
+from simcompare.numeric_schema import NumericContractError
 from test_products_assets import ALLOWED_DIFFERENCES, World, json_differences, make_world, step   # noqa: F401
 
 
@@ -467,6 +468,71 @@ def test_a_fresh_compose_with_a_partial_status_is_skipped_with_a_notice(built):
     assert last['action'] == 'skip' and last['inputs']['compare2_status'] == 'partial'
     code, outs, _errs = pstep(world, 'P1', 'P2', 'compose', 'T3')
     assert outs == ['skip fresh compose P1__P2 (compare2 status: partial)']
+
+
+def _fresh_ctx(world):
+    ctx = pr.PairContext(pc.load_products_config(world.path), 'P1', 'P2', 'T1', print, print)
+    pr.check_pair_assets(ctx)
+    return ctx
+
+
+def test_a_compare2_json_of_other_code_makes_compose_build_again(built, monkeypatch):
+    """R12b:2: ledger_basis / stale_reason of compare2.json, the same checks the ledger makes."""
+    assert pstep(built, 'P1', 'P2', 'compose')[0] == 0
+    assert pr.compose_reasons(_fresh_ctx(built)) == []
+    monkeypatch.setattr(pr.compare2_mod, 'LEDGER_BASIS', 'pair_share_v999')
+    assert pr.compose_reasons(_fresh_ctx(built)) == ['compare2_code_stale']
+    code, _outs, errs = pstep(built, 'P1', 'P2', 'ledger', 'T2')
+    assert code == 2 and any('pair_compose_stale' in e and 'compare2_code_stale' in e and '--force' in e for e in errs)
+    code, outs, errs = pstep(built, 'P1', 'P2', 'compose', 'T3')
+    assert code == 0 and outs[0].startswith('archived data/compare/P1__P2/compare2') and outs[-1].startswith('built compose'), errs
+    assert pair_log(built)[-1]['reasons'] == ['compare2_code_stale']       # (the side module still writes the real basis)
+    monkeypatch.undo()                                                       # the rebuilt file names the patched basis
+    assert pr.compose_reasons(_fresh_ctx(built)) == ['compare2_code_stale']
+    assert pstep(built, 'P1', 'P2', 'compose', 'T4')[0] == 0
+    assert pr.compose_reasons(_fresh_ctx(built)) == []
+    # an area_basis of other code is stale too (compare2.stale_reason)
+    monkeypatch.setattr(pr.compare2_mod, 'AREA_BASIS', 'area_v999')
+    assert pr.compose_reasons(_fresh_ctx(built)) == ['compare2_code_stale']
+
+
+def test_force_with_a_step_other_than_compose_is_refused(built, capsys):
+    """R12b:3"""
+    assert pstep(built, 'P1', 'P2', 'compose')[0] == 0
+    for name in ('ledger', 'maps', 'report'):
+        argv = ['pair-step', '--config', str(built.path), '--pair', 'P1', 'P2', '--step', name, '--run-tag', 'F1', '--force']
+        assert cli.main(argv) == 2
+        assert 'pair_force_compose_only' in capsys.readouterr().err
+    assert not (built.base / 'data/_runs/F1').exists() and not (pair_dir(built) / 'ledger').exists()
+    assert pr.run_pair_step(built.path, 'P1', 'P2', 'ledger', run_tag='F2', force=True, err=lambda t: None) == 2
+
+
+def test_a_symlinked_runs_folder_is_refused_before_anything_is_archived(built):
+    """R12b:4: pair archive"""
+    assert pstep(built, 'P1', 'P2', 'compose')[0] == 0
+    elsewhere = built.base.parent / 'elsewhere'
+    elsewhere.mkdir()
+    runs = built.base / 'data/_runs'
+    runs.mkdir(parents=True, exist_ok=True)
+    os.symlink(str(elsewhere), str(runs / 'T9'))
+    errs = []
+    code = pr.run_pair_step(built.path, 'P1', 'P2', 'compose', run_tag='T9', force=True, out=lambda t: None, err=errs.append)
+    assert code == 2 and any('output_path_symlink' in e for e in errs)
+    assert (pair_dir(built) / 'compare2/compose.json').is_file() and not list(elsewhere.iterdir())
+
+
+def test_a_symlinked_runs_folder_is_refused_for_products_archive(tmp_path):
+    """R12b:4: products _move_to_runs"""
+    source = tmp_path / 'g0001'
+    source.mkdir()
+    elsewhere = tmp_path.parent / ('elsewhere_%s' % tmp_path.name)
+    elsewhere.mkdir()
+    (tmp_path / 'data').mkdir()
+    os.symlink(str(elsewhere), str(tmp_path / 'data/_runs'))
+    with pytest.raises(NumericContractError) as exc:
+        pa._move_to_runs(tmp_path, source, 'T1', 'P1', 'hotspots')
+    assert exc.value.code == 'output_path_symlink'
+    assert source.is_dir() and not list(elsewhere.iterdir())
 
 
 def test_report_with_and_without_cards_differs_only_in_the_card_area(built):

@@ -33,14 +33,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import compare2_side, products_assets as pa, products_config as pc
+from . import compare2 as compare2_mod, compare2_side, products_assets as pa, products_config as pc
 from .numeric_schema import NumericContractError
 
 STEPS = ('compose', 'ledger', 'maps', 'report')
 PAIR_LOG = 'pair_log.jsonl'
 STEP_FOLDER = {'compose': 'compare2', 'ledger': 'ledger', 'maps': 'ledger_maps', 'report': 'ledger_report'}
 CONTINUE_CODES = (0, 3)
-STALE_HINT = 'COMPARE_STEPS 에 02 를 넣으세요 (또는 pair-step --step compose 를 다시 실행)'
+STALE_HINT = 'COMPARE_STEPS 에 02 를 넣으세요 (또는 pair-step --step compose 를 다시 실행, 코드가 바뀐 경우 --force)'
 _COMMON_REASON = {'model_groups': 'model_group_changed', 'lambda_diameters_um': 'diameter_subset_changed',
                   'top_buckets': 'top_buckets_changed'}
 _DEPS_REASON = {'side_sha256': 'side_changed', 'density_sha256': 'density_changed', 'products': 'product_block_changed',
@@ -166,6 +166,21 @@ def _pair_config_changed(ctx: PairContext, compare2_path: Path) -> bool:
         return True
 
 
+def _compare2_code_stale(compare2_path: Path) -> bool:
+    """True when compare2.json was made by other code than this one: the ledger refuses it (`ledger_compare2_stale` /
+    `compare2_stale_*`). Same checks as ledger: `LEDGER_BASIS` and `compare2.stale_reason`. A file that is not a compare2
+    document is judged by the other reasons (`compare2_json_changed`), not here."""
+    try:
+        doc = pa._parse_json(compare2_path.read_bytes())
+    except (OSError, ValueError, AttributeError, TypeError):
+        return False
+    if not isinstance(doc, dict) or doc.get('schema_version') != compare2_mod.SCHEMA_VERSION:
+        return False
+    if (doc.get('inputs') or {}).get('ledger_basis') != compare2_mod.LEDGER_BASIS:
+        return True
+    return compare2_mod.stale_reason(doc) is not None
+
+
 def compose_reasons(ctx: PairContext) -> List[str]:
     """Why the compose of this pair is not fresh ([] = fresh). Read only."""
     files = pair_settings(ctx)
@@ -190,7 +205,9 @@ def compose_reasons(ctx: PairContext) -> List[str]:
         reasons.append('compare2_json_changed')
     if _pair_config_changed(ctx, compare2_path):
         reasons.append('pair_config_changed')
-    now = current_compose_deps(ctx)
+    if _compare2_code_stale(compare2_path):
+        reasons.append('compare2_code_stale')
+    now =current_compose_deps(ctx)
     for key in sorted(set(now) | set(deps)):
         if key == 'common':
             then, current = deps.get(key) or {}, now.get(key) or {}
@@ -209,6 +226,7 @@ def archive_folder(ctx: PairContext, step: str) -> Optional[Path]:
     source = ctx.folder(step)
     if not source.exists():
         return None
+    pc._reject_symlink_components(ctx.base, 'data/_runs/%s/compare/%s' % (ctx.run_tag, ctx.pair))
     destination = ctx.base / 'data' / '_runs' / ctx.run_tag / 'compare' / ctx.pair
     destination.mkdir(parents=True, exist_ok=True)
     target, counter = destination / source.name, 1
@@ -309,6 +327,9 @@ def run_pair_step(config_path, first: str, second: str, step: str, run_tag: Opti
         return 2
     ctx = None
     started = time.time()
+    if force and step != 'compose':
+        err('오류: pair_force_compose_only: --force 는 compose 단계에만 쓸 수 있습니다 (step: %s)' % step)
+        return 2
     try:
         run_tag = pa.check_run_tag(run_tag or pa.utc_run_tag())
         config = pc.load_products_config(config_path)

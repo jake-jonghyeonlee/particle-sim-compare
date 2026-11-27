@@ -281,7 +281,7 @@ def _parser() -> argparse.ArgumentParser:
     pairstep.add_argument("--run-tag", default=None, help="옛 출력을 옮길 data/_runs/<RUN_TAG> 이름(기본: UTC 시각 YYYYMMDD-HHMMSS)")
     pairstep.add_argument("--cards", action="store_true", help="maps 단계에서 카드도 만든다(기본은 끔)")
     pairstep.add_argument("--no-cards", action="store_true", help="maps 단계에서 카드를 만들지 않는다(기본값)")
-    pairstep.add_argument("--force", action="store_true", help="compose 단계가 신선해도 다시 만든다(옛 compare2 는 data/_runs 로 보관)")
+    pairstep.add_argument("--force", action="store_true", help="compose 단계가 신선해도 다시 만든다(옛 compare2 는 data/_runs 로 보관). 다른 단계와 함께 쓰면 종료 2(pair_force_compose_only)")
     pimport = _korean_help(sub.add_parser(
         "products-import", add_help=False,
         help="real.yaml + compare2.yaml 의 두 제품(reference·target)을 products.yaml 에 넣는다. 다르면 거부(--update 로 덮어씀), 같으면 쓰지 않음, 호환 검사 실패면 되돌림"))

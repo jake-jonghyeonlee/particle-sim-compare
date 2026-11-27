@@ -2735,7 +2735,8 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     common['geometry'] = t2 - t1
     corr = load_correspondence(candidates, infos, cfg, opts)
     common['correspondence'] = time.perf_counter() - t2
-    run = _CardRun(led_doc, opts, budget, cfg2, infos, corr, cards=cards)
+    cards_on = bool(cards)                  # the flag; `cards` below becomes the list of finished cards
+    run = _CardRun(led_doc, opts, budget, cfg2, infos, corr, cards=cards_on)
     budget.evictor = run.evict_one          # a reserve outside a card that does not fit first drops finished cards (E2)
     if cand.get('given'):
         cand.update({'apply_align': corr.mode, 'status': 'ok' if corr.ok else corr.band, 'detail': corr.detail})
@@ -2814,7 +2815,7 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         'checks': summary,
         'scale_steps': scale_steps,
         'warnings': warnings, 'bands': run.bands}
-    if not cards:
+    if not cards_on:
         document['options']['cards'] = False
     if occurrence is not None:
         document['occurrence'] = occurrence

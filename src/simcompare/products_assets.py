@@ -335,6 +335,7 @@ def _write_pointer(kdir: Path, generation: str, complete_sha256: str) -> None:
 
 
 def _move_to_runs(base: Path, source: Path, run_tag: str, product: str, kind: str) -> Path:
+    pc._reject_symlink_components(Path(base), 'data/_runs/%s/products/%s/%s' % (run_tag, product, kind))
     destination = Path(base) / 'data' / '_runs' / run_tag / 'products' / product / kind
     destination.mkdir(parents=True, exist_ok=True)
     target, counter = destination / source.name, 1

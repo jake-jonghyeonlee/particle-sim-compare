@@ -10,7 +10,7 @@ import pytest
 from simcompare import ledger_maps as lm
 import test_ledger_maps as base
 from test_ledger_maps_cards import MAP_OPTS, big   # noqa: F401  (big is a fixture)
-from test_ledger_maps_v2 import two_card_chain
+from test_ledger_maps_v2 import inject, two_card_chain
 
 OPTS = {'tile_um': 0.5, 'range_um': 0.5, 'linear_min_length_um': 5, 'segment_um': 7, 'coord_tolerance_um': 1.0}
 CARD_CHECK_KEYS = ('range_sum', 'pair_bound', 'partition', 'row_items')
@@ -43,6 +43,30 @@ def test_default_output_has_no_cards_key_and_is_repeatable(chain):
     doc = load(first)
     assert 'cards' not in doc['options'] and [c['pair_id'] for c in doc['cards']] == ['AB', 'GH']
     assert base.results_hash(first) == base.results_hash(second)          # byte for byte (execution.json is not compared)
+
+
+def test_options_cards_key_only_when_the_flag_is_off_even_if_the_card_list_is_empty(chain, monkeypatch):
+    """R12b:1: the flag, not the (possibly empty) card list, decides `options.cards`."""
+    code, plain = run(chain, 'plain')
+    reference = load(plain)
+    assert code == 0 and reference['cards'] and 'cards' not in reference['options']
+    # (a) the plan has no card at all
+    monkeypatch.setattr(lm, '_select_cards', lambda led_doc, top_cards: [])
+    code_a, folder_a = run(chain, 'plan0')
+    doc_a = load(folder_a)
+    assert code_a == 0 and doc_a['cards'] == [] and 'cards' not in doc_a['options']
+    assert doc_a['options'] == reference['options']
+    monkeypatch.undo()
+    # (b) the budget leaves every card out
+    inject(monkeypatch, 'card rows carried reference')
+    code_b, folder_b = run(chain, 'dropped')
+    doc_b = load(folder_b)
+    assert code_b == 3 and doc_b['cards'] == [] and len(doc_b['cards_dropped_for_budget']) == 2
+    assert 'cards' not in doc_b['options'] and doc_b['options'] == reference['options']
+    monkeypatch.undo()
+    # the flag off still writes it
+    code_c, folder_c = run(chain, 'off', cards=False)
+    assert code_c == 0 and load(folder_c)['options']['cards'] is False
 
 
 def test_cli_flag_default_off_and_on(chain):
