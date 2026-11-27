@@ -234,6 +234,26 @@ def _parser() -> argparse.ArgumentParser:
         help="line/pixel λ·CAA·VI 와 변화 분해·제거 영향(compare2_config_v1 YAML, real_hotspot_v1 두 제품)"))
     c2.add_argument("--config", required=True, help="compare2_config_v1 YAML")
     c2.add_argument("--out", help="출력 디렉터리(생략하면 설정의 output_dir). 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어씀")
+    c2s = _korean_help(sub.add_parser(
+        "compare2-side", add_help=False,
+        help="제품 하나의 측정 결과를 side.json(side_asset_v1)으로 쓴다. 역할(reference/target)은 파일에 남기지 않음"))
+    c2s.add_argument("--config", required=True, help="compare2_config_v1 YAML")
+    c2s.add_argument("--role", required=True, choices=["reference", "target"], help="측정할 제품 절")
+    c2s.add_argument("--out", required=True, help="출력 디렉터리(새 폴더 또는 compare2-side 가 이전에 만든 폴더)")
+    c2m = _korean_help(sub.add_parser(
+        "compare2-summary", add_help=False,
+        help="side.json 으로 제품 단독 지표(summary.json)와 의존 지문을 만든다"))
+    c2m.add_argument("--config", required=True, help="compare2_config_v1 YAML")
+    c2m.add_argument("--role", required=True, choices=["reference", "target"], help="설정의 제품 절")
+    c2m.add_argument("--side", required=True, help="side.json 이 있는 폴더")
+    c2m.add_argument("--out", required=True, help="출력 디렉터리(새 폴더 또는 compare2-summary 가 이전에 만든 폴더)")
+    c2c = _korean_help(sub.add_parser(
+        "compare2-compose", add_help=False,
+        help="두 side.json 으로 compare2 와 같은 출력(compare2.json, CSV 4 개)과 compose.json 을 만든다. side 가 낡았으면 거부"))
+    c2c.add_argument("--config", required=True, help="쌍 compare2_config_v1 YAML")
+    c2c.add_argument("--side-reference", required=True, help="reference side.json 이 있는 폴더")
+    c2c.add_argument("--side-target", required=True, help="target side.json 이 있는 폴더")
+    c2c.add_argument("--out", help="출력 디렉터리(생략하면 설정의 output_dir). 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어씀")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
@@ -397,6 +417,15 @@ def main(argv: list[str] | None = None) -> int:
             # 새 폴더 또는 compare2 가 이전에 만든 폴더만 덮어쓴다. 오류는 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2
             return compare2.main_compare2(args.config, args.out, _print)
+        if args.command == "compare2-side":
+            from simcompare import compare2_side
+            return compare2_side.main_side(args.config, args.role, args.out, _print)
+        if args.command == "compare2-summary":
+            from simcompare import compare2_side
+            return compare2_side.main_summary(args.config, args.role, args.side, args.out, _print)
+        if args.command == "compare2-compose":
+            from simcompare import compare2_side
+            return compare2_side.main_compose(args.config, args.side_reference, args.side_target, args.out, _print)
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report

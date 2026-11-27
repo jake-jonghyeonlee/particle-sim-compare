@@ -26,7 +26,7 @@ CNO_B = 'defect_size(um),Area(um2)\n1,0.5\n2,1.5\n3,5.0\n'
 
 def normalize(text, tmp):
     """Output text with the tmp folder and every 64-hex digest masked (paths and hashes depend on the tmp path)."""
-    text = text.replace(str(tmp), 'TMP')
+    text = text.replace(str(Path(tmp).resolve()), 'TMP').replace(str(tmp), 'TMP')  # macOS: /var is /private/var
     return re.sub(r'[0-9a-f]{64}', 'H', text)
 
 

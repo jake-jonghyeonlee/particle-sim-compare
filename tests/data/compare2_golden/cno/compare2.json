@@ -2,14 +2,14 @@
   "schema_version": "compare2_v1",
   "inputs": {
     "compare2_config": {
-      "path": "/privateTMP/compare2.yaml",
+      "path": "TMP/compare2.yaml",
       "sha256": "H"
     },
     "numeric_config": {
-      "path": "/privateTMP/numeric.yaml",
+      "path": "TMP/numeric.yaml",
       "sha256": "H"
     },
-    "density_dir": "/privateTMP/density",
+    "density_dir": "TMP/density",
     "manifests": {
       "reference": {
         "source_payload_hash": "H",
@@ -90,12 +90,12 @@
       "unit_size_um": null,
       "density_files": {
         "line": {
-          "path": "/privateTMP/density/mobile_line.csv",
+          "path": "TMP/density/mobile_line.csv",
           "file_name": "mobile_line.csv",
           "sha256": "H"
         },
         "pixel": {
-          "path": "/privateTMP/density/mobile_pixel.csv",
+          "path": "TMP/density/mobile_pixel.csv",
           "file_name": "mobile_pixel.csv",
           "sha256": "H"
         }
@@ -126,12 +126,12 @@
       "unit_size_um": null,
       "density_files": {
         "line": {
-          "path": "/privateTMP/density/mobile_line.csv",
+          "path": "TMP/density/mobile_line.csv",
           "file_name": "mobile_line.csv",
           "sha256": "H"
         },
         "pixel": {
-          "path": "/privateTMP/density/mobile_pixel.csv",
+          "path": "TMP/density/mobile_pixel.csv",
           "file_name": "mobile_pixel.csv",
           "sha256": "H"
         }

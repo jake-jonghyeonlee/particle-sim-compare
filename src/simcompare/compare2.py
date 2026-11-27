@@ -40,7 +40,7 @@ RATIO_EPS = 1e-15
 ROLES = ('reference', 'target')
 KINDS = ('line', 'pixel')
 OWNED_NAMES = {'compare2.json', 'compare2_summary.csv', 'compare2_layers.csv', 'compare2_conditions.csv',
-               'compare2_cno.csv', 'execution.json', 'error.json'}
+               'compare2_cno.csv', 'execution.json', 'error.json', 'compose.json'}
 EXECUTION_COMMAND = 'compare2'
 
 
@@ -1398,23 +1398,40 @@ def _csv_text(fields, rows):
     return '﻿' + buffer.getvalue()  # utf-8-sig
 
 
-def build_compare2(config_path):
-    """Load both sides and return (document, status, reasons); writes nothing."""
+def load_pair_config(config_path):
+    """(cfg2, numeric cfg, top_buckets) of a compare2 config; the numeric config must be real mode."""
     from .pipeline import _compare_options, load_numeric_config
     cfg2 = load_compare2_config(config_path)
     cfg = load_numeric_config(cfg2.numeric_config)
     if cfg.get('mode') != 'real':
         raise NumericContractError('compare2_real_mode_required', 'numeric_config mode must be real')
-    top = _compare_options(cfg)[1]
-    sides, tables, extracted = {}, {}, {}
+    return cfg2, cfg, _compare_options(cfg)[1]
+
+
+def prepare_compare2(config_path):
+    """(cfg2, numeric cfg, top_buckets, density tables per role): the inputs both the classic and the composed path need."""
+    cfg2, cfg, top = load_pair_config(config_path)
+    tables = {}
     for role in ROLES:
         product = getattr(cfg2, role)
         if not Path(product.hotspot_root).is_dir():
             raise NumericContractError('compare2_hotspot_root_missing', str(product.hotspot_root))
         tables[role] = load_density(cfg2.density_dir, product.model_group)
-    metas = {}
+    return cfg2, cfg, top, tables
+
+
+def build_compare2(config_path):
+    """Load both sides and return (document, status, reasons); writes nothing."""
+    cfg2, cfg, top, tables = prepare_compare2(config_path)
+    extracted, metas = {}, {}
     for role in ROLES:
         extracted[role], metas[role] = _load_side(cfg, role, top)
+    return assemble_compare2(cfg2, cfg, tables, extracted, metas)
+
+
+def assemble_compare2(cfg2, cfg, tables, extracted, metas):
+    """The measured sides (extracted, meta per role) to (document, status, reasons); shared by compare2 and compare2-compose."""
+    sides = {}
     listed = cfg2.lambda_diameters_um
     subset = None if listed is None else set(listed)
     full_sides = {}
@@ -1477,14 +1494,17 @@ def build_compare2(config_path):
     return document, ('partial' if partial else 'available'), reasons
 
 
-def run_compare2(config_path, out=None):
-    """Compute and publish compare2 outputs; returns the execution record (exit_code 0, 3 or raises)."""
+def run_compare2(config_path, out=None, build=None, after=None):
+    """Compute and publish compare2 outputs; returns the execution record (exit_code 0, 3 or raises).
+
+    build (default build_compare2) returns (document, status, reasons); after(output, compare2_json_text) runs once
+    everything else is published (compare2-compose writes compose.json there)."""
     started = time.time()
     cfg2 = load_compare2_config(config_path)
     output = Path(out) if out is not None else cfg2.output_dir
     if not _owned_output(output):
         raise NumericContractError('compare2_output_not_owned', f'{output}: use a new folder or a previous compare2 folder')
-    document, status, reasons = build_compare2(config_path)
+    document, status, reasons = (build or build_compare2)(config_path)
     texts = [(name, _csv_text(fields, rows)) for name, fields, rows in _csv_documents(document)]
     texts.append(('compare2.json', _json_text(document)))
     exit_code = 0 if status == 'available' else 3
@@ -1496,12 +1516,18 @@ def run_compare2(config_path, out=None):
               'finished_at': datetime.now(timezone.utc).isoformat(),
               'elapsed_seconds': round(time.time() - started, 3), 'exit_code': exit_code}
     texts.append(('execution.json', _json_text(record)))  # every text exists before the first file is written
+    compose_text = None
+    if after is not None:
+        compose_text = after(output, dict(texts)['compare2.json'])  # may raise before anything is written
+    (output / 'compose.json').unlink(missing_ok=True)  # a stale compose.json must not outlive its compare2.json
     _publish(output, texts)
     (output / 'error.json').unlink(missing_ok=True)
+    if compose_text is not None:
+        _publish(output, [('compose.json', compose_text)])  # last: it names the sha of the compare2.json above
     return record
 
 
-def main_compare2(config, out, print_result, error_stream=None):
+def main_compare2(config, out, print_result, error_stream=None, runner=None):
     """CLI body: prints the record, or writes error.json (only) and returns 2."""
     error_stream = error_stream or sys.stderr
     output = None
@@ -1510,7 +1536,7 @@ def main_compare2(config, out, print_result, error_stream=None):
     try:
         if output is None:
             output = load_compare2_config(config).output_dir
-        record = run_compare2(config, out)
+        record = (runner or run_compare2)(config, out)
     except (NumericContractError, OSError, ValueError, TypeError, KeyError) as exc:
         code = getattr(exc, 'code', 'input_or_config_error')
         print(f'오류: {exc}', file=error_stream)
