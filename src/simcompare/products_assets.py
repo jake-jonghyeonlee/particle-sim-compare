@@ -38,7 +38,6 @@ import inspect
 import json
 import os
 import re
-import shutil
 import sys
 import time
 import traceback
@@ -342,7 +341,7 @@ def _move_to_runs(base: Path, source: Path, run_tag: str, product: str, kind: st
     while target.exists():
         counter += 1
         target = destination / ('%s-%d' % (source.name, counter))
-    _retry_permission(lambda: shutil.move(str(source), str(target)))
+    _retry_permission(lambda: os.rename(str(source), str(target)))      # same file system: no copy fallback
     return target
 
 

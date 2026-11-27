@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import time
 import traceback
@@ -153,6 +152,20 @@ def current_compose_deps(ctx: PairContext) -> dict:
     return pa._json_normal(deps)
 
 
+def _pair_config_changed(ctx: PairContext, compare2_path: Path) -> bool:
+    """True when the config shas recorded in compare2.json differ from the bytes of the generated pair settings now
+    (the ledger refuses such a compare2.json with `compare2_config_mismatch`). Unreadable = changed."""
+    try:
+        inputs = pa._parse_json(compare2_path.read_bytes()).get('inputs') or {}
+        recorded = {'compare2_config': (inputs.get('compare2_config') or {}).get('sha256'),
+                    'numeric_config': (inputs.get('numeric_config') or {}).get('sha256')}
+        files = {'compare2_config': ctx.compare2_yaml,
+                 'numeric_config': ctx.base / ('gen.pair.%s.real.yaml' % ctx.pair)}
+        return any(recorded[key] != pa.sha256_file(path) for key, path in files.items())
+    except (OSError, ValueError, AttributeError, TypeError):
+        return True
+
+
 def compose_reasons(ctx: PairContext) -> List[str]:
     """Why the compose of this pair is not fresh ([] = fresh). Read only."""
     files = pair_settings(ctx)
@@ -175,6 +188,8 @@ def compose_reasons(ctx: PairContext) -> List[str]:
             reasons.append('compare2_json_changed')
     except OSError:
         reasons.append('compare2_json_changed')
+    if _pair_config_changed(ctx, compare2_path):
+        reasons.append('pair_config_changed')
     now = current_compose_deps(ctx)
     for key in sorted(set(now) | set(deps)):
         if key == 'common':
@@ -200,7 +215,7 @@ def archive_folder(ctx: PairContext, step: str) -> Optional[Path]:
     while target.exists():
         counter += 1
         target = destination / ('%s-%d' % (source.name, counter))
-    pa._retry_permission(lambda: shutil.move(str(source), str(target)))
+    pa._retry_permission(lambda: os.rename(str(source), str(target)))      # same file system: no copy fallback
     ctx.out('archived %s to data/_runs/%s/compare/%s/%s' % (source.relative_to(ctx.base).as_posix(), ctx.run_tag,
                                                           ctx.pair, target.name))
     return target
@@ -218,27 +233,47 @@ def _inner(ctx: PairContext, step: str, cards: bool) -> int:
     from . import ledger, ledger_maps, ledger_report
     if step == 'ledger':
         return ledger.main_ledger(compare2_dir, config, str(ctx.folder('ledger')), nothing, error_stream=err)
-    ledger_dir = ctx.folder('ledger')
-    if not (ledger_dir / 'ledger.json').is_file():
-        raise NumericContractError('pair_step_order', 'run pair-step --step ledger first: %s/ledger.json is missing' % ledger_dir)
+    ledger_dir, maps_dir = ctx.folder('ledger'), ctx.folder('maps')
     if step == 'maps':
-        return ledger_maps.main_ledger_maps(compare2_dir, config, str(ledger_dir), str(ctx.folder('maps')), nothing,
+        return ledger_maps.main_ledger_maps(compare2_dir, config, str(ledger_dir), str(maps_dir), nothing,
                                             error_stream=err, cards=cards)
-    maps_dir = ctx.folder('maps')
-    if not (maps_dir / 'ledger_maps.json').is_file():
-        raise NumericContractError('pair_step_order', 'run pair-step --step maps first: %s/ledger_maps.json is missing' % maps_dir)
     return ledger_report.main_ledger_report(str(ledger_dir), str(ctx.folder('report')), nothing, maps_dir=str(maps_dir),
                                             error_stream=err)
 
 
-def run_compose_step(ctx: PairContext, started: float) -> int:
+def check_step_order(ctx: PairContext, step: str) -> None:
+    """The earlier output a later step reads must exist. Runs before anything is archived."""
+    if step == 'maps' and not (ctx.folder('ledger') / 'ledger.json').is_file():
+        raise NumericContractError('pair_step_order', 'run pair-step --step ledger first: %s/ledger.json is missing'
+                                   % ctx.folder('ledger'))
+    if step == 'report':
+        for name, first in (('ledger', 'ledger'), ('maps', 'maps')):
+            document = 'ledger.json' if name == 'ledger' else 'ledger_maps.json'
+            if not (ctx.folder(name) / document).is_file():
+                raise NumericContractError('pair_step_order', 'run pair-step --step %s first: %s/%s is missing'
+                                           % (first, ctx.folder(name), document))
+
+
+def _compare2_status(ctx: PairContext) -> str:
+    try:
+        return str(pa._parse_json((ctx.folder('compose') / 'execution.json').read_bytes()).get('status'))
+    except (OSError, ValueError, AttributeError):
+        return 'unreadable'
+
+
+def run_compose_step(ctx: PairContext, started: float, force: bool = False) -> int:
     pc.write_generated(ctx.config, pair_settings(ctx))
     reasons = compose_reasons(ctx)
-    if not reasons:
-        ctx.out('skip fresh compose %s' % ctx.pair)
-        ctx.log.append('compose', 'skip', 0, None, time.time() - started, ctx.inputs())
+    if not reasons and not force:
+        status = _compare2_status(ctx)
+        note = '' if status == 'available' else ' (compare2 status: %s)' % status
+        ctx.out('skip fresh compose %s%s' % (ctx.pair, note))
+        inputs = ctx.inputs()
+        if note:
+            inputs['compare2_status'] = status
+        ctx.log.append('compose', 'skip', 0, None, time.time() - started, inputs)
         return 0
-    return _build(ctx, 'compose', False, reasons, started)
+    return _build(ctx, 'compose', False, reasons or ['force'], started)
 
 
 def run_later_step(ctx: PairContext, step: str, cards: bool, started: float) -> int:
@@ -250,6 +285,7 @@ def run_later_step(ctx: PairContext, step: str, cards: bool, started: float) -> 
 
 
 def _build(ctx: PairContext, step: str, cards: bool, reasons: Sequence[str], started: float) -> int:
+    check_step_order(ctx, step)
     archive_folder(ctx, step)
     code = _inner(ctx, step, cards)
     inputs = ctx.inputs()
@@ -264,7 +300,8 @@ def _build(ctx: PairContext, step: str, cards: bool, reasons: Sequence[str], sta
 
 
 def run_pair_step(config_path, first: str, second: str, step: str, run_tag: Optional[str] = None, cards: bool = False,
-                  out: Callable[[str], None] = print, err: Optional[Callable[[str], None]] = None) -> int:
+                  out: Callable[[str], None] = print, err: Optional[Callable[[str], None]] = None,
+                  force: bool = False) -> int:
     """pair-step: 0 = built or skipped fresh, 3 = built with a partial result, 2 = refused or error."""
     err = err or (lambda text: print(text, file=sys.stderr))
     if step not in STEPS:
@@ -280,9 +317,11 @@ def run_pair_step(config_path, first: str, second: str, step: str, run_tag: Opti
         for product in (first, second):
             pa.check_safe(config.base, product)
         pc._reject_symlink_components(config.base, 'data/compare/%s' % ctx.pair)
+        for name in (PAIR_LOG,) + tuple(STEP_FOLDER[s] for s in STEPS):
+            pc._reject_symlink_components(config.base, 'data/compare/%s/%s' % (ctx.pair, name))
         check_pair_assets(ctx)
         if step == 'compose':
-            return run_compose_step(ctx, started)
+            return run_compose_step(ctx, started, force)
         return run_later_step(ctx, step, cards, started)
     except pc.GroupCompatibilityError as exc:
         err('오류: %s' % exc)
@@ -304,6 +343,7 @@ def _log_failure(ctx: Optional[PairContext], step: str, started: float, code: st
         return
     try:
         pc._reject_symlink_components(ctx.base, 'data/compare/%s' % ctx.pair)     # never log through a symlinked folder
+        pc._reject_symlink_components(ctx.base, 'data/compare/%s/%s' % (ctx.pair, PAIR_LOG))
         ctx.log.append(step, 'fail', 2, code, time.time() - started, ctx.inputs() if ctx.sides else {}, reasons)
     except (OSError, NumericContractError):
         pass

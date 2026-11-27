@@ -281,6 +281,7 @@ def _parser() -> argparse.ArgumentParser:
     pairstep.add_argument("--run-tag", default=None, help="옛 출력을 옮길 data/_runs/<RUN_TAG> 이름(기본: UTC 시각 YYYYMMDD-HHMMSS)")
     pairstep.add_argument("--cards", action="store_true", help="maps 단계에서 카드도 만든다(기본은 끔)")
     pairstep.add_argument("--no-cards", action="store_true", help="maps 단계에서 카드를 만들지 않는다(기본값)")
+    pairstep.add_argument("--force", action="store_true", help="compose 단계가 신선해도 다시 만든다(옛 compare2 는 data/_runs 로 보관)")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
@@ -480,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.cards and args.no_cards:
                 parser.error("--cards 와 --no-cards 는 함께 쓸 수 없습니다")
             return pair_assets.run_pair_step(args.config, args.pair[0], args.pair[1], args.step, run_tag=args.run_tag,
-                                             cards=args.cards)
+                                             cards=args.cards, force=args.force)
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report

@@ -156,7 +156,7 @@ def test_each_changed_input_has_its_own_reason(built):
     assert pstep(world, 'P1', 'P2', 'compose', 'T2')[0] in (0, 3)
     assert reasons() == []
     (pair_dir(world) / 'compare2/compare2.json').write_bytes(b'{}\n')
-    assert reasons() == ['compare2_json_changed']
+    assert reasons() == ['compare2_json_changed', 'pair_config_changed']     # `{}` also names no config sha
     (pair_dir(world) / 'compare2/compose.json').unlink()
     assert reasons() == ['compose_missing']
 
@@ -317,3 +317,170 @@ def test_rerunning_a_step_moves_the_old_folder_to_runs(built):
     assert (built.base / 'data/_runs/T2/compare/P1__P2/ledger/ledger.json').is_file()
     code, outs, _errs = pstep(built, 'P1', 'P2', 'ledger', 'T2')                   # the same tag again: a free name
     assert code == 0 and (built.base / 'data/_runs/T2/compare/P1__P2/ledger-2/ledger.json').is_file()
+
+
+# ---- T12b (R12:1-6) -------------------------------------------------------------------------------------------------------
+
+def test_a_pair_config_change_makes_compose_build_again_and_later_steps_work(built):
+    """R12:1: a products.yaml change that only changes the generated pair settings used to leave a fresh compose whose
+    compare2.json named the old config sha; the ledger then refused it with compare2_config_mismatch (a dead end)."""
+    world = built
+    run_all(world, 'T1')
+    world.doc['common']['report'] = {'diameter_um': 3, 'map_window_um': 40}
+    world.write_doc()
+    for product in ('P1', 'P2'):
+        assert step(world, product, '02', 'T2')[0] == 0
+    yaml_before = (world.base / 'gen.pair.P1__P2.compare2.yaml').read_bytes()
+    ctx = pr.PairContext(pc.load_products_config(world.path), 'P1', 'P2', 'T2', print, print)
+    pr.check_pair_assets(ctx)
+    assert pr.compose_reasons(ctx) == ['pair_settings_changed']                   # before compose writes the settings
+    code, outs, errs = pstep(world, 'P1', 'P2', 'compose', 'T2')
+    assert code in (0, 3) and outs[-1].startswith('built compose') and not errs, (outs, errs)
+    assert (world.base / 'gen.pair.P1__P2.compare2.yaml').read_bytes() != yaml_before
+    assert pr.compose_reasons(ctx) == []
+    for name in ('ledger', 'maps', 'report'):
+        assert pstep(world, 'P1', 'P2', name, 'T2')[0] in (0, 3), name
+    assert pstep(world, 'P1', 'P2', 'compose', 'T3')[1] == ['skip fresh compose P1__P2']
+
+
+def test_compose_reasons_names_pair_config_changed_when_the_yaml_bytes_differ_from_compare2_json(built):
+    """R12:1 with the settings file edited after compose (the file equals what compose would write, compare2.json differs)."""
+    world = built
+    assert pstep(world, 'P1', 'P2', 'compose')[0] == 0
+    path = pair_dir(world) / 'compare2/compare2.json'
+    doc = json.loads(path.read_text(encoding='utf-8'))
+    doc['inputs']['compare2_config']['sha256'] = '0' * 64
+    text = json.dumps(doc)
+    path.write_text(text, encoding='utf-8')
+    compose = pair_dir(world) / 'compare2/compose.json'
+    recorded = json.loads(compose.read_text(encoding='utf-8'))
+    recorded['compare2_json_sha256'] = pa.sha256_file(path)                         # only the config sha is wrong
+    compose.write_text(json.dumps(recorded), encoding='utf-8')
+    ctx = pr.PairContext(pc.load_products_config(world.path), 'P1', 'P2', 'T1', print, print)
+    pr.check_pair_assets(ctx)
+    assert pr.compose_reasons(ctx) == ['pair_config_changed']
+    code, outs, _errs = pstep(world, 'P1', 'P2', 'ledger', 'T2')
+    assert code == 2 and _errs and any('pair_compose_stale' in e and 'pair_config_changed' in e for e in _errs)
+
+
+def test_compose_force_builds_a_fresh_compose_again_after_archiving(built, capsys):
+    assert pstep(built, 'P1', 'P2', 'compose')[0] == 0
+    code, outs, _errs = pstep(built, 'P1', 'P2', 'compose', 'T2')
+    assert outs == ['skip fresh compose P1__P2']
+    argv = ['pair-step', '--config', str(built.path), '--pair', 'P1', 'P2', '--step', 'compose', '--run-tag', 'F1']
+    assert cli.main(argv) == 0 and 'skip fresh compose' in capsys.readouterr().out
+    assert cli.main(argv + ['--force']) == 0
+    out = capsys.readouterr().out
+    assert 'archived data/compare/P1__P2/compare2' in out and 'built compose P1__P2' in out
+    assert (built.base / 'data/_runs/F1/compare/P1__P2/compare2/compose.json').is_file()
+    assert (pair_dir(built) / 'compare2/compose.json').is_file()
+    assert pair_log(built)[-1]['reasons'] == ['force']
+    with pytest.raises(SystemExit) as exc:
+        cli.main(['pair-step', '--help'])
+    assert exc.value.code == 0 and '--force' in capsys.readouterr().out
+
+
+def test_an_order_refusal_archives_nothing(built):
+    """R12:2: maps / report refused for a missing earlier output must leave the old maps and report folders in place."""
+    world = built
+    run_all(world, 'T1')
+    ledger_json = pair_dir(world) / 'ledger/ledger.json'
+    ledger_json.rename(ledger_json.with_name('ledger.json.moved'))
+    code, _outs, errs = pstep(world, 'P1', 'P2', 'maps', 'T2')
+    assert code == 2 and any('pair_step_order' in e for e in errs)
+    code, _outs, errs = pstep(world, 'P1', 'P2', 'report', 'T2')
+    assert code == 2 and any('pair_step_order' in e for e in errs)
+    assert (pair_dir(world) / 'ledger_maps/ledger_maps.json').is_file() and (pair_dir(world) / 'ledger_report').is_dir()
+    assert not (world.base / 'data/_runs/T2').exists()
+    ledger_json.with_name('ledger.json.moved').rename(ledger_json)
+    maps_json = pair_dir(world) / 'ledger_maps/ledger_maps.json'
+    maps_json.rename(maps_json.with_name('x.moved'))
+    code, _outs, errs = pstep(world, 'P1', 'P2', 'report', 'T2')
+    assert code == 2 and any('pair_step_order' in e and 'maps' in e for e in errs)
+    assert (pair_dir(world) / 'ledger_report/ledger_report.html').is_file() and not (world.base / 'data/_runs/T2').exists()
+
+
+def test_the_archive_move_is_a_rename_that_retries_a_permission_error(built, monkeypatch):
+    """R12:3: no shutil.move (no copy fallback): os.rename, PermissionError retried, nothing nested in the target."""
+    run_all(built, 'T1')
+    monkeypatch.setattr(pa, 'RETRY_WAIT_S', 0)
+    real_rename, left = os.rename, {'n': 2}
+    seen = []
+
+    def flaky(src, dst):
+        seen.append((str(src), str(dst)))
+        if left['n'] > 0:
+            left['n'] -= 1
+            raise PermissionError('held open')
+        return real_rename(src, dst)
+    monkeypatch.setattr(pr.os, 'rename', flaky)
+    code, outs, _errs = pstep(built, 'P1', 'P2', 'ledger', 'T2')
+    assert code == 0 and left['n'] == 0 and len(seen) == 3 and outs[0].startswith('archived data/compare/P1__P2/ledger')
+    target = built.base / 'data/_runs/T2/compare/P1__P2/ledger'
+    assert (target / 'ledger.json').is_file() and not (target / 'ledger').exists()
+    left['n'] = 99                                                                   # never works: the error, nothing moved
+    code, _outs, errs = pstep(built, 'P1', 'P2', 'ledger', 'T3')
+    assert code == 2 and any('pair_internal_error' in e and 'PermissionError' in e for e in errs)
+    assert (pair_dir(built) / 'ledger/ledger.json').is_file()
+
+
+def test_products_runs_move_is_a_rename_that_retries(tmp_path, monkeypatch):
+    monkeypatch.setattr(pa, 'RETRY_WAIT_S', 0)
+    source = tmp_path / 'g0001'
+    source.mkdir()
+    (source / 'f.txt').write_text('x', encoding='utf-8')
+    real_rename, left = os.rename, {'n': 2}
+
+    def flaky(src, dst):
+        if left['n'] > 0:
+            left['n'] -= 1
+            raise PermissionError('held open')
+        return real_rename(src, dst)
+    monkeypatch.setattr(pa.os, 'rename', flaky)
+    target = pa._move_to_runs(tmp_path, source, 'T1', 'P1', 'hotspots')
+    assert left['n'] == 0 and (target / 'f.txt').is_file() and not (target / 'g0001').exists() and not source.exists()
+
+
+@pytest.mark.parametrize('name', ['pair_log.jsonl', 'compare2', 'ledger', 'ledger_maps', 'ledger_report'])
+def test_a_symlinked_log_or_step_folder_is_refused(built, name):
+    """R12:4"""
+    elsewhere = built.base.parent / 'elsewhere'
+    elsewhere.mkdir()
+    folder = pair_dir(built)
+    folder.mkdir(parents=True)
+    os.symlink(str(elsewhere), str(folder / name))
+    code, _outs, errs = pstep(built, 'P1', 'P2', 'compose')
+    assert code == 2 and any('output_path_symlink' in e for e in errs) and not list(elsewhere.iterdir())
+
+
+def test_a_fresh_compose_with_a_partial_status_is_skipped_with_a_notice(built):
+    """R12:5"""
+    world = built
+    assert pstep(world, 'P1', 'P2', 'compose')[0] == 0
+    execution = pair_dir(world) / 'compare2/execution.json'
+    doc = json.loads(execution.read_text(encoding='utf-8'))
+    doc['status'] = 'partial'
+    execution.write_text(json.dumps(doc), encoding='utf-8')
+    code, outs, _errs = pstep(world, 'P1', 'P2', 'compose', 'T2')
+    assert code == 0 and outs == ['skip fresh compose P1__P2 (compare2 status: partial)']
+    last = pair_log(world)[-1]
+    assert last['action'] == 'skip' and last['inputs']['compare2_status'] == 'partial'
+    code, outs, _errs = pstep(world, 'P1', 'P2', 'compose', 'T3')
+    assert outs == ['skip fresh compose P1__P2 (compare2 status: partial)']
+
+
+def test_report_with_and_without_cards_differs_only_in_the_card_area(built):
+    """R12:6: the report of a cards-on and a cards-off maps run, shas masked."""
+    world = built
+    run_all(world, 'T1', cards=True)
+    html_on = (pair_dir(world) / 'ledger_report/ledger_report.html').read_text(encoding='utf-8')
+    assert pstep(world, 'P1', 'P2', 'maps', 'T2', cards=False)[0] in (0, 3)
+    assert pstep(world, 'P1', 'P2', 'report', 'T2')[0] in (0, 3)
+    html_off = (pair_dir(world) / 'ledger_report/ledger_report.html').read_text(encoding='utf-8')
+    on, off = SHA.sub('SHA', html_on), SHA.sub('SHA', html_off)
+    marker = '"options": {"coord_min_overlap"'
+    assert marker in on and '"options": {"cards": false, "coord_min_overlap"' in off
+    # the one difference (measured): the embedded maps options record names `"cards": false`; nothing else moves
+    assert on == off.replace('"options": {"cards": false, "coord_min_overlap"', marker, 1)
+    for needle in ('예산 부족', 'budget', 'Budget'):
+        assert needle not in off or needle in on, needle
