@@ -34,11 +34,11 @@ real.yaml 의 경로는 BASE_DIR 안의 상대 경로만 쓴다(절대 경로·`
 
 제품을 `products.yaml` 에 한 번 등록하고 자산을 제품마다 만들어 두는 방식이다. 낡았을 때만 다시 만든다.
 
-1. `python -m simcompare products-import --real real.yaml --compare2 compare2.yaml --group <그룹> --config products.yaml --check` 로 먼저 본 뒤 `--check` 를 빼고 만든다.
+1. 기존 `real.yaml`·`compare2.yaml` 이 있으면 실행기 EDIT 의 `PRODUCTS_IMPORT = [("real.yaml", "compare2.yaml", "<그룹>")]` 로 `products.yaml` 을 만든다(권장). 실행기가 계획 전에 `products-import` 를 돌린다. 패키지가 설치된 PC 에서는 `python -m simcompare products-import ...` 명령으로도 된다. `DRY_RUN = True` 이면 `--check` 로만 돌아 아무것도 쓰지 않는다.
 2. 실행기 EDIT 블록에서 `MODE = "products"`, `ASSET_STEPS = ["01", "02"]`, 비교할 쌍은 `COMPARE = [("A", "B")]` 로 한다. 먼저 `DRY_RUN = True` 로 계획을 본다.
 3. 실행 뒤 `data/products/products_sheet.html` 에서 제품별 자산 상태를 본다.
 
-제품 모드에서는 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 를 읽지 않는다. 설정·이유 코드·정리 방법은 [docs/product_assets.md](../../docs/product_assets.md)를 따른다.
+제품 모드에서는 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 를 읽지 않는다. 설정·이유 코드·정리 방법은 저장소의 docs/product_assets.md 를 따른다.
 
 ## 결과·로그
 

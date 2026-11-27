@@ -81,6 +81,8 @@ DEFAULTS = {
     'compare': (),
     'compare_steps': PRODUCT_COMPARE_STEPS,
     'force_assets': (),
+    'products_import': (),                     # [(real.yaml, compare2.yaml, group)]: 계획 전에 products-import 로 products.yaml 에 넣는다
+    'products_import_update': False,           # True = 달라진 등록 제품·공통 값을 덮어쓴다(note 유지)
     'record_maps': True,                       # 02: 지도 원자료 녹화(maps_src_v2). False = products-step 02 --no-record-maps
     'maps_src_max_bytes': 32 * 1024 ** 3,      # 02: 녹화 비압축 합 상한. 기본값이면 인자를 붙이지 않는다
 }
@@ -509,7 +511,70 @@ def _product_status_lines(plan):
     return lines
 
 
+def _import_items(cfg):
+    value = cfg['products_import']
+    if not isinstance(value, (list, tuple)):
+        raise FlowError('etx_setting_invalid', 'PRODUCTS_IMPORT must be a list of (real.yaml, compare2.yaml, group) entries')
+    if not isinstance(cfg['products_import_update'], bool):
+        raise FlowError('etx_setting_invalid', 'PRODUCTS_IMPORT_UPDATE must be True or False')
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 3 or not all(isinstance(part, str) for part in item):
+            raise FlowError('etx_setting_invalid', 'PRODUCTS_IMPORT entries must be (real.yaml, compare2.yaml, group) '
+                            'strings, got %r' % (item,))
+    return [tuple(item) for item in value]
+
+
+def _run_imports(base_dir, cfg, dry_run, echo):
+    """PRODUCTS_IMPORT 항목마다 products-import 를 같은 프로세스에서 돈다(dry_run 이면 --check = 아무것도 쓰지 않음).
+    하나라도 실패하면 import 의 오류 코드 그대로 FlowError. 돌려주는 값: 하나라도 products.yaml 을 쓰거나 쓸 예정이면 True."""
+    items = _import_items(cfg)
+    if not items:
+        return False
+    import json
+    import re
+    from simcompare.products_import import run_products_import
+    base = Path(base_dir).resolve()
+    config_path = _under(base, cfg['products_config'])
+    update = cfg['products_import_update']
+    pending = False
+    for real, compare2, group in items:
+        outputs, errors = [], []
+        status = run_products_import(_under(base, real), _under(base, compare2), group, config_path=config_path,
+                                     update=update, check=dry_run, out=outputs.append, err=errors.append)
+        label = 'products-import %s %s group %s%s' % (real, compare2, group, ' --check' if dry_run else '')
+        if status != 0:
+            code = 'products_import_failed'
+            for line in errors:
+                found = re.match(r'오류: ([A-Za-z0-9_]+):', line)
+                if found:
+                    code = found.group(1)
+                    break
+            detail = ' / '.join(errors) or '(no message)'
+            if outputs and isinstance(outputs[-1], dict) and outputs[-1].get('conflicts'):
+                detail += ' ' + json.dumps(outputs[-1]['conflicts'], ensure_ascii=False)
+            raise FlowError(code, '%s failed: %s (%s is unchanged)' % (label, detail, config_path.name))
+        result = outputs[-1] if outputs else {}
+        state = result.get('status')
+        word = {'unchanged': 'unchanged', 'written': 'updated' if result.get('updated') else 'added',
+                'would_write': 'would update' if result.get('updated') else 'would add'}.get(state, str(state))
+        extra = ''
+        if result.get('common_changed_products'):
+            extra = '; common changed, affected products: %s' % ', '.join(result['common_changed_products'])
+        echo('flow: %s: %s (%s)%s' % (label, word, ', '.join(result.get('products', [])), extra))
+        if state in ('written', 'would_write'):
+            pending = True
+    return pending
+
+
 def _prepare_products(base_dir, settings, dry_run, echo):
+    cfg = _merged(settings)
+    if _mode(cfg) != 'products':
+        raise FlowError('etx_mode_invalid', 'product jobs need MODE = "products"')
+    pending = _run_imports(base_dir, cfg, dry_run, echo)
+    if dry_run and pending and not _under(Path(base_dir).resolve(), cfg['products_config']).exists():
+        echo('flow: %s 이 없어 계획 생략(실제 실행 때 import 뒤 계획)' % cfg['products_config'])
+        echo('flow: DRY_RUN = True: nothing was run or moved')
+        return []
     plan = _product_plan(base_dir, settings)
     cfg_name = plan.config.path.name
     echo('flow: mode products; %s; products %s; asset steps %s; compare %s; compare steps %s; run tag %s' % (

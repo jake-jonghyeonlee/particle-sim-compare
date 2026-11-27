@@ -27,7 +27,7 @@ LOG_ONLY_REASONS = ('forced', 'rebuild', 'force', 'maps_src_replay_failed_retry'
 
 def _in_source(name, source):
     """True when `name` appears as a whole word (a longer name that contains it does not count)."""
-    return re.search(r'(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])' % re.escape(name), source) is not None
+    return re.search(r'(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])' % re.escape(name), source) is not None
 
 
 def _doc_text():
@@ -110,7 +110,7 @@ def test_edit_names_of_the_product_block_are_all_documented():
     runner = RUNNER.read_text(encoding='utf-8')
     block = runner.split('# ---- 제품 모드', 1)[1].split("'''", 1)[0]
     names = re.findall(r'^([A-Z][A-Z0-9_]+) = ', block, re.M)
-    assert len(names) == 8
+    assert len(names) == 10
     doc_names = _collected_names()[1]
     assert not [name for name in names if name not in doc_names]
     for name in ('MODE', 'RUN_TAG', 'DRY_RUN', 'LEDGER_MAPS_CARDS'):

@@ -327,3 +327,143 @@ def test_runner_force_assets_rebuild_a_fresh_product(world):
     assert result.returncode == 0, result.stderr + tail[-3000:]
     assert 'skip fresh 01 P1' not in tail and '--force' in tail
     assert 'built 01 P1' in tail and 'built 02 side P1' in tail            # a fresh product was rebuilt (current + previous generation kept)
+
+
+# ---- pasx/T13: PRODUCTS_IMPORT runs products-import before the product plan ---------------------------------------------------
+
+IMPORT = [('real.yaml', 'compare2.yaml', 'G')]
+
+
+@pytest.fixture
+def iworld(tmp_path):
+    """real.yaml + compare2.yaml for P1/P2 and NO products.yaml (the import makes it)."""
+    import yaml
+    from test_products_import import make_real_world
+    base = make_real_world(tmp_path)
+    path = base / 'compare2.yaml'
+    doc = yaml.safe_load(path.read_text(encoding='utf-8'))
+    for role in ('reference', 'target'):
+        doc['products'][role]['unit_size_um'] = [0.2, 0.2]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding='utf-8')
+    (base / 'products.yaml').unlink()
+    return base
+
+
+def import_settings(**overrides):
+    found = {'products_import': IMPORT, 'compare': [('P1', 'P2')]}
+    found.update(overrides)
+    return settings(**found)
+
+
+def edit_yaml(path, change):
+    import yaml
+    doc = yaml.safe_load(path.read_text(encoding='utf-8'))
+    change(doc)
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding='utf-8')
+
+
+def test_edit_block_carries_the_import_names():
+    text = _builder().FLOW_EDIT
+    assert re.search(r'^PRODUCTS_IMPORT = \[\]', text, re.M) and re.search(r'^PRODUCTS_IMPORT_UPDATE = False', text, re.M)
+
+
+def test_import_makes_products_yaml_before_the_plan_and_a_second_prepare_says_unchanged(iworld):
+    lines = []
+    jobs = etx_flow.prepare(iworld, import_settings(), echo=lines.append)
+    assert (iworld / 'products.yaml').is_file() and len(jobs) == 4 + 1 + 3
+    assert any('products-import real.yaml compare2.yaml group G: added (P1, P2)' in line for line in lines), lines
+    before = (iworld / 'products.yaml').read_bytes()
+    lines = []
+    etx_flow.prepare(iworld, import_settings(), echo=lines.append)
+    assert any('group G: unchanged (P1, P2)' in line for line in lines) and (iworld / 'products.yaml').read_bytes() == before
+
+
+def test_runner_imports_then_runs_to_the_end_and_a_second_run_skips_the_assets(iworld):
+    first = _runner(iworld.parent, type('W', (), {'base': iworld}), 'I1', PRODUCTS_IMPORT=IMPORT, COMPARE=[('P1', 'P2')])
+    result = run_runner(sys.executable, first, iworld.parent)
+    log = (iworld / 'runs/simcompare_job_etx.log').read_text(encoding='utf-8')
+    assert result.returncode == 0, result.stderr + log[-3000:]
+    assert 'group G: added (P1, P2)' in log and (iworld / 'products.yaml').is_file()
+    assert (iworld / 'data/compare/P1__P2/ledger_report/ledger_report.html').is_file()
+    second = _runner(iworld.parent, type('W', (), {'base': iworld}), 'I2', PRODUCTS_IMPORT=IMPORT, COMPARE=[('P1', 'P2')])
+    result = run_runner(sys.executable, second, iworld.parent)
+    log = (iworld / 'runs/simcompare_job_etx.log').read_text(encoding='utf-8')
+    tail = log[log.rindex('group G:'):]
+    assert result.returncode == 0, result.stderr + tail[-3000:]
+    assert 'group G: unchanged (P1, P2)' in tail and 'skip fresh 01 P1' in tail and 'skip fresh 02 side P2' in tail
+
+
+def test_a_value_conflict_stops_the_run_and_update_overwrites_but_keeps_the_note(iworld):
+    etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
+    edit_yaml(iworld / 'products.yaml', lambda d: d['products']['P1'].update(note='by hand'))
+    edit_yaml(iworld / 'compare2.yaml', lambda d: d['report'].update(diameter_um=4))
+    before = (iworld / 'products.yaml').read_bytes()
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
+    assert raised.value.code == 'products_import_conflict' and 'report' in str(raised.value)
+    assert (iworld / 'products.yaml').read_bytes() == before
+    lines = []
+    jobs = etx_flow.prepare(iworld, import_settings(products_import_update=True), echo=lines.append)
+    assert len(jobs) == 8
+    assert any('group G: updated' in line and 'affected products: P1, P2' in line for line in lines), lines
+    import yaml
+    doc = yaml.safe_load((iworld / 'products.yaml').read_text(encoding='utf-8'))
+    assert doc['common']['report']['diameter_um'] == 4 and doc['products']['P1']['note'] == 'by hand'
+
+
+def test_a_group_conflict_stops_the_run_and_leaves_the_file(iworld):
+    etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
+    before = (iworld / 'products.yaml').read_bytes()
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(products_import=[('real.yaml', 'compare2.yaml', 'H')]), echo=lambda line: None)
+    assert raised.value.code == 'products_import_group_conflict' and (iworld / 'products.yaml').read_bytes() == before
+
+
+def test_an_incompatible_pair_stops_the_run_and_makes_no_file(iworld):
+    edit_yaml(iworld / 'real.yaml', lambda d: d['target']['condition_assignment'].update(
+        layer_stack=d['target']['condition_assignment']['layer_stack'][:1]))
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
+    assert raised.value.code == 'group_incompatible' and not (iworld / 'products.yaml').exists()
+
+
+def test_a_missing_file_and_a_bad_entry_are_flow_errors(iworld):
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(products_import=[('nope.yaml', 'compare2.yaml', 'G')]), echo=lambda line: None)
+    assert raised.value.code.startswith('products_import_')
+    for bad in ([('real.yaml', 'compare2.yaml')], 'real.yaml', [('real.yaml', 'compare2.yaml', 3)]):
+        with pytest.raises(FlowError) as raised:
+            etx_flow.prepare(iworld, import_settings(products_import=bad), echo=lambda line: None)
+        assert raised.value.code == 'etx_setting_invalid'
+    with pytest.raises(FlowError):
+        etx_flow.prepare(iworld, import_settings(products_import_update='yes'), echo=lambda line: None)
+    assert not (iworld / 'products.yaml').exists()
+
+
+def test_dry_run_without_products_yaml_checks_the_import_and_skips_the_plan(iworld):
+    before = snapshot(iworld)
+    lines = []
+    assert etx_flow.prepare(iworld, import_settings(), dry_run=True, echo=lines.append) == []
+    text = '\n'.join(lines)
+    assert 'group G --check: would add (P1, P2)' in text and '계획 생략' in text and '  job ' not in text
+    assert snapshot(iworld) == before
+    print('\n--- DRY_RUN without products.yaml ---\n' + text)
+
+
+def test_dry_run_with_products_yaml_shows_the_check_and_the_existing_plan(iworld):
+    etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
+    edit_yaml(iworld / 'compare2.yaml', lambda d: d['report'].update(diameter_um=4))
+    before = snapshot(iworld)
+    lines = []
+    etx_flow.prepare(iworld, import_settings(products_import_update=True), dry_run=True, echo=lines.append)
+    text = '\n'.join(lines)
+    assert 'group G --check: would update' in text and text.count('  job ') == 8 and '계획 생략' not in text
+    assert snapshot(iworld) == before
+
+
+def test_pair_mode_ignores_the_import_values(tmp_path):
+    from test_etx_flow import edit_settings, template_base
+    base = template_base(tmp_path)
+    plain = etx_flow.plan_jobs(base, edit_settings(steps=['02', '08']))
+    noisy = etx_flow.plan_jobs(base, edit_settings(steps=['02', '08'], products_import=[('x',)], products_import_update=7))
+    assert noisy == plain

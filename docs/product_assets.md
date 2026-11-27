@@ -57,6 +57,8 @@ COMPARE 의 쌍마다: pair-step compose → ledger → maps → report
 ### 2.1 기존 설정에서 products.yaml 만들기
 
 기존 `real.yaml`, `compare2.yaml` 이 이미 자동화로 돌고 있으면 두 제품을 한 번에 넣는다.
+**권장: 실행기 EDIT 의 `PRODUCTS_IMPORT` 로 돌린다**(3.1). ETX 실행기는 명령 인자를 넘기지 못하고 로컬 PC 에는 패키지를 설치하지 않기 때문이다. 실행기는 계획을 세우기 전에 항목마다 같은 `products-import` 를 돌린다. `DRY_RUN = True` 이면 `--check` 로만 돌려 결과를 보여 준다.
+패키지가 설치된 PC 에서는 아래 명령으로도 된다.
 
 ```text
 python -m simcompare products-import --real real.yaml --compare2 compare2.yaml --group QA4 --config products.yaml --check
@@ -137,6 +139,8 @@ ASSET_STEPS = ["01", "02"]          # [] = 자산을 만들지 않음
 COMPARE = []                        # [("A", "B"), ...] (기준, 대상), 같은 그룹만
 COMPARE_STEPS = ["02", "08"]        # 02 = 조합, 08 = ledger·지도·보고서
 FORCE_ASSETS = []                   # 신선해도 다시 만들 제품
+PRODUCTS_IMPORT = []                # [("real.yaml", "compare2.yaml", "QA4"), ...] = 실행 전에 이 설정의 두 제품을 products.yaml 에 넣는다
+PRODUCTS_IMPORT_UPDATE = False      # True = 이미 등록된 제품·공통 값이 다르면 덮어쓴다(note 유지)
 RECORD_MAPS = True                  # 02: side 를 만들 때 08 지도용 원자료도 녹화
 MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, 기본 32 GiB)
 ```
@@ -146,6 +150,9 @@ MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, �
 - `COMPARE_STEPS`: `"02"` 는 쌍마다 compose, `"08"` 은 쌍마다 ledger → maps → report. 모르는 값은 `etx_compare_steps_invalid`.
 - `COMPARE`: (기준, 대상) 쌍 목록. A 가 reference, B 가 target 이다. 오류: `etx_compare_same_product`, `etx_compare_cross_group`, `etx_product_unknown`, `etx_setting_invalid`(같은 쌍 중복 등).
 - `FORCE_ASSETS`: 그 제품의 `ASSET_STEPS` 에 든 단계만 신선해도 다시 만든다(`["02"]` 이면 02 만). `PRODUCTS` 에 없거나 `ASSET_STEPS` 가 비면 `etx_force_not_selected`.
+- `PRODUCTS_IMPORT`: (real.yaml, compare2.yaml, 그룹) 세 문자열 항목 목록. 제품 모드에서만 읽는다(pair 모드는 무시). 실행기는 **계획(products.yaml 적재·검증)보다 먼저** 항목을 차례로 `products-import` 로 처리하고(`--config` = `PRODUCTS_CONFIG`, `--update` = `PRODUCTS_IMPORT_UPDATE`) 항목마다 `added`/`updated`/`unchanged` 한 줄을 로그에 찍는다. 공통 값이 바뀌면 영향받는 제품 목록도 찍는다. 하나라도 실패하면(`products_import_conflict`, `products_import_group_conflict`, `group_incompatible`, 파일 없음 `products_import_unreadable` 등) import 의 오류 코드 그대로 종료 2 로 멈추고 job 은 하나도 돌지 않는다. products.yaml 은 그대로다. 항목 모양이 틀리면 `etx_setting_invalid`.
+- `PRODUCTS_IMPORT_UPDATE`: `True` 면 이미 등록된 제품·공통 값이 달라도 덮어쓴다(사람이 쓴 `note` 는 남는다). 공통 값이 바뀌면 모든 제품이 영향받는다. 기본 `False` 는 다른 값을 `products_import_conflict` 로 멈춘다.
+- `DRY_RUN = True` 일 때 import 는 `--check` 로만 돌아 아무것도 쓰지 않는다. products.yaml 이 아직 없으면 계획을 세울 수 없어 "계획 생략" 한 줄만 찍고 끝난다. 있으면 기존 파일로 계획을 찍는다.
 - `LEDGER_MAPS_CARDS`: `None` = 모드 기본(제품 모드는 카드 끔), `False` = `--no-cards`, `True` = `--cards`.
 - `RECORD_MAPS`: 02 에서 지도 원자료를 녹화한다. 끄면 `products-step 02` 에 `--no-record-maps` 가 붙는다.
 - `MAPS_SRC_MAX_BYTES`: `RECORD_MAPS` 가 켜져 있고 값이 기본값이 아닐 때만 `--maps-src-max-bytes` 가 붙는다. 양의 정수여야 한다(`etx_setting_invalid`).

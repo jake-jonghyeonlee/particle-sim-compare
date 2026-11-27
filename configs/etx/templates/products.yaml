@@ -6,7 +6,9 @@
 #   gen.pair.<A>__<B>.real.yaml / .compare2.yaml                  쌍 설정(--pair A B). 기존 2 칸 스키마 그대로
 # gen.*.yaml 은 첫 줄 표지가 있을 때만 다시 쓴다. 손으로 고치지 않는다.
 #
-# 사용:   기존 real.yaml·compare2.yaml 이 있으면 products-import 로 이 파일을 만든다(--check 로 먼저 본다).
+# 사용:   기존 real.yaml·compare2.yaml 이 있으면 실행기 EDIT 의 PRODUCTS_IMPORT 로 이 파일을 만든다(권장).
+#           PRODUCTS_IMPORT = [("real.yaml", "compare2.yaml", "QA4")]   # DRY_RUN = True 이면 --check 로만 돈다
+#         패키지가 설치된 PC 에서는 명령으로도 된다(--check 로 먼저 본다).
 #           python -m simcompare products-import --real real.yaml --compare2 compare2.yaml --group QA4 --config products.yaml --check
 #         손으로 쓴 파일은 검증만 한다.
 #           python -m simcompare products-config --config products.yaml --check

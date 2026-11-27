@@ -15,7 +15,7 @@ BASE = '274cfea'
 MARK = 'EDIT ABOVE'
 INTEGRATED = ('bundles/etx/simcompare_job_etx.py', 'bundles/local/simcompare_job_local.py')
 ADDED_NAMES = {'MODE', 'LEDGER_MAPS_CARDS', 'PRODUCTS_CONFIG', 'PRODUCTS', 'ASSET_STEPS', 'COMPARE', 'COMPARE_STEPS',
-               'FORCE_ASSETS', 'RECORD_MAPS', 'MAPS_SRC_MAX_BYTES'}
+               'FORCE_ASSETS', 'PRODUCTS_IMPORT', 'PRODUCTS_IMPORT_UPDATE', 'RECORD_MAPS', 'MAPS_SRC_MAX_BYTES'}
 STAGE_RUNNERS = sorted(
     str(path.relative_to(ROOT)) for path in list((ROOT / 'bundles/etx').glob('simcompare_job_*.py'))
     + list((ROOT / 'bundles/etx/dv').glob('simcompare_job_*.py')) + list((ROOT / 'bundles/local').glob('simcompare_job_*.py'))
@@ -30,9 +30,14 @@ def _head(text):
 
 
 def _base_head(path):
-    result = subprocess.run(['git', 'show', '%s:%s' % (BASE, path)], cwd=str(ROOT), capture_output=True)
-    if result.returncode != 0:
+    try:
+        have_base = subprocess.run(['git', 'cat-file', '-e', BASE + '^{commit}'], cwd=str(ROOT), capture_output=True).returncode == 0
+        result = subprocess.run(['git', 'show', '%s:%s' % (BASE, path)], cwd=str(ROOT), capture_output=True) if have_base else None
+    except OSError:                       # no git executable here (FileNotFoundError is an OSError)
+        pytest.skip('git is not available here')
+    if not have_base:
         pytest.skip('base commit %s is not available here' % BASE)
+    assert result.returncode == 0, 'base commit %s has no %s: %s' % (BASE, path, result.stderr.decode('utf-8', 'replace'))
     return _head(result.stdout.decode('utf-8'))
 
 
