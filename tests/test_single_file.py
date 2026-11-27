@@ -202,3 +202,30 @@ def test_plain_job_lists_and_pair_mode_have_no_finalizer(tmp_path):
     result = subprocess.run([sys.executable, '-I', str(script)], capture_output=True, text=True, cwd=tmp_path)
     assert result.returncode == 0
     assert '마무리' not in (tmp_path / 'job.log').read_text(encoding='utf-8')
+
+
+# ---- pasx/T6b (R6:8): an Exception (not an exit code) in a finalizer or in the main job -------------------------------------
+
+BOOM_STUB = ("from simcompare.cli import main as _real_main\n"
+             "    def main(argv):\n"
+             "        if '--out' in argv and argv[argv.index('--out') + 1] == 'boom':\n"
+             "            raise RuntimeError('boom')\n"
+             "        return _real_main(argv)\n")
+
+
+def test_a_finalizer_that_raises_an_exception_only_warns_and_the_next_finalizer_still_runs(tmp_path):
+    boom = ('demo-data', ['--out', 'boom'])
+    script = _build_finalized(tmp_path, [GOOD_JOB], [boom, GOOD_FINALIZER], stub=BOOM_STUB)
+    result, log = _run_finalized(tmp_path, script)
+    assert result.returncode == 0, result.stderr                              # the main job's code
+    assert 'RuntimeError: boom' in log and '경고: 마무리 job demo-data 이(가) exit 1 로 실패했다' in log
+    assert (tmp_path / 'finalized/config.yaml').is_file() and not (tmp_path / 'boom').exists()
+
+
+def test_the_main_job_that_raises_an_exception_exits_1_and_the_finalizer_still_runs(tmp_path):
+    script = _build_finalized(tmp_path, [GOOD_JOB, ('demo-data', ['--out', 'boom']), ('demo-data', ['--out', 'never'])],
+                              [GOOD_FINALIZER], stub=BOOM_STUB)
+    result, log = _run_finalized(tmp_path, script)
+    assert result.returncode == 1
+    assert 'RuntimeError: boom' in log and '마무리 job demo-data exit 0' in log
+    assert (tmp_path / 'finalized/config.yaml').is_file() and not (tmp_path / 'never').exists()

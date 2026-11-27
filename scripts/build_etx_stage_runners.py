@@ -64,6 +64,7 @@ LOCAL_DIR = "data/local"            # 06 출력
 REPORT_DIR = "data/compare2_report" # 07 출력(있으면 08 보고서가 링크)
 
 # ---- 제품 모드: MODE = "products" 일 때만 읽는다(pair 모드는 읽지 않는다) ----
+# 제품 모드는 아래 제품 값과 LEDGER_MAPS_CARDS·RUN_TAG·DRY_RUN·LOG_FILE·WORK_DIR 만 읽는다.
 PRODUCTS_CONFIG = "products.yaml"
 PRODUCTS = None                     # 자산을 만들 제품. None = 등록 전체
 ASSET_STEPS = ["01", "02"]          # [] = 자산을 만들지 않음

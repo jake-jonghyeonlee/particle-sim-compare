@@ -319,3 +319,80 @@ def test_cli_products_import_prints_json_and_exit_codes(template_dir, no_group_c
     assert cli.main(argv) == 0 and json.loads(capsys.readouterr().out)['status'] == 'unchanged'
     assert cli.main(argv + ['--check']) == 0 and json.loads(capsys.readouterr().out)['status'] == 'unchanged'
     print('\n--- products-import output (first run) ---\n' + json.dumps(first, ensure_ascii=False, indent=2))
+
+
+# ---- pasx/T6b (R6:1-3, 7) ------------------------------------------------------------------------------------------------------
+
+def test_check_in_a_missing_folder_creates_no_folder_and_no_temporary_file(template_dir, no_group_check):
+    config = template_dir / 'newdir' / 'products.yaml'
+    names = listing(template_dir)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', config=config, check=True)
+    # ../ paths are refused by products-config (the template inputs sit next to real.yaml); the point is that nothing is created
+    assert code in (0, 2)
+    assert listing(template_dir) == names and not (template_dir / 'newdir').exists()
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True)
+    assert code == 0 and outs[-1]['status'] == 'would_write' and 'folder' not in outs[-1]
+    assert listing(template_dir) == names
+
+
+def test_check_leaves_no_temporary_file_when_the_group_check_or_an_exception_stops_it(template_dir, monkeypatch):
+    names = listing(template_dir)
+    violation = [{'code': 'group_pair_table_mismatch', 'group': 'QA4', 'product': 'QA4_T00', 'case': None}]
+
+    def refuse(config):
+        raise pc.GroupCompatibilityError(violation)
+    monkeypatch.setattr(pc, 'check_groups', refuse)
+    assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True)[0] == 2
+    assert listing(template_dir) == names
+
+    def explode(config):
+        raise OSError('disk gone')
+    monkeypatch.setattr(pc, 'check_groups', explode)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True)
+    assert code == 2 and 'products_import_io' in errs[0]
+    assert listing(template_dir) == names
+
+
+def test_a_new_product_that_does_not_load_with_the_file_common_is_a_listed_conflict(template_dir, no_group_check):
+    assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')[0] == 0
+    target = template_dir / 'products.yaml'
+    before = (target.read_bytes(), target.stat().st_mtime_ns)
+    c2 = yaml.safe_load((template_dir / 'compare2.yaml').read_text(encoding='utf-8'))
+    c2['model_groups']['tablet'] = copy.deepcopy(c2['model_groups']['mobile'])
+    c2['products']['target']['model_group'] = 'tablet'
+    (template_dir / 'compare2.yaml').write_text(yaml.safe_dump(c2, sort_keys=False), encoding='utf-8')
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert code == 2 and 'products_import_conflict' in errs[0], errs
+    assert any('common.model_groups' in line for line in errs)
+    assert any('does not load with the file common values' in line and 'QA4_T00' in line for line in errs)
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', update=True)
+    assert code == 0, errs                                              # --update replaces the common values first, then it loads
+
+
+def test_update_that_changes_common_lists_every_product_of_the_file(template_dir, no_group_check):
+    assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')[0] == 0
+    target = template_dir / 'products.yaml'
+    doc = yaml.safe_load(target.read_text(encoding='utf-8'))
+    doc['products']['OTHER'] = copy.deepcopy(doc['products']['QA4_R00'])
+    doc['groups']['ELSE'] = ['OTHER']
+    target.write_text(yaml.safe_dump(doc, sort_keys=False), encoding='utf-8')
+    c2 = yaml.safe_load((template_dir / 'compare2.yaml').read_text(encoding='utf-8'))
+    c2['report']['top_n'] = 9
+    (template_dir / 'compare2.yaml').write_text(yaml.safe_dump(c2, sort_keys=False), encoding='utf-8')
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', update=True)
+    assert code == 0, errs
+    assert sorted(outs[-1]['common_changed_products']) == ['OTHER', 'QA4_R00', 'QA4_T00']
+    assert any('OTHER' in line and 'QA4_R00' in line for line in errs)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', update=True)      # nothing changes now
+    assert 'common_changed_products' not in outs[-1] and not errs
+
+
+def test_a_path_with_no_relative_form_is_products_import_invalid(template_dir, no_group_check, monkeypatch):
+    def other_drive(path, start=None):
+        raise ValueError('path is on mount "D:", start on mount "C:"')
+    monkeypatch.setattr(os.path, 'relpath', other_drive)
+    names = listing(template_dir)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert code == 2 and 'products_import_invalid' in errs[0], errs
+    assert listing(template_dir) == names

@@ -8,8 +8,8 @@ Reads the two existing settings with their own loaders, builds the product secti
     unless `--update`; an equal one is left alone and an unchanged file is not written at all (its mtime stays);
   - a human-written `note` stays; comments of the file are not kept (the first line says the file was fixed by this command);
   - the result is written to a temporary file next to the target, checked with `check_groups` (group compatibility) and
-    only then moved with os.replace. A failing check leaves the target as it was. `--check` writes nothing to the target
-    (the temporary file is removed again);
+    only then moved with os.replace. A failing check leaves the target as it was. `--check` writes nothing at all: no folder,
+    no temporary file (the text is judged in memory);
   - the YAML is written deterministically (fixed key order).
 """
 import copy
@@ -45,7 +45,10 @@ def _rebase(value, source_dir: Path, target_dir: Path):
     (products-config refuses absolute paths, '..' and backslashes itself)."""
     if not isinstance(value, str) or not value or os.path.isabs(value) or '\\' in value:
         return value
-    return os.path.relpath(str(source_dir / value), str(target_dir)).replace(os.sep, '/')
+    try:
+        return os.path.relpath(str(source_dir / value), str(target_dir)).replace(os.sep, '/')
+    except ValueError as exc:                       # another drive on Windows: no relative path exists
+        raise _error('products_import_invalid', 'no relative path from %s to %s: %s' % (target_dir, source_dir / value, exc))
 
 
 def _read_yaml(path: Path) -> dict:
@@ -258,7 +261,14 @@ def _merge(existing: Optional[dict], config_dir: Path, common: dict, products: D
             old = _normal_product(name, current, file_common)
         except NumericContractError as exc:
             old = {'(does not load)': str(exc)}
-        new = _normal_product(name, section, file_common)
+        try:
+            new = _normal_product(name, section, file_common)
+        except NumericContractError as exc:
+            if update:
+                raise
+            # the desired product does not load with the common values the file has: that is a conflict too (R6:2)
+            merge.conflicts.append('products.%s: the new section does not load with the file common values: %s' % (name, exc))
+            continue
         lines = _diff('products.%s' % name, old, new)
         if lines:
             merge.conflicts += lines
@@ -335,20 +345,33 @@ def run_products_import(real_path, compare2_path, group: str, config_path='produ
             out(result)
             return 0
         text = _dump(_final_doc(merge))
-        temp = config_dir / ('.products-import.%d.tmp' % os.getpid())
-        config_dir.mkdir(parents=True, exist_ok=True)
-        with open(str(temp), 'w', encoding='utf-8', newline='\n') as handle:
-            handle.write(text)
+        if check:
+            # --check touches no disk: no folder, no temporary file (R6:1). The text is judged in memory.
+            checked_config = pc.load_products_config_bytes(config_path, text.encode('utf-8'))
+        else:
+            temp = config_dir / ('.products-import.%d.tmp' % os.getpid())
+            config_dir.mkdir(parents=True, exist_ok=True)
+            with open(str(temp), 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(text)
+            checked_config = None
         try:
-            checked = pc.load_products_config(temp)
-            pc.check_groups(checked)
+            if checked_config is None:
+                checked_config = pc.load_products_config(temp)
+            pc.check_groups(checked_config)
         except pc.GroupCompatibilityError as exc:
             err('오류: group_incompatible: %s (%s is unchanged)' % (exc, config_path.name))
             out({'status': 'incompatible', 'violations': exc.violations})
             return 2
         result.update({'added': merge.added, 'updated': merge.updated, 'conflicts_overwritten': merge.conflicts})
+        if any(item.startswith('common.') for item in merge.updated):
+            # a changed common value reaches every product of the file, not only the two imported ones (R6:3)
+            affected = list(merge.doc['products'])
+            result['common_changed_products'] = affected
+            err('주의: common 이 바뀌어 products.yaml 의 모든 제품이 영향받습니다: %s' % ', '.join(affected))
         if check:
             result['status'] = 'would_write'
+            if not config_dir.exists():
+                result['folder'] = '새로 만들 예정: %s' % config_dir
         else:
             os.replace(str(temp), str(config_path))
             temp = None

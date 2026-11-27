@@ -4,6 +4,7 @@
 선택한 단계의 이전 출력 폴더를 data/_runs/<RUN_TAG>/ 로 옮긴다(삭제·복사 없음, 같은 파일 시스템 안 os.rename).
 계산 코드는 건드리지 않는다: 이 모듈은 `python -m simcompare <명령> <인자...>` 의 인자 목록만 만든다.
 Python 3.8 문법, 표준 라이브러리와 번들 PyYAML 만 쓴다.
+제품 모드는 함수 안에서 패키지 모듈(numpy 포함)을 늦게 import 한다.
 """
 import os
 import sys
@@ -497,9 +498,10 @@ def _prepare_products(base_dir, settings, dry_run, echo):
         echo('  job [%s] %s %s' % (job.step, job[0], ' '.join(job[1])))
     for name, args in finalizers:
         echo('  finalizer %s %s' % (name, ' '.join(args)))
-    echo('flow: asset state of %s (read only):' % cfg_name)
-    for line in _product_status_lines(plan):
-        echo(line)
+    if dry_run:                     # 자산 판정은 읽기 전용이지만 시간이 든다: DRY_RUN 일 때만 계산·출력
+        echo('flow: asset state of %s (read only):' % cfg_name)
+        for line in _product_status_lines(plan):
+            echo(line)
     echo('flow: no output folder is moved by the runner: products-step and pair-step keep and archive their own generations')
     if dry_run:
         echo('flow: DRY_RUN = True: nothing was run or moved')

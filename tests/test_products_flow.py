@@ -182,6 +182,17 @@ def test_prepare_in_product_mode_moves_no_output_folder_and_returns_flow_jobs(wo
     assert snapshot(world.base) == before and not (world.base / 'data/_runs').exists()
 
 
+def test_asset_state_lines_are_computed_and_printed_only_in_dry_run(world, monkeypatch):
+    calls = []
+    monkeypatch.setattr(etx_flow, '_product_status_lines', lambda plan: calls.append(1) or ['  asset X: 없음'])
+    lines = []
+    etx_flow.prepare(world.base, settings(products=['P1']), echo=lines.append)
+    assert calls == [] and not any('asset state' in line for line in lines)
+    lines = []
+    etx_flow.prepare(world.base, settings(products=['P1']), dry_run=True, echo=lines.append)
+    assert calls == [1] and any('asset state' in line for line in lines) and '  asset X: 없음' in lines
+
+
 def test_a_fresh_product_has_a_state_in_dry_run_after_its_assets_exist(world):
     from test_products_assets import build_all
     build_all(world, products=('P1',))

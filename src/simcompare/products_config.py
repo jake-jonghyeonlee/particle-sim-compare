@@ -160,9 +160,14 @@ class ProductsConfig(object):
 
 
 def load_products_config(path) -> ProductsConfig:
+    path = Path(path).resolve()
+    return load_products_config_bytes(path, path.read_bytes())
+
+
+def load_products_config_bytes(path, raw_bytes: bytes) -> ProductsConfig:
+    """The same loader for text that is not on disk (products-import --check): `path` only gives the base folder."""
     import yaml
     path = Path(path).resolve()
-    raw_bytes = path.read_bytes()
     try:
         cfg = yaml.safe_load(raw_bytes.decode('utf-8'))
     except (yaml.YAMLError, UnicodeDecodeError) as exc:
