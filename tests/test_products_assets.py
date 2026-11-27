@@ -449,6 +449,18 @@ def test_open_generation_refuses_a_pointer_to_another_generation(built):
     assert corrupt_reason(built, 'P1', 'hotspots') == 'asset_corrupt:pointer_unreadable'
 
 
+def test_a_corrupt_01_is_rebuilt_and_02_refuses_it(built):
+    world = built
+    manifest = pa.open_generation(world.base, 'P3', 'hotspots').path / 'manifest.json'
+    manifest.write_bytes(manifest.read_bytes() + b'\n')
+    assert states(world, 'P3')['hotspots'][0] == pa.CORRUPT
+    code, _outs, errs = step(world, 'P3', '02', 'T2')
+    assert code == 2 and any('asset_missing' in e and 'products-step 01' in e for e in errs)
+    code, outs, _errs = step(world, 'P3', '01', 'T2')
+    assert code == 0 and outs[-1].startswith('built 01 P3 g0002-')
+    assert states(world, 'P3')['hotspots'] == (pa.OK, [])
+
+
 def test_missing_pointer_is_missing_not_corrupt(built):
     (built.products_dir('P1') / 'side' / 'CURRENT.json').unlink()
     with pytest.raises(pa.AssetError) as caught:
