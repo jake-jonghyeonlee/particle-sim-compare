@@ -25,7 +25,9 @@ CNO_B = 'defect_size(um),Area(um2)\n1,0.5\n2,1.5\n3,5.0\n'
 
 
 def normalize(text, tmp):
-    """Output text with the tmp folder and every 64-hex digest masked (paths and hashes depend on the tmp path)."""
+    """Output text with the tmp folder and every 64-hex digest masked (paths and hashes depend on the tmp path).
+
+    The masked digests are verified by the classic == compose byte comparison in test_compare2_side.py."""
     text = text.replace(str(Path(tmp).resolve()), 'TMP').replace(str(tmp), 'TMP')  # macOS: /var is /private/var
     return re.sub(r'[0-9a-f]{64}', 'H', text)
 
@@ -59,13 +61,23 @@ def scenario_cno(tmp, mp):
     return tc.run(tmp, ref, tgt, ref_cno={tc.CNO_NAME: tc.CNO_CSV}, tgt_cno={tc.CNO_NAME: CNO_B})
 
 
+def scenario_excluded(tmp, mp):
+    # a pairs.csv row with class=excluded: its case is left out and a pair_exclusions meta block appears
+    extra_case = ('lateral_short', 'Y', 'L1', 'Z', 'L1', {1: {0, 1}, 2: {0}})
+    pairs = tc.PAIRS + [('YZ', 'Y', 'Z', 'excluded')]
+    ref, tgt = tc.two_sides()
+    return tc.run(tmp, (ref[0] + [extra_case], pairs), (tgt[0] + [extra_case], pairs))
+
+
 SCENARIOS = {'base': scenario_base, 'absent': scenario_absent, 'subset': scenario_subset,
              'distance': scenario_distance, 'cno': scenario_cno}
+# no golden folder (a baseline run cannot make one for it): checked by classic == compose byte equality only
+EXTRA_SCENARIOS = {'excluded': scenario_excluded}
 
 
 def build(name, tmp, mp):
     """Run scenario `name` in `tmp`; returns (exit code, output folder). The config is tmp/compare2.yaml."""
-    code, out = SCENARIOS[name](tmp, mp)
+    code, out = (SCENARIOS.get(name) or EXTRA_SCENARIOS[name])(tmp, mp)
     return code, out
 
 

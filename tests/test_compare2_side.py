@@ -74,15 +74,47 @@ def test_classic_compare2_equals_golden(tmp_path, monkeypatch, name):
     check_golden(name, out, tmp_path)
 
 
-@pytest.mark.parametrize('name', sorted(gold.SCENARIOS))
-def test_side_side_compose_equals_golden(tmp_path, monkeypatch, name):
-    code, _classic = gold.build(name, tmp_path, monkeypatch)
+def compose_beside_classic(name, tmp_path, monkeypatch):
+    code, classic = gold.build(name, tmp_path, monkeypatch)
     assert code == 0
     config = tmp_path / 'compare2.yaml'
     assert side_cmd(config, 'reference', tmp_path / 'sref') == 0
     assert side_cmd(config, 'target', tmp_path / 'stgt') == 0
     assert compose_cmd(config, tmp_path / 'sref', tmp_path / 'stgt', tmp_path / 'composed') == 0
-    check_golden(name, tmp_path / 'composed', tmp_path)
+    return classic, tmp_path / 'composed'
+
+
+def assert_bytes_equal(classic, composed, name):
+    for file_name in gold.GOLDEN_FILES:  # no normalisation: the hash cells are verified here
+        assert (classic / file_name).read_bytes() == (composed / file_name).read_bytes(), (name, file_name)
+
+
+@pytest.mark.parametrize('name', sorted(gold.SCENARIOS) + sorted(gold.EXTRA_SCENARIOS))
+def test_compose_bytes_equal_classic_bytes(tmp_path, monkeypatch, name):
+    classic, composed = compose_beside_classic(name, tmp_path, monkeypatch)
+    assert_bytes_equal(classic, composed, name)
+
+
+def test_excluded_pair_scenario_has_pair_exclusions_and_round_trips(tmp_path, monkeypatch):
+    classic, composed = compose_beside_classic('excluded', tmp_path, monkeypatch)
+    document = json.loads((classic / 'compare2.json').read_text(encoding='utf-8'))
+    blocks = [document['inputs']['manifests'][role].get('pair_exclusions') for role in ('reference', 'target')]
+    assert all(blocks), blocks  # the scenario really leaves a case out
+    from simcompare.compare2 import _load_side, load_pair_config
+    _cfg2, cfg, top = load_pair_config(tmp_path / 'compare2.yaml')
+    for role, directory in (('reference', 'sref'), ('target', 'stgt')):
+        stored, _sha = cs.read_side(tmp_path / directory)
+        extracted, meta = _load_side(cfg, role, top)
+        assert meta.get('pair_exclusions')
+        same_structure(extracted, stored['extracted'])
+        same_structure(meta, stored['meta'])
+
+
+@pytest.mark.parametrize('name', sorted(gold.SCENARIOS))
+def test_side_side_compose_equals_golden(tmp_path, monkeypatch, name):
+    """Golden files hold hash-masked text; the masked hash cells are verified by test_compose_bytes_equal_classic_bytes."""
+    classic, composed = compose_beside_classic(name, tmp_path, monkeypatch)
+    check_golden(name, composed, tmp_path)
     compose = json.loads((tmp_path / 'composed' / 'compose.json').read_text(encoding='utf-8'))
     assert compose['schema_version'] == cs.COMPOSE_SCHEMA
     assert compose['compare2_json_sha256'] == cs.sha256_bytes((tmp_path / 'composed' / 'compare2.json').read_bytes())
@@ -252,6 +284,48 @@ def test_compose_refuses_a_changed_section(base):
     (tmp / 'numeric.yaml').write_text(yaml.safe_dump(numeric), encoding='utf-8')
     code, error = stale_code(tmp, config)
     assert code == 2 and error['code'] == 'compare2_side_stale' and 'section_sha256' in error['detail']
+
+
+def test_compose_refuses_a_changed_distance_table(tmp_path, monkeypatch):
+    code, _out = gold.build('distance', tmp_path, monkeypatch)
+    assert code == 0
+    config = tmp_path / 'compare2.yaml'
+    make_sides(tmp_path, config)
+    (tmp_path / 'thk_info.txt').write_text('layers\tdistance\nL1L2\t2.5\n', encoding='utf-8')
+    code, error = stale_code(tmp_path, config)
+    assert code == 2 and error['code'] == 'compare2_side_stale' and 'distance_table_sha256' in error['detail']
+    assert not (tmp_path / 'composed' / 'compare2.json').exists()
+
+
+def test_summary_refuses_a_stale_side(base):
+    tmp, config = base
+    assert side_cmd(config, 'reference', tmp / 'sref') == 0
+    pairs = tmp / 'ref' / 'imp' / 'pairs.csv'
+    pairs.write_text(pairs.read_text(encoding='utf-8') + 'ZZ,Y,Z,line,v1\n', encoding='utf-8')
+    code = main(['compare2-summary', '--config', str(config), '--role', 'reference', '--side', str(tmp / 'sref'),
+                 '--out', str(tmp / 'sum')])
+    error = json.loads((tmp / 'sum' / 'error.json').read_text(encoding='utf-8'))
+    assert code == 2 and error['code'] == 'compare2_side_stale' and 'pair_table_sha256' in error['detail']
+    assert not (tmp / 'sum' / 'summary.json').exists()
+
+
+def test_read_side_refuses_non_finite_constants(tmp_path):
+    for index, constant in enumerate(('NaN', 'Infinity', '-Infinity')):
+        folder = tmp_path / f'c{index}'
+        folder.mkdir()
+        (folder / cs.SIDE_FILE).write_text('{"schema_version":"x","binding":{},"meta":{},"extracted":{"v":%s}}' % constant,
+                                           encoding='utf-8')
+        with pytest.raises(NumericContractError):
+            cs.read_side(folder)
+
+
+def test_decoder_refuses_a_duplicate_dict_key():
+    for tag in ('$dict', '$ddict_float'):
+        with pytest.raises(NumericContractError) as caught:
+            cs.decode({tag: [['k', 1], ['k', 2]]})
+        assert caught.value.code == 'compare2_side_invalid'
+    with pytest.raises(NumericContractError):
+        cs.decode({'$dict': [[{'$tuple': [1, 2]}, 1], [{'$tuple': [1, 2]}, 2]]})
 
 
 def test_compose_writes_compose_json_last_and_owns_it(base):

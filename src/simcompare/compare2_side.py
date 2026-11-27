@@ -103,7 +103,10 @@ def decode(value):
         for entry in _list(body, tag):
             if type(entry) is not list or len(entry) != 2:
                 raise _invalid(f'{tag}: entries are [key, value] pairs')
-            result[decode(entry[0])] = decode(entry[1])
+            key = decode(entry[0])
+            if key in result:
+                raise _invalid(f'{tag}: duplicate key {key!r}')
+            result[key] = decode(entry[1])
         return result
     if tag == '$set':
         return {decode(item) for item in _list(body, tag)}
@@ -183,6 +186,10 @@ def side_text(extracted, meta, binding):
     return canonical(encode(document))
 
 
+def _refuse_constant(name):
+    raise ValueError(f'non-finite JSON constant {name}')
+
+
 def read_side(side_dir):
     """(decoded document, sha256 of the side.json bytes)."""
     path = Path(side_dir) / SIDE_FILE
@@ -191,7 +198,7 @@ def read_side(side_dir):
     except OSError as exc:
         raise NumericContractError('compare2_side_missing', f'{path}: {exc}') from exc
     try:
-        document = decode(json.loads(raw.decode('utf-8')))
+        document = decode(json.loads(raw.decode('utf-8'), parse_constant=_refuse_constant))
     except (ValueError, UnicodeDecodeError) as exc:
         raise _invalid(f'{path}: {exc}') from exc
     if type(document) is not dict or document.get('schema_version') != SIDE_SCHEMA:
