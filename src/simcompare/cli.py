@@ -271,6 +271,16 @@ def _parser() -> argparse.ArgumentParser:
     pstep.add_argument("--step", required=True, choices=["01", "02"], help="01 = hotspot import, 02 = side + summary")
     pstep.add_argument("--force", action="store_true", help="신선해도 그 단계를 다시 만든다")
     pstep.add_argument("--run-tag", default=None, help="옛 세대·남은 staging 을 옮길 data/_runs/<RUN_TAG> 이름(기본: UTC 시각 YYYYMMDD-HHMMSS)")
+    pairstep = _korean_help(sub.add_parser(
+        "pair-step", add_help=False,
+        help="두 제품 자산(products-step 01·02)으로 쌍 단계 하나(compose / ledger / maps / report)를 만든다. 조합이 낡았으면 ledger·maps·report 는 거부. 종료 0=만듦·건너뜀, 2=오류·거부, 3=부분 결과"))
+    pairstep.add_argument("--config", required=True, help="products.yaml")
+    pairstep.add_argument("--pair", nargs=2, required=True, metavar=("A", "B"), help="A 가 reference, B 가 target(같은 그룹의 서로 다른 제품)")
+    pairstep.add_argument("--step", required=True, choices=["compose", "ledger", "maps", "report"],
+                          help="compose = compare2-compose(신선하면 건너뜀), ledger, maps(기본 카드 끔), report")
+    pairstep.add_argument("--run-tag", default=None, help="옛 출력을 옮길 data/_runs/<RUN_TAG> 이름(기본: UTC 시각 YYYYMMDD-HHMMSS)")
+    pairstep.add_argument("--cards", action="store_true", help="maps 단계에서 카드도 만든다(기본은 끔)")
+    pairstep.add_argument("--no-cards", action="store_true", help="maps 단계에서 카드를 만들지 않는다(기본값)")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
@@ -465,6 +475,12 @@ def main(argv: list[str] | None = None) -> int:
             from simcompare import products_assets
             return products_assets.run_products_step(args.config, args.product, args.step, force=args.force,
                                                      run_tag=args.run_tag)
+        if args.command == "pair-step":
+            from simcompare import pair_assets
+            if args.cards and args.no_cards:
+                parser.error("--cards 와 --no-cards 는 함께 쓸 수 없습니다")
+            return pair_assets.run_pair_step(args.config, args.pair[0], args.pair[1], args.step, run_tag=args.run_tag,
+                                             cards=args.cards)
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report
