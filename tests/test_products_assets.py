@@ -146,6 +146,12 @@ def rewrite_hotspot(world, product, case, diameter, cells):
 AB = 'lateral_short-A-L1-B-L1'
 
 
+def write_settings(world, product):
+    """The writer side of the generated settings (check_assets only reads them)."""
+    config = pc.load_products_config(world.path)
+    pa.ensure_product_settings(config, product, pa.open_generation(world.base, product, 'hotspots'))
+
+
 # ---- acceptance 1: generations, pointer, complete.json, skip fresh ---------------------------------------------------
 
 def test_01_then_02_build_assets_and_a_second_run_skips_everything(world):
@@ -351,17 +357,22 @@ def test_product_block_diameter_and_model_group_changes_move_the_summary(built):
     world = built
     world.doc['products']['P3']['resolution'] = [40, 10]
     world.write_doc()
-    found = states(world, 'P3')              # the resolution is not part of the side (numeric section): the summary moves
-    assert found['side'][0] == pa.OK and found['summary'] == (pa.STALE, ['product_block_changed'])
-    code, _outs, _errs = step(world, 'P3', '02', 'T2')
-    assert code == 0
+    # the generated settings changed and the read-only check does not write them (R5:1): side and summary read 낡음
+    found = states(world, 'P3')
+    assert found['side'] == (pa.STALE, ['product_settings_changed']) and found['summary'][0] == pa.STALE
+    code, outs, _errs = step(world, 'P3', '02', 'T2')          # 02 writes the settings; the side itself is still fresh
+    assert code == 0 and outs == ['skip fresh 02 side P3', 'built 02 summary P3']
+    assert states(world, 'P3')['summary'] == (pa.OK, [])
     world.doc['common']['lambda_diameters_um'] = [1, 3]
     world.write_doc()
+    assert states(world, 'P3')['summary'][0] == pa.STALE
+    write_settings(world, 'P3')                         # the writer (products-step does it) makes the reason visible
     assert states(world, 'P3')['summary'] == (pa.STALE, ['diameter_subset_changed'])
     code, _outs, _errs = step(world, 'P3', '02', 'T3')
     assert code == 0 and states(world, 'P3')['summary'] == (pa.OK, [])
     world.doc['common']['model_groups']['mobile']['weight_line'] = 2.0
     world.write_doc()
+    write_settings(world, 'P3')
     assert 'model_group_changed' in states(world, 'P3')['summary'][1]
 
 
@@ -461,11 +472,21 @@ def test_a_corrupt_01_is_rebuilt_and_02_refuses_it(built):
     assert states(world, 'P3')['hotspots'] == (pa.OK, [])
 
 
-def test_missing_pointer_is_missing_not_corrupt(built):
-    (built.products_dir('P1') / 'side' / 'CURRENT.json').unlink()
+def test_missing_pointer_without_generations_is_missing(world):
     with pytest.raises(pa.AssetError) as caught:
-        pa.open_generation(built.base, 'P1', 'side')
+        pa.open_generation(world.base, 'P1', 'side')
     assert caught.value.state == pa.MISSING and caught.value.code == 'asset_missing'
+
+
+def test_missing_pointer_with_generations_is_corrupt_and_nothing_moves(built):
+    """R5:4"""
+    kdir = built.products_dir('P1') / 'side'
+    (kdir / 'CURRENT.json').unlink()
+    assert corrupt_reason(built, 'P1', 'side') == 'asset_corrupt:pointer_missing_with_generations'
+    assert pa.asset_status(built.base, 'P1', built.path)[0] == pa.CORRUPT
+    assert pa.archive_names(kdir) == []
+    code, _outs, _errs = step(built, 'P1', '02', 'T2')      # a rebuild is the way out; the old folder is archived after
+    assert code == 0 and pa.asset_status(built.base, 'P1', built.path) == (pa.OK, [])
 
 
 class MaskCounter(object):
@@ -793,3 +814,106 @@ def test_side_of_the_product_settings_equals_the_side_of_a_pair_settings(built):
     side = pa.open_generation(world.base, 'P1', 'side')
     document, _sha = cs.read_side(side.path)
     assert cs.side_binding(cfg_pair[1], 'reference', cfg_pair[2]) == document['binding']
+
+
+# ---- T5b (R5 follow-ups) -----------------------------------------------------------------------------------------
+
+def tree_snapshot(root):
+    return sorted((str(p.relative_to(root)), p.stat().st_mtime_ns) for p in root.rglob('*'))
+
+
+def test_asset_status_writes_nothing_and_works_on_a_read_only_base(built):
+    """R5:1: the check builds the settings in memory; a changed setting reads 낡음 without a write."""
+    world = built
+    before = tree_snapshot(world.base)
+    assert pa.asset_status(world.base, 'P1', world.path) == (pa.OK, [])
+    assert tree_snapshot(world.base) == before
+    (world.base / 'gen.product.P1.compare2.yaml').unlink()                # a missing generated file is a changed setting
+    assert states(world, 'P1')['side'] == (pa.STALE, ['product_settings_changed'])
+    assert not (world.base / 'gen.product.P1.compare2.yaml').exists()
+    step(world, 'P1', '02', 'T2')
+    assert (world.base / 'gen.product.P1.compare2.yaml').exists() and states(world, 'P1')['side'] == (pa.OK, [])
+    write_bits = {}
+    for path in [world.base] + list(world.base.rglob('*')):
+        if path.is_dir():
+            write_bits[path] = path.stat().st_mode
+            os.chmod(str(path), 0o555)
+    try:
+        assert pa.asset_status(world.base, 'P1', world.path) == (pa.OK, [])
+    finally:
+        for path, mode in write_bits.items():
+            os.chmod(str(path), mode)
+
+
+def test_changed_mask_stat_is_corrupt(built):
+    """R5:2: a mask whose size or mtime moved (or that is gone) makes 01 손상; no mask is read."""
+    world = built
+    generation = pa.open_generation(world.base, 'P1', 'hotspots')
+    masks = [entry['path'] for entry in generation.complete['masks']]
+    assert len(masks) >= 2
+    bump_mtime(generation.path / masks[0])
+    state, reasons = pa.asset_status(world.base, 'P1', world.path)
+    assert state == pa.CORRUPT and 'asset_corrupt:mask_stat_changed' in reasons
+    os.utime(str(generation.path / masks[0]), ns=(1, [e['mtime_ns'] for e in generation.complete['masks']][0]))
+    assert pa.asset_status(world.base, 'P1', world.path) == (pa.OK, [])
+    (generation.path / masks[1]).unlink()
+    state, reasons = pa.asset_status(world.base, 'P1', world.path)
+    assert state == pa.CORRUPT and 'asset_corrupt:mask_stat_changed' in reasons
+    assert step(world, 'P1', '01', 'T2')[0] == 0                           # a rebuild is the way out
+    assert states(world, 'P1')['hotspots'] == (pa.OK, [])
+
+
+def test_01_reports_diagnostic_counts_and_02_reports_a_partial_summary_on_skip(world):
+    """R5:3"""
+    code, outs, _errs = step(world, 'P1', '01')
+    assert code == 0 and outs[-2].startswith('diagnostics 01 P1: ') and outs[-1].startswith('built 01 P1 g0001-')
+    entry = log_lines(world, 'P1')[-1]
+    assert isinstance(entry['diagnostics'], dict)
+    assert outs[-2] == 'diagnostics 01 P1: ' + (', '.join('%s=%d' % kv for kv in entry['diagnostics'].items()) or 'none')
+    assert step(world, 'P1', '02')[0] == 0
+    summary_path = world.products_dir('P1') / 'summary.json'
+    document = json.loads(summary_path.read_text(encoding='utf-8'))
+    document['status'] = 'partial'
+    summary_path.write_text(json.dumps(document), encoding='utf-8')
+    code, outs, _errs = step(world, 'P1', '02', 'T2')
+    assert code == 0 and outs[-1] == 'skip fresh 02 summary P1 (summary status: partial)'
+    assert log_lines(world, 'P1')[-1]['summary_status'] == 'partial'
+
+
+def test_a_permission_error_is_retried_a_few_times_and_nothing_else_is(built, monkeypatch):
+    """R5:5"""
+    monkeypatch.setattr(pa, 'RETRY_WAIT_S', 0)
+    real_replace = os.replace
+    failures = {'left': 3}
+
+    def flaky(src, dst):
+        if failures['left'] > 0 and 'hotspots' in str(dst) and '/g0' in str(dst):      # the generation rename only
+            failures['left'] -= 1
+            raise PermissionError('held open')
+        return real_replace(src, dst)
+    monkeypatch.setattr(pa.os, 'replace', flaky)
+    code, outs, _errs = step(built, 'P1', '01', 'T2', force=True)
+    assert code == 0 and failures['left'] == 0 and outs[-1].startswith('built 01 P1 g0002-')
+    failures['left'] = 99                                                    # never works: 5 tries, then the error
+    calls = []
+    monkeypatch.setattr(pa.os, 'replace', lambda s, d: calls.append(1) or (_ for _ in ()).throw(PermissionError('x')))
+    with pytest.raises(PermissionError):
+        pa._rename_generation(Path('a'), Path('b'))
+    assert len(calls) == pa.RETRY_COUNT
+    calls.clear()
+    monkeypatch.setattr(pa.os, 'replace', lambda s, d: calls.append(1) or (_ for _ in ()).throw(OSError('other')))
+    with pytest.raises(OSError):
+        pa._rename_generation(Path('a'), Path('b'))
+    assert len(calls) == 1
+
+
+def test_os_side_files_do_not_change_the_inventory(built):
+    """R5:7"""
+    world = built
+    folder = world.root('P1') / AB
+    for name in ('Thumbs.db', 'desktop.ini', '.DS_Store', '._1.png', 'THUMBS.DB'):
+        (folder / name).write_bytes(b'junk')
+    (world.root('P1') / '._top').write_bytes(b'junk')
+    assert states(world, 'P1')['hotspots'] == (pa.OK, [])
+    (folder / 'notes.txt').write_bytes(b'real file')
+    assert states(world, 'P1')['hotspots'] == (pa.STALE, ['source_changed'])

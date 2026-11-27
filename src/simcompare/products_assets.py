@@ -132,13 +132,28 @@ def _write_file(path: Path, data: bytes) -> None:
         os.fsync(handle.fileno())
 
 
+RETRY_COUNT = 5            # a rename that a virus scanner or indexer holds open raises PermissionError on Windows
+RETRY_WAIT_S = 0.5
+
+
+def _retry_permission(action: Callable[[], object]):
+    """Run `action`; retry only PermissionError (RETRY_COUNT tries, RETRY_WAIT_S apart). Other errors pass at once."""
+    for attempt in range(RETRY_COUNT):
+        try:
+            return action()
+        except PermissionError:
+            if attempt == RETRY_COUNT - 1:
+                raise
+            time.sleep(RETRY_WAIT_S)
+
+
 def _write_atomic(path: Path, data: bytes) -> None:
     """Temporary file + os.replace in the same folder."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name('.%s.tmp-%d-%s' % (path.name, os.getpid(), _new_id8()))
     try:
         _write_file(tmp, data)
-        os.replace(str(tmp), str(path))
+        _retry_permission(lambda: os.replace(str(tmp), str(path)))
     finally:
         if tmp.exists():
             tmp.unlink()
@@ -241,6 +256,8 @@ def open_generation(base, product: str, kind: str) -> Generation:
     kdir = kind_dir(base, product, kind)
     pointer = _read_pointer(kdir)
     if pointer is None:
+        if _generation_numbers(kdir):
+            raise _corrupt('pointer_missing_with_generations', str(kdir))     # nothing is moved or picked
         raise AssetError('asset_missing', '%s/%s has no %s' % (product, kind, POINTER), MISSING)
     gdir = kdir / pointer['generation']
     if gdir.is_symlink() or not gdir.is_dir():
@@ -310,7 +327,7 @@ def _write_complete(staging: Path, document: dict) -> str:
 
 
 def _rename_generation(staging: Path, target: Path) -> None:
-    os.replace(str(staging), str(target))
+    _retry_permission(lambda: os.replace(str(staging), str(target)))
 
 
 def _write_pointer(kdir: Path, generation: str, complete_sha256: str) -> None:
@@ -325,7 +342,7 @@ def _move_to_runs(base: Path, source: Path, run_tag: str, product: str, kind: st
     while target.exists():
         counter += 1
         target = destination / ('%s-%d' % (source.name, counter))
-    shutil.move(str(source), str(target))
+    _retry_permission(lambda: shutil.move(str(source), str(target)))
     return target
 
 
@@ -418,15 +435,14 @@ def _read_pointer_or_none(kdir: Path) -> Optional[dict]:
 
 def archive_names(kdir: Path) -> List[str]:
     """Generation folders to archive: all but the current and the one before it. With a valid pointer, folders newer
-    than the pointer (never published) go too; with no pointer at all every generation folder is an orphan. A corrupt
-    pointer archives nothing."""
+    than the pointer (never published) go too. With no pointer or a corrupt pointer nothing moves (`손상`, R5:4)."""
     try:
         pointer = _read_pointer(kdir)
     except AssetError:
         return []
     numbers = _generation_numbers(kdir)
     if pointer is None:
-        return sorted(numbers)
+        return []
     if pointer['generation'] not in numbers:
         return []
     current = numbers[pointer['generation']]
@@ -490,14 +506,26 @@ class AssetLog(object):
 
 # --------------------------------------------------------------------------------------------------- source inventory
 
+OS_JUNK_NAMES = frozenset(['thumbs.db', 'desktop.ini', '.ds_store'])
+
+
+def is_os_junk(name: str) -> bool:
+    """OS side files (Thumbs.db, desktop.ini, .DS_Store, ._*; case ignored) are not part of a source inventory (R5:7)."""
+    lowered = name.lower()
+    return lowered in OS_JUNK_NAMES or lowered.startswith('._')
+
+
 def _walk_source(root: Path) -> Tuple[List[str], Dict[str, Tuple[int, int]]]:
-    """(sorted folder paths, {file path: (size, mtime_ns)}), relative and posix. Symlinks are not followed."""
+    """(sorted folder paths, {file path: (size, mtime_ns)}), relative and posix. Symlinks are not followed.
+    OS side files are left out."""
     folders, files = [], {}
     for current, dirnames, filenames in os.walk(str(root), followlinks=False):
         dirnames.sort()
         for name in dirnames:
             folders.append((Path(current) / name).relative_to(root).as_posix())
         for name in sorted(filenames):
+            if is_os_junk(name):
+                continue
             path = Path(current) / name
             stat = path.stat()
             files[path.relative_to(root).as_posix()] = (int(stat.st_size), int(stat.st_mtime_ns))
@@ -581,11 +609,27 @@ def _hotspots_reasons(recorded: dict, now: dict) -> List[str]:
     return reasons
 
 
+def _mask_stat_changed(generation: Generation) -> Optional[str]:
+    """First mask whose size or mtime_ns differs from complete.json (os.stat only, no read); None when all match."""
+    for entry in generation.complete['masks']:
+        rel = _safe_relative(entry.get('path'))
+        try:
+            stat = os.stat(str(generation.path / rel))
+        except OSError:
+            return rel
+        if int(stat.st_size) != entry.get('size') or int(stat.st_mtime_ns) != entry.get('mtime_ns'):
+            return rel
+    return None
+
+
 def hotspots_verdict(base, config: pc.ProductsConfig, product: str, results: dict) -> Verdict:
     try:
         generation = open_generation(base, product, 'hotspots')
     except AssetError as exc:
         return Verdict(exc.state, ['asset_missing' if exc.state == MISSING else exc.code])
+    changed = _mask_stat_changed(generation)
+    if changed:
+        return Verdict(CORRUPT, ['asset_corrupt:mask_stat_changed'], ['mask_stat_changed:%s' % changed])
     reasons = _hotspots_reasons(generation.complete.get('fingerprint') or {}, hotspots_fingerprint(config, product, results))
     try:
         inventory = _parse_json((generation.path / 'source_inventory.json').read_bytes())
@@ -616,13 +660,31 @@ def product_settings_names(product: str) -> Tuple[str, str]:
     return 'gen.product.%s.real.yaml' % product, 'gen.product.%s.compare2.yaml' % product
 
 
+def product_settings_files(config: pc.ProductsConfig, product: str, hotspots: Generation) -> Dict[str, str]:
+    """{file name: text} of the two generated settings of `product` for its current hotspots generation (no write)."""
+    real_name, compare2_name = product_settings_names(product)
+    return {real_name: pc.product_real_yaml(config, product, {product: hotspots.relative_path}),
+            compare2_name: product_compare2_yaml(config, product)}
+
+
+def settings_on_disk(config: pc.ProductsConfig, files: Dict[str, str]) -> bool:
+    """True when every generated file exists as a regular file with exactly these bytes (read only)."""
+    for name, text in files.items():
+        path = config.base / name
+        try:
+            if path.is_symlink() or not path.is_file() or path.read_bytes() != text.encode('utf-8'):
+                return False
+        except OSError:
+            return False
+    return True
+
+
 def ensure_product_settings(config: pc.ProductsConfig, product: str, hotspots: Generation) -> Path:
     """Write (only when the bytes change) the two generated settings of `product` for its current hotspots generation.
-    Returns the compare2 settings path. Run again whenever the generation changes."""
+    Returns the compare2 settings path. Run again whenever the generation changes. Only `products-step` and
+    `pair-step` call this; `check_assets` never writes."""
     real_name, compare2_name = product_settings_names(product)
-    pc.write_generated(config, {
-        real_name: pc.product_real_yaml(config, product, {product: hotspots.relative_path}),
-        compare2_name: product_compare2_yaml(config, product)})
+    pc.write_generated(config, product_settings_files(config, product, hotspots))
     return config.base / compare2_name
 
 
@@ -720,8 +782,9 @@ def _load_config(base, config) -> pc.ProductsConfig:
 
 def check_assets(base, product: str, config=None, results: Optional[dict] = None) -> Dict[str, Verdict]:
     """{'hotspots': Verdict, 'side': Verdict, 'summary': Verdict}. Reads names, small files and the source tree stat
-    (and a source file's bytes only when its size or mtime moved); no mask is read. Writes only the two generated
-    settings of the product (same bytes -> no write)."""
+    (and a source file's bytes only when its size or mtime moved); no mask is read. Read only (R5:1): the generated
+    settings are built in memory; when the file on disk differs, side and summary are 낡음 (`product_settings_changed`,
+    or `hotspots_generation_changed` when the hotspots generation moved) and no binding is computed."""
     base = Path(base)
     config = _load_config(base, config)
     if product not in config.products:
@@ -732,7 +795,19 @@ def check_assets(base, product: str, config=None, results: Optional[dict] = None
     if hotspots.generation is None:
         pending = Verdict(MISSING, ['hotspots_unavailable'])
         return {'hotspots': hotspots, 'side': pending, 'summary': Verdict(MISSING, ['hotspots_unavailable'])}
-    compare2_path = ensure_product_settings(config, product, hotspots.generation)
+    files = product_settings_files(config, product, hotspots.generation)
+    if not settings_on_disk(config, files):
+        try:
+            current_side = open_generation(config.base, product, 'side')
+        except AssetError as exc:
+            side = Verdict(exc.state, ['asset_missing' if exc.state == MISSING else exc.code])
+            return {'hotspots': hotspots, 'side': side, 'summary': Verdict(MISSING, ['side_unavailable'])}
+        recorded = current_side.complete.get('fingerprint') or {}
+        moved = (recorded.get('hotspots_generation') != hotspots.generation.name
+                 or recorded.get('hotspots_manifest_sha256') != hotspots.generation.file_sha256('manifest.json'))
+        reasons = ['hotspots_generation_changed' if moved else 'product_settings_changed']
+        return {'hotspots': hotspots, 'side': Verdict(STALE, reasons), 'summary': Verdict(STALE, list(reasons))}
+    compare2_path = config.base / product_settings_names(product)[1]
     cfg_pair = compare2_side.load_pair_config(compare2_path)
     side = side_verdict(config.base, config, product, hotspots.generation, cfg_pair)
     if side.generation is None:
@@ -755,6 +830,7 @@ class StepContext(object):
     def __init__(self, config: pc.ProductsConfig, product: str, run_tag: str, log: AssetLog, out, err):
         self.config, self.product, self.run_tag, self.log, self.out, self.err = config, product, run_tag, log, out, err
         self.base = config.base
+        self.diagnostic_counts: Dict[str, int] = {}
 
 
 def _recover(ctx: StepContext) -> None:
@@ -776,6 +852,16 @@ def _archive_all(ctx: StepContext, started: float) -> None:
             ctx.log.append(kind, 'pending_archive', OK, [], name, time.time() - started, 0, 'archive_failed', detail=error)
 
 
+def diagnostic_counts(manifest_path: Path) -> Dict[str, int]:
+    """{diagnostic status: count} of an imported manifest (R5:3)."""
+    manifest = _parse_json(Path(manifest_path).read_bytes())
+    counts: Dict[str, int] = {}
+    for item in manifest.get('diagnostics') or []:
+        status = str(item.get('status', 'unknown')) if isinstance(item, dict) else 'unknown'
+        counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _hotspots_build(ctx: StepContext, fingerprint: dict, results: dict, started: float) -> Generation:
     from .adapters import real_hotspot as rh
     config, product = ctx.config, ctx.product
@@ -789,6 +875,7 @@ def _hotspots_build(ctx: StepContext, fingerprint: dict, results: dict, started:
     def build(staging: Path) -> dict:
         before = _walk_source(root)
         rh.import_hotspots(root, staging, expected_cases=expected_file, include_cno=fingerprint['import_options']['include_cno'])
+        ctx.diagnostic_counts = diagnostic_counts(staging / 'manifest.json')
         inventory = build_inventory(root, rel_root, before)
         if _walk_source(root) != before:
             raise AssetError('source_changed_during_import', rel_root)
@@ -813,8 +900,11 @@ def run_step_01(ctx: StepContext, force: bool) -> int:
     reasons = verdict.reasons if verdict.state != OK else ['forced']
     fingerprint = hotspots_fingerprint(ctx.config, ctx.product, results)
     generation = _hotspots_build(ctx, fingerprint, results, started)
+    counts = ctx.diagnostic_counts
+    ctx.out('diagnostics 01 %s: %s' % (ctx.product, ', '.join('%s=%d' % item for item in counts.items()) or 'none'))
     ctx.out('built 01 %s %s' % (ctx.product, generation.name))
-    ctx.log.append('01', 'build', OK, reasons, generation.name, time.time() - started, 0, None, warnings=verdict.warnings)
+    ctx.log.append('01', 'build', OK, reasons, generation.name, time.time() - started, 0, None, warnings=verdict.warnings,
+                   diagnostics=counts)
     _archive_all(ctx, started)
     return 0
 
@@ -832,6 +922,13 @@ def _build_side(ctx: StepContext, hotspots: Generation, compare2_path: Path, cfg
 
     depends = [{'kind': 'hotspots', 'generation': hotspots.name, 'complete_sha256': hotspots.complete_sha256}]
     return publish_generation(ctx.base, ctx.product, 'side', build, depends=depends, started=started)
+
+
+def summary_status(base, product: str) -> str:
+    try:
+        return str(_parse_json((products_dir(base, product) / SUMMARY).read_bytes()).get('status'))
+    except (OSError, ValueError, AttributeError):
+        return 'unreadable'
 
 
 def _build_summary(ctx: StepContext, compare2_path: Path, side: Generation) -> int:
@@ -874,8 +971,13 @@ def run_step_02(ctx: StepContext, force: bool) -> int:
         _archive_all(ctx, side_started)
     summary = summary_verdict(ctx.base, ctx.product, side_generation, cfg_pair)
     if summary.state == OK and not force:
-        ctx.out('skip fresh 02 summary %s' % ctx.product)
-        ctx.log.append('02', 'skip', OK, [], side_generation.name, 0.0, 0, None, part='summary')
+        recorded = summary_status(ctx.base, ctx.product)
+        if recorded == 'available':
+            ctx.out('skip fresh 02 summary %s' % ctx.product)
+            ctx.log.append('02', 'skip', OK, [], side_generation.name, 0.0, 0, None, part='summary')
+        else:                                  # a fresh summary that is not `available`: say so (the exit code stays 0)
+            ctx.out('skip fresh 02 summary %s (summary status: %s)' % (ctx.product, recorded))
+            ctx.log.append('02', 'skip', OK, [], side_generation.name, 0.0, 0, None, part='summary', summary_status=recorded)
         return exit_code
     summary_started = time.time()
     code = _build_summary(ctx, compare2_path, side_generation)
