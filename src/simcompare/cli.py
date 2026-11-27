@@ -292,6 +292,11 @@ def _parser() -> argparse.ArgumentParser:
     pimport.add_argument("--update", action="store_true", help="이미 있는 제품·common 이 다르면 덮어쓴다(사람이 쓴 note 는 유지)")
     pimport.add_argument("--check", action="store_true", help="쓰지 않고 결과만 본다(대상 파일은 그대로)")
     pimport.add_argument("--no-cno", action="store_true", help="두 제품의 include_cno 를 false 로 한다(기본 true)")
+    psheet = _korean_help(sub.add_parser(
+        "products-sheet", add_help=False,
+        help="제품 자산 관리 시트(data/products/products_sheet.csv + .html)를 자산 파일에서 매번 전부 다시 만든다. 읽기 전용(시트 두 파일만 씀). 종료 0=씀, 2=오류"))
+    psheet.add_argument("--config", required=True, help="products.yaml")
+    psheet.add_argument("--now", default=None, help="HTML 머리말의 갱신 시각을 고정한다(재현 시험용, 예: 2026-11-27T09:00:00Z)")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
@@ -497,6 +502,9 @@ def main(argv: list[str] | None = None) -> int:
             return products_import.run_products_import(args.real, args.compare2, args.group, config_path=args.config,
                                                        update=args.update, check=args.check, include_cno=not args.no_cno,
                                                        out=_print)
+        if args.command == "products-sheet":
+            from simcompare import products_sheet
+            return products_sheet.run_products_sheet(args.config, now=args.now, out=_print)
         if args.command == "compare2-report":
             # 새 폴더만 쓴다. 오류는 새 --out 에 error.json 하나만 남기고 종료 코드 2.
             from simcompare import compare2_report

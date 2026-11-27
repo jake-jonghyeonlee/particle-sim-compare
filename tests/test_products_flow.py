@@ -177,7 +177,7 @@ def test_prepare_in_product_mode_moves_no_output_folder_and_returns_flow_jobs(wo
         (world.base / folder / 'keep.txt').write_text('x', encoding='utf-8')
     before = snapshot(world.base)
     jobs = etx_flow.prepare(world.base, settings(products=['P1']), echo=lambda line: None)
-    assert isinstance(jobs, etx_flow.FlowJobs) and jobs.finalizers == []        # products-sheet joins in T7
+    assert isinstance(jobs, etx_flow.FlowJobs) and jobs.finalizers == [('products-sheet', ['--config', 'products.yaml'])]
     assert [job[0] for job in jobs] == ['products-step', 'products-step']
     assert snapshot(world.base) == before and not (world.base / 'data/_runs').exists()
 
@@ -261,6 +261,29 @@ def test_runner_runs_assets_then_pair_to_the_end_and_a_second_run_skips_everythi
     for skipped in ('skip fresh 01 P1', 'skip fresh 01 P2', 'skip fresh 02 side P1', 'skip fresh 02 side P2', 'skip fresh compose P1__P2'):
         assert skipped in tail, skipped
     assert 'build' not in [line for line in tail.splitlines() if 'products-step' in line and 'exit' in line]
+
+
+def test_runner_updates_the_sheet_after_a_good_run_and_after_the_main_job_failed(world):
+    good = _runner(world.base.parent, world, 'S1', PRODUCTS=['P1'], ASSET_STEPS=['01', '02'])
+    result = run_runner(sys.executable, good, world.base.parent)
+    log = (world.base / 'runs/simcompare_job_etx.log').read_text(encoding='utf-8')
+    assert result.returncode == 0, result.stderr + log[-3000:]
+    assert '마무리 job products-sheet exit 0' in log
+    csv_path = world.base / 'data/products/products_sheet.csv'
+    text = csv_path.read_bytes().decode('utf-8-sig')
+    assert text.count('\r\n') == 1 + 3 and '\r\nP1,' in text           # header + three registered products
+    assert (world.base / 'data/products/products_sheet.html').is_file()
+    # a main job that stops with exit 2 (the pair has no assets: compose refuses): the sheet is still made again
+    csv_path.unlink()
+    (world.base / 'data/products/products_sheet.html').unlink()
+    bad = _runner(world.base.parent, world, 'S2', ASSET_STEPS=[], COMPARE=[('P2', 'P1')], COMPARE_STEPS=['02'])
+    result = run_runner(sys.executable, bad, world.base.parent)
+    log = (world.base / 'runs/simcompare_job_etx.log').read_text(encoding='utf-8')
+    tail = log[log.rindex('payload_sha256'):]
+    assert result.returncode == 2, result.stderr + tail[-3000:]
+    assert '마무리 job products-sheet exit 0' in tail and '경고' not in tail
+    rows = csv_path.read_bytes().decode('utf-8-sig')
+    assert '\r\nP1,G,' in rows and '\r\nP2,G,' in rows and '\r\nP3,H,' in rows and '없음' in rows
 
 
 def test_runner_force_assets_rebuild_a_fresh_product(world):

@@ -455,8 +455,9 @@ def plan_product_jobs(base_dir, settings):
 
 
 def product_finalizers(config_arg):
-    """제품 모드 마무리 job(본 job 뒤에 항상 돈다). T7 의 `products-sheet --config <products.yaml>` 이 들어올 자리다. 지금은 비어 있다."""
-    return []
+    """제품 모드 마무리 job(본 job 뒤에 항상 돈다): `products-sheet --config <products.yaml>` 로 자산 관리 시트를 다시 만든다.
+    실패해도 경고만 남기고 원래 종료 코드는 그대로다(run_jobs)."""
+    return [('products-sheet', ['--config', str(config_arg)])]
 
 
 def _product_status_lines(plan):
