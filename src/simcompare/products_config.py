@@ -12,8 +12,11 @@ Nothing here changes an existing schema or loader. Mask and PNG files are never 
 pairs.csv, the distance table and the density CSV files are read.
 
 The group compatibility check (PLAN-v2.1 A) is a NAME-LEVEL pre-check that calls the loader's own helper functions in the
-loader's order. The final decision stays with the real loader of step 02: this check reports the five failures it covers
-(see GROUP_ERROR_CODES) before step 01, it does not promise that no case ends with an empty value later.
+loader's order. It reports the failures listed in GROUP_ERROR_CODES before step 01. What it does NOT guarantee: it reads
+folder and file names only (no mask, no PNG, no manifest), so a case that is fine by name can still fail later (an empty
+or unreadable mask, a geometry mismatch, a record the loader drops). A same-name case (electrode A/A) cannot be in
+pairs.csv, so only its layers, direction and density layer are checked. The final decision stays with the real loader of
+step 02.
 
 Every generated YAML file starts with GEN_MARKER. A file of the same name without it is never overwritten
 (`gen_file_not_owned`). A file with the same content is not written again (mtime stays).
@@ -46,7 +49,8 @@ GROUP_SCHEMA = 'products_group_v1'
 # Violations of the group compatibility check; every one comes with (product, case name) pairs.
 GROUP_ERROR_CODES = ('group_pair_table_mismatch', 'group_case_layer_unassigned', 'group_case_layer_mismatch',
                      'group_case_vertical_same_layer', 'group_case_density_layer_missing', 'group_case_pair_unmapped',
-                     'group_distance_table_required', 'group_cno_layer_unassigned')
+                     'group_distance_table_required', 'group_distance_pair_missing', 'group_cno_layer_unassigned',
+                     'group_cno_density_layer_missing')
 # Other error codes of this module: invalid_products_config, unsupported_products_config, invalid_product_name,
 # invalid_group_name, duplicate_product_name, duplicate_group_name, unknown_product_in_group, product_without_group,
 # product_in_two_groups, input_path_overlaps_output, output_path_symlink, gen_file_not_owned, compare_cross_group,
@@ -89,7 +93,7 @@ def _mapping(raw, where: str, allowed, required=()) -> dict:
 def check_name(name, kind: str) -> str:
     """kind: 'product' or 'group'. Raises invalid_product_name / invalid_group_name."""
     code = 'invalid_%s_name' % kind
-    if not isinstance(name, str) or not NAME_RE.match(name):
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise _invalid('%s name %r: use ^[A-Za-z][A-Za-z0-9_-]{0,63}$' % (kind, name), code)
     if '__' in name:
         raise _invalid('%s name %r: "__" is reserved for pair names' % (kind, name), code)
@@ -119,7 +123,13 @@ def _relative_input(value, where: str) -> str:
     return rel.as_posix()
 
 
+def _folded(path: Path) -> Path:
+    """Case-insensitive file systems (macOS, Windows) treat Data/ and data/ as one folder: compare folded."""
+    return Path(os.path.normcase(str(path)).casefold())
+
+
 def _related(first: Path, second: Path) -> bool:
+    first, second = _folded(first), _folded(second)
     return first == second or first in second.parents or second in first.parents
 
 
@@ -383,18 +393,24 @@ def check_groups(config: ProductsConfig) -> Dict[str, GroupResult]:
                     if la == lb:
                         violate('group_case_vertical_same_layer', group, name, case)
                         continue
-                    vertical_cases.append(case)
+                    vertical_cases.append((case, tuple(sorted((la, lb)))))
                     analysis = max((la, lb), key=lambda layer: stack[layer][0])
                 else:
                     if la != lb:
                         violate('group_case_layer_mismatch', group, name, case)
                         continue
                     analysis = la
+                process_layer = stack[analysis][1]
+                if ea == eb:
+                    # same-name case (A/A): pairs.csv cannot hold it, the loader reports it as unresolved; only the
+                    # density layer of its analysis layer must be a non-empty string
+                    if not isinstance(process_layer, str) or not process_layer:
+                        violate('group_case_density_layer_missing', group, name, case)
+                    continue
                 pair = pairs.get(frozenset((ea, eb)))
                 if pair is None:
                     violate('group_case_pair_unmapped', group, name, case)
                     continue
-                process_layer = stack[analysis][1]
                 if density is None:
                     key = (product['model_group'], config.common['density_dir'])
                     if key not in density_cache:
@@ -406,8 +422,15 @@ def check_groups(config: ProductsConfig) -> Dict[str, GroupResult]:
                         or process_layer not in table.layers:
                     violate('group_case_density_layer_missing', group, name, case)
             if vertical_cases and assignment.get('interlayer_distance_path') is None:
-                for case in vertical_cases:
+                for case, _pair in vertical_cases:
                     violate('group_distance_table_required', group, name, case)
+            elif vertical_cases and distance_table is not None:
+                # the loader asks a distance only for the cases found in the product's own root; a name that only
+                # the union has may lack one (it has no geometry to filter)
+                own = frozenset(discovered[name][0])
+                for case, layers in vertical_cases:
+                    if case in own and layers not in distance_table.pairs:
+                        violate('group_distance_pair_missing', group, name, case)
             cno_checked = 0
             if product['include_cno']:
                 for folder in discovered[name][1]:
@@ -415,6 +438,8 @@ def check_groups(config: ProductsConfig) -> Dict[str, GroupResult]:
                     parsed = _cno_name(folder)
                     if parsed is None or parsed[1] not in stack:
                         violate('group_cno_layer_unassigned', group, name, folder)
+                    elif not isinstance(stack[parsed[1]][1], str) or not stack[parsed[1]][1]:
+                        violate('group_cno_density_layer_missing', group, name, folder)
             per_product[name] = {'short_cases': len(discovered[name][0]), 'checked': checked,
                                  'left_out_by_rule': skipped, 'cno_folders_checked': cno_checked,
                                  'pair_table_sha256': pair_shas[name]}
@@ -577,6 +602,8 @@ def run_products_config(config_path, check: bool = False, pairs: Sequence[Tuple[
     for name in sorted(data_dirs):
         if name not in config.products:
             raise _invalid('--data-dir: unknown product %r' % name, 'pair_unknown_product')
+        # same relative-path rule as the products.yaml inputs (absolute, '..' and backslash refused)
+        data_dirs[name] = _relative_input(data_dirs[name], '--data-dir %s' % name)
     for first, second in pairs:       # refuse before any write
         for name in (first, second):
             if name not in config.products:

@@ -292,6 +292,84 @@ def test_left_out_cases_are_not_checked(tmp_path):
     assert pc.run_products_config(path, check=True)['status'] == 'checked'
 
 
+# ---- R3 follow-ups (pasx/T3b) -----------------------------------------------------------------------------------------
+
+AA_L1, AA_L2 = 'lateral_short-A-L1-A-L1', 'lateral_short-A-L2-A-L2'
+
+
+def test_same_name_case_skips_pair_check_but_keeps_layer_and_density_checks(tmp_path):
+    # R3:1: an A/A case cannot be in pairs.csv; the group passes. (Before T3b: group_case_pair_unmapped.)
+    path = _world(tmp_path / 'ok', extra_cases=[('P1', AA_L1)])[1]
+    assert pc.run_products_config(path, check=True)['status'] == 'checked'
+    # layer not in the stack of P2 -> still refused
+    def one_layer(doc, base):
+        doc['products']['P2']['condition_assignment']['layer_stack'] = STACK[:1]
+    found = _violations(_world(tmp_path / 'layer', one_layer, extra_cases=[('P1', AA_L2)])[1])
+    assert found == {('group_case_layer_unassigned', 'P2', AA_L2)}
+    # empty density layer -> still refused
+    def empty_density(doc, base):
+        for product in ('P1', 'P2'):
+            doc['products'][product]['condition_assignment']['layer_stack'] = [
+                STACK[0], dict(STACK[1], density_process_layer='')]
+    found = _violations(_world(tmp_path / 'dens', empty_density, extra_cases=[('P1', AA_L2)])[1])
+    assert found == {('group_case_density_layer_missing', 'P1', AA_L2), ('group_case_density_layer_missing', 'P2', AA_L2)}
+    # direction is still checked
+    found = _violations(_world(tmp_path / 'dir', extra_cases=[('P1', 'lateral_short-A-L1-A-L2')])[1])
+    assert ('group_case_layer_mismatch', 'P1', 'lateral_short-A-L1-A-L2') in found
+
+
+def _three_layers(doc, base):
+    stack = STACK + [{'actual_layer': 'L3', 'stack_order': 3, 'density_process_layer': 'P3'}]
+    for product in ('P1', 'P2'):
+        doc['products'][product]['condition_assignment']['layer_stack'] = copy.deepcopy(stack)
+    for kind in ('line', 'pixel'):
+        (base / 'data/input/density' / ('mobile_%s.csv' % kind)).write_text(DENSITY + 'P3,0.1,0.2\n', encoding='utf-8')
+
+
+def test_distance_pair_missing_only_for_own_root_cases(tmp_path):
+    case = 'vertical_short-A-L1-B-L3'            # the distance table has L1L2 only
+    found = _violations(_world(tmp_path / 'p1', _three_layers, extra_cases=[('P1', case)])[1])
+    assert found == {('group_distance_pair_missing', 'P1', case)}       # P2 only has it through the union: allowed
+    found = _violations(_world(tmp_path / 'p2', _three_layers, extra_cases=[('P2', case)])[1])
+    assert found == {('group_distance_pair_missing', 'P2', case)}
+    assert pc.run_products_config(_world(tmp_path / 'ok', _three_layers, extra_cases=[('P1', VER_AB)])[1],
+                                  check=True)['status'] == 'checked'
+
+
+def test_cno_density_layer_missing(tmp_path):
+    def mutate(doc, base):
+        doc['products']['P1']['include_cno'] = True
+        doc['products']['P1']['condition_assignment']['layer_stack'] = [
+            STACK[0], dict(STACK[1], density_process_layer='')]
+        _cno(base, 'P1', 'lateralopen-A-L2')
+    found = _violations(_world(tmp_path, mutate)[1])
+    assert found == {('group_cno_density_layer_missing', 'P1', 'lateralopen-A-L2')}
+
+
+@pytest.mark.parametrize('name', ['CON\n', 'P1\n', 'P1\r', ' P1'])
+def test_trailing_newline_names_refused(name):
+    for kind in ('product', 'group'):
+        with pytest.raises(NumericContractError) as info:
+            pc.check_name(name, kind)
+        assert info.value.code == 'invalid_%s_name' % kind
+
+
+@pytest.mark.parametrize('value, code', [('/abs/path', 'absolute_or_nonportable_path'),
+                                         ('data\\out', 'absolute_or_nonportable_path'),
+                                         ('C:/abs', 'absolute_or_nonportable_path'),
+                                         ('../outside', 'relative_path_escape')])
+def test_bad_data_dir_refused(tmp_path, value, code):
+    path = _world(tmp_path)[1]
+    assert _error(path, check=True, data_dirs={'P1': value}).code == code
+    assert _error(path, pairs=[('P1', 'P2')], data_dirs={'P1': 'ok', 'P2': value}).code == code
+    assert not (path.parent / 'data/products/_groups').exists()
+
+
+def test_overlap_with_output_root_ignores_case(tmp_path):
+    path = _world(tmp_path, lambda d, b: d['products']['P1'].update(hotspot_root='Data/Products/P1/hotspots'))[1]
+    assert _error(path, check=True).code == 'input_path_overlaps_output'
+
+
 def test_check_writes_nothing(tmp_path):
     base, path = _world(tmp_path)
     before = sorted(p.relative_to(base).as_posix() for p in base.rglob('*'))

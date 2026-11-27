@@ -262,7 +262,7 @@ def _parser() -> argparse.ArgumentParser:
     pcfg.add_argument("--pair", nargs=2, action="append", default=[], metavar=("A", "B"),
                       help="쌍 설정(gen.pair.A__B.real.yaml/.compare2.yaml)도 만든다. A 가 reference, B 가 target. 여러 번 가능")
     pcfg.add_argument("--data-dir", action="append", default=[], metavar="P=PATH",
-                      help="제품 P 의 01 출력 폴더(products.yaml 폴더 기준 상대 경로). 쌍 설정과 gen.product.P.real.yaml 에 쓴다. 여러 번 가능")
+                      help="제품 P 의 01 출력 폴더(products.yaml 폴더 기준 상대 경로. 절대 경로·'..'·역슬래시는 거부). 쌍 설정과 gen.product.P.real.yaml 에 쓴다. 여러 번 가능")
     c2r = _korean_help(sub.add_parser(
         "compare2-report", add_help=False,
         help="compare2 결과(compare2.json)로 외부 보고용 HTML 한 장(report.html, report.json)을 만든다. 수치는 다시 계산하지 않음"))
