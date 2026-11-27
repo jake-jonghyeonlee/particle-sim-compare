@@ -1,0 +1,2 @@
+﻿case_name,electrode_id,density_layer,presence,reference_csv_status,target_csv_status,reference_lambda,target_lambda,delta_lambda_pixel,delta_vi_pixel,share_pixel,removal_b_delta_vi_pixel,reasons
+lateralopen-CNO-gcnt,CNO,gcnt,both,observed,observed,2.945243112740431,3.9269908169872414,0.9817477042468106,0.016856880221357617,1.0000000000000033,-0.5024797841804575,

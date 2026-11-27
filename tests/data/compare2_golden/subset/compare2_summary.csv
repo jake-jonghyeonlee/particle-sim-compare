@@ -1,0 +1,4 @@
+﻿scope,model_group,status,lambda_line,lambda_pixel,lambda_cno,caa_line,caa_pixel,vi_line,vi_pixel,vi_line_rounded,vi_pixel_rounded,slope_line,slope_pixel,conservation,reasons,formula_basis,diameters_um
+reference,mobile,available,0.2925000000000001,0.15750000000000003,0,0.2536047549641184,0.14572318639152054,0.2085736943532514,0.09424601370554944,0.208574,0.094246,,,passed,,diameter_subset,1;3
+target,mobile,available,0.2925000000000001,0.15750000000000003,0,0.2536047549641184,0.14572318639152054,0.2085736943532514,0.09424601370554944,0.208574,0.094246,,,passed,,diameter_subset,1;3
+delta,,passed,0.0,0.0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.613862361243426,0.5525008495721637,passed,,diameter_subset,1;3
