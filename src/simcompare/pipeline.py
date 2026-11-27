@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 
-def _real_source(cfg, section):
+def _real_source(cfg, section, verify='full', seal=None):
     """Return a validated real_hotspot_v1 manifest, or None for numeric_v2."""
     from simcompare.adapters.real_hotspot import CONTRACT_VERSION, load_real_manifest
     from simcompare.numeric_schema import NumericContractError
@@ -27,7 +27,7 @@ def _real_source(cfg, section):
         return None
     if cfg.get('mode') != 'real':
         raise NumericContractError('real_source_in_synthetic_mode')
-    return root, load_real_manifest(root, manifest_path)
+    return root, load_real_manifest(root, manifest_path, verify=verify, seal=seal)
 
 
 def _configured_real(cfg, section, real, detail=None, require_distance=False):

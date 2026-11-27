@@ -762,8 +762,12 @@ def import_hotspots(root: Path, out: Path, *, expected_cases: Path | None = None
         raise
 
 
-def _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets, geometry_ok, frame_shape):
-    """Record, CSV and source-file invariants shared by cases[] and cno_cases[] entries."""
+def _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets, geometry_ok, frame_shape,
+                        skip_masks=False):
+    """Record, CSV and source-file invariants shared by cases[] and cno_cases[] entries.
+
+    skip_masks=True (verify='seal' with a matching seal) does not hash or decode the mask files; the occupied pixel
+    count is then taken from png_area_um2 (a full check proves png_area_um2 == occupied * 0.01)."""
     records = case.get('records', [])
     if len(records) != len(DIAMETERS_UM) or {r.get('diameter_um') for r in records} != set(DIAMETERS_UM):
         raise NumericContractError('real_case_diameter_coverage_invalid', case.get('case_name', ''))
@@ -793,19 +797,27 @@ def _check_case_records(folder, case, name, image_base, source_files, used_sourc
             if record['mask_path'] in assets:
                 raise NumericContractError('duplicate_real_mask_asset', record['mask_path'])
             assets.add(record['mask_path'])
-            if _sha(asset) != record.get('mask_sha256'):
-                raise NumericContractError('real_mask_hash_mismatch', record['mask_path'])
-            mask = None  # at most one mask alive at a time
-            mask = _load_mask(asset, record, mmap=True)
-            if mask.dtype != np.dtype(bool) or mask.ndim != 2 or (geometry_ok and list(mask.shape) != frame_shape):
-                raise NumericContractError('real_mask_binary_contract_mismatch', record['mask_path'])
-            if record.get('mask_shape_yx') != list(mask.shape):
-                raise NumericContractError('real_mask_shape_metadata_mismatch', record['mask_path'])
-            occupied = int(np.count_nonzero(mask))
-            area = occupied * 0.01
-            if not isinstance(record.get('png_area_um2'), (int, float)) or not math.isfinite(record['png_area_um2']) or not math.isclose(area, record['png_area_um2'], rel_tol=0, abs_tol=1e-12):
-                raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
-            del mask
+            if skip_masks:
+                png_value = record.get('png_area_um2')
+                if not isinstance(png_value, (int, float)) or not math.isfinite(png_value):
+                    raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
+                occupied = int(round(png_value * 100))
+                if not math.isclose(occupied * 0.01, png_value, rel_tol=0, abs_tol=1e-12):
+                    raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
+            else:
+                if _sha(asset) != record.get('mask_sha256'):
+                    raise NumericContractError('real_mask_hash_mismatch', record['mask_path'])
+                mask = None  # at most one mask alive at a time
+                mask = _load_mask(asset, record, mmap=True)
+                if mask.dtype != np.dtype(bool) or mask.ndim != 2 or (geometry_ok and list(mask.shape) != frame_shape):
+                    raise NumericContractError('real_mask_binary_contract_mismatch', record['mask_path'])
+                if record.get('mask_shape_yx') != list(mask.shape):
+                    raise NumericContractError('real_mask_shape_metadata_mismatch', record['mask_path'])
+                occupied = int(np.count_nonzero(mask))
+                area = occupied * 0.01
+                if not isinstance(record.get('png_area_um2'), (int, float)) or not math.isfinite(record['png_area_um2']) or not math.isclose(area, record['png_area_um2'], rel_tol=0, abs_tol=1e-12):
+                    raise NumericContractError('real_mask_area_mismatch', record['mask_path'])
+                del mask
             expected_csv_status = 'missing_diameter' if csv_row is None else derived_status
             if csv_row is not None:
                 _csv_row_contract(csv_row, record['diameter_um'],
@@ -829,7 +841,8 @@ def _check_case_records(folder, case, name, image_base, source_files, used_sourc
         used_source_files.add(csv_path)
 
 
-def _check_cno_cases(folder, manifest, frame, frame_shape, case_names, source_files, used_source_files, assets):
+def _check_cno_cases(folder, manifest, frame, frame_shape, case_names, source_files, used_source_files, assets,
+                     skip_masks=False):
     """Validate manifest['cno_cases'] (written by import-hotspots --include-cno); cases[] checks are not touched."""
     cno_cases = manifest['cno_cases']
     if not isinstance(cno_cases, list):
@@ -870,7 +883,7 @@ def _check_cno_cases(folder, manifest, frame, frame_shape, case_names, source_fi
               or electrode_shapes is not None or not case.get('geometry_reasons')):
             raise NumericContractError('invalid_unconfirmed_case_geometry', name)
         _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets,
-                            geometry_ok, frame_shape)
+                            geometry_ok, frame_shape, skip_masks)
         electrode_key = f'{image_base}/1.png'
         if electrode_key in source_files:
             used_source_files.add(electrode_key)
@@ -878,8 +891,101 @@ def _check_cno_cases(folder, manifest, frame, frame_shape, case_names, source_fi
             raise NumericContractError('real_electrode_source_coverage_mismatch', name)
 
 
-def load_real_manifest(folder: Path, manifest_path='manifest.json'):
-    """Read and authenticate a real_hotspot_v1 import without relaxing numeric_v2."""
+MASK_SEAL_SCHEMA = 'mask_seal_v1'
+
+
+def _manifest_mask_paths(manifest):
+    """Mask paths of every observed record in cases[] and cno_cases[]; None when the structure is malformed."""
+    paths = []
+    try:
+        for case in list(manifest.get('cases', [])) + list(manifest.get('cno_cases') or []):
+            for record in case.get('records', []):
+                if record.get('input_status') == 'observed':
+                    paths.append(record.get('mask_path'))
+    except (AttributeError, TypeError):
+        return None
+    if not all(isinstance(p, str) for p in paths):
+        return None
+    return set(paths)
+
+
+def _file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def make_mask_seal(folder: Path, manifest_path='manifest.json'):
+    """Run the full verification, then record manifest.json's sha256 and each mask file's size and mtime_ns.
+
+    Limit: a seal cannot catch a content change that keeps the size and mtime. Use a seal only for a 01 asset folder
+    made right after a full verification."""
+    folder = Path(folder)
+    load_real_manifest(folder, manifest_path)  # full verification first; raises on failure
+    path = resolve_path(folder, manifest_path)
+    manifest = json.loads(path.read_text(encoding='utf-8'))
+    mask_paths = _manifest_mask_paths(manifest)
+    masks = []
+    for rel in sorted(mask_paths):
+        st = os.stat(resolve_path(folder, rel))
+        masks.append({'path': rel, 'size': int(st.st_size), 'mtime_ns': int(st.st_mtime_ns)})
+    return {'schema': MASK_SEAL_SCHEMA, 'manifest_sha256': _file_sha256(path), 'masks': masks,
+            'verification': 'full'}
+
+
+def _seal_mismatch(folder, path, seal):
+    """None when the seal still matches the folder, else the short reason."""
+    if not isinstance(seal, dict):
+        return 'seal_not_a_dict'
+    if seal.get('schema') != MASK_SEAL_SCHEMA:
+        return 'schema'
+    if seal.get('verification') != 'full':
+        return 'verification'
+    try:
+        if _file_sha256(path) != seal.get('manifest_sha256'):
+            return 'manifest_sha256'
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+        paths = _manifest_mask_paths(manifest) if isinstance(manifest, dict) else None
+        if paths is None:
+            return 'manifest_mask_paths'
+        sealed = {}
+        for entry in seal.get('masks') or []:
+            sealed[entry['path']] = entry
+        if len(sealed) != len(seal.get('masks') or []):
+            return 'seal_duplicate_path'
+        if paths != set(sealed):
+            return 'mask_set'
+        for rel in sorted(paths):
+            st = os.stat(resolve_path(folder, rel))
+            if st.st_size != sealed[rel].get('size'):
+                return 'mask_size'
+            if st.st_mtime_ns != sealed[rel].get('mtime_ns'):
+                return 'mask_mtime'
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, NumericContractError):
+        return 'seal_check_failed'
+    return None
+
+
+def load_real_manifest(folder: Path, manifest_path='manifest.json', verify='full', seal=None):
+    """Read and authenticate a real_hotspot_v1 import without relaxing numeric_v2.
+
+    verify='full' (default) hashes and decodes every mask. verify='seal' with a seal from make_mask_seal skips the
+    per-mask hash and decode when manifest.json's sha256 and every mask's size and mtime_ns still match; any
+    difference (or a missing seal) falls back to the full check with a `mask_seal_mismatch:<reason>` line on stderr.
+    Limit: a seal cannot catch a content change that keeps the size and mtime. Use it only for a 01 asset folder
+    made right after a full verification. The return value is the same in both modes."""
+    if verify not in ('full', 'seal'):
+        raise ValueError(f'verify must be "full" or "seal", got {verify!r}')
+    folder = Path(folder)
+    skip_masks = False
+    if verify == 'seal':
+        reason = 'seal_missing' if seal is None else _seal_mismatch(folder, resolve_path(folder, manifest_path), seal)
+        if reason is None:
+            skip_masks = True
+        else:
+            print(f'mask_seal_mismatch:{reason}', file=sys.stderr)
+    return _load_real_manifest(folder, manifest_path, skip_masks)
+
+
+def _load_real_manifest(folder, manifest_path, skip_masks):
     folder = Path(folder)
     path = resolve_path(folder, manifest_path)
     manifest = json.loads(path.read_text(encoding='utf-8'))
@@ -987,7 +1093,7 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
         if case.get('source_contract_version') != manifest['schema_version']:
             raise NumericContractError('real_case_manifest_version_mismatch')
         _check_case_records(folder, case, name, image_base, source_files, used_source_files, assets,
-                            geometry_ok, frame_shape)
+                            geometry_ok, frame_shape, skip_masks)
         for image_name in ('1.png', '2.png'):
             key = f"{image_base}/{image_name}"
             if key in source_files:
@@ -995,7 +1101,8 @@ def load_real_manifest(folder: Path, manifest_path='manifest.json'):
             elif geometry_ok:
                 raise NumericContractError('real_electrode_source_coverage_mismatch', name)
     if 'cno_cases' in manifest:
-        _check_cno_cases(folder, manifest, frame, frame_shape, names, source_files, used_source_files, assets)
+        _check_cno_cases(folder, manifest, frame, frame_shape, names, source_files, used_source_files, assets,
+                         skip_masks)
     if used_source_files != set(source_files):
         raise NumericContractError('unbound_real_source_file_index_entry')
     if manifest.get('expected_cases') is not None:
