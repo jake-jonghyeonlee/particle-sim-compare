@@ -230,7 +230,7 @@ def test_seven_sections_in_order_with_a_head_and_a_pointer_each(real):
     for sid in ids:
         s = new_section(page, sid)
         assert s.startswith('<section id="%s"><p class="q">' % sid) and '<h2>' in s and 'class="nextl"' in s
-    assert 'id="purpose"' in page and 'id="pair-find"' in new_section(page, 's4') and 'id="s3-detail"' in new_section(page, 's3')       # rexp/T2
+    assert 'id="purpose"' not in page and 'id="report-title"' in page and 'id="pair-find"' in new_section(page, 's4') and 'id="s3-detail"' in new_section(page, 's3')       # rexp/T2
     text = all_text(page)
     for old in '③④⑤⑥⑦':          # rexp/T13: ① ② are the two compartments of the card list of 3
         assert old not in text, old
@@ -1580,3 +1580,34 @@ def test_chrome_r6_the_shrunk_crop_flat_shortcut_equals_isborder(tmp_path):
     page.write_text('<!doctype html><html><body><script>%s%s%s</script></body></html>' % (ib, rq + fr, test), encoding='utf-8')
     dom, _ = dump_dom(page, '')
     assert int(dom.root['data-flat']) > 100 and dom.root['data-bad'] == '0'
+
+
+def _title_block(page):
+    return re.search(r'<header class="rtitle" id="report-title">.*?</header>', page, re.S).group(0)
+
+
+def test_title_names_both_products_from_dl1_model_in_order_and_escapes(real):          # pasx/T11
+    import copy
+    doc = copy.deepcopy(real)
+    doc['inputs']['products']['reference']['dl1_model'] = 'PROD_R'
+    doc['inputs']['products']['target']['dl1_model'] = 'T<b>&"x'
+    page = render(doc)
+    assert '<title>PROD_R 제품과 T&lt;b&gt;&amp;&quot;x 제품의 비교 보고서</title>' in page or '<title>PROD_R 제품과 T&lt;b&gt;&amp;"x 제품의 비교 보고서</title>' in page
+    h1 = re.search(r'<h1>.*?</h1>', _title_block(page), re.S).group(0)
+    assert h1.index('PROD_R') < h1.index('T&lt;b&gt;') and 'T<b>' not in page.split('<title>', 1)[1].split('</main>', 1)[0].split('id="bar"')[0]
+    assert 'id="purpose"' not in page and '목적' not in _title_block(page)
+
+
+def test_title_falls_back_to_a_and_b_without_dl1_model(real):                            # pasx/T11
+    import copy
+    doc = copy.deepcopy(real)
+    for role in ('reference', 'target'):
+        doc['inputs']['products'][role].pop('dl1_model', None)       # an older ledger.json has no key at all
+    page = render(doc)
+    assert '<title>기준 A 제품과 대상 B 제품의 비교 보고서</title>' in page
+    assert '기준 <b>A = 기준 A</b>' in _title_block(page)
+
+
+def test_ledger_json_records_dl1_model_per_role(real):                                    # pasx/T11
+    for role in ('reference', 'target'):
+        assert 'dl1_model' in real['inputs']['products'][role]

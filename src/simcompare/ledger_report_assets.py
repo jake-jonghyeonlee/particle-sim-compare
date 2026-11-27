@@ -13,7 +13,7 @@ CSS = """
 *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:50px}
 body{margin:0;background:var(--surface-0);color:var(--text-primary);font:13px/1.5 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
 main{max-width:1400px;margin:0 auto;padding:10px 16px 60px}
-h1{font-size:19px;margin:6px 0 0}h2{font-size:16px;margin:0 0 2px}h3{font-size:13px;margin:10px 0 4px;color:var(--text-secondary)}
+h2{font-size:16px;margin:0 0 2px}h3{font-size:13px;margin:10px 0 4px;color:var(--text-secondary)}
 section{background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-top:12px}
 .q{color:var(--text-secondary);font-weight:600;margin:0}.muted,.lead{color:var(--text-muted)}.lead{margin:0 0 6px}
 #bar{position:sticky;top:0;z-index:9;background:var(--surface-1);border:1px solid var(--border);border-radius:0 0 8px 8px;
@@ -139,7 +139,12 @@ button.linkbtn{border:0;border-radius:0;background:none;color:var(--down);paddin
 .leg i{position:relative;display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px;border:var(--b)}.leg i::before{content:"";position:absolute;inset:0;background:var(--c);opacity:var(--a)}
 #dp-items tr.itc td{font-weight:700}#dp-items tr.itsel td{background:var(--trade);outline:1px solid #e0b04a}
 .rt th,.rt td{white-space:normal}
-.purpose{margin:6px 0 4px;padding:7px 12px;border-left:3px solid var(--text-primary);background:var(--surface-1);font-size:15px;line-height:1.7}
+.rtitle{margin:14px 0 10px;padding:16px 20px 14px;background:var(--surface-1);border:1px solid var(--border);border-left:6px solid var(--text-primary);border-radius:6px}
+.rtitle h1{font-size:28px;line-height:1.35;margin:0;font-weight:800;letter-spacing:-.3px}
+.rtitle .pn{display:inline-block;padding:1px 10px 2px;border-radius:5px;background:var(--mid);font-weight:800}
+.rtitle .pn small{font-size:13px;font-weight:700;color:var(--text-secondary);margin-right:6px}
+.rtitle .sub{margin-top:6px;font-size:13px;color:var(--text-secondary)}
+.rtitle .sub b{color:var(--text-primary)}
 .nextl{margin:12px 0 0;padding-top:6px;border-top:1px dashed var(--border);color:var(--text-muted)}
 .report{border-left:3px solid var(--text-secondary);padding:7px 14px;margin:6px 0 10px;background:var(--surface-0);border-radius:0 6px 6px 0;font-size:14px;line-height:1.7}
 .report p{margin:0 0 5px}.summary{border-left:3px solid var(--text-secondary);padding:6px 12px;margin:6px 0 10px;background:var(--surface-0)}.summary p{margin:0 0 3px}

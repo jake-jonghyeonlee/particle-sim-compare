@@ -56,7 +56,7 @@ def _strip_new_keys(doc):
         doc['checks'].pop(key)
     doc['inputs'].pop('layer_order', None)
     for product in doc['inputs']['products'].values():
-        for key in ('resolution', 'effective_resolution', 'glass_um2', 'weights', 'unit_size_um', 'F', 'density_sha256'):
+        for key in ('resolution', 'effective_resolution', 'glass_um2', 'weights', 'unit_size_um', 'F', 'density_sha256', 'dl1_model'):
             product.pop(key, None)
     for row in doc['pairs']:
         for item in row['items']:

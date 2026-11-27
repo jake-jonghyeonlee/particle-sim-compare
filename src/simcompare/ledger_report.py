@@ -2691,12 +2691,17 @@ def render_html(doc, ledger_sha, top_pairs, top_electrodes, maps=None, report07=
     ctx = Ctx(doc, top_pairs, top_electrodes, maps=maps, report07=report07)
     products = doc['inputs']['products']
     data = _json_embed(_bundle(ctx, ledger_sha))
+    name_a = products['reference'].get('dl1_model') or '기준 A'
+    name_b = products['target'].get('dl1_model') or '대상 B'
+    group_a, group_b = products['reference'].get('model_group'), products['target'].get('model_group')
+    groups = esc(group_a) if group_a == group_b else '%s / %s' % (esc(group_a), esc(group_b))
     body = [
-        '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>설계 변경 영향 보고서 (합친 비교)</title><style>%s</style></head><body><main>' % CSS,
-        '<h1>설계 변경 영향 보고서 — 합친 비교 <span class="muted" style="font-size:13px;font-weight:400">기준 A: %s · 대상 B: %s · ledger %s</span></h1>' % (
-            esc(products['reference'].get('model_group')), esc(products['target'].get('model_group')), esc(doc.get('status'))),
-        '<p class="purpose" id="purpose"><b>목적</b> 기준 제품 A 와 설계 변경 제품 B 를 비교해, 어떤 layout(전극·레이어) 변화가 이물 불량 지표 vi(line·pixel)를 '
-        '얼마나 바꿨는지 한눈에 보이고, 설계자가 그 근거를 차례로 따라가 확인할 수 있게 합니다.</p>',
+        '<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>%s 제품과 %s 제품의 비교 보고서</title><style>%s</style></head><body><main>' % (
+            esc(name_a), esc(name_b), CSS),
+        '<header class="rtitle" id="report-title"><h1><span class="pn"><small>A</small>%s</span> 제품과 '
+        '<span class="pn"><small>B</small>%s</span> 제품의 비교 보고서</h1>'
+        '<div class="sub">설계 변경 영향(이물 불량 vi line·pixel) · 기준 <b>A = %s</b> · 대상 <b>B = %s</b> · 제품군 %s · ledger %s</div></header>' % (
+            esc(name_a), esc(name_b), esc(name_a), esc(name_b), groups, esc(doc.get('status'))),
         _bar(), _bands(ctx, size_warning), _section1(ctx),
         _section2(ctx), _section3(ctx), _section4(ctx), _section5(ctx), _section6(ctx),
         _section_appendix(ctx),
