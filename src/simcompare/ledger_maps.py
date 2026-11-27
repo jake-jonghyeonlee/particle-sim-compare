@@ -40,6 +40,9 @@ LEDGER_SCHEMA = 'ledger_v1'
 ROW_PRESENCE = {'both': 'both', 'gone': 'a_only', 'new': 'b_only'}
 TABS = ('same', 'comp', 'all')
 STAGES = ('read', 'merge', 'maps', 'cards')
+# execution.json `elapsed_by_stage.<role>` keys (seconds, perf_counter, 3 decimals; observation only)
+STAGE_TIME_KEYS = ('read_total', 'read_configured_estimate', 'read_load_side', 'read_sink', 'read_occurrence', 'merge',
+                   'maps_items', 'maps_electrodes', 'cards')
 COMMAND = 'ledger-maps'
 ROLES = ('reference', 'target')
 KINDS = ('line', 'pixel')
@@ -2286,10 +2289,25 @@ def _check_kinds(ctx, led_doc, key):
     return out
 
 
+def _timed(acc, name, func):
+    """Thin wrapper: adds the seconds `func` took (also when it raises) to acc[name]; arguments, result and exceptions pass through."""
+    def wrapper(*args, **kwargs):
+        t0 = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            acc[name] = acc.get(name, 0.0) + (time.perf_counter() - t0)
+    return wrapper
+
+
 def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geom, report_diameter, warnings, run=None,
-                  occ_out=None):
-    """Read one product once and return (side json, files, window json, checks, ctx-free summary)."""
+                  occ_out=None, timing=None):
+    """Read one product once and return (side json, files, window json, checks, ctx-free summary).
+
+    timing: optional dict that receives the seconds of each stage (observation only, see `elapsed_by_stage`)."""
     from .pipeline import _configured_real
+    tm = timing if timing is not None else {}
+    t_read = time.perf_counter()
     budget.set_stage(role, 'read')
     product = getattr(cfg2, role)
     group = cfg2.model_groups[product.model_group]
@@ -2307,12 +2325,16 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
     ctx.layer_key = layer_key
     occ = (_Occurrence(ctx, budget, report_diameter, _occ_piece_counts(led_doc, role, report_diameter))
            if OCCURRENCE_ENABLED and occ_out is not None else None)
+    if occ is not None:
+        occ.arrive = _timed(tm, 'occ_arrive', occ.arrive)     # instance-level timing wrapper, same call and result
     ctx.occ = occ
     key = 'a' if role == 'reference' else 'b'
 
     # estimate of the unchanged compute_areas holding (real_hotspot.estimate_area_bytes, via the dataset admission)
+    t0 = time.perf_counter()
     dataset = _configured_real(cfg, info['section'], info['real'], {'bucket_detail': 'summary', 'top_buckets': geom['top']},
                                require_distance=True)
+    tm['read_configured_estimate'] = time.perf_counter() - t0
     if dataset is None:
         raise NumericContractError('compare2_condition_assignment_required', f'{role}: condition_assignment needed')
     provenance = getattr(dataset[1], 'provenance', None) or {}
@@ -2335,12 +2357,20 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
                              np.full((ctx.dh, ctx.dw), BIG_RANK, dtype=np.int32))
     sink = _make_sink(ctx, budget, report_diameter, slope, tables, factors, subset, options['max_tile_entries'])
     try:
-        _extracted, meta = _load_side(cfg, role, geom['top'], share_sink=sink)
+        t0 = time.perf_counter()
+        try:
+            _extracted, meta = _load_side(cfg, role, geom['top'], share_sink=_timed(tm, 'read_sink_all', sink))
+        finally:
+            tm['read_load_side'] = time.perf_counter() - t0
         del _extracted
         _check_input_hash(role, doc_hash, meta.get('input_hash'))
         budget.release(estimate, 'compute_areas holding')   # the masks and the dataset are gone
         if occ is not None:
-            occ.finish()
+            t0 = time.perf_counter()
+            try:
+                occ.finish()
+            finally:
+                tm['occ_finish'] = time.perf_counter() - t0
             occ_out[role] = {'states': occ.result(), 'pitch': info['pitch'], 'valid_cells': occ.valid_cells,
                              'basis': occ.valid_basis}
     finally:
@@ -2349,6 +2379,11 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
             ctx.occ = None
 
     # finalize items: merge the chunks of one item (np.unique + np.bincount), then drop the chunk copies
+    t_merge = time.perf_counter()
+    tm['read_total'] = t_merge - t_read
+    arrive, finish = tm.pop('occ_arrive', 0.0), tm.pop('occ_finish', 0.0)
+    tm['read_occurrence'] = arrive + finish
+    tm['read_sink'] = max(0.0, tm.pop('read_sink_all', 0.0) - arrive)      # the sink without its occurrence part
     budget.set_stage(role, 'merge')
     entries = {}
     for rec in items:
@@ -2366,6 +2401,8 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
             'membership_tiles': int(len(member))}
 
     # numbered pictures (item maps first, then the DL1 electrode maps)
+    t_maps = time.perf_counter()
+    tm['merge'] = t_maps - t_merge
     budget.set_stage(role, 'maps')
     files, maps, shown = [], [], {}
     for index, layer in enumerate(layers):
@@ -2383,7 +2420,10 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
                      'numbers': _numbers_json(num)})
     ctx.canvas.clear()
     budget.release(canvas_bytes * len(layers), 'item map canvases')
+    t_el = time.perf_counter()
+    tm['maps_items'] = t_el - t_maps
     extra, el_files, el_maps = _electrode_maps(ctx, cfg2, budget, warnings, layers)
+    tm['maps_electrodes'] = time.perf_counter() - t_el
     files += el_files
     maps += el_maps
 
@@ -2401,7 +2441,9 @@ def _process_side(role, info, cfg, cfg2, led_doc, doc_hash, options, budget, geo
             'value_tiles': entry['value_tiles'], 'membership_tiles': entry['membership_tiles'], 'status': status})
     checks = {'item_sum': _check_items(ctx, entries), 'kind_sum': _check_kinds(ctx, led_doc, key)}
     budget.set_stage(role, 'cards')
+    t0 = time.perf_counter()
     cards, carried = _cards(ctx)
+    tm['cards'] = time.perf_counter() - t0
     budget.reserve(carried, f'cards carried to the next product ({role})')   # not card-owned (0 unless a caller adds some)
     ctx.sparse.clear()                      # this product's sparse data is dropped after its cards and checks
     budget.release(ctx.sparse_bytes, 'item sparse values')
@@ -2633,6 +2675,8 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
 
     max_operation_bytes overrides the limit of real.yaml (tests and tuning; the CLI leaves it out)."""
     started = time.time()
+    clock0 = time.perf_counter()
+    common = {}                         # elapsed_by_stage.common (observation only)
     output = Path(out)
     opts = validate_options(options)
     if not _owned_output(output):
@@ -2645,7 +2689,11 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     from .pipeline import _compare_options, load_numeric_config
     cfg = load_numeric_config(cfg2.numeric_config)
     top = _compare_options(cfg)[1]
+    t0 = time.perf_counter()
+    common['inputs_read'] = t0 - clock0
     infos = {role: _side_info(cfg, cfg2, role) for role in ROLES}
+    t1 = time.perf_counter()
+    common['side_info'] = t1 - t0
     limit = max_operation_bytes if max_operation_bytes is not None else min(info['limit'] for info in infos.values())
     budget = _Budget(limit)
     report_diameter = size_key(cfg2.report.diameter_um)
@@ -2679,7 +2727,10 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         estimates.append((f'item map canvases {role}', len(side_layers[role]) * dh * dw * 6))
     guard_stage_ledger_maps(limit, estimates)
 
+    t2 = time.perf_counter()
+    common['geometry'] = t2 - t1
     corr = load_correspondence(candidates, infos, cfg, opts)
+    common['correspondence'] = time.perf_counter() - t2
     run = _CardRun(led_doc, opts, budget, cfg2, infos, corr)
     budget.evictor = run.evict_one          # a reserve outside a card that does not fit first drops finished cards (E2)
     if cand.get('given'):
@@ -2687,10 +2738,12 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     texts_files, sides_json, window_json, checks, cards, metas = [], {}, {}, {}, [], {}
     warnings, reasons = [], []
     occ_out = {}
+    stage_times = {role: {} for role in ROLES}
+    t_sides = time.perf_counter()
     for role in ROLES:
         side, files, side_checks, side_cards, meta = _process_side(
             role, infos[role], cfg, cfg2, led_doc, recorded_hash[role], opts, budget, geoms[role],
-            report_diameter, warnings, run=run, occ_out=occ_out)
+            report_diameter, warnings, run=run, occ_out=occ_out, timing=stage_times[role])
         sides_json[role] = side
         window_json[role] = geoms[role]['window']
         checks[role] = side_checks
@@ -2700,7 +2753,11 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
     failed = [role for role in ROLES
               if checks[role]['item_sum']['status'] == 'failed'
               or any(row['status'] == 'failed' for row in checks[role]['kind_sum'].values())]
+    t3 = time.perf_counter()
+    common['sides_total'] = t3 - t_sides
     changes, overlay = _changes_section(candidates, led_doc, c2_doc, infos, sides_json, window_json, corr, opts)
+    common['changes_section'] = time.perf_counter() - t3
+    t4 = time.perf_counter()
     card_checks = {name: _card_check(run, name) for name in CARD_CHECKS}
     if any(row['status'] == 'failed' for row in card_checks.values()):
         failed.append('cards')
@@ -2759,6 +2816,17 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
         document['inputs']['layer_order'] = _layer_order(led_doc)
     exit_code = 0 if status == 'ok' else 3
     texts_files.sort(key=lambda item: item[0])
+    # elapsed_by_stage (observation only; written to execution.json, never to ledger_maps.json). The ledger_maps.json text
+    # is built just below and `publish` runs after this record, so neither is inside `common`.
+    t5 = time.perf_counter()
+    common['document'] = t5 - t4                        # checks summary, occurrence json, document dict
+    document_text = _json_text(document)
+    common['json_text'] = time.perf_counter() - t5
+    elapsed_by_stage = {role: {name: round(float(stage_times[role].get(name, 0.0)), 3) for name in STAGE_TIME_KEYS}
+                        for role in ROLES}
+    for role in ROLES:
+        elapsed_by_stage[role]['side_info_manifest'] = round(float(infos[role].get('real_source_s', 0.0)), 3)
+    elapsed_by_stage['common'] = {name: round(float(value), 3) for name, value in common.items()}
     record = {'command': COMMAND, 'status': status, 'reasons': reasons,
               'outputs': [str(output / 'ledger_maps.json')] + [str(output / name) for name, _data in texts_files],
               'compare2_dir': str(compare2_dir), 'ledger_dir': str(ledger_dir), 'config': str(cfg2.config_path),
@@ -2768,8 +2836,9 @@ def run_ledger_maps(compare2_dir, config, ledger_dir, out, options=None, candida
                                         for role in ROLES},
               'started_at': datetime.fromtimestamp(started, timezone.utc).isoformat(),
               'finished_at': datetime.now(timezone.utc).isoformat(),
+              'elapsed_by_stage': elapsed_by_stage,
               'elapsed_seconds': round(time.time() - started, 3), 'exit_code': exit_code}
-    files = texts_files + [('ledger_maps.json', _json_text(document)), ('execution.json', _json_text(record))]
+    files = texts_files + [('ledger_maps.json', document_text), ('execution.json', _json_text(record))]
     _remove_results(output)             # a previous run's pictures must not outlive this run
     _publish(output, files)
     error = output / 'error.json'

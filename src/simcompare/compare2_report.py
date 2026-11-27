@@ -287,7 +287,9 @@ class _FrameInfo(object):
 def _side_info(cfg, cfg2, role):
     from .pipeline import _real_source
     section = cfg.get(role)
+    _t0 = time.perf_counter()
     real = _real_source(cfg, section)
+    real_source_s = time.perf_counter() - _t0           # observation only (ledger-maps execution.json elapsed_by_stage)
     if real is None:
         raise NumericContractError('compare2_real_source_required', f'{role}: real_hotspot_v1 data_dir needed')
     frame = _FrameInfo(real[1]['frame'])
@@ -302,7 +304,8 @@ def _side_info(cfg, cfg2, role):
     return {'role': role, 'section': section, 'real': real, 'frame': frame, 'pitch': pitch,
             'unit_um': unit_um, 'unit_derived': derived, 'unit_px': (unit_um[0] / pitch, unit_um[1] / pitch),
             'product_id': assignment.get('product_id'),
-            'limit': assignment.get('max_operation_bytes', DEFAULT_MAX_OPERATION_BYTES)}
+            'limit': assignment.get('max_operation_bytes', DEFAULT_MAX_OPERATION_BYTES),
+            'real_source_s': real_source_s}
 
 
 # ---- masks, components, windows -------------------------------------------------------------------------------------
