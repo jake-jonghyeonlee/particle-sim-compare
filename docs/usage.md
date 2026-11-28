@@ -177,7 +177,7 @@ BASE_DIR/
 
 ### 제품 모드 (선택)
 
-`products.yaml` 은 실행기 EDIT 의 `PRODUCTS_IMPORT = [("real.yaml", "compare2.yaml", "<그룹>")]` 로 만든다(권장). 실행기가 계획 전에 `products-import` 를 돌린다. 패키지가 설치된 PC 에서는 `python -m simcompare products-import` 명령으로도 된다. 그다음 `bundles/etx/simcompare_job_etx.py`(또는 `bundles/local/simcompare_job_local.py`)의 EDIT 블록에서 `MODE = "products"` 로 바꾸면 실행기는 `products.yaml` 의 제품 자산 방식으로 돈다. 단계 01·02 는 제품마다 자산을 만들고 낡았을 때만 다시 만든다. 08 은 `COMPARE` 에 적은 같은 그룹의 쌍마다 돈다. 이때 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 는 읽지 않는다. 실행 뒤에는 자산 관리 시트(`data/products/products_sheet.html`)가 갱신된다. 설정, 이유 코드 표, 폴더 정리, 첫 실행 확인 목록은 [제품 자산 관리](product_assets.md)를 따른다.
+`products.yaml` 은 실행기 EDIT 의 `PRODUCTS_IMPORT = [("real.yaml", "compare2.yaml", "<그룹>")]` 로 만든다(권장). 실행기가 계획 전에 `products-import` 를 돌린다. 이미 등록된 제품은 값이 달라도 건너뛰고(경고) 새 제품만 넣는다. 덮어쓰려면 `PRODUCTS_IMPORT_UPDATE = True`. 패키지가 설치된 PC 에서는 `python -m simcompare products-import` 명령으로도 된다. 그다음 `bundles/etx/simcompare_job_etx.py`(또는 `bundles/local/simcompare_job_local.py`)의 EDIT 블록에서 `MODE = "products"` 로 바꾸면 실행기는 `products.yaml` 의 제품 자산 방식으로 돈다. 단계 01·02 는 제품마다 자산을 만들고 낡았을 때만 다시 만든다. 08 은 `COMPARE` 에 적은 같은 그룹의 쌍마다 돈다. 이때 `STEPS`, `REAL_CONFIG`, `COMPARE2_CONFIG` 는 읽지 않는다. 실행 뒤에는 자산 관리 시트(`data/products/products_sheet.html`)가 갱신된다. 설정, 이유 코드 표, 폴더 정리, 첫 실행 확인 목록은 [제품 자산 관리](product_assets.md)를 따른다.
 
 ### 다시 실행하기
 

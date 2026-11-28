@@ -393,14 +393,15 @@ def test_runner_imports_then_runs_to_the_end_and_a_second_run_skips_the_assets(i
     assert 'group G: unchanged (P1, P2)' in tail and 'skip fresh 01 P1' in tail and 'skip fresh 02 side P2' in tail
 
 
-def test_a_value_conflict_stops_the_run_and_update_overwrites_but_keeps_the_note(iworld):
+def test_a_value_difference_is_kept_with_a_warning_and_update_overwrites_but_keeps_the_note(iworld):
     etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
     edit_yaml(iworld / 'products.yaml', lambda d: d['products']['P1'].update(note='by hand'))
     edit_yaml(iworld / 'compare2.yaml', lambda d: d['report'].update(diameter_um=4))
     before = (iworld / 'products.yaml').read_bytes()
-    with pytest.raises(FlowError) as raised:
-        etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
-    assert raised.value.code == 'products_import_conflict' and 'report' in str(raised.value)
+    lines = []
+    etx_flow.prepare(iworld, import_settings(), echo=lines.append)             # T14: no stop; the file's values stay
+    assert any('group G: kept existing (P1, P2)' in line for line in lines), lines
+    assert any('products_import_kept_existing' in line and 'report' in line for line in lines), lines
     assert (iworld / 'products.yaml').read_bytes() == before
     lines = []
     jobs = etx_flow.prepare(iworld, import_settings(products_import_update=True), echo=lines.append)
@@ -411,12 +412,46 @@ def test_a_value_conflict_stops_the_run_and_update_overwrites_but_keeps_the_note
     assert doc['common']['report']['diameter_um'] == 4 and doc['products']['P1']['note'] == 'by hand'
 
 
-def test_a_group_conflict_stops_the_run_and_leaves_the_file(iworld):
+def test_a_registered_product_in_another_group_is_kept_and_update_stops_with_a_group_conflict(iworld):
     etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
     before = (iworld / 'products.yaml').read_bytes()
+    lines = []
+    etx_flow.prepare(iworld, import_settings(products_import=[('real.yaml', 'compare2.yaml', 'H')]), echo=lines.append)
+    assert any('products_import_kept_existing' in line and 'G -> H' in line for line in lines), lines
+    assert (iworld / 'products.yaml').read_bytes() == before
     with pytest.raises(FlowError) as raised:
-        etx_flow.prepare(iworld, import_settings(products_import=[('real.yaml', 'compare2.yaml', 'H')]), echo=lambda line: None)
+        etx_flow.prepare(iworld, import_settings(products_import=[('real.yaml', 'compare2.yaml', 'H')],
+                                                 products_import_update=True), echo=lambda line: None)
     assert raised.value.code == 'products_import_group_conflict' and (iworld / 'products.yaml').read_bytes() == before
+
+
+def test_a_failing_second_item_says_the_first_one_is_already_in(iworld):
+    items = [('real.yaml', 'compare2.yaml', 'G'), ('nope.yaml', 'compare2.yaml', 'G')]
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(products_import=items), echo=lambda line: None)
+    text = str(raised.value)
+    assert raised.value.code == 'products_import_unreadable' and '앞 항목 1 개는 이미 반영됨(다음 실행에서 건너뜀)' in text
+    assert '실패한 항목만 반영되지 않음' in text and (iworld / 'products.yaml').is_file()
+
+
+def test_a_failing_first_item_leaves_products_yaml_as_it_was(iworld):
+    items = [('nope.yaml', 'compare2.yaml', 'G'), ('real.yaml', 'compare2.yaml', 'G')]
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(products_import=items), echo=lambda line: None)
+    assert 'products.yaml 은 그대로' in str(raised.value) and '앞 항목' not in str(raised.value)
+    assert not (iworld / 'products.yaml').exists()
+
+
+def test_an_error_without_a_code_line_is_products_import_failed(iworld, monkeypatch):
+    from simcompare import products_import
+
+    def silent_failure(real, compare2, group, config_path=None, update=False, check=False, out=None, err=None):
+        err('something odd without a code')
+        return 2
+    monkeypatch.setattr(products_import, 'run_products_import', silent_failure)
+    with pytest.raises(FlowError) as raised:
+        etx_flow.prepare(iworld, import_settings(), echo=lambda line: None)
+    assert raised.value.code == 'products_import_failed' and 'something odd' in str(raised.value)
 
 
 def test_an_incompatible_pair_stops_the_run_and_makes_no_file(iworld):

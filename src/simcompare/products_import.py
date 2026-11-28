@@ -4,8 +4,12 @@
 
 Reads the two existing settings with their own loaders, builds the product sections of `reference` and `target`
 (name = real.yaml `<role>.product_id`) and merges them into products.yaml (created when absent):
-  - a product or common value that already exists and differs is listed and refused (exit 2, `products_import_conflict`)
-    unless `--update`; an equal one is left alone and an unchanged file is not written at all (its mtime stays);
+  - a product that is already registered is skipped even when its values differ (T14): its section stays, the differing
+    cells are warned (`products_import_kept_existing`) and listed under `skipped` (`same` / `kept_existing`). Only a new
+    product is put in, into `--group`; a registered product in another group stays there (warned). Common values that
+    differ also stay (warned). A new product that does not load with the file's common values stops the run
+    (exit 2, `products_import_conflict`). `--update` overwrites the differing values instead (the note stays). A file
+    with nothing to add is not written at all (its mtime stays);
   - a human-written `note` stays; comments of the file are not kept (the first line says the file was fixed by this command);
   - the result is written to a temporary file next to the target, checked with `check_groups` (group compatibility) and
     only then moved with os.replace. A failing check leaves the target as it was. `--check` writes nothing at all: no folder,
@@ -214,18 +218,27 @@ def _dump(doc: dict) -> str:
 class _Merge(object):
     def __init__(self):
         self.doc: dict = {}
-        self.conflicts: List[str] = []         # existing values that differ from the desired ones
+        self.errors: List[str] = []            # a NEW product that cannot be put in (refused, products_import_conflict)
+        self.overwritten: List[str] = []       # differing values replaced (only with --update)
+        self.kept_common: List[str] = []       # common values that differ from the input; the file's values stay
+        self.skipped: Dict[str, dict] = {}     # registered products left alone: {'status': 'same'|'kept_existing', 'differs': [...]}
+        self.new_products: List[str] = []
         self.added: List[str] = []             # new products / group members
         self.updated: List[str] = []           # existing values replaced (only with --update)
-        self.notes: Dict[str, str] = {}
 
     @property
     def changed(self) -> bool:
         return bool(self.added or self.updated)
 
+    @property
+    def kept(self) -> bool:
+        return bool(self.kept_common or any(item['status'] == 'kept_existing' for item in self.skipped.values()))
+
 
 def _merge(existing: Optional[dict], config_dir: Path, common: dict, products: Dict[str, dict], group: str,
            update: bool) -> _Merge:
+    """T14: a registered product is left as it is (an equal one is `same`, a differing one `kept_existing` with its cells
+    listed); only a new product is put in. `--update` replaces differing values like before."""
     merge = _Merge()
     if existing is None:
         doc = {'schema_version': pc.SCHEMA_VERSION, 'common': copy.deepcopy(common), 'groups': {},
@@ -246,17 +259,25 @@ def _merge(existing: Optional[dict], config_dir: Path, common: dict, products: D
         for key in COMMON_ORDER:
             lines = _diff('common.%s' % key, old_common.get(key), new_common.get(key))
             if lines:
-                merge.conflicts += lines
                 if update:
+                    merge.overwritten += lines
                     doc['common'][key] = copy.deepcopy(common[key])
                     merge.updated.append('common.%s' % key)
+                else:
+                    merge.kept_common += lines
+    file_common = _normal_common(config_dir, doc['common'])          # the common values the file has after this run
     for name, section in products.items():
         current = doc['products'].get(name)
         if current is None:
+            try:
+                _normal_product(name, section, file_common)
+            except NumericContractError as exc:
+                merge.errors.append('products.%s: the new product does not load with the file common values: %s' % (name, exc))
+                continue
             doc['products'][name] = copy.deepcopy(section)
+            merge.new_products.append(name)
             merge.added.append('products.%s' % name)
             continue
-        file_common = _normal_common(config_dir, doc['common'])      # the common values the file has after this run
         try:
             old = _normal_product(name, current, file_common)
         except NumericContractError as exc:
@@ -266,30 +287,39 @@ def _merge(existing: Optional[dict], config_dir: Path, common: dict, products: D
         except NumericContractError as exc:
             if update:
                 raise
-            # the desired product does not load with the common values the file has: that is a conflict too (R6:2)
-            merge.conflicts.append('products.%s: the new section does not load with the file common values: %s' % (name, exc))
+            merge.skipped[name] = {'status': 'kept_existing', 'differs': [
+                'products.%s: the input section does not load with the file common values: %s' % (name, exc)]}
             continue
         lines = _diff('products.%s' % name, old, new)
-        if lines:
-            merge.conflicts += lines
-            if update:
+        if update:
+            if lines:
+                merge.overwritten += lines
                 replaced = copy.deepcopy(section)
                 if isinstance(current, dict) and current.get('note') is not None:
                     replaced['note'] = current['note']          # a human-written note stays
                 doc['products'][name] = replaced
                 merge.updated.append('products.%s' % name)
+        else:
+            merge.skipped[name] = {'status': 'kept_existing' if lines else 'same', 'differs': lines}
+    touched = [name for name in products if name in doc['products'] and (update or name in merge.new_products)]
     for name in products:
         owner = [g for g, members in doc['groups'].items() if isinstance(members, list) and name in members]
-        if owner and owner[0] != group:
+        if not owner or owner[0] == group or name not in doc['products']:
+            continue
+        if name in touched:
             raise _error('products_import_group_conflict', 'product %s is already in group %s (asked for group %s); '
                          'move it by hand' % (name, owner[0], group))
-    members = doc['groups'].setdefault(group, [])
-    if not isinstance(members, list):
-        raise _error('invalid_products_config', 'groups.%s must be a list' % group)
-    for name in products:
-        if name not in members:
-            members.append(name)
-            merge.added.append('groups.%s: %s' % (group, name))
+        item = merge.skipped.setdefault(name, {'status': 'same', 'differs': []})
+        item['status'] = 'kept_existing'
+        item['differs'].append('products.%s.group: %s -> %s' % (name, owner[0], group))
+    if touched:
+        members = doc['groups'].setdefault(group, [])
+        if not isinstance(members, list):
+            raise _error('invalid_products_config', 'groups.%s must be a list' % group)
+        for name in touched:
+            if name not in members:
+                members.append(name)
+                merge.added.append('groups.%s: %s' % (group, name))
     return merge
 
 
@@ -332,16 +362,24 @@ def run_products_import(real_path, compare2_path, group: str, config_path='produ
             if existing.get('schema_version') != pc.SCHEMA_VERSION:
                 raise _error('unsupported_products_config', '%s: use schema_version: %s' % (config_path, pc.SCHEMA_VERSION))
         merge = _merge(existing, config_dir, common, products, group, update)
-        if merge.conflicts and not update:
-            err('오류: products_import_conflict: %s differs from %s / %s; use --update to overwrite:'
-                % (config_path.name, real_path.name, compare2_path.name))
-            for line in merge.conflicts:
+        if merge.errors:
+            err('오류: products_import_conflict: a new product cannot be put into %s (%s is unchanged):'
+                % (config_path.name, config_path.name))
+            for line in merge.errors:
                 err('  ' + line)
-            out({'status': 'conflict', 'conflicts': merge.conflicts})
+            out({'status': 'conflict', 'conflicts': merge.errors})
             return 2
         result = {'path': str(config_path), 'group': group, 'products': list(products)}
+        result['skipped'] = merge.skipped
+        if merge.kept_common:
+            result['common_kept'] = merge.kept_common
+        for line in merge.kept_common:
+            err('주의: products_import_kept_existing: common: %s' % line)
+        for name, item in merge.skipped.items():
+            for line in item['differs']:
+                err('주의: products_import_kept_existing: %s: %s' % (name, line))
         if not merge.changed:
-            result['status'] = 'unchanged'
+            result['status'] = 'kept_existing' if merge.kept else 'unchanged'
             out(result)
             return 0
         text = _dump(_final_doc(merge))
@@ -362,7 +400,7 @@ def run_products_import(real_path, compare2_path, group: str, config_path='produ
             err('오류: group_incompatible: %s (%s is unchanged)' % (exc, config_path.name))
             out({'status': 'incompatible', 'violations': exc.violations})
             return 2
-        result.update({'added': merge.added, 'updated': merge.updated, 'conflicts_overwritten': merge.conflicts})
+        result.update({'added': merge.added, 'updated': merge.updated, 'conflicts_overwritten': merge.overwritten})
         if any(item.startswith('common.') for item in merge.updated):
             # a changed common value reaches every product of the file, not only the two imported ones (R6:3)
             affected = list(merge.doc['products'])

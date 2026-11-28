@@ -67,12 +67,16 @@ python -m simcompare products-import --real real.yaml --compare2 compare2.yaml -
 
 - `--check` 는 아무것도 쓰지 않는다. 결과(`would_write` 등)만 본다.
 - `--no-cno` 는 두 제품의 `include_cno` 를 false 로 한다. 기본은 true 다.
-- 같은 제품이 이미 있고 값이 다르면 `products_import_conflict`(종료 2)로 멈추고 다른 칸을 한 줄씩 보여 준다. 덮어쓰려면 `--update` 를 붙인다.
+- **이미 등록된 제품은 건너뛴다.** 값이 달라도 기존 절을 그대로 두고, 다른 칸마다 경고 한 줄(`주의: products_import_kept_existing: <제품>: <칸> <기존> -> <입력>`)을 찍는다. 결과 JSON 의 `skipped` 에 제품별 `same` 또는 `kept_existing` 과 다른 칸 목록이 든다. 새 제품만 `--group` 그룹에 넣는다. 종료 0.
+- 이미 등록된 제품이 다른 그룹에 있어도 그대로 두고 경고만 한다. 두 제품이 모두 등록돼 있으면 파일을 쓰지 않는다(`unchanged` 또는 `kept_existing`, mtime 불변).
+- `common` 값이 입력과 다르면 기존 값을 유지하고 경고만 한다. 새 제품은 기존 `common` 기준으로 읽는다. 읽지 못하면(예: 새 제품의 `model_group` 이 기존 `common` 에 없음) 그 제품을 넣지 않고 `products_import_conflict`(종료 2)로 멈춘다. 없는 항목을 출력한다.
+- 다른 값으로 덮어쓰려면 `--update`(실행기 `PRODUCTS_IMPORT_UPDATE = True`)를 붙인다. 이때만 등록된 제품이 다른 그룹에 있으면 `products_import_group_conflict` 로 멈춘다. 손으로 옮긴다.
 - `--update` 로 `common` 값이 바뀌면 products.yaml 의 모든 제품이 영향받는다. 명령이 제품 목록을 경고로 알려 준다.
 - 사람이 쓴 `note` 는 `--update` 에서도 남는다. 주석은 남지 않는다(첫 줄에 이 명령이 고친 파일이라고 적힌다).
-- 두 제품이 다른 그룹에 이미 있으면 `products_import_group_conflict` 로 멈춘다. 손으로 옮긴다.
-- 그룹 호환 검사에 실패하면 `group_incompatible` 로 멈추고 products.yaml 은 그대로다.
-- 그 밖의 입력 오류 코드: `products_import_invalid`, `products_import_unreadable`, `products_import_config_mismatch`, `products_import_io`.
+- 새 제품을 넣은 뒤 그룹 호환 검사에 실패하면 `group_incompatible` 로 멈추고 products.yaml 은 그대로다.
+- 그 밖의 입력 오류 코드: `products_import_invalid`, `products_import_unreadable`, `products_import_config_mismatch`, `products_import_io`. 실행기가 import 의 오류 코드 줄을 읽지 못하면 `products_import_failed` 로 멈춘다.
+
+예: 자산이 이미 있는 제품끼리 비교한다. 두 제품이 모두 등록돼 있으면 두 제품 자산(`P01`·`P02`)은 `skip fresh` 로 건너뛴다. 쌍 조합(`C02`)은 처음 한 번만 만든다. 실제로 오래 걸리는 단계는 `C08`(ledger·지도·보고서)이다. 한 제품만 새 제품이면 그 제품만 products.yaml 에 넣고 그 제품의 자산만 만든다.
 
 손으로 쓰려면 `configs/etx/templates/products.yaml` 을 복사해 고친다. 검증만 하려면 다음을 쓴다.
 
@@ -139,8 +143,8 @@ ASSET_STEPS = ["01", "02"]          # [] = 자산을 만들지 않음
 COMPARE = []                        # [("A", "B"), ...] (기준, 대상), 같은 그룹만
 COMPARE_STEPS = ["02", "08"]        # 02 = 조합, 08 = ledger·지도·보고서
 FORCE_ASSETS = []                   # 신선해도 다시 만들 제품
-PRODUCTS_IMPORT = []                # [("real.yaml", "compare2.yaml", "QA4"), ...] = 실행 전에 이 설정의 두 제품을 products.yaml 에 넣는다
-PRODUCTS_IMPORT_UPDATE = False      # True = 이미 등록된 제품·공통 값이 다르면 덮어쓴다(note 유지)
+PRODUCTS_IMPORT = []                # [("real.yaml", "compare2.yaml", "QA4"), ...] = 실행 전에 이 설정의 두 제품 중 등록 안 된 새 제품만 products.yaml 에 넣는다(등록된 제품은 건너뜀)
+PRODUCTS_IMPORT_UPDATE = False      # True = 이미 등록된 제품·공통 값이 다르면 덮어쓴다(note 유지). False = 등록된 제품은 건너뜀(경고)
 RECORD_MAPS = True                  # 02: side 를 만들 때 08 지도용 원자료도 녹화
 MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, 기본 32 GiB)
 ```
@@ -150,9 +154,9 @@ MAPS_SRC_MAX_BYTES = 32 * 1024**3   # 02: 녹화 크기 상한(비압축 합, �
 - `COMPARE_STEPS`: `"02"` 는 쌍마다 compose, `"08"` 은 쌍마다 ledger → maps → report. 모르는 값은 `etx_compare_steps_invalid`.
 - `COMPARE`: (기준, 대상) 쌍 목록. A 가 reference, B 가 target 이다. 오류: `etx_compare_same_product`, `etx_compare_cross_group`, `etx_product_unknown`, `etx_setting_invalid`(같은 쌍 중복 등).
 - `FORCE_ASSETS`: 그 제품의 `ASSET_STEPS` 에 든 단계만 신선해도 다시 만든다(`["02"]` 이면 02 만). `PRODUCTS` 에 없거나 `ASSET_STEPS` 가 비면 `etx_force_not_selected`.
-- `PRODUCTS_IMPORT`: (real.yaml, compare2.yaml, 그룹) 세 문자열 항목 목록. 제품 모드에서만 읽는다(pair 모드는 무시). 실행기는 **계획(products.yaml 적재·검증)보다 먼저** 항목을 차례로 `products-import` 로 처리하고(`--config` = `PRODUCTS_CONFIG`, `--update` = `PRODUCTS_IMPORT_UPDATE`) 항목마다 `added`/`updated`/`unchanged` 한 줄을 로그에 찍는다. 공통 값이 바뀌면 영향받는 제품 목록도 찍는다. 하나라도 실패하면(`products_import_conflict`, `products_import_group_conflict`, `group_incompatible`, 파일 없음 `products_import_unreadable` 등) import 의 오류 코드 그대로 종료 2 로 멈추고 job 은 하나도 돌지 않는다. products.yaml 은 그대로다. 항목 모양이 틀리면 `etx_setting_invalid`.
-- `PRODUCTS_IMPORT_UPDATE`: `True` 면 이미 등록된 제품·공통 값이 달라도 덮어쓴다(사람이 쓴 `note` 는 남는다). 공통 값이 바뀌면 모든 제품이 영향받는다. 기본 `False` 는 다른 값을 `products_import_conflict` 로 멈춘다.
-- `DRY_RUN = True` 일 때 import 는 `--check` 로만 돌아 아무것도 쓰지 않는다. products.yaml 이 아직 없으면 계획을 세울 수 없어 "계획 생략" 한 줄만 찍고 끝난다. 있으면 기존 파일로 계획을 찍는다.
+- `PRODUCTS_IMPORT`: (real.yaml, compare2.yaml, 그룹) 세 문자열 항목 목록. 제품 모드에서만 읽는다(pair 모드는 무시). 실행기는 **계획(products.yaml 적재·검증)보다 먼저** 항목을 차례로 `products-import` 로 처리하고(`--config` = `PRODUCTS_CONFIG`, `--update` = `PRODUCTS_IMPORT_UPDATE`) 항목마다 `added`/`updated`/`unchanged`/`kept existing` 한 줄과 경고(`products_import_kept_existing`)를 로그에 찍는다. **이미 등록된 제품은 건너뛰고 새 제품만 넣는다**(2.1). 공통 값이 바뀌면 영향받는 제품 목록도 찍는다. 하나라도 실패하면(`products_import_conflict`, `products_import_group_conflict`, `group_incompatible`, 파일 없음 `products_import_unreadable` 등) import 의 오류 코드 그대로 종료 2 로 멈추고 job 은 하나도 돌지 않는다. 첫 항목이 실패하면 "products.yaml 은 그대로", 둘째 이후가 실패하면 "앞 항목 N 개는 이미 반영됨(다음 실행에서 건너뜀), 실패한 항목만 반영되지 않음" 으로 끝난다. 항목 모양이 틀리면 `etx_setting_invalid`.
+- `PRODUCTS_IMPORT_UPDATE`: `True` 면 이미 등록된 제품·공통 값이 달라도 덮어쓴다(사람이 쓴 `note` 는 남는다). 공통 값이 바뀌면 모든 제품이 영향받는다. 기본 `False` 는 등록된 제품을 건너뛰고 경고만 한다.
+- `DRY_RUN = True` 일 때 import 는 `--check` 로만 돌아 아무것도 쓰지 않는다. 항목마다 기존 파일 기준으로 따로 본다(앞 항목 결과를 쌓지 않는다). 그래서 새로 더해질 제품은 미리보기 계획에 나오지 않는다. products.yaml 이 아직 없으면 계획을 세울 수 없어 "계획 생략" 한 줄만 찍고 끝난다. 있으면 기존 파일로 계획을 찍는다.
 - `LEDGER_MAPS_CARDS`: `None` = 모드 기본(제품 모드는 카드 끔), `False` = `--no-cards`, `True` = `--cards`.
 - `RECORD_MAPS`: 02 에서 지도 원자료를 녹화한다. 끄면 `products-step 02` 에 `--no-record-maps` 가 붙는다.
 - `MAPS_SRC_MAX_BYTES`: `RECORD_MAPS` 가 켜져 있고 값이 기본값이 아닐 때만 `--maps-src-max-bytes` 가 붙는다. 양의 정수여야 한다(`etx_setting_invalid`).
@@ -422,7 +426,7 @@ flow: DRY_RUN = True: nothing was run or moved
 ### 6.4 그룹 변경
 
 - 제품을 다른 그룹으로 옮기면 두 그룹의 합집합이 모두 바뀐다. 두 그룹 제품 전부의 01 을 다시 돌린다.
-- `products-import` 는 다른 그룹에 이미 있는 제품을 옮기지 않는다(`products_import_group_conflict`). 손으로 옮긴다.
+- `products-import` 는 다른 그룹에 이미 있는 제품을 옮기지 않는다(기본은 그대로 두고 경고, `--update` 에서는 `products_import_group_conflict`). 손으로 옮긴다.
 - pairs.csv 를 바꾸면(`pair_table_changed`) 그룹 모든 제품의 02 를 다시 돌린다. 한 제품만 바꾸면 `group_pair_table_mismatch` 로 멈춘다.
 
 ## 7. 결과의 의미 (중요)

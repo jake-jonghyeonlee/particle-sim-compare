@@ -537,7 +537,7 @@ def _run_imports(base_dir, cfg, dry_run, echo):
     config_path = _under(base, cfg['products_config'])
     update = cfg['products_import_update']
     pending = False
-    for real, compare2, group in items:
+    for index, (real, compare2, group) in enumerate(items):
         outputs, errors = [], []
         status = run_products_import(_under(base, real), _under(base, compare2), group, config_path=config_path,
                                      update=update, check=dry_run, out=outputs.append, err=errors.append)
@@ -552,15 +552,25 @@ def _run_imports(base_dir, cfg, dry_run, echo):
             detail = ' / '.join(errors) or '(no message)'
             if outputs and isinstance(outputs[-1], dict) and outputs[-1].get('conflicts'):
                 detail += ' ' + json.dumps(outputs[-1]['conflicts'], ensure_ascii=False)
-            raise FlowError(code, '%s failed: %s (%s is unchanged)' % (label, detail, config_path.name))
+            if index == 0 or dry_run:
+                tail = '%s 은 그대로' % config_path.name
+            else:
+                tail = ('앞 항목 %d 개는 이미 반영됨(다음 실행에서 건너뜀), 실패한 항목만 반영되지 않음' % index)
+            raise FlowError(code, '%s failed: %s (%s)' % (label, detail, tail))
         result = outputs[-1] if outputs else {}
         state = result.get('status')
-        word = {'unchanged': 'unchanged', 'written': 'updated' if result.get('updated') else 'added',
+        word = {'unchanged': 'unchanged', 'kept_existing': 'kept existing',
+                'written': 'updated' if result.get('updated') else 'added',
                 'would_write': 'would update' if result.get('updated') else 'would add'}.get(state, str(state))
+        for line in errors:                      # warnings (products_import_kept_existing, common changes) stay visible
+            echo('flow: %s' % line)
         extra = ''
         if result.get('common_changed_products'):
             extra = '; common changed, affected products: %s' % ', '.join(result['common_changed_products'])
         echo('flow: %s: %s (%s)%s' % (label, word, ', '.join(result.get('products', [])), extra))
+        skipped = result.get('skipped') or {}
+        if skipped:
+            echo('flow:   이미 등록된 제품은 건너뜀: %s' % ', '.join('%s(%s)' % (n, skipped[n]['status']) for n in skipped))
         if state in ('written', 'would_write'):
             pending = True
     return pending

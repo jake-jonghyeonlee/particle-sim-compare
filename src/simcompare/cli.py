@@ -293,10 +293,10 @@ def _parser() -> argparse.ArgumentParser:
     pairstep.add_argument("--force", action="store_true", help="compose 단계가 신선해도 다시 만든다(옛 compare2 는 data/_runs 로 보관). 다른 단계와 함께 쓰면 종료 2(pair_force_compose_only)")
     pimport = _korean_help(sub.add_parser(
         "products-import", add_help=False,
-        help="real.yaml + compare2.yaml 의 두 제품(reference·target)을 products.yaml 에 넣는다. 다르면 거부(--update 로 덮어씀), 같으면 쓰지 않음, 호환 검사 실패면 되돌림"))
+        help="real.yaml + compare2.yaml 의 두 제품(reference·target)을 products.yaml 에 넣는다. 이미 등록된 제품은 값이 달라도 건너뛰고(경고) 새 제품만 넣는다(--update 로 덮어씀). 넣을 것이 없으면 쓰지 않음, 호환 검사 실패면 되돌림"))
     pimport.add_argument("--real", required=True, help="real.yaml(numeric_config_v1)")
     pimport.add_argument("--compare2", required=True, help="compare2.yaml(compare2_config_v1, numeric_config 가 --real 을 가리킴)")
-    pimport.add_argument("--group", required=True, help="두 제품을 넣을 비교 그룹 이름(없으면 만든다. 다른 그룹에 이미 있으면 거부)")
+    pimport.add_argument("--group", required=True, help="새 제품을 넣을 비교 그룹 이름(없으면 만든다. 이미 등록된 제품이 다른 그룹에 있으면 그대로 두고 경고)")
     pimport.add_argument("--config", default="products.yaml", help="products.yaml(없으면 새로 만든다). 기본 products.yaml")
     pimport.add_argument("--update", action="store_true", help="이미 있는 제품·common 이 다르면 덮어쓴다(사람이 쓴 note 는 유지)")
     pimport.add_argument("--check", action="store_true", help="쓰지 않고 결과만 본다(대상 파일은 그대로)")

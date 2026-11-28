@@ -102,7 +102,7 @@ def test_a_hand_written_file_with_the_same_meaning_is_left_alone(template_dir, n
     shutil.copyfile(str(TEMPLATES / 'products.yaml'), str(template_dir / 'products.yaml'))
     # the template has two model families only; compare2.yaml has four, so this is a (real) difference ...
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
-    assert code == 2 and any('common.model_groups' in line for line in errs)
+    assert code == 0 and outs[-1]['status'] == 'kept_existing' and any('common.model_groups' in line for line in errs)   # T14: kept, warned
     # ... and once compare2.yaml says the same, the hand-written file (comments and all) is not touched
     data = yaml.safe_load((template_dir / 'compare2.yaml').read_text(encoding='utf-8'))
     for name in ('auto', 'watch'):
@@ -127,10 +127,13 @@ def test_a_different_value_is_a_conflict_listed_by_cell_and_update_overwrites_bu
     (template_dir / 'compare2.yaml').write_text(yaml.safe_dump(c2, sort_keys=False), encoding='utf-8')
     before = (target.read_bytes(), target.stat().st_mtime_ns)
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
-    assert code == 2 and 'products_import_conflict' in errs[0]
-    assert any('products.QA4_R00.resolution: [1500, 1850] -> [1600, 1850]' in line for line in errs)
-    assert any('common.report.top_n: 4 -> 7' in line for line in errs)
-    assert (target.read_bytes(), target.stat().st_mtime_ns) == before                       # refused: nothing written
+    assert code == 0 and outs[-1]['status'] == 'kept_existing', errs                        # T14: registered products are kept
+    assert any('products_import_kept_existing' in line and 'products.QA4_R00.resolution: [1500, 1850] -> [1600, 1850]' in line
+               for line in errs)
+    assert any('products_import_kept_existing' in line and 'common.report.top_n: 4 -> 7' in line for line in errs)
+    assert outs[-1]['skipped']['QA4_R00']['status'] == 'kept_existing'
+    assert outs[-1]['skipped']['QA4_T00']['status'] == 'same'
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before                       # kept: nothing written
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', update=True)
     assert code == 0, errs
     assert outs[-1]['status'] == 'written' and 'products.QA4_R00' in outs[-1]['updated'] and 'common.report' in outs[-1]['updated']
@@ -138,7 +141,8 @@ def test_a_different_value_is_a_conflict_listed_by_cell_and_update_overwrites_bu
     assert config.products['QA4_R00']['resolution'] == [1600, 1850] and config.common['report']['top_n'] == 7
     assert config.products['QA4_R00']['note'] == '손으로 쓴 메모'
     assert listing(template_dir) == ['compare2.yaml', 'products.yaml', 'real.yaml']
-    assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')[2] == []          # now equal again
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert errs == [] and outs[-1]['status'] == 'unchanged'                                  # now equal again
 
 
 def test_other_products_of_the_file_are_kept(template_dir, no_group_check):
@@ -158,12 +162,15 @@ def test_other_products_of_the_file_are_kept(template_dir, no_group_check):
     assert config.products['QA4_T00']['resolution'] == [1500, 1800]
 
 
-def test_a_product_that_is_in_another_group_is_refused(template_dir, no_group_check):
+def test_a_product_that_is_in_another_group_is_refused_only_with_update(template_dir, no_group_check):
     assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', group='QA4')[0] == 0
     target = template_dir / 'products.yaml'
     before = (target.read_bytes(), target.stat().st_mtime_ns)
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', group='ELSE', update=True)
     assert code == 2 and 'products_import_group_conflict' in errs[0] and 'QA4' in errs[0]
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', group='ELSE')       # T14: kept + warned
+    assert code == 0 and outs[-1]['status'] == 'kept_existing' and any('QA4' in line and 'ELSE' in line for line in errs)
     assert (target.read_bytes(), target.stat().st_mtime_ns) == before
 
 
@@ -200,7 +207,8 @@ def test_check_writes_nothing_to_the_target(template_dir, no_group_check):
     c2 = yaml.safe_load((template_dir / 'compare2.yaml').read_text(encoding='utf-8'))
     c2['products']['target']['resolution'] = [10, 10]
     (template_dir / 'compare2.yaml').write_text(yaml.safe_dump(c2, sort_keys=False), encoding='utf-8')
-    assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True)[0] == 2        # the conflict is reported
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True)
+    assert code == 0 and outs[-1]['status'] == 'kept_existing' and errs                                 # T14: kept + warned
     code, outs, _ = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', check=True, update=True)
     assert code == 0 and outs[-1]['status'] == 'would_write'
     assert (target.read_bytes(), target.stat().st_mtime_ns) == before and listing(template_dir) == ['compare2.yaml', 'products.yaml', 'real.yaml']
@@ -354,9 +362,19 @@ def test_check_leaves_no_temporary_file_when_the_group_check_or_an_exception_sto
     assert listing(template_dir) == names
 
 
-def test_a_new_product_that_does_not_load_with_the_file_common_is_a_listed_conflict(template_dir, no_group_check):
+def register_only_reference(template_dir):
+    """products.yaml with QA4_R00 only (QA4_T00 is the NEW product of the next import)."""
     assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')[0] == 0
     target = template_dir / 'products.yaml'
+    doc = yaml.safe_load(target.read_text(encoding='utf-8'))
+    del doc['products']['QA4_T00']
+    doc['groups']['QA4'] = ['QA4_R00']
+    target.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding='utf-8')
+    return target
+
+
+def test_a_new_product_that_does_not_load_with_the_file_common_is_a_listed_conflict(template_dir, no_group_check):
+    target = register_only_reference(template_dir)
     before = (target.read_bytes(), target.stat().st_mtime_ns)
     c2 = yaml.safe_load((template_dir / 'compare2.yaml').read_text(encoding='utf-8'))
     c2['model_groups']['tablet'] = copy.deepcopy(c2['model_groups']['mobile'])
@@ -364,11 +382,74 @@ def test_a_new_product_that_does_not_load_with_the_file_common_is_a_listed_confl
     (template_dir / 'compare2.yaml').write_text(yaml.safe_dump(c2, sort_keys=False), encoding='utf-8')
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
     assert code == 2 and 'products_import_conflict' in errs[0], errs
-    assert any('common.model_groups' in line for line in errs)
-    assert any('does not load with the file common values' in line and 'QA4_T00' in line for line in errs)
+    assert any('does not load with the file common values' in line and 'QA4_T00' in line and 'tablet' in line for line in errs)
     assert (target.read_bytes(), target.stat().st_mtime_ns) == before
     code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', update=True)
     assert code == 0, errs                                              # --update replaces the common values first, then it loads
+
+
+# ---- pasx/T14: registered products are skipped, only new ones go in ---------------------------------------------------------------
+
+def test_registered_equal_product_is_same_and_the_new_one_is_added(template_dir, no_group_check):
+    target = register_only_reference(template_dir)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert code == 0 and not errs, errs
+    assert outs[-1]['status'] == 'written' and outs[-1]['skipped'] == {'QA4_R00': {'status': 'same', 'differs': []}}
+    assert outs[-1]['added'] == ['products.QA4_T00', 'groups.QA4: QA4_T00']
+    assert load(target).groups == {'QA4': ['QA4_R00', 'QA4_T00']}
+
+
+def test_registered_different_product_is_kept_and_the_new_one_is_added_update_overwrites_with_the_note(template_dir, no_group_check):
+    target = register_only_reference(template_dir)
+    doc = yaml.safe_load(target.read_text(encoding='utf-8'))
+    doc['products']['QA4_R00']['note'] = '메모'
+    doc['products']['QA4_R00']['resolution'] = [1000, 1000]
+    target.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding='utf-8')
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert code == 0, errs
+    assert outs[-1]['status'] == 'written' and outs[-1]['skipped']['QA4_R00']['status'] == 'kept_existing'
+    assert any(line.startswith('주의: products_import_kept_existing: QA4_R00: ') and 'resolution' in line
+               and '[1000, 1000] -> [1500, 1850]' in line for line in errs), errs
+    config = load(target)
+    assert config.products['QA4_R00']['resolution'] == [1000, 1000] and 'QA4_T00' in config.products
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', update=True)
+    assert code == 0 and 'products.QA4_R00' in outs[-1]['updated'], errs
+    config = load(target)
+    assert config.products['QA4_R00']['resolution'] == [1500, 1850] and config.products['QA4_R00']['note'] == '메모'
+
+
+def test_a_registered_product_in_another_group_stays_there_and_the_new_one_joins_the_asked_group(template_dir, no_group_check):
+    target = register_only_reference(template_dir)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml', group='ELSE')
+    assert code == 0, errs
+    assert outs[-1]['skipped']['QA4_R00']['status'] == 'kept_existing'
+    assert any('QA4_R00' in line and 'QA4 -> ELSE' in line for line in errs), errs
+    assert load(target).groups == {'QA4': ['QA4_R00'], 'ELSE': ['QA4_T00']}
+
+
+def test_both_registered_writes_nothing(template_dir, no_group_check):
+    assert run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')[0] == 0
+    target = template_dir / 'products.yaml'
+    c2 = yaml.safe_load((template_dir / 'compare2.yaml').read_text(encoding='utf-8'))
+    c2['products']['target']['resolution'] = [10, 10]
+    (template_dir / 'compare2.yaml').write_text(yaml.safe_dump(c2, sort_keys=False), encoding='utf-8')
+    before = (target.read_bytes(), target.stat().st_mtime_ns)
+    names = listing(template_dir)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert code == 0 and outs[-1]['status'] == 'kept_existing' and errs
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before and listing(template_dir) == names
+
+
+def test_a_new_product_that_makes_the_group_incompatible_leaves_the_file(template_dir, monkeypatch):
+    monkeypatch.setattr(pc, 'check_groups', lambda config: {})
+    target = register_only_reference(template_dir)
+    monkeypatch.setattr(pc, 'check_groups', lambda config: (_ for _ in ()).throw(pc.GroupCompatibilityError(
+        [{'code': 'group_pair_table_mismatch', 'group': 'QA4', 'product': 'QA4_T00', 'case': None}])))
+    before = (target.read_bytes(), target.stat().st_mtime_ns)
+    names = listing(template_dir)
+    code, outs, errs = run(template_dir / 'real.yaml', template_dir / 'compare2.yaml')
+    assert code == 2 and 'group_incompatible' in errs[-1] and outs[-1]['status'] == 'incompatible'
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before and listing(template_dir) == names
 
 
 def test_update_that_changes_common_lists_every_product_of_the_file(template_dir, no_group_check):
